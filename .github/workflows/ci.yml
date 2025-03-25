@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test - ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            os: ubuntu
+            cross: false
+# Disabled for now because these take 4 mins to run, we can use arm GH images when repo is public
+#          - target: aarch64-unknown-linux-gnu
+#            runner: ubuntu-latest # ubuntu-24.04-arm is only available on public repos
+#            os: ubuntu
+#            cross: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+            cross: false
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: update apt cache on linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get update
+      - name: install protoc linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get install -y protobuf-compiler
+      - name: install protoc macos
+        if: matrix.os == 'macos'
+        run: brew install protobuf
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+      - name: install cross
+        if: matrix.cross == true
+        run: |
+          cargo install cross
+          echo "CARGO_BIN=cross" >> $GITHUB_ENV
+      - name: set CARGO bin
+        if: matrix.cross == false
+        run: |
+          echo "CARGO_BIN=cargo" >> $GITHUB_ENV
+      - name: run test
+        run: |
+          $CARGO_BIN test --target ${{ matrix.target }} --verbose
+
+  # Check formatting with rustfmt
+  formatting:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Ensure rustfmt is installed and setup problem matcher
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt
+          rustflags: ""
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1

@@ -1,0 +1,82 @@
+[package]
+name = "rotel"
+version = "0.0.1-alpha0"
+edition = "2021"
+homepage = "https://github.com/streamfold/rotel"
+readme = "README.md"
+rust-version = "1.83.0"
+
+[dependencies]
+clap = { version = "4.5.23", features = ["derive", "env"] }
+tokio = { version = "1.43.0", features = ["full"] }
+tokio-util = "0.7.13"
+tokio-stream = "0.1.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-log = "0.2.0"
+tracing-bunyan-formatter = "0.3.10"
+tracing-appender = "0.2.3"
+tonic = { version = "0.12.3", features = ["gzip", "tls", "tls-roots", "tls-native-roots"] }
+opentelemetry-proto = { version = "0.27.0" }
+flume = { version = "0.11.1", features = ["async"] }
+http-body-util = "0.1.2"
+http = "1.2.0"
+hyper-util = { version = "0.1", features = ["full"] }
+hyper = { version = "1", features = ["full"] }
+prost = "0.13.4"
+flate2 = { version = "1.0", features = ["zlib-ng"], default-features = false }
+futures = "0.3.31"
+daemonize = { git = "https://github.com/mheffner/daemonize", branch = "passy-pr54" }
+humantime = "2.1.0"
+rand = "0.8.5"
+bytes = "1.9.0"
+read-restrict = "0.3.0"
+tower = { version = "0.5.2", features = ["retry", "timeout"] }
+tower-http = { version = "0.6.2", features = ["limit", "trace", "compression-gzip", "validate-request"] }
+byteorder = "1.5.0"
+url = "2.5.4"
+hyper-rustls = { version = "0.27.5", features = ["http2"] }
+rustls = "0.23.20"
+rustls-pki-types = "1.10.0"
+pprof = { version = "0.14.0", features = ["flamegraph", "prost", "prost-codec"], optional = true }
+futures-sink = "0.3.31"
+num_cpus = "1.16.0"
+hex = "0.4.3"
+serde_json = "1.0.135"
+opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
+gethostname = "0.5.0"
+libc = "0.2.170"
+pin-project = "1.1.10"
+futures-util = "0.3.31"
+
+[dev-dependencies]
+tokio-test = "0.4.4"
+utilities = { path = "utilities" }
+httpmock = "0.7.0"
+criterion = { version = "0.5.1", features = ["async_tokio"] }
+tracing-test = "0.2.5"
+
+[build-dependencies]
+prost-build = "0.13.4"
+
+[features]
+pprof = ["dep:pprof"]
+datadog = []
+
+[[bench]]
+name = "flume_bench"
+harness = false
+
+[[bench]]
+name = "clone_trace_request_bench"
+harness = false
+
+[[bench]]
+name = "encode_otlp_trace_bench"
+harness = false
+
+[[bin]]
+name = "rotel"
+
+[profile.release]
+lto = "fat"

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package datadog_pb;
+
+message Span {
+    // service is the name of the service with which this span is associated.
+    string service = 1;
+    // name is the operation name of this span.
+    string name = 2;
+    // resource is the resource name of this span, also sometimes called the endpoint (for web spans).
+    string resource = 3;
+    // traceID is the ID of the trace to which this span belongs.
+    uint64 traceID = 4;
+    // spanID is the ID of this span.
+    uint64 spanID = 5;
+    // parentID is the ID of this span's parent, or zero if this span has no parent.
+    uint64 parentID = 6;
+    // start is the number of nanoseconds between the Unix epoch and the beginning of this span.
+    int64 start = 7;
+    // duration is the time length of this span in nanoseconds.
+    int64 duration = 8;
+    // error is 1 if there is an error associated with this span, or 0 if there is not.
+    int32 error = 9;
+    // meta is a mapping from tag name to tag value for string-valued tags.
+    map<string, string> meta = 10;
+    // metrics is a mapping from tag name to tag value for numeric-valued tags.
+    map<string, double> metrics = 11;
+    // type is the type of the service with which this span is associated.  Example values: web, db, lambda.
+    string type = 12;
+    // meta_struct is a registry of structured "other" data used by, e.g., AppSec.
+    map<string, bytes> meta_struct = 13;
+}

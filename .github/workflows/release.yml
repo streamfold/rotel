@@ -1,0 +1,62 @@
+name: release
+
+on:
+  release:
+    types: [ created ]
+
+jobs:
+  release:
+    name: release - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            os: ubuntu
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest # ubuntu-24.04-arm is only available on public repos
+            os: ubuntu
+            cross: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+            cross: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: update apt cache on linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get update
+      - name: install protoc linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get install -y protobuf-compiler
+      - name: install protoc macos
+        if: matrix.os == 'macos'
+        run: brew install protobuf
+      - name: Set build env
+        run: echo "BUILD_SHORT_SHA=$(echo -n $GITHUB_SHA | cut -c 1-7)" >> $GITHUB_ENV
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+      - name: install cross
+        if: matrix.cross == true
+        run: |
+          cargo install cross
+          echo "CARGO_BIN=cross" >> $GITHUB_ENV
+      - name: set CARGO bin
+        if: matrix.cross == false
+        run: |
+          echo "CARGO_BIN=cargo" >> $GITHUB_ENV
+      - name: build
+        run: $CARGO_BIN build --release --locked --target ${{ matrix.target }}
+      - name: tar
+        run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
+      - name: upload
+        run: |
+          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
+          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
