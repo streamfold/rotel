@@ -17,11 +17,10 @@ jobs:
             runner: ubuntu-latest
             os: ubuntu
             cross: false
-# Disabled for now because these take 4 mins to run, we can use arm GH images when repo is public
-#          - target: aarch64-unknown-linux-gnu
-#            runner: ubuntu-latest # ubuntu-24.04-arm is only available on public repos
-#            os: ubuntu
-#            cross: true
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            os: ubuntu
+            cross: false
           - target: aarch64-apple-darwin
             runner: macos-latest
             os: macos
