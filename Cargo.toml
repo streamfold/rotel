@@ -33,13 +33,11 @@ bytes = "1.9.0"
 read-restrict = "0.3.0"
 tower = { version = "0.5.2", features = ["retry", "timeout"] }
 tower-http = { version = "0.6.2", features = ["limit", "trace", "compression-gzip", "validate-request"] }
-byteorder = "1.5.0"
 url = "2.5.4"
 hyper-rustls = { version = "0.27.5", features = ["http2"] }
 rustls = "0.23.20"
 rustls-pki-types = "1.10.0"
 pprof = { version = "0.14.0", features = ["flamegraph", "prost", "prost-codec"], optional = true }
-futures-sink = "0.3.31"
 num_cpus = "1.16.0"
 hex = "0.4.3"
 serde_json = "1.0.135"
