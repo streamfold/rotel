@@ -31,6 +31,3 @@ When you have rebuilt with pprof support, the following options are available. Y
 * `--pprof-flame-graph`
 * `--pprof-call-graph`
 
-## Other features
-
-* Datadog trace support: `datadog`

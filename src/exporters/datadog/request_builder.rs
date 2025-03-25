@@ -6,6 +6,7 @@ use crate::exporters::datadog::types::pb::AgentPayload;
 use crate::exporters::http::types::Request;
 use std::marker::PhantomData;
 use tower::BoxError;
+use crate::exporters::datadog::Region;
 
 pub trait TransformPayload<T> {
     fn transform(&self, input: Vec<T>) -> AgentPayload;
@@ -28,9 +29,15 @@ where
 {
     pub fn new(
         transformer: Transform,
-        endpoint: String,
+        region: Region,
+        custom_endpoint: Option<String>,
         api_key: String,
     ) -> Result<Self, BoxError> {
+        let endpoint = if let Some(custom) = custom_endpoint {
+            custom
+        } else {
+            region.trace_endpoint()
+        };
         let api_req_builder = ApiRequestBuilder::new(endpoint, api_key)?;
 
         Ok(Self {

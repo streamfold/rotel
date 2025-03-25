@@ -63,7 +63,6 @@ rotel start --help
 
 All CLI arguments can also be passed as environment variable by prefixing with `ROTEL_` and switching hyphens to underscores. For example, `--log-level info` can also be specified by setting the environment variable `ROTEL_LOG_LEVEL=info`.
 
-
 | Option                                 | Default              | Options                  |
 |----------------------------------------|----------------------|--------------------------|
 | --daemon                               |                      |                          |
@@ -75,7 +74,14 @@ All CLI arguments can also be passed as environment variable by prefixing with `
 | --otlp-grpc-endpoint                   | localhost:4317       |                          |
 | --otlp-http-endpoint                   | localhost:4318       |                          |
 | --otlp-grpc-max-recv-msg-size-mib      | 4                    |                          |
-| --exporter                             | otlp                 | otlp, blackhole          |
+| --exporter                             | otlp                 | otlp, blackhole, datadog |
+
+### OTLP exporter configuration
+
+The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
+
+| Option                                 | Default              | Options                  |
+|----------------------------------------|----------------------|--------------------------|
 | --otlp-receiver-traces-disabled        |                      |                          |
 | --otlp-receiver-metrics-disabled       |                      |                          |
 | --otlp-receiver-logs-disabled          |                      |                          |
@@ -100,6 +106,18 @@ All CLI arguments can also be passed as environment variable by prefixing with `
 | --otlp-exporter-batch-max-size         | 8192                 |                          |
 | --otlp-exporter-batch-timeout          | 200ms                |                          |
 
+### Datadog exporter configuration
+
+The Datadog exporter can be selected by passing `--exporter datadog`. The Datadog exporter only supports traces at the
+moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
+
+| Option                             | Default | Options                |
+|------------------------------------|---------|------------------------|
+| --datadog-exporter-region          | us1     | us1, us3, us5, eu, ap1 |
+| --datadog-exporter-custom-endpoint |         |                        |
+| --datadog-exporter-api-key         |         |                        |
+
+Specifying a custom endpoint will override the region selection.
 
 **Notes**:
 

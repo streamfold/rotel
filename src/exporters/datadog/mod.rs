@@ -40,6 +40,29 @@ const MAX_CONCURRENT_REQUESTS: usize = 10;
 type ExportFuture =
     Pin<Box<dyn Future<Output = Result<Response<()>, Box<dyn Error + Send + Sync>>> + Send>>;
 
+#[derive(Copy, Clone)]
+pub enum Region {
+    US1,
+    US3,
+    US5,
+    EU,
+    AP1,
+}
+
+impl Region {
+    pub(crate) fn trace_endpoint(&self) -> String {
+        let base = match self {
+            Region::US1 => "datadoghq.com",
+            Region::US3 => "us3.datadoghq.com",
+            Region::US5 => "us5.datadoghq.com",
+            Region::EU => "datadoghq.eu",
+            Region::AP1 => "ap1.datadoghq.com"
+        };
+        format!("https://trace.agent.{}", base)
+    }
+
+}
+
 pub struct DatadogTraceExporter {
     rx: BoundedReceiver<Vec<ResourceSpans>>,
     encode_drain_max_time: Duration,
@@ -49,7 +72,8 @@ pub struct DatadogTraceExporter {
 }
 
 pub struct DatadogTraceExporterBuilder {
-    endpoint: String,
+    region: Region,
+    custom_endpoint: Option<String>,
     api_token: String,
     environment: String,
     hostname: String,
@@ -59,7 +83,8 @@ pub struct DatadogTraceExporterBuilder {
 impl Default for DatadogTraceExporterBuilder {
     fn default() -> Self {
         Self {
-            endpoint: "".to_string(),
+            region: Region::US1,
+            custom_endpoint: None,
             api_token: "".to_string(),
             environment: "dev".to_string(),
             hostname: "hostname".to_string(),
@@ -96,7 +121,7 @@ impl DatadogTraceExporterBuilder {
         let transformer = Transformer::new(self.environment.clone(), self.hostname.clone());
 
         let req_builder =
-            RequestBuilder::new(transformer, self.endpoint.clone(), self.api_token.clone())?;
+            RequestBuilder::new(transformer, self.region, self.custom_endpoint.clone(), self.api_token.clone())?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
 
@@ -116,9 +141,10 @@ impl DatadogTraceExporterBuilder {
 }
 
 impl DatadogTraceExporter {
-    pub fn builder(endpoint: String, api_key: String) -> DatadogTraceExporterBuilder {
+    pub fn builder(region: Region, custom_endpoint: Option<String>, api_key: String) -> DatadogTraceExporterBuilder {
         DatadogTraceExporterBuilder {
-            endpoint,
+            region,
+            custom_endpoint,
             api_token: api_key,
             ..Default::default()
         }
@@ -252,7 +278,7 @@ mod tests {
     extern crate utilities;
 
     use crate::bounded_channel::{bounded, BoundedReceiver};
-    use crate::exporters::datadog::DatadogTraceExporter;
+    use crate::exporters::datadog::{DatadogTraceExporter, Region};
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -321,7 +347,7 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
     ) -> DatadogTraceExporter {
-        DatadogTraceExporter::builder(addr, "1234".to_string())
+        DatadogTraceExporter::builder(Region::US1, Some(addr), "1234".to_string())
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
                 max_backoff: Duration::from_millis(50),
