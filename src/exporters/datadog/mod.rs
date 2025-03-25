@@ -56,11 +56,10 @@ impl Region {
             Region::US3 => "us3.datadoghq.com",
             Region::US5 => "us5.datadoghq.com",
             Region::EU => "datadoghq.eu",
-            Region::AP1 => "ap1.datadoghq.com"
+            Region::AP1 => "ap1.datadoghq.com",
         };
         format!("https://trace.agent.{}", base)
     }
-
 }
 
 pub struct DatadogTraceExporter {
@@ -120,8 +119,12 @@ impl DatadogTraceExporterBuilder {
 
         let transformer = Transformer::new(self.environment.clone(), self.hostname.clone());
 
-        let req_builder =
-            RequestBuilder::new(transformer, self.region, self.custom_endpoint.clone(), self.api_token.clone())?;
+        let req_builder = RequestBuilder::new(
+            transformer,
+            self.region,
+            self.custom_endpoint.clone(),
+            self.api_token.clone(),
+        )?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
 
@@ -141,7 +144,11 @@ impl DatadogTraceExporterBuilder {
 }
 
 impl DatadogTraceExporter {
-    pub fn builder(region: Region, custom_endpoint: Option<String>, api_key: String) -> DatadogTraceExporterBuilder {
+    pub fn builder(
+        region: Region,
+        custom_endpoint: Option<String>,
+        api_key: String,
+    ) -> DatadogTraceExporterBuilder {
         DatadogTraceExporterBuilder {
             region,
             custom_endpoint,

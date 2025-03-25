@@ -3,10 +3,10 @@
 use crate::exporters::datadog::api_request::ApiRequestBuilder;
 use crate::exporters::datadog::request_builder_mapper::BuildRequest;
 use crate::exporters::datadog::types::pb::AgentPayload;
+use crate::exporters::datadog::Region;
 use crate::exporters::http::types::Request;
 use std::marker::PhantomData;
 use tower::BoxError;
-use crate::exporters::datadog::Region;
 
 pub trait TransformPayload<T> {
     fn transform(&self, input: Vec<T>) -> AgentPayload;
