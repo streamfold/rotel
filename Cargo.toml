@@ -59,7 +59,6 @@ prost-build = "0.13.4"
 
 [features]
 pprof = ["dep:pprof"]
-datadog = []
 
 [[bench]]
 name = "flume_bench"
