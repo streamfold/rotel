@@ -6,3 +6,4 @@ pub mod listener;
 pub mod receivers;
 pub mod semconv;
 pub mod topology;
+pub mod telemetry;

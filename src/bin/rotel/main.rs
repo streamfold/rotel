@@ -12,7 +12,7 @@ use rotel::receivers::otlp_grpc::OTLPGrpcServer;
 use rotel::receivers::otlp_http::OTLPHttpServer;
 use rotel::receivers::otlp_output::OTLPOutput;
 use rotel::topology::debug::DebugLogger;
-use rotel::{listener, topology};
+use rotel::{listener, telemetry, topology};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::env;
@@ -32,6 +32,11 @@ use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
+
+use opentelemetry::global;
+use opentelemetry::metrics::Meter;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
 
 #[cfg(feature = "datadog")]
 use gethostname::gethostname;
@@ -982,6 +987,13 @@ async fn run_agent(
         let pipeline_cancel = pipeline_cancel.clone();
         pipeline_task_set.spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
     }
+
+    let internal_metrics_exporter = telemetry::internal_exporter::InternalOTLPMetricsExporter::new(metrics_output.clone());    // Create a meter provider with the OTLP Metric exporter
+
+    let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_periodic_exporter(internal_metrics_exporter)
+        .build();
+    global::set_meter_provider(meter_provider.clone());
 
     #[cfg(feature = "pprof")]
     let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph {
