@@ -175,6 +175,12 @@ impl BatchSizer for [ResourceSpans] {
     }
 }
 
+impl BatchSizer for Vec<ResourceSpans> {
+    fn size_of(&self) -> usize {
+        self.iter().map(|n| n.size_of()).sum()
+    }
+}
+
 impl BatchSplittable for ResourceSpans {
     fn split(&mut self, split_n: usize) -> Self
     where
@@ -240,6 +246,12 @@ impl BatchSizer for [ResourceMetrics] {
     }
 }
 
+impl BatchSizer for Vec<ResourceMetrics> {
+    fn size_of(&self) -> usize {
+        self.iter().map(|n| n.size_of()).sum()
+    }
+}
+
 impl BatchSplittable for ResourceMetrics {
     fn split(&mut self, split_n: usize) -> Self
     where
@@ -287,6 +299,12 @@ impl BatchSizer for ResourceLogs {
 }
 
 impl BatchSizer for [ResourceLogs] {
+    fn size_of(&self) -> usize {
+        self.iter().map(|n| n.size_of()).sum()
+    }
+}
+
+impl BatchSizer for Vec<ResourceLogs> {
     fn size_of(&self) -> usize {
         self.iter().map(|n| n.size_of()).sum()
     }
