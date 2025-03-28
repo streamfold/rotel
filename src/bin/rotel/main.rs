@@ -2,6 +2,7 @@
 
 use crate::listener::Listener;
 use clap::{Args, Parser, ValueEnum};
+use opentelemetry::global;
 use rotel::bounded_channel::bounded;
 use rotel::exporters::blackhole::BlackholeExporter;
 use rotel::exporters::otlp::config::{
@@ -32,7 +33,6 @@ use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
-use opentelemetry::global;
 
 #[cfg(feature = "datadog")]
 use gethostname::gethostname;
