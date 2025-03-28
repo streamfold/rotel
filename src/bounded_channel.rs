@@ -2,6 +2,7 @@
 
 use flume::r#async::{RecvStream, SendFut};
 use flume::{Receiver, Sender};
+use std::fmt;
 
 pub struct BoundedSender<T> {
     tx: Sender<T>,
@@ -10,6 +11,20 @@ pub struct BoundedSender<T> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SendError {
     Disconnected,
+}
+
+impl fmt::Display for SendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SendError::Disconnected => write!(f, "channel disconnected"),
+        }
+    }
+}
+
+impl From<SendError> for String {
+    fn from(error: SendError) -> String {
+        error.to_string()
+    }
 }
 
 impl<T> BoundedSender<T> {
