@@ -24,7 +24,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use crate::listener::Listener;
+use crate::receivers::get_meter;
+use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPInto;
+use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -44,7 +48,6 @@ use tower_http::trace::{HttpMakeClassifier, Trace, TraceLayer};
 use tower_http::validate_request::{
     ValidateRequest, ValidateRequestHeader, ValidateRequestHeaderLayer,
 };
-use crate::topology::batch::BatchSizer;
 
 // 20MiB matches collector limit:
 // https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/confighttp/README.md
@@ -284,6 +287,12 @@ struct OTLPService {
     metrics_path: String,
     logs_path: String,
     logs_ok_resp: Bytes,
+    accepted_spans_records_counter: Counter<u64>,
+    accepted_metric_points_counter: Counter<u64>,
+    accepted_log_records_counter: Counter<u64>,
+    refused_spans_records_counter: Counter<u64>,
+    refused_metric_points_counter: Counter<u64>,
+    refused_log_records_counter: Counter<u64>,
 }
 
 impl OTLPService {
@@ -307,6 +316,44 @@ impl OTLPService {
             trace_ok_resp: compute_ok_resp::<ExportTraceServiceResponse>().unwrap(),
             metrics_ok_resp: compute_ok_resp::<ExportMetricsServiceResponse>().unwrap(),
             logs_ok_resp: compute_ok_resp::<ExportLogsServiceResponse>().unwrap(),
+            accepted_spans_records_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_spans")
+                .with_description(
+                    "Number of spans successfully ingested and pushed into the pipeline",
+                )
+                .with_unit("spans")
+                .build(),
+            accepted_metric_points_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_metric_points")
+                .with_description(
+                    "Number of metric points successfully ingested and pushed into the pipeline.",
+                )
+                .with_unit("metric_points")
+                .build(),
+            accepted_log_records_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_log_records")
+                .with_description(
+                    "Number of metric points successfully ingested and pushed into the pipeline.",
+                )
+                .with_unit("log_records")
+                .build(),
+            refused_spans_records_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_spans")
+                .with_description("Number of spans that could not be pushed into the pipeline.")
+                .with_unit("spans")
+                .build(),
+            refused_metric_points_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_metric_points")
+                .with_description(
+                    "Number of metric points that could not be pushed into the pipeline.",
+                )
+                .with_unit("metric_points")
+                .build(),
+            refused_log_records_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_log_records")
+                .with_description("Number of logs that could not be pushed into the pipeline.")
+                .with_unit("log_records")
+                .build(),
         }
     }
 }
@@ -337,10 +384,14 @@ where
                     }
                     let trace_ok_resp = self.trace_ok_resp.clone();
                     let output = self.trace_output.clone().unwrap();
+                    let accepted = self.accepted_spans_records_counter.clone();
+                    let refused = self.refused_spans_records_counter.clone();
                     return Box::pin(handle::<H, ExportTraceServiceRequest, ResourceSpans>(
                         req,
                         output,
                         trace_ok_resp,
+                        accepted,
+                        refused,
                     ));
                 }
                 if path == self.metrics_path {
@@ -351,10 +402,14 @@ where
                     }
                     let metrics_ok_resp = self.metrics_ok_resp.clone();
                     let output = self.metrics_output.clone().unwrap();
+                    let accepted = self.accepted_metric_points_counter.clone();
+                    let refused = self.refused_metric_points_counter.clone();
                     return Box::pin(handle::<H, ExportMetricsServiceRequest, ResourceMetrics>(
                         req,
                         output,
                         metrics_ok_resp,
+                        accepted,
+                        refused,
                     ));
                 }
                 if path == self.logs_path {
@@ -365,10 +420,14 @@ where
                     }
                     let logs_ok_resp = self.logs_ok_resp.clone();
                     let output = self.logs_output.clone().unwrap();
+                    let accepted = self.accepted_log_records_counter.clone();
+                    let refused = self.refused_log_records_counter.clone();
                     return Box::pin(handle::<H, ExportLogsServiceRequest, ResourceLogs>(
                         req,
                         output,
                         logs_ok_resp,
+                        accepted,
+                        refused,
                     ));
                 }
                 Box::pin(futures::future::ok(
@@ -426,13 +485,16 @@ where
     Ok(decoded_bytes)
 }
 
-async fn handle<H: Body, ExpReq: prost::Message + Default + OTLPInto<Vec<T>>, T: prost::Message + BatchSizer>(
+async fn handle<H: Body, ExpReq: prost::Message + Default + OTLPInto<Vec<T>>, T: prost::Message>(
     req: Request<H>,
     output: OTLPOutput<Vec<T>>,
     ok_resp: Bytes,
+    accepted_counter: Counter<u64>,
+    refused_counter: Counter<u64>,
 ) -> Result<Response<Full<Bytes>>, hyper::Error>
 where
     <H as Body>::Error: Display + Debug + Send + Sync + ToString,
+    Vec<T>: BatchSizer,
 {
     let decoded_bytes = decode_body(req).await;
     if decoded_bytes.is_err() {
@@ -445,21 +507,27 @@ where
     }
 
     let req = decoded.unwrap();
-    //let count = BatchSizer::size_of(&req);
 
     let mut rb = Response::builder();
     rb.headers_mut()
         .unwrap()
         .insert(CONTENT_TYPE, HeaderValue::from_str(PROTOBUF_CT).unwrap());
 
-    match output.send(ExpReq::otlp_into(req)).await {
+    let otlp_payload = ExpReq::otlp_into(req);
+    let count = BatchSizer::size_of(&otlp_payload);
+
+    match output.send(otlp_payload).await {
         Ok(_) => {
             // No partial success at the moment
             let body = Full::new(ok_resp.clone());
+            accepted_counter.add(count as u64, &[KeyValue::new("protocol", "http")]);
             Ok(rb.body(body).unwrap())
         }
         // todo: these should encode a GRPC Status as a body response
-        Err(_) => response_4xx(StatusCode::SERVICE_UNAVAILABLE),
+        Err(_) => {
+            refused_counter.add(count as u64, &[KeyValue::new("protocol", "http")]);
+            response_4xx(StatusCode::SERVICE_UNAVAILABLE)
+        }
     }
 }
 
