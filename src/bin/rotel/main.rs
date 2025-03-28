@@ -32,11 +32,7 @@ use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
-
 use opentelemetry::global;
-use opentelemetry::metrics::Meter;
-use opentelemetry::KeyValue;
-use opentelemetry_otlp::WithExportConfig;
 
 #[cfg(feature = "datadog")]
 use gethostname::gethostname;
@@ -44,6 +40,7 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use opentelemetry_sdk::metrics::Temporality;
+use opentelemetry_sdk::Resource;
 #[cfg(feature = "datadog")]
 use rotel::exporters::datadog::DatadogTraceExporter;
 use rotel::exporters::otlp;
@@ -996,6 +993,7 @@ async fn run_agent(
 
     let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
         .with_periodic_exporter(internal_metrics_exporter)
+        .with_resource(Resource::builder().with_service_name("rotel").build())
         .build();
     global::set_meter_provider(meter_provider.clone());
 
