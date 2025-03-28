@@ -44,6 +44,7 @@ use tower_http::trace::{HttpMakeClassifier, Trace, TraceLayer};
 use tower_http::validate_request::{
     ValidateRequest, ValidateRequestHeader, ValidateRequestHeaderLayer,
 };
+use crate::topology::batch::BatchSizer;
 
 // 20MiB matches collector limit:
 // https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/confighttp/README.md
@@ -425,10 +426,10 @@ where
     Ok(decoded_bytes)
 }
 
-async fn handle<H: Body, ExpReq: prost::Message + Default + OTLPInto<Vec<T>>, T: prost::Message>(
+async fn handle<H: Body, ExpReq: prost::Message + Default + OTLPInto<Vec<T>>, T: prost::Message + BatchSizer>(
     req: Request<H>,
     output: OTLPOutput<Vec<T>>,
-    metrics_ok_resp: Bytes,
+    ok_resp: Bytes,
 ) -> Result<Response<Full<Bytes>>, hyper::Error>
 where
     <H as Body>::Error: Display + Debug + Send + Sync + ToString,
@@ -443,18 +444,18 @@ where
         return response_4xx(StatusCode::BAD_REQUEST);
     }
 
-    let metrics_req = decoded.unwrap();
-    //let x = ExpReq::otlp_into(metrics_req);
+    let req = decoded.unwrap();
+    //let count = BatchSizer::size_of(&req);
 
     let mut rb = Response::builder();
     rb.headers_mut()
         .unwrap()
         .insert(CONTENT_TYPE, HeaderValue::from_str(PROTOBUF_CT).unwrap());
 
-    match output.send(ExpReq::otlp_into(metrics_req)).await {
+    match output.send(ExpReq::otlp_into(req)).await {
         Ok(_) => {
             // No partial success at the moment
-            let body = Full::new(metrics_ok_resp.clone());
+            let body = Full::new(ok_resp.clone());
             Ok(rb.body(body).unwrap())
         }
         // todo: these should encode a GRPC Status as a body response

@@ -43,6 +43,7 @@ use gethostname::gethostname;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use opentelemetry_sdk::metrics::Temporality;
 #[cfg(feature = "datadog")]
 use rotel::exporters::datadog::DatadogTraceExporter;
 use rotel::exporters::otlp;
@@ -988,7 +989,10 @@ async fn run_agent(
         pipeline_task_set.spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
     }
 
-    let internal_metrics_exporter = telemetry::internal_exporter::InternalOTLPMetricsExporter::new(metrics_output.clone());    // Create a meter provider with the OTLP Metric exporter
+    let internal_metrics_exporter = telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
+        metrics_output.clone(),
+        Temporality::Cumulative,
+    );
 
     let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
         .with_periodic_exporter(internal_metrics_exporter)
