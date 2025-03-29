@@ -5,4 +5,5 @@ pub mod exporters;
 pub mod listener;
 pub mod receivers;
 pub mod semconv;
+pub mod telemetry;
 pub mod topology;

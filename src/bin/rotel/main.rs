@@ -2,6 +2,7 @@
 
 use crate::listener::Listener;
 use clap::{Args, Parser, ValueEnum};
+use opentelemetry::global;
 use rotel::bounded_channel::bounded;
 use rotel::exporters::blackhole::BlackholeExporter;
 use rotel::exporters::otlp::config::{
@@ -12,7 +13,7 @@ use rotel::receivers::otlp_grpc::OTLPGrpcServer;
 use rotel::receivers::otlp_http::OTLPHttpServer;
 use rotel::receivers::otlp_output::OTLPOutput;
 use rotel::topology::debug::DebugLogger;
-use rotel::{listener, topology};
+use rotel::{listener, telemetry, topology};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::env;
@@ -37,6 +38,8 @@ use gethostname::gethostname;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use opentelemetry_sdk::metrics::Temporality;
+use opentelemetry_sdk::Resource;
 use rotel::exporters::datadog::{DatadogTraceExporter, Region};
 use rotel::exporters::otlp;
 use rotel::topology::batch::BatchConfig;
@@ -993,6 +996,17 @@ async fn run_agent(
         let pipeline_cancel = pipeline_cancel.clone();
         pipeline_task_set.spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
     }
+
+    let internal_metrics_exporter = telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
+        metrics_output.clone(),
+        Temporality::Cumulative,
+    );
+
+    let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_periodic_exporter(internal_metrics_exporter)
+        .with_resource(Resource::builder().with_service_name("rotel").build())
+        .build();
+    global::set_meter_provider(meter_provider);
 
     #[cfg(feature = "pprof")]
     let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph {
