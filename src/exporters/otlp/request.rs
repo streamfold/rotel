@@ -24,6 +24,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use std::error::Error;
 use std::marker::PhantomData;
 
+
 /// Service path for gRPC trace exports
 const TRACE_GRPC_SERVICE_PATH: &str = "/opentelemetry.proto.collector.trace.v1.TraceService/Export";
 /// Service path for gRPC metrics exports
@@ -58,6 +59,12 @@ pub struct RequestBuilderConfig {
     pub protocol: Protocol,
     compression: Option<CompressionEncoding>,
     default_headers: HeaderMap,
+}
+
+#[derive(Clone)]
+pub struct EncodedRequest {
+    pub request: Request<Full<Bytes>>,
+    pub size: usize,
 }
 
 /// Creates a new RequestBuilder for trace exports.
@@ -201,10 +208,10 @@ impl<T: prost::Message> RequestBuilder<T> {
     ///
     /// # Returns
     /// * `Result<Request<Full<Bytes>>, ExporterError>`
-    pub fn encode(&self, message: T) -> Result<Request<Full<Bytes>>, ExporterError> {
+    pub fn encode(&self, message: T, size: usize) -> Result<EncodedRequest, ExporterError> {
         let res = self.new_request(message);
         match res {
-            Ok(r) => Ok(r),
+            Ok(request) => Ok(EncodedRequest { request, size }),
             Err(e) => Err(ExporterError::Generic(format!(
                 "error encoding request: {}",
                 e

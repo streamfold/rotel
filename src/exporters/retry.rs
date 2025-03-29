@@ -14,6 +14,7 @@ use tokio::time::Instant;
 use tower::retry::Policy;
 use tower::BoxError;
 use tracing::{info, warn};
+use crate::exporters::otlp::request::EncodedRequest;
 
 #[derive(Clone)]
 pub struct RetryConfig {
@@ -80,14 +81,14 @@ impl<T> RetryPolicy<T> {
     }
 }
 
-impl<T: Debug + Clone + Send + 'static> Policy<Request<Full<Bytes>>, T, BoxError>
+impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError>
     for RetryPolicy<T>
 {
     type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     fn retry(
         &mut self,
-        _req: &mut Request<Full<Bytes>>,
+        _req: &mut EncodedRequest,
         result: &mut Result<T, BoxError>,
     ) -> Option<Self::Future> {
         // Should never happen
@@ -146,7 +147,7 @@ impl<T: Debug + Clone + Send + 'static> Policy<Request<Full<Bytes>>, T, BoxError
         }
     }
 
-    fn clone_request(&mut self, req: &Request<Full<Bytes>>) -> Option<Request<Full<Bytes>>> {
+    fn clone_request(&mut self, req: &EncodedRequest) -> Option<EncodedRequest> {
         // Set the request start time
         if self.request_start.is_none() {
             self.request_start = Some(Instant::now());

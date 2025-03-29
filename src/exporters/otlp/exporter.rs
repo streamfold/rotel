@@ -13,7 +13,7 @@ use crate::exporters::otlp::client::OTLPClient;
 use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
-use crate::exporters::otlp::request::RequestBuilder;
+use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
 use crate::exporters::otlp::{errors, request};
 use crate::exporters::retry::RetryPolicy;
 use crate::topology::payload::OTLPFrom;
@@ -47,6 +47,7 @@ use tower::retry::{Retry, RetryLayer};
 use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{debug, error};
+use crate::topology::batch::BatchSizer;
 
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
@@ -54,7 +55,7 @@ const MAX_CONCURRENT_ENCODERS: usize = 20;
 #[rustfmt::skip]
 type ExportFuture<T> = Pin<Box<dyn Future<Output = Result<T, BoxError>> + Send>>;
 #[rustfmt::skip]
-type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<Request<Full<Bytes>>, errors::ExporterError>, JoinError>> + Send>>;
+type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<EncodedRequest, errors::ExporterError>, JoinError>> + Send>>;
 
 /// Creates a configured OTLP traces exporter
 ///
@@ -195,6 +196,7 @@ where
     Response: prost::Message + std::fmt::Debug + Clone + Default + Send + 'static,
     Resource: prost::Message + std::fmt::Debug + Clone + Send + 'static,
     Request: prost::Message + OTLPFrom<Vec<Resource>> + Clone + 'static,
+    Vec<Resource>: BatchSizer,
 {
     /// Creates a new Exporter instance
     ///
@@ -263,6 +265,8 @@ where
                                     self.export_futures.push(Box::pin(self.svc.call(request)));
                                 },
                                 Err(e) => {
+                                    // TODO
+                                    // Add metric for encoding error
                                     error!(exporter_type = type_name,
                                         "Failed to encode OTLP request into Request<Full<Bytes>> {:?}", e);
                                 }
@@ -283,7 +287,8 @@ where
                                 "Got a request {:?}", payload);
                                 let req_builder = self.req_builder.clone();
                                 let f = tokio::task::spawn_blocking(move || {
-                                    req_builder.encode(Request::otlp_from(payload))
+                                    let size = BatchSizer::size_of(&payload);
+                                    req_builder.encode(Request::otlp_from(payload), size)
                                 });
                                 self.encoding_futures.push(Box::pin(f));
                         },

@@ -24,6 +24,7 @@ use std::time::Duration;
 use tonic::codegen::Service;
 use tonic::Status;
 use tower_http::BoxError;
+use crate::exporters::otlp::request::EncodedRequest;
 
 /// Client struct for handling OTLP exports.
 /// Generic over message type T which must implement prost::Message, i.e. ExportTraceServiceRequest.
@@ -41,7 +42,7 @@ where
 }
 
 /// Implementation of Tower's Service trait for OTLPClient
-impl<T> Service<Request<Full<Bytes>>> for OTLPClient<T>
+impl<T> Service<EncodedRequest> for OTLPClient<T>
 where
     T: prost::Message + Default + Clone + Send + 'static,
 {
@@ -55,10 +56,10 @@ where
     }
 
     /// Processes the request and returns a Future containing the response
-    fn call(&mut self, req: Request<Full<Bytes>>) -> Self::Future {
+    fn call(&mut self, req: EncodedRequest) -> Self::Future {
         let this = self.clone();
         Box::pin(async move {
-            let result = this.perform_request(req.clone()).await;
+            let result = this.perform_request(req.request.clone()).await;
             match result {
                 Ok(response) => Ok(response),
                 Err(error) => Err(error.into()),
