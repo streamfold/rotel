@@ -4,6 +4,7 @@ use crate::exporters::http::tls::Config;
 /// A client implementation for OTLP (OpenTelemetry Protocol) exports that supports both gRPC and HTTP protocols.
 /// The client handles TLS configuration, request processing, and response decoding.
 use crate::exporters::otlp::errors::ExporterError;
+use crate::exporters::otlp::request::EncodedRequest;
 use crate::exporters::otlp::{grpc_codec, http_codec, Protocol};
 use bytes::Bytes;
 use http::header::CONTENT_ENCODING;
@@ -24,7 +25,6 @@ use std::time::Duration;
 use tonic::codegen::Service;
 use tonic::Status;
 use tower_http::BoxError;
-use crate::exporters::otlp::request::EncodedRequest;
 
 /// Client struct for handling OTLP exports.
 /// Generic over message type T which must implement prost::Message, i.e. ExportTraceServiceRequest.

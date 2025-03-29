@@ -16,6 +16,7 @@ use crate::exporters::otlp::config::{
 use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
 use crate::exporters::otlp::{errors, request};
 use crate::exporters::retry::RetryPolicy;
+use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPFrom;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
@@ -47,7 +48,6 @@ use tower::retry::{Retry, RetryLayer};
 use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{debug, error};
-use crate::topology::batch::BatchSizer;
 
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::otlp::errors::ExporterError;
+use crate::exporters::otlp::request::EncodedRequest;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
@@ -14,7 +15,6 @@ use tokio::time::Instant;
 use tower::retry::Policy;
 use tower::BoxError;
 use tracing::{info, warn};
-use crate::exporters::otlp::request::EncodedRequest;
 
 #[derive(Clone)]
 pub struct RetryConfig {
@@ -81,9 +81,7 @@ impl<T> RetryPolicy<T> {
     }
 }
 
-impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError>
-    for RetryPolicy<T>
-{
+impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError> for RetryPolicy<T> {
     type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     fn retry(
