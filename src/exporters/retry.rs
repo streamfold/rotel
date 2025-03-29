@@ -2,9 +2,6 @@
 
 use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::request::EncodedRequest;
-use bytes::Bytes;
-use http::Request;
-use http_body_util::Full;
 use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;

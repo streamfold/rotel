@@ -18,10 +18,7 @@ use crate::exporters::otlp::{errors, request};
 use crate::exporters::retry::RetryPolicy;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPFrom;
-use bytes::Bytes;
 use futures::stream::FuturesUnordered;
-use http::Request;
-use http_body_util::Full;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -48,6 +45,7 @@ use tower::retry::{Retry, RetryLayer};
 use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{debug, error};
+
 
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
@@ -196,7 +194,7 @@ where
     Response: prost::Message + std::fmt::Debug + Clone + Default + Send + 'static,
     Resource: prost::Message + std::fmt::Debug + Clone + Send + 'static,
     Request: prost::Message + OTLPFrom<Vec<Resource>> + Clone + 'static,
-    Vec<Resource>: BatchSizer,
+    [Resource]: BatchSizer,
 {
     /// Creates a new Exporter instance
     ///
@@ -287,7 +285,7 @@ where
                                 "Got a request {:?}", payload);
                                 let req_builder = self.req_builder.clone();
                                 let f = tokio::task::spawn_blocking(move || {
-                                    let size = BatchSizer::size_of(&payload);
+                                    let size = BatchSizer::size_of(payload.as_slice());
                                     req_builder.encode(Request::otlp_from(payload), size)
                                 });
                                 self.encoding_futures.push(Box::pin(f));
