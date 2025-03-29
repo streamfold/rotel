@@ -1006,7 +1006,7 @@ async fn run_agent(
         .with_periodic_exporter(internal_metrics_exporter)
         .with_resource(Resource::builder().with_service_name("rotel").build())
         .build();
-    global::set_meter_provider(meter_provider.clone());
+    global::set_meter_provider(meter_provider);
 
     #[cfg(feature = "pprof")]
     let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph {

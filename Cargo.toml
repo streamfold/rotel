@@ -18,7 +18,6 @@ tracing-bunyan-formatter = "0.3.10"
 tracing-appender = "0.2.3"
 tonic = { version = "0.12.3", features = ["gzip", "tls", "tls-roots", "tls-native-roots"] }
 opentelemetry = "0.29.0"
-opentelemetry-otlp = { version = "0.29.0"}
 opentelemetry_sdk = { version = "0.29.0"}
 opentelemetry-proto = { version = "0.29.0" }
 flume = { version = "0.11.1", features = ["async"] }
