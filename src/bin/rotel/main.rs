@@ -34,15 +34,13 @@ use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
-#[cfg(feature = "datadog")]
 use gethostname::gethostname;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::Resource;
-#[cfg(feature = "datadog")]
-use rotel::exporters::datadog::DatadogTraceExporter;
+use rotel::exporters::datadog::{DatadogTraceExporter, Region};
 use rotel::exporters::otlp;
 use rotel::topology::batch::BatchConfig;
 
@@ -401,20 +399,31 @@ pub struct AgentRun {
     #[clap(flatten)]
     profile_group: ProfileGroup,
 
-    /// Datadog Endpoint
-    /// todo: switch this to a region selector
-    #[cfg(feature = "datadog")]
+    /// Datadog Exporter Region
     #[arg(
+        value_enum,
         long,
-        env = "ROTEL_DATADOG_EXPORTER_ENDPOINT",
-        default_value = "https://trace.agent.datadoghq.com"
+        env = "ROTEL_DATADOG_EXPORTER_REGION",
+        default_value = "us1"
     )]
-    datadog_exporter_endpoint: String,
+    datadog_exporter_region: DatadogRegion,
 
-    #[cfg(feature = "datadog")]
-    /// Datadog Exporter API KEY
+    /// Datadog Exporter custom endpoint override
+    #[arg(long, env = "ROTEL_DATADOG_EXPORTER_CUSTOM_ENDPOINT")]
+    datadog_exporter_custom_endpoint: Option<String>,
+
+    /// Datadog Exporter API key
     #[arg(long, env = "ROTEL_DATADOG_EXPORTER_API_KEY")]
     datadog_exporter_api_key: Option<String>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+pub enum DatadogRegion {
+    US1,
+    US3,
+    US5,
+    EU,
+    AP1,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
@@ -568,7 +577,6 @@ pub enum Exporter {
 
     Blackhole,
 
-    #[cfg(feature = "datadog")]
     Datadog,
 }
 
@@ -680,12 +688,7 @@ fn main() -> ExitCode {
 
             let _logger = setup_logging(&opt.log_level, &opt.log_format);
 
-            match run_agent(
-                agent,
-                port_map,
-                #[cfg(feature = "datadog")]
-                &opt.environment,
-            ) {
+            match run_agent(agent, port_map, &opt.environment) {
                 Ok(_) => {}
                 Err(e) => {
                     error!(error = ?e, "Failed to run agent.");
@@ -708,7 +711,7 @@ fn main() -> ExitCode {
 async fn run_agent(
     agent: Box<AgentRun>,
     mut port_map: HashMap<SocketAddr, Listener>,
-    #[cfg(feature = "datadog")] environment: &String,
+    environment: &String,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     info!(
         grpc_endpoint = agent.otlp_grpc_endpoint.to_string(),
@@ -731,28 +734,28 @@ async fn run_agent(
     let pipeline_cancel = CancellationToken::new();
     let exporters_cancel = CancellationToken::new();
 
-    let has_global_endpoint = agent.otlp_exporter_endpoint.is_some();
-    let has_traces_endpoint = has_global_endpoint || agent.otlp_exporter_traces_endpoint.is_some();
-    let has_metrics_endpoint =
-        has_global_endpoint || agent.otlp_exporter_metrics_endpoint.is_some();
-    let has_logs_endpoint = has_global_endpoint || agent.otlp_exporter_logs_endpoint.is_some();
+    let activation = TelemetryActivation::from_config(&agent);
 
-    if !has_global_endpoint
-        && !has_traces_endpoint
-        && !has_metrics_endpoint
-        && !has_logs_endpoint
-        && agent.exporter == Exporter::Otlp
+    // If there are no listeners, suggest the blackhole exporter
+    if activation.traces == TelemetryState::NoListeners
+        && activation.metrics == TelemetryState::NoListeners
+        && activation.logs == TelemetryState::NoListeners
     {
         return Err(
-            "no OTLP endpoints specified, perhaps you meant to use --exporter blackhole instead"
+            "no exporter endpoints specified, perhaps you meant to use --exporter blackhole instead"
                 .into(),
         );
     }
-    //
-    // OTLP GRPC server
-    //
-    // let mut enable_traces_svc = false;
-    // let mut enable_metrics_svc = false;
+
+    // If no active type exists, nothing to do. Exit here before errors later
+    if !(activation.traces == TelemetryState::Active
+        || activation.metrics == TelemetryState::Active
+        || activation.logs == TelemetryState::Active)
+    {
+        return Err(
+            "there are no active telemetry types, exiting because there is nothing to do".into(),
+        );
+    }
 
     let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
         bounded::<Vec<ResourceSpans>>(max(4, num_cpus));
@@ -775,33 +778,39 @@ async fn run_agent(
     let mut metrics_output = None;
     let mut logs_output = None;
 
-    if agent.otlp_receiver_traces_disabled {
-        info!("OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces");
-    } else if agent.exporter == Exporter::Otlp && !has_traces_endpoint {
-        // User has not explicitly disabled traces, see if we need to do it implicitly
-        info!("No global or explicit OTLP trace exporter endpoint specified, OTLP receiver will be configured to not accept traces");
-    } else {
-        traces_output = Some(trace_otlp_output);
+    match activation.traces {
+        TelemetryState::Active => traces_output = Some(trace_otlp_output),
+        TelemetryState::Disabled => {
+            info!("OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces");
+        }
+        TelemetryState::NoListeners => {
+            info!("No exporters are configured for traces, OTLP receiver will be configured to not accept traces");
+        }
     }
 
-    if agent.otlp_receiver_metrics_disabled {
-        info!("OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept traces");
-    } else if agent.exporter == Exporter::Otlp && !has_metrics_endpoint {
-        // User has not explicitly disabled traces, see if we need to do it implicitly
-        info!("No global or explicit OTLP metrics exporter endpoint specified, OTLP receiver will be configured to not accept metrics");
-    } else {
-        metrics_output = Some(metrics_otlp_output);
+    match activation.metrics {
+        TelemetryState::Active => metrics_output = Some(metrics_otlp_output),
+        TelemetryState::Disabled => {
+            info!("OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics");
+        }
+        TelemetryState::NoListeners => {
+            info!("No exporters are configured for metrics, OTLP receiver will be configured to not accept metrics");
+        }
     }
 
-    if agent.otlp_receiver_logs_disabled {
-        info!("OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept traces");
-    } else if agent.exporter == Exporter::Otlp && !has_logs_endpoint {
-        // User has not explicitly disabled traces, see if we need to do it implicitly
-        info!("No global or explicit OTLP logs exporter endpoint specified, OTLP receiver will be configured to not accept logs");
-    } else {
-        logs_output = Some(logs_otlp_output);
+    match activation.logs {
+        TelemetryState::Active => logs_output = Some(logs_otlp_output),
+        TelemetryState::Disabled => {
+            info!("OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept logs");
+        }
+        TelemetryState::NoListeners => {
+            info!("No exporters are configured for logs, OTLP receiver will be configured to not accept logs");
+        }
     }
 
+    //
+    // OTLP GRPC server
+    //
     let grpc_srv = OTLPGrpcServer::builder()
         .with_max_recv_msg_size_mib(agent.otlp_grpc_max_recv_msg_size_mib as usize)
         .with_traces_output(traces_output.clone())
@@ -868,7 +877,7 @@ async fn run_agent(
         }
         Exporter::Otlp => {
             let endpoint = agent.otlp_exporter_endpoint.as_ref();
-            if has_traces_endpoint {
+            if activation.traces == TelemetryState::Active {
                 let traces_config = build_traces_config(agent.clone(), endpoint);
                 let mut traces = otlp::exporter::build_traces_exporter(
                     traces_config,
@@ -888,7 +897,7 @@ async fn run_agent(
                     Ok(())
                 });
             }
-            if has_metrics_endpoint {
+            if activation.metrics == TelemetryState::Active {
                 let metrics_config = build_metrics_config(agent.clone(), endpoint);
                 let mut metrics = otlp::exporter::build_metrics_exporter(
                     metrics_config,
@@ -908,7 +917,7 @@ async fn run_agent(
                     Ok(())
                 });
             }
-            if has_logs_endpoint {
+            if activation.logs == TelemetryState::Active {
                 let logs_config = build_logs_config(agent.clone(), endpoint);
                 let mut logs =
                     otlp::exporter::build_logs_exporter(logs_config, logs_pipeline_out_rx.clone())?;
@@ -928,7 +937,6 @@ async fn run_agent(
             }
         }
 
-        #[cfg(feature = "datadog")]
         Exporter::Datadog => {
             if agent.datadog_exporter_api_key.is_none() {
                 // todo: is there a way to make this config required with the exporter mode?
@@ -938,9 +946,12 @@ async fn run_agent(
 
             let hostname = get_hostname();
 
-            let mut builder =
-                DatadogTraceExporter::builder(agent.datadog_exporter_endpoint, api_key)
-                    .with_environment(environment.clone());
+            let mut builder = DatadogTraceExporter::builder(
+                agent.datadog_exporter_region.into(),
+                agent.datadog_exporter_custom_endpoint.clone(),
+                api_key,
+            )
+            .with_environment(environment.clone());
 
             if let Some(hostname) = hostname {
                 builder = builder.with_hostname(hostname);
@@ -1575,7 +1586,6 @@ fn daemonize(pid_file: &String, log_file: &String) -> Result<Option<ExitCode>, B
     }
 }
 
-#[cfg(feature = "datadog")]
 fn get_hostname() -> Option<String> {
     match gethostname().into_string() {
         Ok(s) => Some(s),
@@ -1611,6 +1621,75 @@ impl From<OTLPExporterProtocol> for Protocol {
             OTLPExporterProtocol::Grpc => Protocol::Grpc,
             OTLPExporterProtocol::Http => Protocol::Http,
         }
+    }
+}
+
+impl From<DatadogRegion> for Region {
+    fn from(value: DatadogRegion) -> Self {
+        match value {
+            DatadogRegion::US1 => Region::US1,
+            DatadogRegion::US3 => Region::US3,
+            DatadogRegion::US5 => Region::US5,
+            DatadogRegion::EU => Region::EU,
+            DatadogRegion::AP1 => Region::AP1,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct TelemetryActivation {
+    traces: TelemetryState,
+    metrics: TelemetryState,
+    logs: TelemetryState,
+}
+
+#[derive(Default, PartialEq)]
+pub enum TelemetryState {
+    #[default]
+    Active,
+    Disabled,
+    NoListeners,
+}
+
+impl TelemetryActivation {
+    fn from_config(config: &AgentRun) -> Self {
+        let mut activation = match config.exporter {
+            Exporter::Otlp => {
+                let has_global_endpoint = config.otlp_exporter_endpoint.is_some();
+                let mut activation = TelemetryActivation::default();
+                if !has_global_endpoint && config.otlp_exporter_traces_endpoint.is_none() {
+                    activation.traces = TelemetryState::NoListeners
+                }
+                if !has_global_endpoint && config.otlp_exporter_metrics_endpoint.is_none() {
+                    activation.metrics = TelemetryState::NoListeners
+                }
+                if !has_global_endpoint && config.otlp_exporter_logs_endpoint.is_none() {
+                    activation.logs = TelemetryState::NoListeners
+                }
+                activation
+            }
+            Exporter::Blackhole => TelemetryActivation::default(),
+            Exporter::Datadog => {
+                // Only supports traces for now
+                TelemetryActivation {
+                    traces: TelemetryState::Active,
+                    metrics: TelemetryState::NoListeners,
+                    logs: TelemetryState::NoListeners,
+                }
+            }
+        };
+
+        if config.otlp_receiver_traces_disabled {
+            activation.traces = TelemetryState::Disabled
+        }
+        if config.otlp_receiver_metrics_disabled {
+            activation.metrics = TelemetryState::Disabled
+        }
+        if config.otlp_receiver_logs_disabled {
+            activation.logs = TelemetryState::Disabled
+        }
+
+        activation
     }
 }
 

@@ -2767,9 +2767,8 @@ dependencies = [
 
 [[package]]
 name = "rotel"
-version = "0.0.1-alpha0"
+version = "0.0.1-alpha1"
 dependencies = [
- "byteorder",
  "bytes",
  "clap",
  "criterion",
@@ -2777,7 +2776,6 @@ dependencies = [
  "flate2",
  "flume",
  "futures",
- "futures-sink",
  "futures-util",
  "gethostname 0.5.0",
  "hex",
