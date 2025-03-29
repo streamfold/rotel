@@ -408,7 +408,7 @@ where
                     let output = self.metrics_output.clone().unwrap();
                     let accepted = self.accepted_metric_points_counter.clone();
                     let refused = self.refused_metric_points_counter.clone();
-                    let tags= self.tags.clone();
+                    let tags = self.tags.clone();
                     return Box::pin(handle::<H, ExportMetricsServiceRequest, ResourceMetrics>(
                         req,
                         output,
