@@ -40,7 +40,7 @@ impl PushMetricExporter for InternalOTLPMetricsExporter {
                 let res = mo.send(req.resource_metrics).await;
                 match res {
                     Ok(_) => Ok(()),
-                    Err(e) => Err(OTelSdkError::InternalFailure(e.into())),
+                    Err(e) => Err(OTelSdkError::InternalFailure(e.to_string())),
                 }
             }
         }

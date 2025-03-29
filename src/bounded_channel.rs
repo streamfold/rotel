@@ -21,12 +21,6 @@ impl fmt::Display for SendError {
     }
 }
 
-impl From<SendError> for String {
-    fn from(error: SendError) -> String {
-        error.to_string()
-    }
-}
-
 impl<T> BoundedSender<T> {
     pub async fn send(&self, item: T) -> Result<(), SendError> {
         match self.tx.send_async(item).await {

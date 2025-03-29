@@ -293,6 +293,7 @@ struct OTLPService {
     refused_spans_records_counter: Counter<u64>,
     refused_metric_points_counter: Counter<u64>,
     refused_log_records_counter: Counter<u64>,
+    tags: [KeyValue; 1],
 }
 
 impl OTLPService {
@@ -354,6 +355,7 @@ impl OTLPService {
                 .with_description("Number of logs that could not be pushed into the pipeline.")
                 .with_unit("log_records")
                 .build(),
+            tags: [KeyValue::new("protocol", "http")],
         }
     }
 }
@@ -386,12 +388,14 @@ where
                     let output = self.trace_output.clone().unwrap();
                     let accepted = self.accepted_spans_records_counter.clone();
                     let refused = self.refused_spans_records_counter.clone();
+                    let tags = self.tags.clone();
                     return Box::pin(handle::<H, ExportTraceServiceRequest, ResourceSpans>(
                         req,
                         output,
                         trace_ok_resp,
                         accepted,
                         refused,
+                        tags,
                     ));
                 }
                 if path == self.metrics_path {
@@ -404,12 +408,14 @@ where
                     let output = self.metrics_output.clone().unwrap();
                     let accepted = self.accepted_metric_points_counter.clone();
                     let refused = self.refused_metric_points_counter.clone();
+                    let tags= self.tags.clone();
                     return Box::pin(handle::<H, ExportMetricsServiceRequest, ResourceMetrics>(
                         req,
                         output,
                         metrics_ok_resp,
                         accepted,
                         refused,
+                        tags,
                     ));
                 }
                 if path == self.logs_path {
@@ -422,12 +428,14 @@ where
                     let output = self.logs_output.clone().unwrap();
                     let accepted = self.accepted_log_records_counter.clone();
                     let refused = self.refused_log_records_counter.clone();
+                    let tags = self.tags.clone();
                     return Box::pin(handle::<H, ExportLogsServiceRequest, ResourceLogs>(
                         req,
                         output,
                         logs_ok_resp,
                         accepted,
                         refused,
+                        tags,
                     ));
                 }
                 Box::pin(futures::future::ok(
@@ -491,10 +499,11 @@ async fn handle<H: Body, ExpReq: prost::Message + Default + OTLPInto<Vec<T>>, T:
     ok_resp: Bytes,
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
+    tags: [KeyValue; 1],
 ) -> Result<Response<Full<Bytes>>, hyper::Error>
 where
     <H as Body>::Error: Display + Debug + Send + Sync + ToString,
-    Vec<T>: BatchSizer,
+    [T]: BatchSizer,
 {
     let decoded_bytes = decode_body(req).await;
     if decoded_bytes.is_err() {
@@ -514,13 +523,13 @@ where
         .insert(CONTENT_TYPE, HeaderValue::from_str(PROTOBUF_CT).unwrap());
 
     let otlp_payload = ExpReq::otlp_into(req);
-    let count = BatchSizer::size_of(&otlp_payload);
+    let count = BatchSizer::size_of(otlp_payload.as_slice());
 
     match output.send(otlp_payload).await {
         Ok(_) => {
             // No partial success at the moment
             let body = Full::new(ok_resp.clone());
-            accepted_counter.add(count as u64, &[KeyValue::new("protocol", "http")]);
+            accepted_counter.add(count as u64, &tags);
             Ok(rb.body(body).unwrap())
         }
         // todo: these should encode a GRPC Status as a body response
