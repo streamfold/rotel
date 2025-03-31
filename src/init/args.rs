@@ -1,8 +1,8 @@
-use std::error::Error;
-use std::net::SocketAddr;
-use clap::{Args, ValueEnum};
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
+use clap::{Args, ValueEnum};
+use std::error::Error;
+use std::net::SocketAddr;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -159,8 +159,8 @@ pub fn parse_endpoint(s: &str) -> Result<SocketAddr, Box<dyn Error + Send + Sync
 
 #[cfg(test)]
 mod test {
-    use tokio_test::assert_ok;
     use crate::init::args::parse_endpoint;
+    use tokio_test::assert_ok;
 
     #[test]
     fn endpoint_parse() {

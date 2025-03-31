@@ -1,11 +1,11 @@
-
 use crate::exporters::otlp;
-use crate::exporters::otlp::config::{OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig};
+use crate::exporters::otlp::config::{
+    OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
+};
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
-use crate::init::args::{OTLPExporterProtocol};
 use crate::init::args;
+use crate::init::args::OTLPExporterProtocol;
 use crate::topology::batch::BatchConfig;
-
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct OTLPExporterArgs {
@@ -124,7 +124,11 @@ pub struct OTLPExporterArgs {
 
     /// OTLP Exporter TLS SKIP VERIFY - Used as default for all OTLP data types unless more specific flag specified
     /// THIS SHOULD ONLY BE USED IN SITUATIONS WHERE YOU ABSOLUTELY NEED TO BYPASS SSL CERTIFICATE VERIFICATION FOR TESTING PURPOSES OR WHEN CONNECTING TO A SERVER WITH A SELF-SIGNED CERTIFICATE THAT YOU FULLY TRUST!!!
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_SKIP_VERIFY", default_value = "false")]
+    #[arg(
+        long,
+        env = "ROTEL_OTLP_EXPORTER_TLS_SKIP_VERIFY",
+        default_value = "false"
+    )]
     pub otlp_exporter_tls_skip_verify: bool,
 
     /// OTLP Exporter traces TLS SKIP VERIFY - Overrides otlp_exporter_tls_skip_verify for OTLP traces if specified
@@ -444,47 +448,47 @@ pub fn build_traces_config(
             .unwrap_or(agent.otlp_exporter_protocol)
             .into(),
     )
-        .with_tls_skip_verify(
-            agent
-                .otlp_exporter_traces_tls_skip_verify
-                .unwrap_or(agent.otlp_exporter_tls_skip_verify),
-        )
-        .with_headers(
-            agent
-                .otlp_exporter_traces_custom_headers
-                .as_ref()
-                .unwrap_or(&agent.otlp_exporter_custom_headers),
-        )
-        .with_request_timeout(
-            agent
-                .otlp_exporter_traces_request_timeout
-                .unwrap_or(agent.otlp_exporter_request_timeout)
-                .into(),
-        )
-        .with_max_elapsed_time(
-            agent
-                .otlp_exporter_traces_retry_max_elapsed_time
-                .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
-                .into(),
-        )
-        .with_initial_backoff(
-            agent
-                .otlp_exporter_traces_retry_initial_backoff
-                .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
-                .into(),
-        )
-        .with_max_backoff(
-            agent
-                .otlp_exporter_traces_retry_max_backoff
-                .unwrap_or(agent.otlp_exporter_retry_max_backoff)
-                .into(),
-        )
-        .with_compression_encoding(
-            agent
-                .otlp_exporter_traces_compression
-                .unwrap_or(agent.otlp_exporter_compression)
-                .into(),
-        );
+    .with_tls_skip_verify(
+        agent
+            .otlp_exporter_traces_tls_skip_verify
+            .unwrap_or(agent.otlp_exporter_tls_skip_verify),
+    )
+    .with_headers(
+        agent
+            .otlp_exporter_traces_custom_headers
+            .as_ref()
+            .unwrap_or(&agent.otlp_exporter_custom_headers),
+    )
+    .with_request_timeout(
+        agent
+            .otlp_exporter_traces_request_timeout
+            .unwrap_or(agent.otlp_exporter_request_timeout)
+            .into(),
+    )
+    .with_max_elapsed_time(
+        agent
+            .otlp_exporter_traces_retry_max_elapsed_time
+            .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
+            .into(),
+    )
+    .with_initial_backoff(
+        agent
+            .otlp_exporter_traces_retry_initial_backoff
+            .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
+            .into(),
+    )
+    .with_max_backoff(
+        agent
+            .otlp_exporter_traces_retry_max_backoff
+            .unwrap_or(agent.otlp_exporter_retry_max_backoff)
+            .into(),
+    )
+    .with_compression_encoding(
+        agent
+            .otlp_exporter_traces_compression
+            .unwrap_or(agent.otlp_exporter_compression)
+            .into(),
+    );
 
     let traces_tls_cert_file = agent
         .otlp_exporter_traces_cert_group
@@ -555,47 +559,47 @@ pub fn build_metrics_config(
             .unwrap_or(agent.otlp_exporter_protocol)
             .into(),
     )
-        .with_tls_skip_verify(
-            agent
-                .otlp_exporter_metrics_tls_skip_verify
-                .unwrap_or(agent.otlp_exporter_tls_skip_verify),
-        )
-        .with_headers(
-            agent
-                .otlp_exporter_metrics_custom_headers
-                .as_ref()
-                .unwrap_or(&agent.otlp_exporter_custom_headers),
-        )
-        .with_request_timeout(
-            agent
-                .otlp_exporter_metrics_request_timeout
-                .unwrap_or(agent.otlp_exporter_request_timeout)
-                .into(),
-        )
-        .with_max_elapsed_time(
-            agent
-                .otlp_exporter_metrics_retry_max_elapsed_time
-                .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
-                .into(),
-        )
-        .with_initial_backoff(
-            agent
-                .otlp_exporter_metrics_retry_initial_backoff
-                .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
-                .into(),
-        )
-        .with_max_backoff(
-            agent
-                .otlp_exporter_metrics_retry_max_backoff
-                .unwrap_or(agent.otlp_exporter_retry_max_backoff)
-                .into(),
-        )
-        .with_compression_encoding(
-            agent
-                .otlp_exporter_metrics_compression
-                .unwrap_or(agent.otlp_exporter_compression)
-                .into(),
-        );
+    .with_tls_skip_verify(
+        agent
+            .otlp_exporter_metrics_tls_skip_verify
+            .unwrap_or(agent.otlp_exporter_tls_skip_verify),
+    )
+    .with_headers(
+        agent
+            .otlp_exporter_metrics_custom_headers
+            .as_ref()
+            .unwrap_or(&agent.otlp_exporter_custom_headers),
+    )
+    .with_request_timeout(
+        agent
+            .otlp_exporter_metrics_request_timeout
+            .unwrap_or(agent.otlp_exporter_request_timeout)
+            .into(),
+    )
+    .with_max_elapsed_time(
+        agent
+            .otlp_exporter_metrics_retry_max_elapsed_time
+            .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
+            .into(),
+    )
+    .with_initial_backoff(
+        agent
+            .otlp_exporter_metrics_retry_initial_backoff
+            .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
+            .into(),
+    )
+    .with_max_backoff(
+        agent
+            .otlp_exporter_metrics_retry_max_backoff
+            .unwrap_or(agent.otlp_exporter_retry_max_backoff)
+            .into(),
+    )
+    .with_compression_encoding(
+        agent
+            .otlp_exporter_metrics_compression
+            .unwrap_or(agent.otlp_exporter_compression)
+            .into(),
+    );
 
     let metrics_tls_cert_file = agent
         .otlp_exporter_metrics_cert_group
@@ -652,7 +656,10 @@ pub fn build_metrics_config(
     metrics_config_builder
 }
 
-pub fn build_logs_config(agent: OTLPExporterArgs, endpoint: Option<&String>) -> OTLPExporterLogsConfig {
+pub fn build_logs_config(
+    agent: OTLPExporterArgs,
+    endpoint: Option<&String>,
+) -> OTLPExporterLogsConfig {
     let mut logs_config_builder = otlp::logs_config_builder(
         agent
             .otlp_exporter_logs_endpoint
@@ -663,47 +670,47 @@ pub fn build_logs_config(agent: OTLPExporterArgs, endpoint: Option<&String>) -> 
             .unwrap_or(agent.otlp_exporter_protocol)
             .into(),
     )
-        .with_tls_skip_verify(
-            agent
-                .otlp_exporter_logs_tls_skip_verify
-                .unwrap_or(agent.otlp_exporter_tls_skip_verify),
-        )
-        .with_headers(
-            agent
-                .otlp_exporter_logs_custom_headers
-                .as_ref()
-                .unwrap_or(&agent.otlp_exporter_custom_headers),
-        )
-        .with_request_timeout(
-            agent
-                .otlp_exporter_logs_request_timeout
-                .unwrap_or(agent.otlp_exporter_request_timeout)
-                .into(),
-        )
-        .with_max_elapsed_time(
-            agent
-                .otlp_exporter_logs_retry_max_elapsed_time
-                .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
-                .into(),
-        )
-        .with_initial_backoff(
-            agent
-                .otlp_exporter_logs_retry_initial_backoff
-                .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
-                .into(),
-        )
-        .with_max_backoff(
-            agent
-                .otlp_exporter_logs_retry_max_backoff
-                .unwrap_or(agent.otlp_exporter_retry_max_backoff)
-                .into(),
-        )
-        .with_compression_encoding(
-            agent
-                .otlp_exporter_logs_compression
-                .unwrap_or(agent.otlp_exporter_compression)
-                .into(),
-        );
+    .with_tls_skip_verify(
+        agent
+            .otlp_exporter_logs_tls_skip_verify
+            .unwrap_or(agent.otlp_exporter_tls_skip_verify),
+    )
+    .with_headers(
+        agent
+            .otlp_exporter_logs_custom_headers
+            .as_ref()
+            .unwrap_or(&agent.otlp_exporter_custom_headers),
+    )
+    .with_request_timeout(
+        agent
+            .otlp_exporter_logs_request_timeout
+            .unwrap_or(agent.otlp_exporter_request_timeout)
+            .into(),
+    )
+    .with_max_elapsed_time(
+        agent
+            .otlp_exporter_logs_retry_max_elapsed_time
+            .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
+            .into(),
+    )
+    .with_initial_backoff(
+        agent
+            .otlp_exporter_logs_retry_initial_backoff
+            .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
+            .into(),
+    )
+    .with_max_backoff(
+        agent
+            .otlp_exporter_logs_retry_max_backoff
+            .unwrap_or(agent.otlp_exporter_retry_max_backoff)
+            .into(),
+    )
+    .with_compression_encoding(
+        agent
+            .otlp_exporter_logs_compression
+            .unwrap_or(agent.otlp_exporter_compression)
+            .into(),
+    );
 
     let logs_tls_cert_file = agent
         .otlp_exporter_logs_cert_group

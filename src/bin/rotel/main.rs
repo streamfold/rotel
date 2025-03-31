@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::listener::Listener;
-use rotel::{listener};
+use clap::{Parser, ValueEnum};
+use rotel::listener;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -9,7 +10,6 @@ use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::process::{exit, ExitCode};
-use clap::{Parser, ValueEnum};
 use tracing::error;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;

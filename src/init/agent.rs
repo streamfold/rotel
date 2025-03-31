@@ -1,8 +1,20 @@
-use std::cmp::max;
-use std::collections::HashMap;
-use std::error::Error;
-use std::net::SocketAddr;
-use std::time::{Duration};
+use crate::bounded_channel::bounded;
+use crate::exporters::blackhole::BlackholeExporter;
+use crate::exporters::datadog::{DatadogTraceExporter, Region};
+use crate::exporters::otlp;
+use crate::init::activation::{TelemetryActivation, TelemetryState};
+use crate::init::args::{AgentRun, DebugLogParam, Exporter};
+use crate::init::datadog_exporter::DatadogRegion;
+use crate::init::otlp_exporter::{
+    build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
+    build_traces_batch_config, build_traces_config,
+};
+use crate::listener::Listener;
+use crate::receivers::otlp_grpc::OTLPGrpcServer;
+use crate::receivers::otlp_http::OTLPHttpServer;
+use crate::receivers::otlp_output::OTLPOutput;
+use crate::topology::debug::DebugLogger;
+use crate::{telemetry, topology};
 use gethostname::gethostname;
 use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -10,27 +22,18 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::Resource;
+use std::cmp::max;
+use std::collections::HashMap;
+use std::error::Error;
+use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::task::JoinSet;
 use tokio::time::{timeout_at, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
 use tracing::log::warn;
-use crate::bounded_channel::bounded;
-use crate::exporters::otlp;
-use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter};
-use crate::init::otlp_exporter::{build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config, build_traces_batch_config, build_traces_config};
-use crate::listener::Listener;
-use crate::receivers::otlp_output::OTLPOutput;
-use crate::{telemetry, topology};
-use crate::exporters::blackhole::BlackholeExporter;
-use crate::exporters::datadog::{DatadogTraceExporter, Region};
-use crate::init::datadog_exporter::DatadogRegion;
-use crate::receivers::otlp_grpc::OTLPGrpcServer;
-use crate::receivers::otlp_http::OTLPHttpServer;
-use crate::topology::debug::DebugLogger;
+use tracing::{error, info};
 
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
@@ -87,7 +90,8 @@ impl Agent {
             || activation.logs == TelemetryState::Active)
         {
             return Err(
-                "there are no active telemetry types, exiting because there is nothing to do".into(),
+                "there are no active telemetry types, exiting because there is nothing to do"
+                    .into(),
             );
         }
 
@@ -103,7 +107,8 @@ impl Agent {
             bounded::<Vec<ResourceMetrics>>(sending_queue_size);
         let metrics_otlp_output = OTLPOutput::new(metrics_pipeline_in_tx);
 
-        let (logs_pipeline_in_tx, logs_pipeline_in_rx) = bounded::<Vec<ResourceLogs>>(max(4, num_cpus));
+        let (logs_pipeline_in_tx, logs_pipeline_in_rx) =
+            bounded::<Vec<ResourceLogs>>(max(4, num_cpus));
         let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
             bounded::<Vec<ResourceLogs>>(sending_queue_size);
         let logs_otlp_output = OTLPOutput::new(logs_pipeline_in_tx);
@@ -232,7 +237,8 @@ impl Agent {
                     });
                 }
                 if activation.metrics == TelemetryState::Active {
-                    let metrics_config = build_metrics_config(agent.otlp_exporter.clone(), endpoint);
+                    let metrics_config =
+                        build_metrics_config(agent.otlp_exporter.clone(), endpoint);
                     let mut metrics = otlp::exporter::build_metrics_exporter(
                         metrics_config,
                         metrics_pipeline_out_rx.clone(),
@@ -253,8 +259,10 @@ impl Agent {
                 }
                 if activation.logs == TelemetryState::Active {
                     let logs_config = build_logs_config(agent.otlp_exporter.clone(), endpoint);
-                    let mut logs =
-                        otlp::exporter::build_logs_exporter(logs_config, logs_pipeline_out_rx.clone())?;
+                    let mut logs = otlp::exporter::build_logs_exporter(
+                        logs_config,
+                        logs_pipeline_out_rx.clone(),
+                    )?;
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
                         let res = logs.start(token).await;
@@ -282,10 +290,13 @@ impl Agent {
 
                 let mut builder = DatadogTraceExporter::builder(
                     agent.datadog_exporter.datadog_exporter_region.into(),
-                    agent.datadog_exporter.datadog_exporter_custom_endpoint.clone(),
+                    agent
+                        .datadog_exporter
+                        .datadog_exporter_custom_endpoint
+                        .clone(),
                     api_key,
                 )
-                    .with_environment(environment.clone());
+                .with_environment(environment.clone());
 
                 if let Some(hostname) = hostname {
                     builder = builder.with_hostname(hostname);
@@ -328,13 +339,15 @@ impl Agent {
             let dbg_log = DebugLogger::new(log_logs);
 
             let pipeline_cancel = pipeline_cancel.clone();
-            pipeline_task_set.spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
+            pipeline_task_set
+                .spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
         }
 
-        let internal_metrics_exporter = telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
-            metrics_output.clone(),
-            Temporality::Cumulative,
-        );
+        let internal_metrics_exporter =
+            telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
+                metrics_output.clone(),
+                Temporality::Cumulative,
+            );
 
         let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
             .with_periodic_exporter(internal_metrics_exporter)
@@ -343,7 +356,8 @@ impl Agent {
         global::set_meter_provider(meter_provider);
 
         #[cfg(feature = "pprof")]
-        let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph {
+        let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph
+        {
             pprof::pprof_guard()
         } else {
             None
@@ -384,7 +398,8 @@ impl Agent {
         receivers_cancel.cancel();
 
         // Wait up until one second for receivers to finish
-        let res = wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(1)).await;
+        let res =
+            wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(1)).await;
         if let Err(e) = res {
             return Err(format!("timed out waiting for receiver exit: {}", e).into());
         }
@@ -401,7 +416,8 @@ impl Agent {
         let receivers_hard_stop = Instant::now() + Duration::from_secs(3);
 
         // Wait 500ms for the pipelines to finish. They should exit when the pipes are dropped.
-        let res = wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500)).await;
+        let res =
+            wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500)).await;
         if res.is_err() {
             warn!("Pipelines did not exit on channel close, cancelling.");
 
@@ -410,7 +426,8 @@ impl Agent {
 
             // try again
             let res =
-                wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500)).await;
+                wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500))
+                    .await;
             if let Err(e) = res {
                 return Err(format!("timed out waiting for pipline to exit: {}", e).into());
             }
@@ -427,7 +444,8 @@ impl Agent {
             // force cancel
             exporters_cancel.cancel();
 
-            let res = wait_for_tasks_with_deadline(&mut exporters_task_set, receivers_hard_stop).await;
+            let res =
+                wait_for_tasks_with_deadline(&mut exporters_task_set, receivers_hard_stop).await;
             if let Err(e) = res {
                 return Err(format!("timed out waiting for exporters to exit: {}", e).into());
             }

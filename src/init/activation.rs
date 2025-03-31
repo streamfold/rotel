@@ -21,13 +21,22 @@ impl TelemetryActivation {
             Exporter::Otlp => {
                 let has_global_endpoint = config.otlp_exporter.otlp_exporter_endpoint.is_some();
                 let mut activation = TelemetryActivation::default();
-                if !has_global_endpoint && config.otlp_exporter.otlp_exporter_traces_endpoint.is_none() {
+                if !has_global_endpoint
+                    && config.otlp_exporter.otlp_exporter_traces_endpoint.is_none()
+                {
                     activation.traces = TelemetryState::NoListeners
                 }
-                if !has_global_endpoint && config.otlp_exporter.otlp_exporter_metrics_endpoint.is_none() {
+                if !has_global_endpoint
+                    && config
+                        .otlp_exporter
+                        .otlp_exporter_metrics_endpoint
+                        .is_none()
+                {
                     activation.metrics = TelemetryState::NoListeners
                 }
-                if !has_global_endpoint && config.otlp_exporter.otlp_exporter_logs_endpoint.is_none() {
+                if !has_global_endpoint
+                    && config.otlp_exporter.otlp_exporter_logs_endpoint.is_none()
+                {
                     activation.logs = TelemetryState::NoListeners
                 }
                 activation
