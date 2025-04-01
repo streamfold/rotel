@@ -23,13 +23,7 @@ pub fn grpc_decode_body<T: prost::Message + Default>(
     count: u64,
 ) -> Result<T, ExporterError> {
     if body.len() < GRPC_HEADER_SIZE {
-        failed.add(
-            count,
-            &[
-                KeyValue::new("error", "grpc.header.size"),
-                KeyValue::new("value", body.len().to_string()),
-            ],
-        );
+        failed.add(count, &[KeyValue::new("error", "grpc.header.size")]);
         return Err(ExporterError::Generic(format!(
             "invalid response size: {}",
             body.len()
@@ -42,13 +36,7 @@ pub fn grpc_decode_body<T: prost::Message + Default>(
         return Ok(T::default());
     }
     if len > GRPC_MAX_RESPONSE_SIZE {
-        failed.add(
-            count,
-            &[
-                KeyValue::new("error", "grpc.body.size"),
-                KeyValue::new("value", body.len().to_string()),
-            ],
-        );
+        failed.add(count, &[KeyValue::new("error", "grpc.body.size")]);
         return Err(ExporterError::Grpc(Status::failed_precondition(
             "message too large",
         )));

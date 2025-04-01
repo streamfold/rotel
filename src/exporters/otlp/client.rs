@@ -243,19 +243,7 @@ fn process_head(
     // we must identify them from the Content-Encoding header
     let encoding = head.headers.get(CONTENT_ENCODING);
     if encoding.is_some_and(|ce| ce != "gzip") {
-        let hv = encoding
-            .unwrap()
-            .clone()
-            .to_str()
-            .unwrap_or("unknown")
-            .to_string();
-        failed.add(
-            count as u64,
-            &[
-                KeyValue::new("error", "content-encoding"),
-                KeyValue::new("value", hv),
-            ],
-        );
+        failed.add(count as u64, &[KeyValue::new("error", "content-encoding")]);
         return Err(ExporterError::Generic(format!(
             "unknown content encoding: {:?}",
             encoding.unwrap()
