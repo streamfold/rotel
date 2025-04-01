@@ -82,14 +82,14 @@ pub fn build_traces_exporter(
         tls_config,
         traces_config.protocol.clone(),
         sent,
-        send_failed,
+        send_failed.clone(),
     )?;
     let retry_policy = RetryPolicy::new(
         traces_config.retry_config.clone(),
         errors::is_retryable_error,
     );
 
-    let req_builder = request::build_traces(&traces_config)?;
+    let req_builder = request::build_traces(&traces_config, send_failed)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -155,11 +155,16 @@ pub fn build_logs_exporter(
     let sent = RotelCounter::OTELCounter(sent);
     let send_failed = RotelCounter::OTELCounter(send_failed);
     let tls_config = logs_config.tls_cfg_builder.clone().build()?;
-    let client = OTLPClient::new(tls_config, logs_config.protocol.clone(), sent, send_failed)?;
+    let client = OTLPClient::new(
+        tls_config,
+        logs_config.protocol.clone(),
+        sent,
+        send_failed.clone(),
+    )?;
     let retry_policy =
         RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
 
-    let req_builder = request::build_logs(&logs_config)?;
+    let req_builder = request::build_logs(&logs_config, send_failed)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -209,14 +214,14 @@ fn _build_metrics_exporter(
         tls_config,
         metrics_config.protocol.clone(),
         sent,
-        send_failed,
+        send_failed.clone(),
     )?;
     let retry_policy = RetryPolicy::new(
         metrics_config.retry_config.clone(),
         errors::is_retryable_error,
     );
 
-    let req_builder = request::build_metrics(&metrics_config)?;
+    let req_builder = request::build_metrics(&metrics_config, send_failed)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -328,8 +333,6 @@ where
                                     self.export_futures.push(Box::pin(self.svc.call(request)));
                                 },
                                 Err(e) => {
-                                    // TODO
-                                    // Add metric for encoding error
                                     error!(exporter_type = type_name,
                                         "Failed to encode OTLP request into Request<Full<Bytes>> {:?}", e);
                                 }

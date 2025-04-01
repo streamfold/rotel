@@ -14,15 +14,18 @@ use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::grpc_codec::grpc_encode_body;
 use crate::exporters::otlp::http_codec::http_encode_body;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
+use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
 use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request};
 use http_body_util::Full;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use std::error::Error;
 use std::marker::PhantomData;
+
 
 /// Service path for gRPC trace exports
 const TRACE_GRPC_SERVICE_PATH: &str = "/opentelemetry.proto.collector.trace.v1.TraceService/Export";
@@ -47,6 +50,7 @@ const LOGS_RELATIVE_HTTP_PATH: &str = "v1/logs";
 pub struct RequestBuilder<T> {
     config: Option<RequestBuilderConfig>,
     _phantom: PhantomData<T>,
+    pub send_failed: RotelCounter<u64>,
 }
 
 /// Configuration for the request builder.
@@ -75,13 +79,14 @@ pub struct EncodedRequest {
 /// * `Result<RequestBuilder<ExportTraceServiceRequest>, Box<dyn Error + Send + Sync>>`
 pub fn build_traces(
     traces_config: &OTLPExporterTracesConfig,
+    send_failed: RotelCounter<u64>,
 ) -> Result<RequestBuilder<ExportTraceServiceRequest>, Box<dyn Error + Send + Sync>> {
     let rbc = get_request_builder_config(
         traces_config,
         TRACE_GRPC_SERVICE_PATH,
         TRACES_RELATIVE_HTTP_PATH,
     )?;
-    Ok(RequestBuilder::new(Some(rbc)))
+    Ok(RequestBuilder::new(Some(rbc), send_failed))
 }
 
 /// Creates a new RequestBuilder for metric exports.
@@ -93,13 +98,14 @@ pub fn build_traces(
 /// * `Result<RequestBuilder<ExportMetricsServiceRequest>, Box<dyn Error + Send + Sync>>`
 pub fn build_metrics(
     metrics_config: &OTLPExporterMetricsConfig,
+    send_failed: RotelCounter<u64>,
 ) -> Result<RequestBuilder<ExportMetricsServiceRequest>, Box<dyn Error + Send + Sync>> {
     let rbc = get_request_builder_config(
         metrics_config,
         METRICS_GRPC_SERVICE_PATH,
         METRICS_RELATIVE_HTTP_PATH,
     )?;
-    Ok(RequestBuilder::new(Some(rbc)))
+    Ok(RequestBuilder::new(Some(rbc), send_failed))
 }
 
 /// Creates a new RequestBuilder for metric exports.
@@ -111,10 +117,11 @@ pub fn build_metrics(
 /// * `Result<RequestBuilder<ExportLogsServiceRequest>, Box<dyn Error + Send + Sync>>`
 pub fn build_logs(
     logs_config: &OTLPExporterLogsConfig,
+    send_failed: RotelCounter<u64>,
 ) -> Result<RequestBuilder<ExportLogsServiceRequest>, Box<dyn Error + Send + Sync>> {
     let rbc =
         get_request_builder_config(logs_config, LOGS_GRPC_SERVICE_PATH, LOGS_RELATIVE_HTTP_PATH)?;
-    Ok(RequestBuilder::new(Some(rbc)))
+    Ok(RequestBuilder::new(Some(rbc), send_failed))
 }
 
 /// Creates the configuration for a RequestBuilder.
@@ -193,9 +200,10 @@ fn get_request_builder_config(
 
 impl<T: prost::Message> RequestBuilder<T> {
     /// Creates a new RequestBuilder with the given configuration.
-    fn new(config: Option<RequestBuilderConfig>) -> Self {
+    fn new(config: Option<RequestBuilderConfig>, send_failed: RotelCounter<u64>) -> Self {
         Self {
             config,
+            send_failed,
             _phantom: PhantomData,
         }
     }
@@ -211,10 +219,14 @@ impl<T: prost::Message> RequestBuilder<T> {
         let res = self.new_request(message);
         match res {
             Ok(request) => Ok(EncodedRequest { request, size }),
-            Err(e) => Err(ExporterError::Generic(format!(
-                "error encoding request: {}",
-                e
-            ))),
+            Err(e) => {
+                self.send_failed
+                    .add(size as u64, &[KeyValue::new("error", "request.encode")]);
+                Err(ExporterError::Generic(format!(
+                    "error encoding request: {}",
+                    e
+                )))
+            }
         }
     }
 
