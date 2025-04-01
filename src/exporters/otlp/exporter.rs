@@ -47,6 +47,7 @@ use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{debug, error};
 
+
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
 
@@ -70,9 +71,15 @@ pub fn build_traces_exporter(
     Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
     Box<dyn Error + Send + Sync>,
 > {
-    let sent = get_meter().u64_counter("rotel_exporter_sent_spans").build();
+    let sent = get_meter()
+        .u64_counter("rotel_exporter_sent_spans")
+        .with_description("Number of spans successfully exported")
+        .with_unit("spans")
+        .build();
     let send_failed = get_meter()
         .u64_counter("rotel_exporter_send_failed_spans")
+        .with_description("Number of spans that could not be exported")
+        .with_unit("spans")
         .build();
     let sent = RotelCounter::OTELCounter(sent);
     let send_failed = RotelCounter::OTELCounter(send_failed);
@@ -121,9 +128,13 @@ pub fn build_metrics_exporter(
 > {
     let sent = get_meter()
         .u64_counter("rotel_exporter_sent_metric_points")
+        .with_description("Number of metrics points successfully exported")
+        .with_unit("metric_points")
         .build();
     let send_failed = get_meter()
         .u64_counter("rotel_exporter_send_failed_metric_points")
+        .with_description("Number of metric points that could not be exported")
+        .with_unit("metric_points")
         .build();
     let sent = RotelCounter::OTELCounter(sent);
     let send_failed = RotelCounter::OTELCounter(send_failed);
@@ -147,9 +158,13 @@ pub fn build_logs_exporter(
 > {
     let sent = get_meter()
         .u64_counter("rotel_exporter_sent_log_records")
+        .with_description("Number of log records successfully exported")
+        .with_unit("log_records")
         .build();
     let send_failed = get_meter()
         .u64_counter("rotel_exporter_send_failed_log_records")
+        .with_description("Number of log records that could not be exported")
+        .with_unit("log_records")
         .build();
     let sent = RotelCounter::OTELCounter(sent);
     let send_failed = RotelCounter::OTELCounter(send_failed);
