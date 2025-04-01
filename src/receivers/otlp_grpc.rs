@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::listener::Listener;
+use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
+use crate::topology::batch::BatchSizer;
+use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
     LogsService, LogsServiceServer,
 };
@@ -156,6 +160,13 @@ struct CollectorService {
     traces_tx: Option<OTLPOutput<Vec<ResourceSpans>>>,
     metrics_tx: Option<OTLPOutput<Vec<ResourceMetrics>>>,
     logs_tx: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    accepted_spans_records_counter: Counter<u64>,
+    accepted_metric_points_counter: Counter<u64>,
+    accepted_log_records_counter: Counter<u64>,
+    refused_spans_records_counter: Counter<u64>,
+    refused_metric_points_counter: Counter<u64>,
+    refused_log_records_counter: Counter<u64>,
+    tags: [KeyValue; 1],
 }
 
 impl CollectorService {
@@ -168,6 +179,45 @@ impl CollectorService {
             traces_tx,
             metrics_tx,
             logs_tx,
+            accepted_spans_records_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_spans")
+                .with_description(
+                    "Number of spans successfully ingested and pushed into the pipeline",
+                )
+                .with_unit("spans")
+                .build(),
+            accepted_metric_points_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_metric_points")
+                .with_description(
+                    "Number of metric points successfully ingested and pushed into the pipeline.",
+                )
+                .with_unit("metric_points")
+                .build(),
+            accepted_log_records_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_log_records")
+                .with_description(
+                    "Number of metric points successfully ingested and pushed into the pipeline.",
+                )
+                .with_unit("log_records")
+                .build(),
+            refused_spans_records_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_spans")
+                .with_description("Number of spans that could not be pushed into the pipeline.")
+                .with_unit("spans")
+                .build(),
+            refused_metric_points_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_metric_points")
+                .with_description(
+                    "Number of metric points that could not be pushed into the pipeline.",
+                )
+                .with_unit("metric_points")
+                .build(),
+            refused_log_records_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_log_records")
+                .with_description("Number of logs that could not be pushed into the pipeline.")
+                .with_unit("log_records")
+                .build(),
+            tags: [KeyValue::new("protocol", "grpc")],
         }
     }
 }
@@ -181,12 +231,21 @@ impl TraceService for CollectorService {
         let trace_request = request.into_inner();
         match &self.traces_tx {
             None => Err(Status::unavailable("OTLP trace receiver is disabled")),
-            Some(traces_tx) => match traces_tx.send(trace_request.resource_spans).await {
-                Ok(_) => Ok(Response::new(ExportTraceServiceResponse {
-                    partial_success: None,
-                })),
-                Err(_) => Err(Status::unavailable("channel was disconnected")),
-            },
+            Some(traces_tx) => {
+                let count = BatchSizer::size_of(trace_request.resource_spans.as_slice()) as u64;
+                match traces_tx.send(trace_request.resource_spans).await {
+                    Ok(_) => {
+                        self.accepted_spans_records_counter.add(count, &self.tags);
+                        Ok(Response::new(ExportTraceServiceResponse {
+                            partial_success: None,
+                        }))
+                    }
+                    Err(_) => {
+                        self.refused_spans_records_counter.add(count, &self.tags);
+                        Err(Status::unavailable("channel was disconnected"))
+                    }
+                }
+            }
         }
     }
 }
@@ -200,12 +259,21 @@ impl MetricsService for CollectorService {
         let metrics_request = request.into_inner();
         match &self.metrics_tx {
             None => Err(Status::unavailable("OTLP metrics receiver is disabled")),
-            Some(metrics_tx) => match metrics_tx.send(metrics_request.resource_metrics).await {
-                Ok(_) => Ok(Response::new(ExportMetricsServiceResponse {
-                    partial_success: None,
-                })),
-                Err(_) => Err(Status::unavailable("channel was disconnected")),
-            },
+            Some(metrics_tx) => {
+                let count = BatchSizer::size_of(metrics_request.resource_metrics.as_slice()) as u64;
+                match metrics_tx.send(metrics_request.resource_metrics).await {
+                    Ok(_) => {
+                        self.accepted_metric_points_counter.add(count, &self.tags);
+                        Ok(Response::new(ExportMetricsServiceResponse {
+                            partial_success: None,
+                        }))
+                    }
+                    Err(_) => {
+                        self.refused_metric_points_counter.add(count, &self.tags);
+                        Err(Status::unavailable("channel was disconnected"))
+                    }
+                }
+            }
         }
     }
 }
@@ -219,12 +287,21 @@ impl LogsService for CollectorService {
         let logs_request = request.into_inner();
         match &self.logs_tx {
             None => Err(Status::unavailable("OTLP logs receiver is disabled")),
-            Some(logs_tx) => match logs_tx.send(logs_request.resource_logs).await {
-                Ok(_) => Ok(Response::new(ExportLogsServiceResponse {
-                    partial_success: None,
-                })),
-                Err(_) => Err(Status::unavailable("channel was disconnected")),
-            },
+            Some(logs_tx) => {
+                let count = BatchSizer::size_of(logs_request.resource_logs.as_slice()) as u64;
+                match logs_tx.send(logs_request.resource_logs).await {
+                    Ok(_) => {
+                        self.accepted_log_records_counter.add(count, &self.tags);
+                        Ok(Response::new(ExportLogsServiceResponse {
+                            partial_success: None,
+                        }))
+                    }
+                    Err(_) => {
+                        self.refused_log_records_counter.add(count, &self.tags);
+                        Err(Status::unavailable("channel was disconnected"))
+                    }
+                }
+            }
         }
     }
 }
