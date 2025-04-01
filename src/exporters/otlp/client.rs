@@ -6,6 +6,7 @@ use crate::exporters::http::tls::Config;
 use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::request::EncodedRequest;
 use crate::exporters::otlp::{grpc_codec, http_codec, Protocol};
+use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
 use http::header::CONTENT_ENCODING;
 use http::{HeaderValue, Response};
@@ -26,7 +27,6 @@ use std::time::Duration;
 use tonic::codegen::Service;
 use tonic::Status;
 use tower_http::BoxError;
-use crate::telemetry::{Counter, RotelCounter};
 
 /// Client struct for handling OTLP exports.
 /// Generic over message type T which must implement prost::Message, i.e. ExportTraceServiceRequest.
@@ -88,7 +88,7 @@ where
         tls_config: Config,
         protocol: Protocol,
         send_failed: RotelCounter<u64>,
-        sent: RotelCounter<u64>
+        sent: RotelCounter<u64>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = build_client(tls_config, protocol.clone())?;
         Ok(Self {

@@ -26,7 +26,6 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use std::error::Error;
 use std::marker::PhantomData;
 
-
 /// Service path for gRPC trace exports
 const TRACE_GRPC_SERVICE_PATH: &str = "/opentelemetry.proto.collector.trace.v1.TraceService/Export";
 /// Service path for gRPC metrics exports
