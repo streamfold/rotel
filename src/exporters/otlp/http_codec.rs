@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::otlp::errors::ExporterError;
-use crate::telemetry::Counter;
+use crate::telemetry::{Counter, RotelCounter};
 use bytes::{Bytes, BytesMut};
 use flate2::read::GzEncoder;
 use flate2::write::GzDecoder;
@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 pub fn http_decode_body<T: prost::Message + Default>(
     body: Bytes,
     compress: bool,
-    failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    failed: RotelCounter<u64>,
     count: u64,
 ) -> Result<T, ExporterError> {
     if !compress {

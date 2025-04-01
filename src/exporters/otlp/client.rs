@@ -26,7 +26,7 @@ use std::time::Duration;
 use tonic::codegen::Service;
 use tonic::Status;
 use tower_http::BoxError;
-use crate::telemetry::Counter;
+use crate::telemetry::{Counter, RotelCounter};
 
 /// Client struct for handling OTLP exports.
 /// Generic over message type T which must implement prost::Message, i.e. ExportTraceServiceRequest.
@@ -41,8 +41,8 @@ where
     protocol: Protocol,
     /// PhantomData to handle generic type T
     _phantom: PhantomData<T>,
-    send_failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
-    sent: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    send_failed: RotelCounter<u64>,
+    sent: RotelCounter<u64>,
 }
 
 /// Implementation of Tower's Service trait for OTLPClient
@@ -87,8 +87,8 @@ where
     pub fn new(
         tls_config: Config,
         protocol: Protocol,
-        send_failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
-        sent: Box<dyn Counter<u64> + Send + Sync + 'static>,
+        send_failed: RotelCounter<u64>,
+        sent: RotelCounter<u64>
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = build_client(tls_config, protocol.clone())?;
         Ok(Self {
@@ -223,7 +223,7 @@ where
 /// * `Result<(Incoming, Option<HeaderValue>), ExporterError>` - The processed body and content encoding
 fn process_head(
     response: Response<Incoming>,
-    failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    failed: RotelCounter<u64>,
     count: usize,
 ) -> Result<(Incoming, Option<HeaderValue>), ExporterError> {
     let (head, body) = response.into_parts();

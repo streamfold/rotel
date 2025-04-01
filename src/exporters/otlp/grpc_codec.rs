@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::otlp::errors::ExporterError;
-use crate::telemetry::Counter;
+use crate::telemetry::{Counter, RotelCounter};
 use bytes::{BufMut, Bytes, BytesMut};
 use flate2::read::GzEncoder;
 use flate2::write::GzDecoder;
@@ -19,7 +19,7 @@ const GRPC_MAX_RESPONSE_SIZE: u32 = 1024 * 1024;
 /// Decode a gRPC response
 pub fn grpc_decode_body<T: prost::Message + Default>(
     body: Bytes,
-    failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    failed: RotelCounter<u64>,
     count: u64,
 ) -> Result<T, ExporterError> {
     if body.len() < GRPC_HEADER_SIZE {

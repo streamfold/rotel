@@ -16,12 +16,10 @@ use crate::exporters::otlp::config::{
 use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
 use crate::exporters::otlp::{errors, get_meter, request};
 use crate::exporters::retry::RetryPolicy;
-use crate::telemetry;
-use crate::telemetry::Counter;
+use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPFrom;
 use futures::stream::FuturesUnordered;
-use opentelemetry::global;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -77,8 +75,8 @@ pub fn build_traces_exporter(
     let send_failed = get_meter()
         .u64_counter("rotel_exporter_send_failed_spans")
         .build();
-    let sent = Box::new(telemetry::RotelCounter::new(sent));
-    let send_failed = Box::new(telemetry::RotelCounter::new(send_failed));
+    let sent = RotelCounter::OTELCounter(sent);
+    let send_failed = RotelCounter::OTELCounter(send_failed);
     let tls_config = traces_config.tls_cfg_builder.clone().build()?;
     let client = OTLPClient::new(
         tls_config,
@@ -128,8 +126,8 @@ pub fn build_metrics_exporter(
     let send_failed = get_meter()
         .u64_counter("rotel_exporter_send_failed_metric_points")
         .build();
-    let sent = Box::new(telemetry::RotelCounter::new(sent));
-    let send_failed = Box::new(telemetry::RotelCounter::new(send_failed));
+    let sent = RotelCounter::OTELCounter(sent);
+    let send_failed = RotelCounter::OTELCounter(send_failed);
     _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx)
 }
 
@@ -154,8 +152,8 @@ pub fn build_logs_exporter(
     let send_failed = get_meter()
         .u64_counter("rotel_exporter_send_failed_log_records")
         .build();
-    let sent = Box::new(telemetry::RotelCounter::new(sent));
-    let send_failed = Box::new(telemetry::RotelCounter::new(send_failed));
+    let sent = RotelCounter::OTELCounter(sent);
+    let send_failed = RotelCounter::OTELCounter(send_failed);
     let tls_config = logs_config.tls_cfg_builder.clone().build()?;
     let client = OTLPClient::new(tls_config, logs_config.protocol.clone(), sent, send_failed)?;
     let retry_policy =
@@ -192,14 +190,14 @@ pub fn build_internal_metrics_exporter(
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
 > {
-    let sent = Box::new(telemetry::NoOpCounter::new());
-    let send_failed = Box::new(telemetry::NoOpCounter::new());
+    let sent = RotelCounter::NoOpCounter;
+    let send_failed = RotelCounter::NoOpCounter;
     _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx)
 }
 
 fn _build_metrics_exporter(
-    sent: Box<dyn Counter<u64> + Send + Sync + 'static>,
-    send_failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    sent: RotelCounter<u64>,
+    send_failed: RotelCounter<u64>,
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
 ) -> Result<
