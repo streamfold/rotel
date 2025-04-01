@@ -87,15 +87,15 @@ where
     pub fn new(
         tls_config: Config,
         protocol: Protocol,
-        send_failed: RotelCounter<u64>,
         sent: RotelCounter<u64>,
+        send_failed: RotelCounter<u64>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = build_client(tls_config, protocol.clone())?;
         Ok(Self {
             client,
             protocol,
-            send_failed,
             sent,
+            send_failed,
             _phantom: PhantomData,
         })
     }
