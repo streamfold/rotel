@@ -48,6 +48,8 @@ mod http_codec;
 
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use clap::ValueEnum;
+use opentelemetry::global;
+use opentelemetry::metrics::Meter;
 use std::time::Duration;
 
 /// Default timeout duration for OTLP requests
@@ -72,6 +74,10 @@ pub enum Protocol {
 pub enum Endpoint {
     Base(String),
     Full(String),
+}
+
+pub fn get_meter() -> Meter {
+    global::meter("exporters")
 }
 
 /// Creates a configuration builder for OTLP trace export

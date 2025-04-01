@@ -8,6 +8,7 @@ use prost::Message;
 use rotel::exporters::otlp;
 use rotel::exporters::otlp::request::RequestBuilder;
 use rotel::exporters::otlp::{request, CompressionEncoding, Endpoint, Protocol};
+use rotel::telemetry::RotelCounter;
 use utilities::otlp::FakeOTLP;
 
 #[derive(Clone)]
@@ -22,7 +23,7 @@ fn build_request_builder() -> RequestBuilder<ExportTraceServiceRequest> {
         Protocol::Grpc,
     )
     .with_compression_encoding(Some(CompressionEncoding::Gzip));
-    request::build_traces(&config).unwrap()
+    request::build_traces(&config, RotelCounter::NoOpCounter).unwrap()
 }
 
 fn encode_trace(c: &mut Criterion) {
@@ -47,9 +48,12 @@ fn encode_trace(c: &mut Criterion) {
                     reqs: size_and_req.1.clone(),
                 },
                 |ti| {
-                    ti.rb.encode(ExportTraceServiceRequest {
-                        resource_spans: ti.reqs.resource_spans,
-                    })
+                    ti.rb.encode(
+                        ExportTraceServiceRequest {
+                            resource_spans: ti.reqs.resource_spans,
+                        },
+                        100,
+                    )
                 },
                 BatchSize::SmallInput,
             )

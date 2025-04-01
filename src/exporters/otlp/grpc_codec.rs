@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::otlp::errors::ExporterError;
+use crate::telemetry::{Counter, RotelCounter};
 use bytes::{BufMut, Bytes, BytesMut};
 use flate2::read::GzEncoder;
 use flate2::write::GzDecoder;
 use flate2::Compression as GZCompression;
+use opentelemetry::KeyValue;
 use std::io::{Read, Write};
 use tonic::Status;
 
@@ -15,8 +17,13 @@ const GRPC_HEADER_SIZE: usize = 5;
 const GRPC_MAX_RESPONSE_SIZE: u32 = 1024 * 1024;
 
 /// Decode a gRPC response
-pub fn grpc_decode_body<T: prost::Message + Default>(body: Bytes) -> Result<T, ExporterError> {
+pub fn grpc_decode_body<T: prost::Message + Default>(
+    body: Bytes,
+    failed: RotelCounter<u64>,
+    count: u64,
+) -> Result<T, ExporterError> {
     if body.len() < GRPC_HEADER_SIZE {
+        failed.add(count, &[KeyValue::new("error", "grpc.header.size")]);
         return Err(ExporterError::Generic(format!(
             "invalid response size: {}",
             body.len()
@@ -29,6 +36,7 @@ pub fn grpc_decode_body<T: prost::Message + Default>(body: Bytes) -> Result<T, E
         return Ok(T::default());
     }
     if len > GRPC_MAX_RESPONSE_SIZE {
+        failed.add(count, &[KeyValue::new("error", "grpc.body.size")]);
         return Err(ExporterError::Grpc(Status::failed_precondition(
             "message too large",
         )));
@@ -39,15 +47,19 @@ pub fn grpc_decode_body<T: prost::Message + Default>(body: Bytes) -> Result<T, E
     if *is_gz == 0 {
         match T::decode(body) {
             Ok(r) => Ok(r),
-            Err(e) => Err(ExporterError::Generic(format!(
-                "failed to decode response: {}",
-                e
-            ))),
+            Err(e) => {
+                failed.add(count, &[KeyValue::new("error", "grpc.decode")]);
+                Err(ExporterError::Generic(format!(
+                    "failed to decode response: {}",
+                    e
+                )))
+            }
         }
     } else {
         let buf_out = Vec::new();
         let mut dec = GzDecoder::new(buf_out);
         if let Err(e) = dec.write_all(body.as_ref()) {
+            failed.add(count, &[KeyValue::new("error", "grpc.decode.gzip")]);
             return Err(ExporterError::Generic(format!(
                 "failed to gzip decode response: {}",
                 e
@@ -57,15 +69,22 @@ pub fn grpc_decode_body<T: prost::Message + Default>(body: Bytes) -> Result<T, E
         match dec.finish() {
             Ok(buf) => match T::decode(Bytes::from(buf)) {
                 Ok(r) => Ok(r),
-                Err(e) => Err(ExporterError::Generic(format!(
-                    "failed to decode response: {}",
-                    e
-                ))),
+                Err(e) => {
+                    failed.add(count, &[KeyValue::new("error", "grpc.decode")]);
+                    Err(ExporterError::Generic(format!(
+                        "failed to decode response: {}",
+                        e
+                    )))
+                }
             },
-            Err(e) => Err(ExporterError::Generic(format!(
-                "failed to finish gzip decode of response: {}",
-                e
-            ))),
+
+            Err(e) => {
+                failed.add(count, &[KeyValue::new("error", "grpc.decode.gzip")]);
+                Err(ExporterError::Generic(format!(
+                    "failed to finish gzip decode of response: {}",
+                    e
+                )))
+            }
         }
     }
 }
