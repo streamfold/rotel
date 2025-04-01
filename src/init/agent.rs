@@ -9,6 +9,8 @@ use crate::init::otlp_exporter::{
     build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
     build_traces_batch_config, build_traces_config,
 };
+#[cfg(feature = "pprof")]
+use crate::init::pprof;
 use crate::listener::Listener;
 use crate::receivers::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp_http::OTLPHttpServer;
@@ -20,7 +22,7 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::metrics::Temporality;
+use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
@@ -34,9 +36,6 @@ use tokio::time::{timeout_at, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{error, info};
-
-#[cfg(feature = "pprof")]
-use crate::init::pprof;
 
 // todo: split out argument processing into some type of AgentBuilder interface
 #[derive(Default)]
@@ -113,9 +112,16 @@ impl Agent {
             bounded::<Vec<ResourceLogs>>(sending_queue_size);
         let logs_otlp_output = OTLPOutput::new(logs_pipeline_in_tx);
 
+        let (internal_metrics_pipeline_in_tx, internal_metrics_pipeline_in_rx) =
+            bounded::<Vec<ResourceMetrics>>(max(4, num_cpus));
+        let (internal_metrics_pipeline_out_tx, internal_metrics_pipeline_out_rx) =
+            bounded::<Vec<ResourceMetrics>>(sending_queue_size);
+        let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
+
         let mut traces_output = None;
         let mut metrics_output = None;
         let mut logs_output = None;
+        let mut internal_metrics_output = None;
 
         match activation.traces {
             TelemetryState::Active => traces_output = Some(trace_otlp_output),
@@ -128,7 +134,10 @@ impl Agent {
         }
 
         match activation.metrics {
-            TelemetryState::Active => metrics_output = Some(metrics_otlp_output),
+            TelemetryState::Active => {
+                metrics_output = Some(metrics_otlp_output);
+                internal_metrics_output = Some(internal_metrics_otlp_output);
+            }
             TelemetryState::Disabled => {
                 info!("OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics");
             }
@@ -145,42 +154,6 @@ impl Agent {
             TelemetryState::NoListeners => {
                 info!("No exporters are configured for logs, OTLP receiver will be configured to not accept logs");
             }
-        }
-
-        //
-        // OTLP GRPC server
-        //
-        let grpc_srv = OTLPGrpcServer::builder()
-            .with_max_recv_msg_size_mib(agent.otlp_grpc_max_recv_msg_size_mib as usize)
-            .with_traces_output(traces_output.clone())
-            .with_metrics_output(metrics_output.clone())
-            .with_logs_output(logs_output.clone())
-            .build();
-
-        let grpc_listener = port_map.remove(&agent.otlp_grpc_endpoint).unwrap();
-        {
-            let receivers_cancel = receivers_cancel.clone();
-            receivers_task_set
-                .spawn(async move { grpc_srv.serve(grpc_listener, receivers_cancel).await });
-        }
-
-        //
-        // OTLP HTTP server
-        //
-        let http_srv = OTLPHttpServer::builder()
-            .with_traces_output(traces_output.clone())
-            .with_metrics_output(metrics_output.clone())
-            .with_logs_output(logs_output.clone())
-            .with_traces_path(agent.otlp_receiver_traces_http_path.clone())
-            .with_metrics_path(agent.otlp_receiver_metrics_http_path.clone())
-            .with_logs_path(agent.otlp_receiver_logs_http_path.clone())
-            .build();
-
-        let http_listener = port_map.remove(&agent.otlp_http_endpoint).unwrap();
-        {
-            let receivers_cancel = receivers_cancel.clone();
-            receivers_task_set
-                .spawn(async move { http_srv.serve(http_listener, receivers_cancel).await });
         }
 
         let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
@@ -200,6 +173,35 @@ impl Agent {
             logs_pipeline_out_tx,
             build_logs_batch_config(agent.otlp_exporter.clone()),
         );
+
+        // Internal metrics
+        // N.B Internal metrics initialization MUST be done before starting other parts of the agent such as
+        // receiver and exporters, so that the global meter provider is set before those components attempt to
+        // create instruments such as counters, etc. Be careful when refactoring this code to avoid breaking
+        // this dependency.
+
+        let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+            internal_metrics_pipeline_in_rx.clone(),
+            internal_metrics_pipeline_out_tx,
+            build_metrics_batch_config(agent.otlp_exporter.clone()),
+        );
+
+        let internal_metrics_sdk_exporter =
+            telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
+                internal_metrics_output.clone(),
+                Temporality::Cumulative,
+            );
+
+        let periodic_reader = PeriodicReader::builder(internal_metrics_sdk_exporter)
+            .with_interval(Duration::from_secs(10))
+            .build();
+
+        let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .with_reader(periodic_reader)
+            .with_resource(Resource::builder().with_service_name("rotel").build())
+            .build();
+
+        global::set_meter_provider(meter_provider.clone());
 
         let token = exporters_cancel.clone();
         match agent.exporter {
@@ -240,7 +242,7 @@ impl Agent {
                     let metrics_config =
                         build_metrics_config(agent.otlp_exporter.clone(), endpoint);
                     let mut metrics = otlp::exporter::build_metrics_exporter(
-                        metrics_config,
+                        metrics_config.clone(),
                         metrics_pipeline_out_rx.clone(),
                     )?;
                     let token = exporters_cancel.clone();
@@ -249,6 +251,24 @@ impl Agent {
                         if let Err(e) = res {
                             error!(
                                 exporter_type = "otlp_metrics",
+                                error = e,
+                                "OTLPExporter returned from run loop with error."
+                            );
+                        }
+
+                        Ok(())
+                    });
+
+                    let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
+                        metrics_config.clone(),
+                        internal_metrics_pipeline_out_rx.clone(),
+                    )?;
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = internal_metrics.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                exporter_type = "internal_otlp_metrics",
                                 error = e,
                                 "OTLPExporter returned from run loop with error."
                             );
@@ -342,18 +362,53 @@ impl Agent {
             pipeline_task_set
                 .spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
         }
+        if internal_metrics_output.is_some() {
+            let log_metrics = agent.debug_log.contains(&DebugLogParam::Metrics);
+            let dbg_log = DebugLogger::new(log_metrics);
 
-        let internal_metrics_exporter =
-            telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
-                metrics_output.clone(),
-                Temporality::Cumulative,
-            );
+            let pipeline_cancel = pipeline_cancel.clone();
+            pipeline_task_set.spawn(async move {
+                internal_metrics_pipeline
+                    .start(dbg_log, pipeline_cancel)
+                    .await
+            });
+        }
 
-        let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-            .with_periodic_exporter(internal_metrics_exporter)
-            .with_resource(Resource::builder().with_service_name("rotel").build())
+        //
+        // OTLP GRPC server
+        //
+        let grpc_srv = OTLPGrpcServer::builder()
+            .with_max_recv_msg_size_mib(agent.otlp_grpc_max_recv_msg_size_mib as usize)
+            .with_traces_output(traces_output.clone())
+            .with_metrics_output(metrics_output.clone())
+            .with_logs_output(logs_output.clone())
             .build();
-        global::set_meter_provider(meter_provider);
+
+        let grpc_listener = port_map.remove(&agent.otlp_grpc_endpoint).unwrap();
+        {
+            let receivers_cancel = receivers_cancel.clone();
+            receivers_task_set
+                .spawn(async move { grpc_srv.serve(grpc_listener, receivers_cancel).await });
+        }
+
+        //
+        // OTLP HTTP server
+        //
+        let http_srv = OTLPHttpServer::builder()
+            .with_traces_output(traces_output.clone())
+            .with_metrics_output(metrics_output.clone())
+            .with_logs_output(logs_output.clone())
+            .with_traces_path(agent.otlp_receiver_traces_http_path.clone())
+            .with_metrics_path(agent.otlp_receiver_metrics_http_path.clone())
+            .with_logs_path(agent.otlp_receiver_logs_http_path.clone())
+            .build();
+
+        let http_listener = port_map.remove(&agent.otlp_http_endpoint).unwrap();
+        {
+            let receivers_cancel = receivers_cancel.clone();
+            receivers_task_set
+                .spawn(async move { http_srv.serve(http_listener, receivers_cancel).await });
+        }
 
         #[cfg(feature = "pprof")]
         let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph
