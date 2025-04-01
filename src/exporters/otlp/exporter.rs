@@ -14,11 +14,14 @@ use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
 use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
-use crate::exporters::otlp::{errors, request};
+use crate::exporters::otlp::{errors, get_meter, request};
 use crate::exporters::retry::RetryPolicy;
+use crate::telemetry;
+use crate::telemetry::Counter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPFrom;
 use futures::stream::FuturesUnordered;
+use opentelemetry::global;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -70,8 +73,19 @@ pub fn build_traces_exporter(
     Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
     Box<dyn Error + Send + Sync>,
 > {
+    let sent = get_meter().u64_counter("rotel_exporter_sent_spans").build();
+    let send_failed = get_meter()
+        .u64_counter("rotel_exporter_send_failed_spans")
+        .build();
+    let sent = Box::new(telemetry::RotelCounter::new(sent));
+    let send_failed = Box::new(telemetry::RotelCounter::new(send_failed));
     let tls_config = traces_config.tls_cfg_builder.clone().build()?;
-    let client = OTLPClient::new(tls_config, traces_config.protocol.clone())?;
+    let client = OTLPClient::new(
+        tls_config,
+        traces_config.protocol.clone(),
+        sent,
+        send_failed,
+    )?;
     let retry_policy = RetryPolicy::new(
         traces_config.retry_config.clone(),
         errors::is_retryable_error,
@@ -108,8 +122,97 @@ pub fn build_metrics_exporter(
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
 > {
+    let sent = get_meter()
+        .u64_counter("rotel_exporter_sent_metric_points")
+        .build();
+    let send_failed = get_meter()
+        .u64_counter("rotel_exporter_send_failed_metric_points")
+        .build();
+    let sent = Box::new(telemetry::RotelCounter::new(sent));
+    let send_failed = Box::new(telemetry::RotelCounter::new(send_failed));
+    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx)
+}
+
+/// Creates a configured OTLP logs exporter
+///
+/// # Arguments
+/// * `logs_config` - Configuration for the logs exporter  
+/// * `logs_rx` - Channel receiver for incoming logs data
+///
+/// # Returns
+/// Configured Exporter instance for logs telemetry
+pub fn build_logs_exporter(
+    logs_config: OTLPExporterLogsConfig,
+    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+) -> Result<
+    Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
+    Box<dyn Error + Send + Sync>,
+> {
+    let sent = get_meter()
+        .u64_counter("rotel_exporter_sent_log_records")
+        .build();
+    let send_failed = get_meter()
+        .u64_counter("rotel_exporter_send_failed_log_records")
+        .build();
+    let sent = Box::new(telemetry::RotelCounter::new(sent));
+    let send_failed = Box::new(telemetry::RotelCounter::new(send_failed));
+    let tls_config = logs_config.tls_cfg_builder.clone().build()?;
+    let client = OTLPClient::new(tls_config, logs_config.protocol.clone(), sent, send_failed)?;
+    let retry_policy =
+        RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
+
+    let req_builder = request::build_logs(&logs_config)?;
+
+    let svc = ServiceBuilder::new()
+        .layer(RetryLayer::new(retry_policy))
+        .layer(TimeoutLayer::new(logs_config.request_timeout))
+        .service(client);
+    Ok(Exporter::new(
+        logs_config.type_name.clone(),
+        svc,
+        req_builder.clone(),
+        logs_rx.clone(),
+        logs_config.encode_drain_max_time,
+        logs_config.export_drain_max_time,
+    ))
+}
+
+/// Creates a configured OTLP metrics exporter
+///
+/// # Arguments
+/// * `metrics_config` - Configuration for the metrics exporter
+/// * `metrics_rx` - Channel receiver for incoming metrics data
+///
+/// # Returns
+/// Configured Exporter instance for metrics telemetry
+pub fn build_internal_metrics_exporter(
+    metrics_config: OTLPExporterMetricsConfig,
+    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+) -> Result<
+    Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
+    Box<dyn Error + Send + Sync>,
+> {
+    let sent = Box::new(telemetry::NoOpCounter::new());
+    let send_failed = Box::new(telemetry::NoOpCounter::new());
+    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx)
+}
+
+fn _build_metrics_exporter(
+    sent: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    send_failed: Box<dyn Counter<u64> + Send + Sync + 'static>,
+    metrics_config: OTLPExporterMetricsConfig,
+    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+) -> Result<
+    Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
+    Box<dyn Error + Send + Sync>,
+> {
     let tls_config = metrics_config.tls_cfg_builder.clone().build()?;
-    let client = OTLPClient::new(tls_config, metrics_config.protocol.clone())?;
+    let client = OTLPClient::new(
+        tls_config,
+        metrics_config.protocol.clone(),
+        sent,
+        send_failed,
+    )?;
     let retry_policy = RetryPolicy::new(
         metrics_config.retry_config.clone(),
         errors::is_retryable_error,
@@ -128,42 +231,6 @@ pub fn build_metrics_exporter(
         metrics_rx.clone(),
         metrics_config.encode_drain_max_time,
         metrics_config.export_drain_max_time,
-    ))
-}
-
-/// Creates a configured OTLP logs exporter
-///
-/// # Arguments
-/// * `logs_config` - Configuration for the logs exporter  
-/// * `logs_rx` - Channel receiver for incoming logs data
-///
-/// # Returns
-/// Configured Exporter instance for logs telemetry
-pub fn build_logs_exporter(
-    logs_config: OTLPExporterLogsConfig,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
-) -> Result<
-    Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
-    Box<dyn Error + Send + Sync>,
-> {
-    let tls_config = logs_config.tls_cfg_builder.clone().build()?;
-    let client = OTLPClient::new(tls_config, logs_config.protocol.clone())?;
-    let retry_policy =
-        RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
-
-    let req_builder = request::build_logs(&logs_config)?;
-
-    let svc = ServiceBuilder::new()
-        .layer(RetryLayer::new(retry_policy))
-        .layer(TimeoutLayer::new(logs_config.request_timeout))
-        .service(client);
-    Ok(Exporter::new(
-        logs_config.type_name.clone(),
-        svc,
-        req_builder.clone(),
-        logs_rx.clone(),
-        logs_config.encode_drain_max_time,
-        logs_config.export_drain_max_time,
     ))
 }
 
