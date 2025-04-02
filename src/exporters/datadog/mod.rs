@@ -21,13 +21,13 @@ use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, Service, ServiceBuilder};
-use tracing::{debug, error, event, Level};
+use tracing::{Level, debug, error, event};
 
 mod api_request;
 mod request_builder;
@@ -224,7 +224,7 @@ impl DatadogTraceExporter {
             let poll_res = timeout_at(finish_encoding, enc_stream.next()).await;
             match poll_res {
                 Err(_) => {
-                    return Err("DatadogExporter, timed out waiting for requests to encode".into())
+                    return Err("DatadogExporter, timed out waiting for requests to encode".into());
                 }
                 Ok(res) => match res {
                     None => break,
@@ -247,7 +247,7 @@ impl DatadogTraceExporter {
             let poll_res = timeout_at(finish_sending, export_futures.next()).await;
             match poll_res {
                 Err(_) => {
-                    return Err("DatadogExporter, timed out waiting for requests to finish".into())
+                    return Err("DatadogExporter, timed out waiting for requests to finish".into());
                 }
                 Ok(res) => match res {
                     None => {
@@ -284,7 +284,7 @@ impl DatadogTraceExporter {
 mod tests {
     extern crate utilities;
 
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::datadog::{DatadogTraceExporter, Region};
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;

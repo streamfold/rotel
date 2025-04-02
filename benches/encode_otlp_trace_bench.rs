@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::Throughput;
-use criterion::{criterion_group, criterion_main};
 use criterion::{BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use prost::Message;
 use rotel::exporters::otlp;
 use rotel::exporters::otlp::request::RequestBuilder;
-use rotel::exporters::otlp::{request, CompressionEncoding, Endpoint, Protocol};
+use rotel::exporters::otlp::{CompressionEncoding, Endpoint, Protocol, request};
 use rotel::telemetry::RotelCounter;
 use utilities::otlp::FakeOTLP;
 

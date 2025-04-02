@@ -5,7 +5,7 @@ use crate::topology::generic_pipeline::Inspect;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use tracing::{event, Level};
+use tracing::{Level, event};
 
 // Basic debug logger, future thoughts on additional configurability:
 //  - support detail levels beyond basic (normal, detailed) (see: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/debugexporter/README.md)

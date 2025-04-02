@@ -22,17 +22,17 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::select;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{error, info};
@@ -126,10 +126,14 @@ impl Agent {
         match activation.traces {
             TelemetryState::Active => traces_output = Some(trace_otlp_output),
             TelemetryState::Disabled => {
-                info!("OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces");
+                info!(
+                    "OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces"
+                );
             }
             TelemetryState::NoListeners => {
-                info!("No exporters are configured for traces, OTLP receiver will be configured to not accept traces");
+                info!(
+                    "No exporters are configured for traces, OTLP receiver will be configured to not accept traces"
+                );
             }
         }
 
@@ -139,20 +143,28 @@ impl Agent {
                 internal_metrics_output = Some(internal_metrics_otlp_output);
             }
             TelemetryState::Disabled => {
-                info!("OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics");
+                info!(
+                    "OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics"
+                );
             }
             TelemetryState::NoListeners => {
-                info!("No exporters are configured for metrics, OTLP receiver will be configured to not accept metrics");
+                info!(
+                    "No exporters are configured for metrics, OTLP receiver will be configured to not accept metrics"
+                );
             }
         }
 
         match activation.logs {
             TelemetryState::Active => logs_output = Some(logs_otlp_output),
             TelemetryState::Disabled => {
-                info!("OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept logs");
+                info!(
+                    "OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept logs"
+                );
             }
             TelemetryState::NoListeners => {
-                info!("No exporters are configured for logs, OTLP receiver will be configured to not accept logs");
+                info!(
+                    "No exporters are configured for logs, OTLP receiver will be configured to not accept logs"
+                );
             }
         }
 

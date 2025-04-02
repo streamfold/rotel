@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::Throughput;
-use criterion::{criterion_group, criterion_main};
 use criterion::{BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main};
 use prost::Message;
 use utilities::otlp::FakeOTLP;
 

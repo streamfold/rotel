@@ -3,9 +3,9 @@
 use crate::exporters::otlp::errors::ExporterError;
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::{Bytes, BytesMut};
+use flate2::Compression as GZCompression;
 use flate2::read::GzEncoder;
 use flate2::write::GzDecoder;
-use flate2::Compression as GZCompression;
 use opentelemetry::KeyValue;
 use std::io::{Read, Write};
 
