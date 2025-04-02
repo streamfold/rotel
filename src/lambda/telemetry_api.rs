@@ -1,3 +1,4 @@
+use crate::bounded_channel::BoundedSender;
 use crate::listener::Listener;
 use bytes::Bytes;
 use http::header::CONTENT_TYPE;
@@ -16,7 +17,6 @@ use std::task::{Context, Poll};
 use tokio_util::sync::CancellationToken;
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{error, info};
-use crate::bounded_channel::BoundedSender;
 
 pub struct TelemetryAPI {
     pub listener: Listener,
@@ -34,7 +34,11 @@ impl TelemetryAPI {
     }
 
     // todo: abstract this with the server code in the otlp http receiver
-    pub async fn run(self, bus_tx: BoundedSender<LambdaTelemetry>, cancellation: CancellationToken) -> Result<(), BoxError> {
+    pub async fn run(
+        self,
+        bus_tx: BoundedSender<LambdaTelemetry>,
+        cancellation: CancellationToken,
+    ) -> Result<(), BoxError> {
         let svc = ServiceBuilder::new().service(TelemetryService::new(bus_tx));
         let svc = TowerToHyperService::new(svc);
 
@@ -100,9 +104,7 @@ pub struct TelemetryService {
 
 impl TelemetryService {
     fn new(bus_tx: BoundedSender<LambdaTelemetry>) -> Self {
-        Self {
-            bus_tx,
-        }
+        Self { bus_tx }
     }
 }
 
@@ -122,6 +124,9 @@ where
 
     fn call(&mut self, req: Request<H>) -> Self::Future {
         let (parts, body) = req.into_parts();
+
+        // will remove when debugged
+        info!(?parts, "request received");
 
         // This part could be decoupled out to a layer, but they are complicated
         // to setup, so inlining for now.
@@ -145,7 +150,10 @@ where
     }
 }
 
-async fn handle_request<H>(bus_tx: BoundedSender<LambdaTelemetry>, body: H) -> Result<Response<Full<Bytes>>, BoxError>
+async fn handle_request<H>(
+    bus_tx: BoundedSender<LambdaTelemetry>,
+    body: H,
+) -> Result<Response<Full<Bytes>>, BoxError>
 where
     H: Body,
     <H as Body>::Error: Debug,
@@ -163,7 +171,7 @@ where
                     error!("unable to send telemetry event to bus: {}", e);
                     // Should handle this?
                 }
-            },
+            }
             _ => {} // todo: handle more
         }
     }

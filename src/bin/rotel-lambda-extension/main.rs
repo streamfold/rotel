@@ -21,7 +21,7 @@ use tokio::select;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tower_http::BoxError;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
@@ -172,7 +172,12 @@ async fn run_agent(
                         }
                     }
                 },
-                // todo: if the agent were to exit, we should capture that here
+                e = wait::wait_for_any_task(&mut task_join_set) => {
+                    match e {
+                        Ok(()) => warn!("Unexpected early exit of extension."),
+                        Err(e) => return Err(e),
+                    }
+                },
             }
         }
 
