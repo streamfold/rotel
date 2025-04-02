@@ -27,8 +27,8 @@ use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPInto;
-use opentelemetry::metrics::Counter;
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -576,23 +576,23 @@ fn compute_ok_resp<T: prost::Message + Default>() -> Result<Bytes, EncodeError> 
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use flate2::read::GzEncoder;
     use flate2::Compression as GZCompression;
+    use flate2::read::GzEncoder;
     use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
     use http::{Method, Request, StatusCode};
     use http_body_util::Full;
     use hyper::service::Service;
-    use hyper_util::client::legacy::connect::HttpConnector;
     use hyper_util::client::legacy::Client;
+    use hyper_util::client::legacy::connect::HttpConnector;
     use hyper_util::rt::{TokioExecutor, TokioTimer};
     use std::io::Read;
     use std::time::Duration;
 
     extern crate utilities;
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::listener::Listener;
     use crate::receivers::otlp_http::{
-        build_service, OTLPHttpServer, OTLPService, ValidateOTLPContentType, MAX_BODY_SIZE,
+        MAX_BODY_SIZE, OTLPHttpServer, OTLPService, ValidateOTLPContentType, build_service,
     };
     use crate::receivers::otlp_output::OTLPOutput;
     use hyper_util::service::TowerToHyperService;

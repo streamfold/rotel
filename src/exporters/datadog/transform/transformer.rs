@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::datadog::transform::attributes::{
-    find_key_in_attrlist, ConvertedAttrKeyValue, ConvertedAttrMap, ConvertedAttrValue,
+    ConvertedAttrKeyValue, ConvertedAttrMap, ConvertedAttrValue, find_key_in_attrlist,
 };
 use crate::exporters::datadog::transform::otel_mapping::attributes::HTTP_MAPPINGS;
 use crate::exporters::datadog::transform::otel_util::get_otel_env;

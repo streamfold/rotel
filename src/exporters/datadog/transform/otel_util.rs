@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::datadog::transform::attributes::{
-    find_first_in_resource, ConvertedAttrMap, ConvertedAttrValue,
+    ConvertedAttrMap, ConvertedAttrValue, find_first_in_resource,
 };
 use crate::exporters::datadog::transform::attributes::{
     find_key_in_attrlist, find_with_resource_precedence,
@@ -9,8 +9,8 @@ use crate::exporters::datadog::transform::attributes::{
 use crate::exporters::datadog::transform::db_types;
 use crate::semconv::misc::MESSAGING_DESTINATION;
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
-use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::Span as OTelSpan;
+use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_semantic_conventions::attribute;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -107,7 +107,7 @@ pub fn get_otel_operation_name_v2(span: &OTelSpan) -> String {
     if msg_sys.is_some() && msg_op.is_some() {
         match span.kind() {
             SpanKind::Server | SpanKind::Client | SpanKind::Producer | SpanKind::Consumer => {
-                return format!("{}.{}", msg_sys.unwrap(), msg_op.unwrap())
+                return format!("{}.{}", msg_sys.unwrap(), msg_op.unwrap());
             }
             _ => {}
         }
@@ -323,15 +323,15 @@ mod tests {
         get_otel_resource_v2, get_otel_service, get_otel_span_type,
     };
     use crate::semconv::db_system::{CASSANDRA, COUCHDB, ELASTICSEARCH, OPENSEARCH, POSTGRESQL};
-    use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
     use opentelemetry_proto::tonic::trace::v1::Span;
+    use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
     #[allow(deprecated)]
     use opentelemetry_semantic_conventions::attribute::{
         DB_QUERY_TEXT, DB_STATEMENT, DB_SYSTEM, HTTP_METHOD, HTTP_ROUTE,
     };
     use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
     use std::collections::HashMap;
-    use utilities::otlp::{string_attr, FakeOTLP};
+    use utilities::otlp::{FakeOTLP, string_attr};
 
     // Constants for span types matching the Go file
     const MAX_SERVICE_LEN: usize = 100;

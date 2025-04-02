@@ -9,7 +9,7 @@ use std::error::Error;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{event, warn, Level};
+use tracing::{Level, event, warn};
 
 pub struct Pipeline {
     receiver: BoundedReceiver<OTLPPayload>,

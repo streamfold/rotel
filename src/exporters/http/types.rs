@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use bytes::Bytes;
-use http::request::Request as HttpRequest;
 use http::HeaderValue;
+use http::request::Request as HttpRequest;
 use http_body_util::Full;
 use tower_http::BoxError;
 

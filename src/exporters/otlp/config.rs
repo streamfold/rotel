@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::http::tls::{Config, ConfigBuilder};
-use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol, DEFAULT_REQUEST_TIMEOUT};
+use crate::exporters::otlp::{CompressionEncoding, DEFAULT_REQUEST_TIMEOUT, Endpoint, Protocol};
 use crate::exporters::retry::RetryConfig;
 use std::time::Duration;
 

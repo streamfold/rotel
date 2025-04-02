@@ -39,7 +39,7 @@ use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
 use tokio::task::JoinError;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tower::retry::{Retry, RetryLayer};
@@ -416,7 +416,7 @@ where
                         "OTLPExporter, {} timed out waiting for requests to encode",
                         type_name,
                     )
-                    .into())
+                    .into());
                 }
                 Ok(res) => match res {
                     None => {
@@ -433,14 +433,14 @@ where
                                 "OTLPExporter, {} JoinError on encoding future: {:?}",
                                 type_name, e
                             )
-                            .into())
+                            .into());
                         }
                         Ok(Err(e)) => {
                             return Err(format!(
                                 "OTLPExporter, {} encoding error: {:?}",
                                 type_name, e
                             )
-                            .into())
+                            .into());
                         }
                     },
                 },
@@ -460,7 +460,7 @@ where
                         "OTLPExporter, {} timed out waiting for requests to finish",
                         type_name
                     )
-                    .into())
+                    .into());
                 }
                 Ok(res) => match res {
                     None => {

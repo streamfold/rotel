@@ -5,7 +5,7 @@ use crate::exporters::http::tls::Config;
 /// The client handles TLS configuration, request processing, and response decoding.
 use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::request::EncodedRequest;
-use crate::exporters::otlp::{grpc_codec, http_codec, Protocol};
+use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
 use http::header::CONTENT_ENCODING;
@@ -14,8 +14,8 @@ use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client as HyperClient;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use opentelemetry::KeyValue;
 use std::error::Error;
@@ -24,8 +24,8 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tonic::codegen::Service;
 use tonic::Status;
+use tonic::codegen::Service;
 use tower_http::BoxError;
 
 /// Client struct for handling OTLP exports.

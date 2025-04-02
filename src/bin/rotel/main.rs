@@ -9,7 +9,7 @@ use std::error::Error;
 use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
-use std::process::{exit, ExitCode};
+use std::process::{ExitCode, exit};
 use tracing::error;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -234,15 +234,15 @@ unsafe fn check_rotel_active(pid_path: &String) -> bool {
         }
     };
 
-    let ret = unwrap_errno(unsafe{libc::open(path_c.as_ptr(), libc::O_RDONLY, 0o666)});
+    let ret = unwrap_errno(unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY, 0o666) });
     if ret.0 < 0 {
         return false;
     }
 
-    let ret = unwrap_errno(unsafe{libc::flock(ret.0, libc::LOCK_EX | libc::LOCK_NB)});
+    let ret = unwrap_errno(unsafe { libc::flock(ret.0, libc::LOCK_EX | libc::LOCK_NB) });
 
     // Close the original file descriptor
-    unsafe{libc::close(ret.0)};
+    unsafe { libc::close(ret.0) };
 
     if ret.0 != 0 {
         // Unknown error from flock

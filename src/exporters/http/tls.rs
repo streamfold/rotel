@@ -3,7 +3,7 @@
 use hyper_rustls::ConfigBuilderExt;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
-use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime, pem::PemObject};
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;

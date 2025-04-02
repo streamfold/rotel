@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use http::response::Parts;
 use http::StatusCode;
+use http::response::Parts;
 use tonic::Status;
 
 #[derive(Debug)]

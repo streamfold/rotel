@@ -9,8 +9,8 @@ use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::time::Instant;
-use tower::retry::Policy;
 use tower::BoxError;
+use tower::retry::Policy;
 use tracing::{info, warn};
 
 #[derive(Clone)]

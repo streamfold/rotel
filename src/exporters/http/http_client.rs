@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::client::{build_hyper_client, ConnectError, ResponseDecode};
+use crate::exporters::http::client::{ConnectError, ResponseDecode, build_hyper_client};
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::{ContentEncoding, Request};
@@ -8,8 +8,8 @@ use bytes::Bytes;
 use http::header::CONTENT_ENCODING;
 use http_body_util::{BodyExt, Full};
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client as HyperClient;
+use hyper_util::client::legacy::connect::HttpConnector;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;

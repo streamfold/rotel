@@ -2,9 +2,8 @@
 
 use crate::exporters::http::types::Request;
 use futures_util::{
-    ready,
+    Stream, StreamExt, ready,
     stream::{Fuse, FuturesOrdered},
-    Stream, StreamExt,
 };
 use pin_project::pin_project;
 use std::pin::Pin;
