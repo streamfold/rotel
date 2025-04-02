@@ -234,15 +234,15 @@ unsafe fn check_rotel_active(pid_path: &String) -> bool {
         }
     };
 
-    let ret = unwrap_errno(libc::open(path_c.as_ptr(), libc::O_RDONLY, 0o666));
+    let ret = unwrap_errno(unsafe{libc::open(path_c.as_ptr(), libc::O_RDONLY, 0o666)});
     if ret.0 < 0 {
         return false;
     }
 
-    let ret = unwrap_errno(libc::flock(ret.0, libc::LOCK_EX | libc::LOCK_NB));
+    let ret = unwrap_errno(unsafe{libc::flock(ret.0, libc::LOCK_EX | libc::LOCK_NB)});
 
     // Close the original file descriptor
-    libc::close(ret.0);
+    unsafe{libc::close(ret.0)};
 
     if ret.0 != 0 {
         // Unknown error from flock
