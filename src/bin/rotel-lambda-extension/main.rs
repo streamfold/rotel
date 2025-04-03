@@ -86,7 +86,7 @@ fn main() -> ExitCode {
     // Remove this, the rest are passed to the agent
     let telemetry_listener = port_map.remove(&opt.telemetry_endpoint).unwrap();
 
-    match run_agent(
+    match run_extension(
         start_time,
         agent,
         port_map,
@@ -104,7 +104,7 @@ fn main() -> ExitCode {
 }
 
 #[tokio::main]
-async fn run_agent(
+async fn run_extension(
     start_time: Instant,
     agent_args: Box<AgentRun>,
     port_map: HashMap<SocketAddr, Listener>,
