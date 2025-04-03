@@ -23,10 +23,8 @@ pub struct TelemetryAPI {
 }
 
 impl TelemetryAPI {
-    pub async fn bind_and_listen() -> Result<TelemetryAPI, BoxError> {
-        let listener = Listener::listen_async("0.0.0.0:0".parse().unwrap()).await?;
-
-        Ok(TelemetryAPI { listener })
+    pub fn new(listener: Listener) -> Self {
+        Self { listener }
     }
 
     pub fn addr(&self) -> SocketAddr {

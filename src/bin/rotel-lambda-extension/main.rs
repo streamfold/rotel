@@ -7,6 +7,7 @@ use hyper_util::rt::{TokioExecutor, TokioTimer};
 use lambda_extension::{LambdaTelemetryRecord, NextEvent};
 use rotel::bounded_channel::bounded;
 use rotel::init::agent::Agent;
+use rotel::init::args;
 use rotel::init::args::{AgentRun, Exporter};
 use rotel::init::misc::bind_endpoints;
 use rotel::init::wait;
@@ -19,6 +20,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 use tokio::select;
 use tokio::task::JoinSet;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tower_http::BoxError;
 use tracing::{error, info, warn};
@@ -34,6 +36,9 @@ struct Arguments {
     #[arg(long, global = true, env = "ROTEL_LOG_LEVEL", default_value = "info")]
     /// Log configuration
     log_level: String,
+
+    #[arg(long, env = "ROTEL_TELEMETRY_ENDPOINT", default_value = "localhost:8990", value_parser = args::parse_endpoint)]
+    telemetry_endpoint: SocketAddr,
 
     #[arg(
         value_enum,
@@ -60,10 +65,16 @@ pub enum LogFormatArg {
 }
 
 fn main() -> ExitCode {
+    let start_time = Instant::now();
     let opt = Arguments::parse();
 
+    let _logger = setup_logging(&opt.log_level);
     let agent = opt.agent_args;
-    let port_map = match bind_endpoints(&[agent.otlp_grpc_endpoint, agent.otlp_http_endpoint]) {
+    let mut port_map = match bind_endpoints(&[
+        agent.otlp_grpc_endpoint,
+        agent.otlp_http_endpoint,
+        opt.telemetry_endpoint,
+    ]) {
         Ok(ports) => ports,
         Err(e) => {
             eprintln!("ERROR: {}", e);
@@ -72,9 +83,16 @@ fn main() -> ExitCode {
         }
     };
 
-    let _logger = setup_logging(&opt.log_level);
+    // Remove this, the rest are passed to the agent
+    let telemetry_listener = port_map.remove(&opt.telemetry_endpoint).unwrap();
 
-    match run_agent(agent, port_map, &opt.environment) {
+    match run_agent(
+        start_time,
+        agent,
+        port_map,
+        telemetry_listener,
+        &opt.environment,
+    ) {
         Ok(_) => {}
         Err(e) => {
             error!(error = ?e, "Failed to run agent.");
@@ -87,8 +105,10 @@ fn main() -> ExitCode {
 
 #[tokio::main]
 async fn run_agent(
+    start_time: Instant,
     agent_args: Box<AgentRun>,
     port_map: HashMap<SocketAddr, Listener>,
+    telemetry_listener: Listener,
     env: &String,
 ) -> Result<(), BoxError> {
     let mut task_join_set = JoinSet::new();
@@ -140,19 +160,28 @@ async fn run_agent(
         task_join_set.spawn(agent_fut);
     };
 
-    let telemetry = TelemetryAPI::bind_and_listen().await?;
-    if let Err(e) =
-        lambda::api::telemetry_subscribe(client.clone(), &r.extension_id, &telemetry.addr()).await
+    if let Err(e) = lambda::api::telemetry_subscribe(
+        client.clone(),
+        &r.extension_id,
+        &telemetry_listener.bound_address()?,
+    )
+    .await
     {
         return Err(format!("Failed to subscribe to telemetry: {}", e).into());
     }
 
+    let telemetry = TelemetryAPI::new(telemetry_listener);
     let telemetry_cancel = CancellationToken::new();
     {
         let token = telemetry_cancel.clone();
         let telemetry_fut = async move { telemetry.run(bus_tx.clone(), token).await };
         task_join_set.spawn(telemetry_fut)
     };
+
+    info!(
+        "Rotel Lambda Extension started in {}ms",
+        start_time.elapsed().as_millis()
+    );
 
     // Must perform next_request to get the first INVOKE call
     let next_evt = match lambda::api::next_request(client.clone(), &r.extension_id).await {
