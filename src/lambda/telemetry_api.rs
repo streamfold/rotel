@@ -125,9 +125,6 @@ where
     fn call(&mut self, req: Request<H>) -> Self::Future {
         let (parts, body) = req.into_parts();
 
-        // will remove when debugged
-        info!(?parts, "request received");
-
         // This part could be decoupled out to a layer, but they are complicated
         // to setup, so inlining for now.
         if parts.method != Method::POST {
@@ -164,7 +161,17 @@ where
         .map_err(|e| format!("unable to parse telemetry events from json: {}", e))?;
 
     for event in &events {
-        info!("received telemetry event from lambda: {:?}", event);
+        // We should avoid logging on Extension or Function events, since it can cause a logging
+        // loop
+        match event.record {
+            LambdaTelemetryRecord::Extension{..} => break,
+            LambdaTelemetryRecord::Function{..} => break,
+            _ => {
+                // Keep this for debugging for now
+                info!("received telemetry event from lambda: {:?}", event);
+            }
+        }
+
         match event.record {
             LambdaTelemetryRecord::PlatformRuntimeDone { .. } => {
                 if let Err(e) = bus_tx.send(event.clone()).await {
