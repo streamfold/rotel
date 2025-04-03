@@ -10,7 +10,13 @@ use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::process::{ExitCode, exit};
-use tracing::error;
+use std::time::Duration;
+use tokio::select;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+use tracing::log::warn;
+use tracing::{error, info};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -18,6 +24,8 @@ use tracing_subscriber::{EnvFilter, Registry};
 
 use rotel::init::agent::Agent;
 use rotel::init::args::AgentRun;
+use rotel::init::misc::bind_endpoints;
+use rotel::init::wait;
 
 // Used when daemonized
 static WORKDING_DIR: &str = "/"; // TODO
@@ -25,7 +33,7 @@ static WORKDING_DIR: &str = "/"; // TODO
 const SENDING_QUEUE_SIZE: usize = 1_000;
 
 #[derive(Debug, clap::Subcommand)]
-pub enum Commands {
+enum Commands {
     /// Run agent
     Start(Box<AgentRun>),
 
@@ -38,7 +46,7 @@ pub enum Commands {
 #[command(bin_name = "rotel")]
 #[command(version, about, long_about = None)]
 #[command(subcommand_required = true)]
-pub struct Arguments {
+struct Arguments {
     #[arg(long, global = true, env = "ROTEL_LOG_LEVEL", default_value = "info")]
     /// Log configuration
     log_level: String,
@@ -131,11 +139,40 @@ async fn run_agent(
     port_map: HashMap<SocketAddr, Listener>,
     env: &String,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let agent = Agent::default();
+    let mut agent_join_set = JoinSet::new();
 
-    agent
-        .run(agent_args, port_map, SENDING_QUEUE_SIZE, env)
-        .await
+    let cancel_token = CancellationToken::new();
+    {
+        let token = cancel_token.clone();
+        let env = env.clone();
+        let agent_fut = async move {
+            let agent = Agent::default();
+            agent
+                .run(agent_args, port_map, SENDING_QUEUE_SIZE, env, token)
+                .await
+        };
+
+        agent_join_set.spawn(agent_fut);
+    };
+
+    select! {
+        _ = signal_wait() => {
+            info!("Shutdown signal received.");
+            cancel_token.cancel();
+        },
+        e = wait::wait_for_any_task(&mut agent_join_set) => {
+            match e {
+                Ok(()) => warn!("Unexpected early exit of agent."),
+                Err(e) => return Err(e),
+            }
+        },
+    }
+
+    // Wait for tasks to complete, we use a large timeout here because the agent
+    // enforces lower timeouts.
+    wait::wait_for_tasks_with_timeout(&mut agent_join_set, Duration::from_secs(10)).await?;
+
+    Ok(())
 }
 
 type LoggerGuard = tracing_appender::non_blocking::WorkerGuard;
@@ -207,18 +244,6 @@ fn get_version() -> String {
     format!("{}-{}", env!("CARGO_PKG_VERSION"), version_build)
 }
 
-fn bind_endpoints(
-    endpoints: &[SocketAddr],
-) -> Result<HashMap<SocketAddr, Listener>, Box<dyn Error + Send + Sync>> {
-    endpoints
-        .iter()
-        .map(|endpoint| match Listener::listen_std(*endpoint) {
-            Ok(l) => Ok((*endpoint, l)),
-            Err(e) => Err(e),
-        })
-        .collect()
-}
-
 // Check the lock status of the PID file to see if another version of Rotel is running.
 // TODO: We should likely move this to a healthcheck on a known status port rather then
 // use something more OS dependent.
@@ -267,4 +292,18 @@ fn unwrap_errno(ret: LibcRet) -> (LibcRet, Errno) {
         .raw_os_error()
         .expect("errno");
     (ret, errno)
+}
+
+async fn signal_wait() {
+    let mut sig_term = sig(SignalKind::terminate());
+    let mut sig_int = sig(SignalKind::interrupt());
+
+    select! {
+        _ = sig_term.recv() => {},
+        _ = sig_int.recv() => {},
+    }
+}
+
+fn sig(kind: SignalKind) -> tokio::signal::unix::Signal {
+    signal(kind).unwrap()
 }

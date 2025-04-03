@@ -9,8 +9,7 @@ use crate::init::otlp_exporter::{
     build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
     build_traces_batch_config, build_traces_config,
 };
-#[cfg(feature = "pprof")]
-use crate::init::pprof;
+use crate::init::wait;
 use crate::listener::Listener;
 use crate::receivers::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp_http::OTLPHttpServer;
@@ -30,12 +29,14 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::select;
-use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
-use tracing::{error, info};
+use tracing::{debug, error, info};
+
+#[cfg(feature = "pprof")]
+use crate::init::pprof;
 
 // todo: split out argument processing into some type of AgentBuilder interface
 #[derive(Default)]
@@ -47,7 +48,8 @@ impl Agent {
         agent: Box<AgentRun>,
         mut port_map: HashMap<SocketAddr, Listener>,
         sending_queue_size: usize,
-        environment: &String,
+        environment: String,
+        agent_cancel: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         info!(
             grpc_endpoint = agent.otlp_grpc_endpoint.to_string(),
@@ -432,27 +434,27 @@ impl Agent {
 
         let mut result = Ok(());
         select! {
-            _ = signal_wait() => {
-                info!("Shutdown signal received.");
+            _ = agent_cancel.cancelled() => {
+                debug!("Agent cancellation signaled.");
 
                 #[cfg(feature = "pprof")]
                 if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph {
                     pprof::pprof_finish(guard, agent.profile_group.pprof_flame_graph, agent.profile_group.pprof_call_graph);
                 }
             },
-            e = wait_for_any_task(&mut receivers_task_set) => {
+            e = wait::wait_for_any_task(&mut receivers_task_set) => {
                 match e {
                     Ok(()) => warn!("Unexpected early exit of receiver."),
                     Err(e) => result = Err(e),
                 }
             },
-            e = wait_for_any_task(&mut pipeline_task_set) => {
+            e = wait::wait_for_any_task(&mut pipeline_task_set) => {
                 match e {
                     Ok(()) => warn!("Unexpected early exit of pipeline."),
                     Err(e) => result = Err(e),
                 }
             },
-            e = wait_for_any_task(&mut exporters_task_set) => {
+            e = wait::wait_for_any_task(&mut exporters_task_set) => {
                 match e {
                     Ok(()) => warn!("Unexpected early exit of task."),
                     Err(e) => result = Err(e),
@@ -466,7 +468,8 @@ impl Agent {
 
         // Wait up until one second for receivers to finish
         let res =
-            wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(1)).await;
+            wait::wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(1))
+                .await;
         if let Err(e) = res {
             return Err(format!("timed out waiting for receiver exit: {}", e).into());
         }
@@ -484,7 +487,8 @@ impl Agent {
 
         // Wait 500ms for the pipelines to finish. They should exit when the pipes are dropped.
         let res =
-            wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500)).await;
+            wait::wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500))
+                .await;
         if res.is_err() {
             warn!("Pipelines did not exit on channel close, cancelling.");
 
@@ -492,9 +496,11 @@ impl Agent {
             pipeline_cancel.cancel();
 
             // try again
-            let res =
-                wait_for_tasks_with_timeout(&mut pipeline_task_set, Duration::from_millis(500))
-                    .await;
+            let res = wait::wait_for_tasks_with_timeout(
+                &mut pipeline_task_set,
+                Duration::from_millis(500),
+            )
+            .await;
             if let Err(e) = res {
                 return Err(format!("timed out waiting for pipline to exit: {}", e).into());
             }
@@ -504,7 +510,8 @@ impl Agent {
 
         // Wait for the exporters using the same process
         let res =
-            wait_for_tasks_with_timeout(&mut exporters_task_set, Duration::from_millis(500)).await;
+            wait::wait_for_tasks_with_timeout(&mut exporters_task_set, Duration::from_millis(500))
+                .await;
         if res.is_err() {
             warn!("Exporters did not exit on channel close, cancelling.");
 
@@ -512,7 +519,8 @@ impl Agent {
             exporters_cancel.cancel();
 
             let res =
-                wait_for_tasks_with_deadline(&mut exporters_task_set, receivers_hard_stop).await;
+                wait::wait_for_tasks_with_deadline(&mut exporters_task_set, receivers_hard_stop)
+                    .await;
             if let Err(e) = res {
                 return Err(format!("timed out waiting for exporters to exit: {}", e).into());
             }
@@ -532,65 +540,6 @@ impl From<DatadogRegion> for Region {
             DatadogRegion::AP1 => Region::AP1,
         }
     }
-}
-
-async fn wait_for_any_task(
-    tasks: &mut JoinSet<Result<(), Box<dyn Error + Send + Sync>>>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let r = tasks.join_next().await;
-
-    match r {
-        None => Ok(()), // should not happen
-        Some(res) => res?,
-    }
-}
-
-async fn wait_for_tasks_with_timeout(
-    tasks: &mut JoinSet<Result<(), Box<dyn Error + Send + Sync>>>,
-    timeout: Duration,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    wait_for_tasks_with_deadline(tasks, Instant::now() + timeout).await
-}
-
-async fn wait_for_tasks_with_deadline(
-    tasks: &mut JoinSet<Result<(), Box<dyn Error + Send + Sync>>>,
-    stop_at: Instant,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut result = Ok(());
-    loop {
-        match timeout_at(stop_at, tasks.join_next()).await {
-            Err(_) => {
-                result = Err("timed out waiting for tasks to complete".into());
-                break;
-            }
-            Ok(None) => break,
-            Ok(Some(v)) => {
-                match v {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => result = Err(e),
-                    e => {
-                        error!("Failed to join with task: {:?}", e)
-                    } // Ignore?
-                }
-            }
-        }
-    }
-
-    result
-}
-
-async fn signal_wait() {
-    let mut sig_term = sig(SignalKind::terminate());
-    let mut sig_int = sig(SignalKind::interrupt());
-
-    select! {
-        _ = sig_term.recv() => {},
-        _ = sig_int.recv() => {},
-    }
-}
-
-fn sig(kind: SignalKind) -> tokio::signal::unix::Signal {
-    signal(kind).unwrap()
 }
 
 fn get_hostname() -> Option<String> {
