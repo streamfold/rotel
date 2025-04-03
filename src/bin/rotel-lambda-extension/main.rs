@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use clap::{Parser, ValueEnum};
 use http_body_util::Full;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use lambda_extension::{LambdaTelemetryRecord, NextEvent};
 use rotel::bounded_channel::bounded;
@@ -27,19 +27,9 @@ use tracing_subscriber::{EnvFilter, Registry};
 
 pub const SENDING_QUEUE_SIZE: usize = 10;
 
-#[derive(Debug, clap::Subcommand)]
-enum Commands {
-    /// Run agent
-    Start(Box<AgentRun>),
-
-    /// Return version
-    Version,
-}
-
 #[derive(Debug, Parser)]
 #[command(name = "rotel-lambda-extension")]
 #[command(bin_name = "rotel-lambda-extension")]
-#[command(subcommand_required = true)]
 struct Arguments {
     #[arg(long, global = true, env = "ROTEL_LOG_LEVEL", default_value = "info")]
     /// Log configuration
@@ -59,8 +49,8 @@ struct Arguments {
     /// Environment
     environment: String,
 
-    #[command(subcommand)]
-    command: Option<Commands>,
+    #[command(flatten)]
+    agent_args: Box<AgentRun>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
@@ -72,36 +62,23 @@ pub enum LogFormatArg {
 fn main() -> ExitCode {
     let opt = Arguments::parse();
 
-    match opt.command {
-        Some(Commands::Version) => {
-            println!("{}", get_version())
+    let agent = opt.agent_args;
+    let port_map = match bind_endpoints(&[agent.otlp_grpc_endpoint, agent.otlp_http_endpoint]) {
+        Ok(ports) => ports,
+        Err(e) => {
+            eprintln!("ERROR: {}", e);
+
+            return ExitCode::from(1);
         }
-        Some(Commands::Start(agent)) => {
-            let port_map =
-                match bind_endpoints(&[agent.otlp_grpc_endpoint, agent.otlp_http_endpoint]) {
-                    Ok(ports) => ports,
-                    Err(e) => {
-                        eprintln!("ERROR: {}", e);
+    };
 
-                        return ExitCode::from(1);
-                    }
-                };
+    let _logger = setup_logging(&opt.log_level);
 
-            let _logger = setup_logging(&opt.log_level);
-
-            match run_agent(agent, port_map, &opt.environment) {
-                Ok(_) => {}
-                Err(e) => {
-                    error!(error = ?e, "Failed to run agent.");
-                    return ExitCode::from(1);
-                }
-            }
-        }
-        _ => {
-            // it shouldn't be possible to get here since we mark a subcommand as
-            // required
-            error!("Must specify a command");
-            return ExitCode::from(2);
+    match run_agent(agent, port_map, &opt.environment) {
+        Ok(_) => {}
+        Err(e) => {
+            error!(error = ?e, "Failed to run agent.");
+            return ExitCode::from(1);
         }
     }
 
@@ -131,10 +108,20 @@ async fn run_agent(
         agent_args.otlp_exporter.otlp_exporter_batch_timeout = "200ms".parse().unwrap();
 
         if agent_args.exporter == Exporter::Otlp {
-            if agent_args.otlp_exporter.otlp_exporter_endpoint.is_none() &&
-                agent_args.otlp_exporter.otlp_exporter_traces_endpoint.is_none() &&
-                agent_args.otlp_exporter.otlp_exporter_metrics_endpoint.is_none() &&
-                agent_args.otlp_exporter.otlp_exporter_logs_endpoint.is_none() {
+            if agent_args.otlp_exporter.otlp_exporter_endpoint.is_none()
+                && agent_args
+                    .otlp_exporter
+                    .otlp_exporter_traces_endpoint
+                    .is_none()
+                && agent_args
+                    .otlp_exporter
+                    .otlp_exporter_metrics_endpoint
+                    .is_none()
+                && agent_args
+                    .otlp_exporter
+                    .otlp_exporter_logs_endpoint
+                    .is_none()
+            {
                 // todo: We should be able to startup with no config and not fail, identify best
                 // default mode.
                 info!("Automatically selecting blackhole exporter due to missing endpoint configs");
@@ -222,13 +209,6 @@ fn handle_next_response(evt: NextEvent) -> bool {
     }
 
     false
-}
-
-fn get_version() -> String {
-    // Set during CI
-    let version_build = option_env!("BUILD_SHORT_SHA").unwrap_or("dev");
-
-    format!("{}-{}", env!("CARGO_PKG_VERSION"), version_build)
 }
 
 type LoggerGuard = tracing_appender::non_blocking::WorkerGuard;
