@@ -7,7 +7,7 @@ use hyper_util::rt::{TokioExecutor, TokioTimer};
 use lambda_extension::{LambdaTelemetryRecord, NextEvent};
 use rotel::bounded_channel::bounded;
 use rotel::init::agent::Agent;
-use rotel::init::args::AgentRun;
+use rotel::init::args::{AgentRun, Exporter};
 use rotel::init::misc::bind_endpoints;
 use rotel::init::wait;
 use rotel::lambda;
@@ -129,6 +129,18 @@ async fn run_agent(
 
         // Ensure this is set low
         agent_args.otlp_exporter.otlp_exporter_batch_timeout = "200ms".parse().unwrap();
+
+        if agent_args.exporter == Exporter::Otlp {
+            if agent_args.otlp_exporter.otlp_exporter_endpoint.is_none() &&
+                agent_args.otlp_exporter.otlp_exporter_traces_endpoint.is_none() &&
+                agent_args.otlp_exporter.otlp_exporter_metrics_endpoint.is_none() &&
+                agent_args.otlp_exporter.otlp_exporter_logs_endpoint.is_none() {
+                // todo: We should be able to startup with no config and not fail, identify best
+                // default mode.
+                info!("Automatically selecting blackhole exporter due to missing endpoint configs");
+                agent_args.exporter = Exporter::Blackhole;
+            }
+        }
 
         let agent = Agent::default();
         let env = env.clone();
