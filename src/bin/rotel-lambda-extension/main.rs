@@ -223,6 +223,8 @@ fn setup_logging(log_level: &str) -> std::io::Result<LoggerGuard> {
         .with_target(false)
         // cloudwatch will add time
         .without_time()
+        // cloudwatch doesn't play nice with escape codes
+        .with_ansi(false)
         .compact();
 
     let subscriber = Registry::default()
