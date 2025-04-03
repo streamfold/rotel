@@ -5,7 +5,7 @@ use crate::lambda::types::{
 };
 use bytes::Bytes;
 use http::header::CONTENT_TYPE;
-use http::{Method, Request};
+use http::{HeaderValue, Method, Request};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -24,7 +24,8 @@ pub async fn register(
     let req = Request::builder()
         .method(Method::POST)
         .uri(&url)
-        .header(constants::EXTENSION_NAME_HEADER, "rotel")
+        // This value must match the binary name, or this call will 403
+        .header(constants::EXTENSION_NAME_HEADER, "rotel-lambda-extension")
         .header(
             constants::EXTENSION_ACCEPT_FEATURE,
             constants::EXTENSION_FEATURE_ACCOUNTID,
@@ -144,8 +145,5 @@ fn lambda_api_url(path: &str) -> Result<String, BoxError> {
     let base_api = std::env::var("AWS_LAMBDA_RUNTIME_API")
         .map_err(|e| format!("Unable to read AWS_LAMBDA_RUNTIME_API: {:?}", e))?;
 
-    let base_api_url: Url = Url::parse(base_api.as_str())
-        .map_err(|e| format!("Unable to parse the Lambda URL: {:?}", e))?;
-
-    Ok(format!("{}{}", base_api_url, path))
+    Ok(format!("http://{}{}", base_api, path))
 }
