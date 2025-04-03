@@ -5,7 +5,7 @@ use crate::lambda::types::{
 };
 use bytes::Bytes;
 use http::header::CONTENT_TYPE;
-use http::{HeaderValue, Method, Request};
+use http::{Method, Request};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -13,7 +13,6 @@ use hyper_util::client::legacy::Client;
 use lambda_extension::NextEvent;
 use std::net::SocketAddr;
 use tower::BoxError;
-use url::Url;
 
 pub async fn register(
     client: Client<HttpConnector, Full<Bytes>>,
