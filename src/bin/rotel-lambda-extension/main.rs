@@ -37,7 +37,7 @@ struct Arguments {
     /// Log configuration
     log_level: String,
 
-    #[arg(long, env = "ROTEL_TELEMETRY_ENDPOINT", default_value = "localhost:8990", value_parser = args::parse_endpoint)]
+    #[arg(long, env = "ROTEL_TELEMETRY_ENDPOINT", default_value = "0.0.0.0:8990", value_parser = args::parse_endpoint)]
     telemetry_endpoint: SocketAddr,
 
     #[arg(
