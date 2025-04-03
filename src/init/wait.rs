@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::time::Duration;
 use tokio::task::JoinSet;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tracing::error;
 
 pub async fn wait_for_any_task(

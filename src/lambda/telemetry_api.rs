@@ -162,8 +162,8 @@ where
         // We should avoid logging on Extension or Function events, since it can cause a logging
         // loop
         match event.record {
-            LambdaTelemetryRecord::Extension{..} => break,
-            LambdaTelemetryRecord::Function{..} => break,
+            LambdaTelemetryRecord::Extension { .. } => break,
+            LambdaTelemetryRecord::Function { .. } => break,
             _ => {
                 // Keep this for debugging for now
                 info!("received telemetry event from lambda: {:?}", event);

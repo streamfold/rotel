@@ -8,8 +8,8 @@ use http::header::CONTENT_TYPE;
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use http_body_util::Full;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use lambda_extension::NextEvent;
 use std::net::SocketAddr;
 use tower::BoxError;
@@ -34,7 +34,12 @@ pub async fn register(
 
     let resp = client.request(req).await?;
     if resp.status() != 200 {
-        return Err(format!("Can not register extension at {}, got {}", url, resp.status()).into());
+        return Err(format!(
+            "Can not register extension at {}, got {}",
+            url,
+            resp.status()
+        )
+        .into());
     }
 
     let (parts, body) = resp.into_parts();
@@ -48,7 +53,7 @@ pub async fn register(
             Err(e) => {
                 return Err(
                     format!("Can not get extension id, got invalid header value: {}", e).into(),
-                )
+                );
             }
         },
     };
@@ -134,7 +139,12 @@ pub async fn telemetry_subscribe(
 
     let resp = client.request(req).await?;
     if resp.status() != 200 {
-        return Err(format!("Can not subscribe to telemetry API at {}, got {}", url, resp.status()).into());
+        return Err(format!(
+            "Can not subscribe to telemetry API at {}, got {}",
+            url,
+            resp.status()
+        )
+        .into());
     }
 
     Ok(())
