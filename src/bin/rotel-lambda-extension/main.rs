@@ -132,7 +132,7 @@ fn load_env_file(env_file: &String) -> Result<(), BoxError> {
     let subs = load_env_file_updates(env_file)?;
 
     for (key, val) in subs {
-        unsafe{env::set_var(key, val)}
+        unsafe { env::set_var(key, val) }
     }
 
     Ok(())
@@ -348,10 +348,7 @@ mod test {
                     "ROTEL_DOUBLE_SUB".to_string(),
                     "frontend-123abc".to_string()
                 ),
-                (
-                    "ROTEL_ESCAPED".to_string(),
-                    "NotMe${TEAM}".to_string()
-                )
+                ("ROTEL_ESCAPED".to_string(), "NotMe${TEAM}".to_string())
             ],
             updates
         );
