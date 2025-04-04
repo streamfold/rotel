@@ -1,3 +1,5 @@
+extern crate core;
+
 use bytes::Bytes;
 use clap::{Parser, ValueEnum};
 use http_body_util::Full;
@@ -15,6 +17,7 @@ use rotel::lambda;
 use rotel::lambda::telemetry_api::TelemetryAPI;
 use rotel::listener::Listener;
 use std::collections::HashMap;
+use std::env;
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -54,8 +57,21 @@ struct Arguments {
     /// Environment
     environment: String,
 
+    // This is ignored in these options, but we keep it here to avoid an error on unknown
+    // options
+    #[arg(long)]
+    env_file: Option<String>,
+
     #[command(flatten)]
     agent_args: Box<AgentRun>,
+}
+
+// Minimal option to allow us to parse out the env from a file
+#[derive(Debug, Parser)]
+#[clap(ignore_errors = true)]
+struct EnvFileArguments {
+    #[arg(long, env = "ROTEL_ENV_FILE")]
+    env_file: Option<String>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
@@ -66,6 +82,15 @@ pub enum LogFormatArg {
 
 fn main() -> ExitCode {
     let start_time = Instant::now();
+
+    let env_opt = EnvFileArguments::parse();
+    if let Some(env_file) = env_opt.env_file {
+        if let Err(e) = load_env_file(&env_file) {
+            eprintln!("Can not load envfile: {}", e);
+            return ExitCode::FAILURE;
+        }
+    }
+
     let opt = Arguments::parse();
 
     let _logger = setup_logging(&opt.log_level);
@@ -101,6 +126,27 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+fn load_env_file(env_file: &String) -> Result<(), BoxError> {
+    let subs = load_env_file_updates(env_file)?;
+
+    for (key, val) in subs {
+        unsafe{env::set_var(key, val)}
+    }
+
+    Ok(())
+}
+fn load_env_file_updates(env_file: &String) -> Result<Vec<(String, String)>, BoxError> {
+    let mut updates = Vec::new();
+    for item in dotenvy::from_filename_iter(env_file)
+        .map_err(|e| format!("failed to open env file {}: {}", env_file, e))?
+    {
+        let (key, val) = item.map_err(|e| format!("unable to parse line: {}", e))?;
+        updates.push((key, val))
+    }
+
+    Ok(updates)
 }
 
 #[tokio::main]
@@ -271,4 +317,54 @@ fn build_hyper_client() -> Client<HttpConnector, Full<Bytes>> {
         .pool_max_idle_per_host(5)
         .timer(TokioTimer::new())
         .build::<_, Full<Bytes>>(HttpConnector::new())
+}
+
+#[cfg(test)]
+mod test {
+    use crate::load_env_file_updates;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_env_var_subs() {
+        let tf = write_env_file(vec![
+            "ROTEL_FOO=nottouched",
+            "ROTEL_SUB=\"Bearer ${TOKEN}\"",
+            "ROTEL_DOUBLE_SUB=${TEAM}-${TOKEN}",
+            "ROTEL_ESCAPED=\"NotMe\\${TEAM}\"",
+        ]);
+
+        unsafe { std::env::set_var("TOKEN", "123abc") };
+        unsafe { std::env::set_var("TEAM", "frontend") };
+
+        let tf_path = tf.path().to_str().unwrap().to_string();
+        let updates = load_env_file_updates(&tf_path).unwrap();
+
+        assert_eq!(
+            vec![
+                ("ROTEL_FOO".to_string(), "nottouched".to_string()),
+                ("ROTEL_SUB".to_string(), "Bearer 123abc".to_string()),
+                (
+                    "ROTEL_DOUBLE_SUB".to_string(),
+                    "frontend-123abc".to_string()
+                ),
+                (
+                    "ROTEL_ESCAPED".to_string(),
+                    "NotMe${TEAM}".to_string()
+                )
+            ],
+            updates
+        );
+    }
+
+    fn write_env_file(envs: Vec<&str>) -> NamedTempFile {
+        let mut tf = NamedTempFile::new().unwrap();
+
+        for env in envs {
+            tf.write_all(format!("{}\n", env).as_ref()).unwrap();
+        }
+        tf.flush().unwrap();
+
+        tf
+    }
 }
