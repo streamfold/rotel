@@ -51,6 +51,7 @@ pin-project = "1.1.10"
 futures-util = "0.3.31"
 lambda-extension = "0.11.0"
 serde = { version = "1.0.217", features = ["derive"] }
+dotenvy = "0.15.7"
 
 [dev-dependencies]
 tokio-test = "0.4.4"
@@ -58,6 +59,7 @@ utilities = { path = "utilities" }
 httpmock = "0.7.0"
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tracing-test = "0.2.5"
+tempfile = "3.19.1"
 
 [build-dependencies]
 prost-build = "0.13.4"
