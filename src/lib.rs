@@ -4,6 +4,7 @@ pub mod bounded_channel;
 pub mod exporters;
 pub mod init;
 pub mod listener;
+mod processor;
 pub mod receivers;
 pub mod semconv;
 pub mod telemetry;

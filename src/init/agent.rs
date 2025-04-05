@@ -22,17 +22,17 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::select;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::task::JoinSet;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{timeout_at, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{error, info};
@@ -172,18 +172,21 @@ impl Agent {
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
             build_traces_batch_config(agent.otlp_exporter.clone()),
+            agent.otlp_with_trace_processor.clone(),
         );
 
         let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
             metrics_pipeline_in_rx.clone(),
             metrics_pipeline_out_tx,
             build_metrics_batch_config(agent.otlp_exporter.clone()),
+            vec![],
         );
 
         let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
             logs_pipeline_in_rx.clone(),
             logs_pipeline_out_tx,
             build_logs_batch_config(agent.otlp_exporter.clone()),
+            vec![],
         );
 
         // Internal metrics
@@ -196,6 +199,7 @@ impl Agent {
             internal_metrics_pipeline_in_rx.clone(),
             internal_metrics_pipeline_out_tx,
             build_metrics_batch_config(agent.otlp_exporter.clone()),
+            vec![],
         );
 
         let internal_metrics_sdk_exporter =

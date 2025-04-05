@@ -82,6 +82,9 @@ pub struct AgentRun {
     )]
     pub otlp_receiver_logs_http_path: String,
 
+    #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append)]
+    pub otlp_with_trace_processor: Vec<String>,
+
     /// Exporter
     #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]
     pub exporter: Exporter,

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
+use crate::processor::model::PythonProcessable;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
+use std::env;
 use std::error::Error;
 use tokio::select;
 use tokio::time::Instant;
@@ -17,6 +19,7 @@ pub struct Pipeline<T> {
     receiver: BoundedReceiver<Vec<T>>,
     sender: BoundedSender<Vec<T>>,
     batch_config: BatchConfig,
+    processors: Vec<String>,
 }
 
 pub trait Inspect<T> {
@@ -25,18 +28,20 @@ pub trait Inspect<T> {
 
 impl<T> Pipeline<T>
 where
-    T: BatchSizer + BatchSplittable,
+    T: BatchSizer + BatchSplittable + PythonProcessable,
     Vec<T>: Send,
 {
     pub fn new(
         receiver: BoundedReceiver<Vec<T>>,
         sender: BoundedSender<Vec<T>>,
         batch_config: BatchConfig,
+        processors: Vec<String>,
     ) -> Self {
         Self {
             receiver,
             sender,
             batch_config,
+            processors,
         }
     }
 
@@ -62,7 +67,21 @@ where
             NestedBatch::<T>::new(self.batch_config.max_size, self.batch_config.timeout);
 
         let mut batch_timer = tokio::time::interval(batch.get_timeout());
-
+        let mut processors: Vec<String> = vec![];
+        let path = env::current_dir();
+        if path.is_err() {
+            panic!("env.current_dir() failed {:?}", path.err())
+        }
+        let path = path.unwrap();
+        for file in &self.processors {
+            let script = format!("{}/{}", path.clone().to_str().unwrap(), file);
+            println!("script path is {:?}", script);
+            let code = std::fs::read_to_string(script);
+            if code.is_err() {
+                panic!("reading script failed {:?}", code.err());
+            }
+            processors.push(code.unwrap());
+        }
         loop {
             select! {
                 biased;
@@ -106,13 +125,24 @@ where
                         return Ok(());
                     }
 
-                    let item = item.unwrap();
-
+                    let mut items = item.unwrap();
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
-                    inspector.inspect(&item);
-
-                    let maybe_popped = batch.offer(item);
+                    inspector.inspect(&items);
+                    if !processors.is_empty() {
+                        for p in &processors {
+                            let mut new_items = Vec::new();
+                            while !items.is_empty() {
+                                let item = items.pop();
+                                if item.is_some() {
+                                    let result = item.unwrap().process(p);
+                                    new_items.push(result);
+                                }
+                            }
+                            items = new_items;
+                        }
+                    }
+                    let maybe_popped = batch.offer(items);
                     if let Ok(Some(popped)) = maybe_popped { // todo: handle error?
                         if let Err(e) = self.send_item(popped, &pipeline_token).await {
                             return match e {
