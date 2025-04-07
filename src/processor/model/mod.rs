@@ -1,4 +1,4 @@
-mod otel_transform;
+pub mod otel_transform;
 mod py_transform;
 
 use crate::processor::model::Value::{BoolValue, BytesValue, DoubleValue, IntValue, StringValue};

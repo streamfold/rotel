@@ -677,7 +677,6 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::processor::mocks::prepare_resource_spans;
     use crate::processor::model::Value::{BoolValue, StringValue};
     use pyo3::ffi::c_str;
     use std::ffi::CString;
@@ -692,6 +691,25 @@ mod tests {
         });
     }
 
+    fn run_script<'py, T: IntoPyObject<'py>>(script: &str, py: Python<'py>, pv: T) -> PyResult<()> {
+        let sys = py.import("sys")?;
+        sys.setattr("stdout", LoggingStdout.into_py(py))?;
+        let code = std::fs::read_to_string(format!("./contrib/processor/tests/{}", script))?;
+        let py_mod = PyModule::from_code(
+            py,
+            CString::new(code)?.as_c_str(),
+            c_str!("example.py"),
+            c_str!("example"),
+        )?;
+
+        let result_py_object = py_mod.getattr("process")?.call1((pv,));
+        if result_py_object.is_err() {
+            let err = result_py_object.unwrap_err();
+            return Err(err);
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_read_any_value() {
         initialize();
@@ -703,30 +721,8 @@ mod tests {
         let pv = PyAnyValue {
             inner: any_value_arc.clone(),
         };
-
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/read_value_test.py").unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((pv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
-
+        Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
+            .unwrap();
         let av = any_value_arc.lock().unwrap().clone().unwrap();
         let avx = av.value.lock().unwrap().clone();
         match avx.unwrap() {
@@ -745,34 +741,11 @@ mod tests {
         let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
             value: arc_value.clone(),
         })));
-
         let pv = PyAnyValue {
             inner: any_value_arc.clone(),
         };
-
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/write_string_value_test.py")
-                    .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((pv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
+            .unwrap();
         let av = any_value_arc.lock().unwrap().clone().unwrap();
         let avx = av.value.lock().unwrap().clone();
         match avx.unwrap() {
@@ -796,32 +769,11 @@ mod tests {
             inner: any_value_arc.clone(),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/write_bool_value_test.py")
-                    .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((pv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
+            .unwrap();
         match arc_value.lock().unwrap().clone().unwrap() {
             BoolValue(b) => {
-                assert_eq!(b, true);
+                assert!(b);
             }
             _ => panic!("wrong type"),
         }
@@ -844,29 +796,8 @@ mod tests {
             })),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/read_key_value_key_test.py")
-                    .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((kv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> { run_script("read_key_value_key_test.py", py, kv) })
+            .unwrap();
         let av = key.clone().lock().unwrap().clone();
         assert_eq!(av, "key".to_string());
         println!("{:?}", av);
@@ -888,29 +819,10 @@ mod tests {
             })),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/write_key_value_key_test.py")
-                    .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((kv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_key_test.py", py, kv)
+        })
+        .unwrap();
         let av = key.clone().lock().unwrap().clone();
         assert_eq!(av, "new_key".to_string());
         println!("{:?}", av);
@@ -932,29 +844,10 @@ mod tests {
             })),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/read_key_value_value_test.py")
-                    .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((kv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_key_value_value_test.py", py, kv)
+        })
+        .unwrap();
         match arc_value.lock().unwrap().clone().unwrap() {
             StringValue(s) => {
                 assert_eq!(s, "foo");
@@ -980,29 +873,10 @@ mod tests {
             })),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code =
-                std::fs::read_to_string("./contrib/processor/tests/write_key_value_value_test.py")
-                    .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((kv,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_value_test.py", py, kv)
+        })
+        .unwrap();
         match arc_value.lock().unwrap().clone().unwrap() {
             StringValue(s) => {
                 assert_eq!(s, "changed");
@@ -1032,30 +906,10 @@ mod tests {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/read_resource_attributes_test.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((resource,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_resource_attributes_test.py", py, resource)
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1078,30 +932,14 @@ mod tests {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/write_resource_attributes_key_value_key_test.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "write_resource_attributes_key_value_key_test.py",
                 py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((resource,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+                resource,
+            )
+        })
+        .unwrap();
         let av = key.clone().lock().unwrap().clone();
         assert_eq!(av, "new_key".to_string());
         println!("{:?}", av);
@@ -1127,30 +965,14 @@ mod tests {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/write_resource_attributes_key_value_value_test.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "write_resource_attributes_key_value_value_test.py",
                 py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((resource,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+                resource,
+            )
+        })
+        .unwrap();
         match arc_value.lock().unwrap().clone().unwrap() {
             StringValue(s) => {
                 assert_eq!(s, "changed");
@@ -1180,30 +1002,10 @@ mod tests {
             attributes: attrs_arc.clone(),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/resource_attributes_append_attribute.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((resource,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_attributes_append_attribute.py", py, resource)
+        })
+        .unwrap();
         println!("{:#?}", attrs_arc.lock().unwrap());
     }
 
@@ -1227,30 +1029,10 @@ mod tests {
             attributes: attrs_arc.clone(),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/resource_attributes_set_attributes.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((resource,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_attributes_set_attributes.py", py, resource)
+        })
+        .unwrap();
         println!("{:#?}", attrs_arc.lock().unwrap());
         let attrs = attrs_arc.lock().unwrap();
         assert_eq!(2, attrs.len());
@@ -1271,76 +1053,39 @@ mod tests {
     #[test]
     fn resource_spans_append_attributes() {
         initialize();
-
-        let resource_spans = prepare_resource_spans();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans = crate::processor::model::otel_transform::transform(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
             schema_url: Arc::new(Mutex::new("".to_string())),
         };
-
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/resource_spans_append_attribute.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((py_resource_spans,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_spans_append_attribute.py", py, py_resource_spans)
+        })
+        .unwrap();
         println!("{:#?}", resource_spans.resource.lock().unwrap());
     }
 
     #[test]
     fn resource_spans_iterate_spans() {
         initialize();
-
-        let resource_spans = prepare_resource_spans();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans = crate::processor::model::otel_transform::transform(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: Arc::new(Mutex::new("".to_string())),
         };
 
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let sys = py.import("sys")?;
-            sys.setattr("stdout", LoggingStdout.into_py(py))?;
-            let code = std::fs::read_to_string(
-                "./contrib/processor/tests/resource_spans_iterate_spans.py",
-            )
-            .unwrap();
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(code)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-
-            let result_py_object = py_mod.getattr("process")?.call1((py_resource_spans,));
-            if result_py_object.is_err() {
-                let err = result_py_object.unwrap_err();
-                return Err(err);
-            }
-            Ok(())
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap().to_string())
-        }
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
+        })
+        .unwrap();
         println!("{:#?}", resource_spans.resource.lock().unwrap());
     }
 }
