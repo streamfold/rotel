@@ -123,11 +123,37 @@ impl PyKeyValue {
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_bool_value<'py>(key: &str, py: Python<'py>, value: PyObject) -> PyResult<PyKeyValue> {
+    fn new_bool_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
         let b = value.extract::<bool>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = AnyValue {
             value: Arc::new(Mutex::new(Some(BoolValue(b)))),
+        };
+        let value = Arc::new(Mutex::new(Some(value)));
+        Ok(PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        })
+    }
+    // Helper methods for class
+    #[staticmethod]
+    fn new_int_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+        let i = value.extract::<i64>(py)?;
+        let key = Arc::new(Mutex::new(key.to_string()));
+        let value = AnyValue {
+            value: Arc::new(Mutex::new(Some(IntValue(i)))),
+        };
+        let value = Arc::new(Mutex::new(Some(value)));
+        Ok(PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        })
+    }
+    // Helper methods for class
+    #[staticmethod]
+    fn new_double_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+        let f = value.extract::<f64>(py)?;
+        let key = Arc::new(Mutex::new(key.to_string()));
+        let value = AnyValue {
+            value: Arc::new(Mutex::new(Some(DoubleValue(f)))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
         Ok(PyKeyValue {
