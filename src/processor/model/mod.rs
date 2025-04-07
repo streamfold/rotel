@@ -14,13 +14,14 @@ pub struct AnyValue {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 pub enum Value {
     StringValue(String),
     BoolValue(bool),
     IntValue(i64),
     DoubleValue(f64),
     ArrayValue(ArrayValue),
-    KvlistValue(KeyValueList),
+    KvListValue(KeyValueList),
     BytesValue(Vec<u8>),
 }
 

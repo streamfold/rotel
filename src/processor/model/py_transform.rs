@@ -110,7 +110,7 @@ pub fn transform_resource(
                         })
                     }
                     Value::ArrayValue(_) => {}
-                    Value::KvlistValue(_) => {}
+                    Value::KvListValue(_) => {}
                     BytesValue(b) => {
                         new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
                             key,
