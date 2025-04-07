@@ -1,15 +1,12 @@
 pub mod otel_transform;
 mod py_transform;
 
-use crate::processor::model::Value::{BoolValue, BytesValue, DoubleValue, IntValue, StringValue};
-use crate::processor::py::rotel_python_processor_sdk;
 use crate::processor::py::PyResourceSpans;
-use pyo3::ffi::c_str;
 use pyo3::prelude::*;
 use std::ffi::CString;
-use std::mem;
-use std::sync::{Arc, Mutex, MutexGuard, Once};
-use tracing::{error, event};
+use std::sync::{Arc, Mutex};
+use tower::BoxError;
+use tracing::error;
 
 #[derive(Debug, Clone)]
 pub struct AnyValue {
@@ -53,7 +50,7 @@ pub struct Resource {
 pub struct ResourceSpans {
     pub resource: Arc<Mutex<Option<Resource>>>,
     pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>,
-    pub schema_url: Arc<Mutex<String>>,
+    pub _schema_url: Arc<Mutex<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,22 +85,37 @@ pub struct Status {
     pub code: i32,
 }
 
-static INIT: Once = Once::new();
-
-pub fn initialize(processor: &str) {
-    INIT.call_once(|| {
-        pyo3::append_to_inittab!(rotel_python_processor_sdk);
-        pyo3::prepare_freethreaded_python();
-        let res = Python::with_gil(|py| -> PyResult<()> {
-            let py_mod = PyModule::from_code(
-                py,
-                CString::new(processor)?.as_c_str(),
-                c_str!("example.py"),
-                c_str!("example"),
-            )?;
-            Ok(())
-        });
+// static INIT: Once = Once::new();
+//
+// pub fn initialize(processor: &str) {
+//     INIT.call_once(|| {
+//         pyo3::append_to_inittab!(rotel_python_processor_sdk);
+//         pyo3::prepare_freethreaded_python();
+//         let res = Python::with_gil(|py| -> PyResult<()> {
+//             let py_mod = PyModule::from_code(
+//                 py,
+//                 CString::new(processor)?.as_c_str(),
+//                 c_str!("example.py"),
+//                 c_str!("example"),
+//             )?;
+//             Ok(())
+//         });
+//     });
+// }
+pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
+    let res = Python::with_gil(|py| -> PyResult<()> {
+        PyModule::from_code(
+            py,
+            CString::new(code)?.as_c_str(),
+            CString::new(script)?.as_c_str(),
+            CString::new(module)?.as_c_str(),
+        )?;
+        Ok(())
     });
+    match res {
+        Ok(_) => Ok(()),
+        Err(e) => Err(BoxError::from(e.to_string())),
+    }
 }
 
 pub trait PythonProcessable {
@@ -112,7 +124,7 @@ pub trait PythonProcessable {
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
     fn process(self, processor: &str) -> Self {
-        initialize(processor);
+        //initialize(processor);
         let inner = otel_transform::transform(self);
         // Build the PyObject
         let spans = PyResourceSpans {
@@ -127,7 +139,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
             //     c_str!("example.py"),
             //     c_str!("example"),
             // )?;
-            let py_mod = PyModule::import(py, "example")?;
+            let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process")?.call1((spans,));
             if result_py_object.is_err() {
                 let err = result_py_object.unwrap_err();
@@ -159,14 +171,14 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, processor: &str) -> Self {
+    fn process(self, _processor: &str) -> Self {
         // Noop
         self
     }
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, processor: &str) -> Self {
+    fn process(self, _processor: &str) -> Self {
         // Noop
         self
     }

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
-use crate::processor::model::PythonProcessable;
+use crate::processor::model::{PythonProcessable, register_processor};
+use crate::processor::py::rotel_python_processor_sdk;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
@@ -9,9 +10,11 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 use std::env;
 use std::error::Error;
+use std::sync::Once;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use tower::BoxError;
 use tracing::{debug, error};
 
 #[derive(Clone)]
@@ -25,6 +28,8 @@ pub struct Pipeline<T> {
 pub trait Inspect<T> {
     fn inspect(&self, value: &[T]);
 }
+
+static PROCESSOR_INIT: Once = Once::new();
 
 impl<T> Pipeline<T>
 where
@@ -54,8 +59,27 @@ where
         if let Err(e) = res {
             error!(error = e, "Pipeline returned from run loop with error");
         }
-
         Ok(())
+    }
+
+    fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
+        let mut processor_modules = vec![];
+        let path = env::current_dir()?;
+        if !self.processors.is_empty() {
+            PROCESSOR_INIT.call_once(|| {
+                pyo3::append_to_inittab!(rotel_python_processor_sdk);
+                pyo3::prepare_freethreaded_python();
+            });
+        }
+        let processor_idx = 0;
+        for file in &self.processors {
+            let script = format!("{}/{}", path.clone().to_str().unwrap(), file);
+            let code = std::fs::read_to_string(script)?;
+            let module = format!("rotel_processor_{}", processor_idx);
+            register_processor(code, file.clone(), module.clone())?;
+            processor_modules.push(module)
+        }
+        Ok(processor_modules)
     }
 
     async fn run(
@@ -65,23 +89,10 @@ where
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let mut batch =
             NestedBatch::<T>::new(self.batch_config.max_size, self.batch_config.timeout);
-
         let mut batch_timer = tokio::time::interval(batch.get_timeout());
-        let mut processors: Vec<String> = vec![];
-        let path = env::current_dir();
-        if path.is_err() {
-            panic!("env.current_dir() failed {:?}", path.err())
-        }
-        let path = path.unwrap();
-        for file in &self.processors {
-            let script = format!("{}/{}", path.clone().to_str().unwrap(), file);
-            println!("script path is {:?}", script);
-            let code = std::fs::read_to_string(script);
-            if code.is_err() {
-                panic!("reading script failed {:?}", code.err());
-            }
-            processors.push(code.unwrap());
-        }
+
+        let processor_modules = self.initialize_processors()?;
+
         loop {
             select! {
                 biased;
@@ -129,18 +140,16 @@ where
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
                     inspector.inspect(&items);
-                    if !processors.is_empty() {
-                        for p in &processors {
-                            let mut new_items = Vec::new();
-                            while !items.is_empty() {
-                                let item = items.pop();
-                                if item.is_some() {
-                                    let result = item.unwrap().process(p);
-                                    new_items.push(result);
-                                }
-                            }
-                            items = new_items;
-                        }
+                    for p in &processor_modules {
+                       let mut new_items = Vec::new();
+                       while !items.is_empty() {
+                           let item = items.pop();
+                           if item.is_some() {
+                                let result = item.unwrap().process(p);
+                                new_items.push(result);
+                           }
+                       }
+                       items = new_items;
                     }
                     let maybe_popped = batch.offer(items);
                     if let Ok(Some(popped)) = maybe_popped { // todo: handle error?

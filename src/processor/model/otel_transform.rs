@@ -16,7 +16,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     let mut resource_span = ResourceSpans {
         resource: Arc::new(Mutex::new(None)),
         scope_spans: Arc::new(Mutex::new(vec![])),
-        schema_url: Arc::new(Mutex::new("".to_string())),
+        _schema_url: Arc::new(Mutex::new("".to_string())),
     };
     if rs.resource.is_some() {
         let resource = rs.resource.unwrap();
