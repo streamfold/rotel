@@ -72,79 +72,66 @@ fn build_rotel_sdk_resource(
         let any_value = a.value;
         match any_value {
             None => {}
-            Some(v) => {
-                let v = v;
-                match v.value {
-                    None => {
+            Some(v) => match v.value {
+                None => {
+                    let kv = crate::processor::model::KeyValue {
+                        key,
+                        value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                            value: Arc::new(Mutex::new(None)),
+                        }))),
+                    };
+                    kvs.push(Arc::new(Mutex::new(kv)));
+                }
+                Some(v) => match v {
+                    Value::StringValue(s) => {
                         let kv = crate::processor::model::KeyValue {
                             key,
                             value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
-                                value: Arc::new(Mutex::new(None)),
+                                value: Arc::new(Mutex::new(Some(StringValue(s)))),
                             }))),
                         };
                         kvs.push(Arc::new(Mutex::new(kv)));
                     }
-                    Some(v) => match v {
-                        Value::StringValue(s) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(StringValue(s)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        Value::BoolValue(b) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(BoolValue(b)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        Value::IntValue(i) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(IntValue(i)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        Value::DoubleValue(d) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(DoubleValue(d)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        Value::ArrayValue(_) => {}
-                        Value::KvlistValue(_) => {}
-                        Value::BytesValue(b) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(BytesValue(b)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                    },
-                }
-            }
+                    Value::BoolValue(b) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(BoolValue(b)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                    Value::IntValue(i) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(IntValue(i)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                    Value::DoubleValue(d) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(DoubleValue(d)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                    Value::ArrayValue(_) => {}
+                    Value::KvlistValue(_) => {}
+                    Value::BytesValue(b) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(BytesValue(b)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                },
+            },
         }
     }
     kvs
