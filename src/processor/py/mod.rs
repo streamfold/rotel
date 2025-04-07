@@ -217,6 +217,20 @@ impl PyResource {
     fn attributes(&self) -> PyResult<PyAttributes> {
         Ok(PyAttributes(self.attributes.clone()))
     }
+    #[setter]
+    fn set_attributes(&mut self, new_value: &PyAttributes) -> PyResult<()> {
+        let mut attrs = self.attributes.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = new_value.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        attrs.clear();
+        for kv in v.iter() {
+            attrs.push(kv.clone())
+        }
+        Ok(())
+    }
 }
 
 #[pyclass]
@@ -224,6 +238,11 @@ struct PyAttributes(Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>);
 
 #[pymethods]
 impl PyAttributes {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyAttributes(Arc::new(Mutex::new(vec![]))))
+    }
+
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyAttributesIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -649,6 +668,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAnyValue>()?;
     m.add_class::<PyKeyValue>()?;
     m.add_class::<PyResource>()?;
+    m.add_class::<PyAttributes>()?;
     m.add_class::<PySpan>()?;
     Ok(())
 }
@@ -1185,6 +1205,67 @@ mod tests {
             panic!("{}", res.err().unwrap().to_string())
         }
         println!("{:#?}", attrs_arc.lock().unwrap());
+    }
+
+    #[test]
+    fn resource_attributes_set_attributes() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+        let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
+        let resource = PyResource {
+            attributes: attrs_arc.clone(),
+        };
+
+        let res = Python::with_gil(|py| -> PyResult<()> {
+            let sys = py.import("sys")?;
+            sys.setattr("stdout", LoggingStdout.into_py(py))?;
+            let code = std::fs::read_to_string(
+                "./contrib/processor/tests/resource_attributes_set_attributes.py",
+            )
+            .unwrap();
+            let py_mod = PyModule::from_code(
+                py,
+                CString::new(code)?.as_c_str(),
+                c_str!("example.py"),
+                c_str!("example"),
+            )?;
+
+            let result_py_object = py_mod.getattr("process")?.call1((resource,));
+            if result_py_object.is_err() {
+                let err = result_py_object.unwrap_err();
+                return Err(err);
+            }
+            Ok(())
+        });
+        if res.is_err() {
+            panic!("{}", res.err().unwrap().to_string())
+        }
+        println!("{:#?}", attrs_arc.lock().unwrap());
+        let attrs = attrs_arc.lock().unwrap();
+        assert_eq!(2, attrs.len());
+        for kv in attrs.iter() {
+            let guard = kv.lock();
+            let kv_guard = guard.unwrap();
+            let key = kv_guard.key.lock().unwrap().to_string();
+            let value = kv_guard.value.lock().unwrap();
+            assert_ne!(key, "key");
+            assert!(key == "os.name" || key == "os.version");
+            assert!(value.is_some());
+            let av = value.clone().unwrap();
+            let value = av.value.lock().unwrap();
+            assert!(value.is_some());
+        }
     }
 
     #[test]
