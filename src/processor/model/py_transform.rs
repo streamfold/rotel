@@ -1,5 +1,5 @@
 use crate::processor::model::Value::{BoolValue, BytesValue, DoubleValue, IntValue, StringValue};
-use crate::processor::model::{Resource, ScopeSpans, Span, Value};
+use crate::processor::model::{AnyValue, Resource, ScopeSpans, Span, Value};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -63,7 +63,8 @@ pub fn transform_spans(
 pub fn transform_resource(
     resource: Resource,
 ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
-    let attributes = resource.attributes.lock().unwrap();
+    let attributes = Arc::into_inner(resource.attributes).unwrap();
+    let attributes = attributes.into_inner().unwrap();
     let mut new_attrs = vec![];
     for attr in attributes.iter() {
         let kv = attr.lock().unwrap();
@@ -71,62 +72,69 @@ pub fn transform_resource(
         let key = key.to_string();
         let mut any_value = kv.value.lock().unwrap();
         let any_value = any_value.take();
-        if any_value.is_some() {
-            let value = any_value.unwrap();
-            let value = value.value.lock().unwrap().take();
-            if value.is_some() {
-                let value = value.unwrap();
-                match value {
-                    StringValue(s) => {
-                        new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
-                            key,
-                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s))
-                            }),
-                        })
-                    }
-                    BoolValue(b) => {
-                        new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
-                            key,
-                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b))
-                            }),
-                        })
-                    }
-                    IntValue(i) => {
-                        new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
-                            key,
-                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i))
-                            }),
-                        })
-                    }
-                    DoubleValue(d) => {
-                        new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
-                            key,
-                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d))
-                            }),
-                        })
-                    }
-                    Value::ArrayValue(_) => {}
-                    Value::KvListValue(_) => {}
-                    BytesValue(b) => {
-                        new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
-                            key,
-                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b))
-                            }),
-                        })
-                    }
-                }
+        match any_value {
+            None => {}
+            Some(v) => {
+                let converted = convert_value(v);
+                new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key,
+                    value: Some(converted),
+                })
             }
-        } else {
-            new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue { key, value: None })
         }
     }
     Some(opentelemetry_proto::tonic::resource::v1::Resource {
         attributes: new_attrs,
         dropped_attributes_count: 0,
     })
+}
+
+pub fn convert_value(v: AnyValue) -> opentelemetry_proto::tonic::common::v1::AnyValue {
+    let inner_value = Arc::into_inner(v.value).unwrap();
+    let inner_value = inner_value.into_inner().unwrap();
+    if inner_value.is_none() {
+        return opentelemetry_proto::tonic::common::v1::AnyValue { value: None };
+    }
+    match inner_value.unwrap() {
+        StringValue(s) => opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)),
+        },
+        BoolValue(b) => opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)),
+        },
+        IntValue(i) => opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)),
+        },
+        DoubleValue(d) => opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)),
+        },
+        Value::ArrayValue(a) => {
+            let mut values = vec![];
+            let inner_values = Arc::into_inner(a.values).unwrap();
+            let inner_values = inner_values.into_inner().unwrap();
+            for v in inner_values.iter() {
+                let inner_v = Arc::into_inner(v.clone()).unwrap();
+                let inner_v = inner_v.into_inner().unwrap();
+                if inner_v.is_none() {
+                    values.push(opentelemetry_proto::tonic::common::v1::AnyValue { value: None })
+                } else {
+                    let converted = convert_value(inner_v.unwrap());
+                    values.push(converted);
+                }
+            }
+            opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(
+                        opentelemetry_proto::tonic::common::v1::ArrayValue { values },
+                    ),
+                ),
+            }
+        }
+        BytesValue(b) => opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b)),
+        },
+        // TODO get rid of after limplementing KV list
+        _ => opentelemetry_proto::tonic::common::v1::AnyValue { value: None },
+        //Value::KvListValue(_) => {}
+    }
 }
