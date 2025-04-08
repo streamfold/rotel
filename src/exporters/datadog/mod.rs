@@ -285,6 +285,7 @@ mod tests {
     extern crate utilities;
 
     use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::datadog::{DatadogTraceExporter, Region};
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;
@@ -297,6 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn success_and_retry() {
+        init_crypto();
         let server = MockServer::start();
         let addr = format!("http://127.0.0.1:{}", server.port());
 

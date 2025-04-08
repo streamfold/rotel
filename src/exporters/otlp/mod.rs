@@ -167,8 +167,9 @@ mod tests {
     use std::cell::RefCell;
     use std::error::Error;
     use std::net::SocketAddr;
-    use std::sync::{Arc, Mutex, Once};
+    use std::sync::{Arc, Mutex};
 
+    use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::otlp;
     use crate::exporters::otlp::exporter::Exporter;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
@@ -1291,15 +1292,5 @@ mod tests {
     ) -> Result<LogsServiceClient<Channel>, Box<dyn Error + Send + Sync + 'static>> {
         let e = format!("http://{}", endpoint);
         Ok(LogsServiceClient::connect(e).await?)
-    }
-
-    static INIT_CRYPTO: Once = Once::new();
-
-    fn init_crypto() {
-        INIT_CRYPTO.call_once(|| {
-            rustls::crypto::ring::default_provider()
-                .install_default()
-                .unwrap()
-        });
     }
 }
