@@ -174,18 +174,21 @@ impl Agent {
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
             build_traces_batch_config(agent.otlp_exporter.clone()),
+            agent.otlp_with_trace_processor.clone(),
         );
 
         let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
             metrics_pipeline_in_rx.clone(),
             metrics_pipeline_out_tx,
             build_metrics_batch_config(agent.otlp_exporter.clone()),
+            vec![],
         );
 
         let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
             logs_pipeline_in_rx.clone(),
             logs_pipeline_out_tx,
             build_logs_batch_config(agent.otlp_exporter.clone()),
+            vec![],
         );
 
         // Internal metrics
@@ -198,6 +201,7 @@ impl Agent {
             internal_metrics_pipeline_in_rx.clone(),
             internal_metrics_pipeline_out_tx,
             build_metrics_batch_config(agent.otlp_exporter.clone()),
+            vec![],
         );
 
         let internal_metrics_sdk_exporter =

@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
+use crate::processor::model::{PythonProcessable, register_processor};
+use crate::processor::py::rotel_python_processor_sdk;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
+use std::env;
 use std::error::Error;
+use std::sync::Once;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use tower::BoxError;
 use tracing::{debug, error};
 
 #[derive(Clone)]
@@ -17,26 +22,31 @@ pub struct Pipeline<T> {
     receiver: BoundedReceiver<Vec<T>>,
     sender: BoundedSender<Vec<T>>,
     batch_config: BatchConfig,
+    processors: Vec<String>,
 }
 
 pub trait Inspect<T> {
     fn inspect(&self, value: &[T]);
 }
 
+static PROCESSOR_INIT: Once = Once::new();
+
 impl<T> Pipeline<T>
 where
-    T: BatchSizer + BatchSplittable,
+    T: BatchSizer + BatchSplittable + PythonProcessable,
     Vec<T>: Send,
 {
     pub fn new(
         receiver: BoundedReceiver<Vec<T>>,
         sender: BoundedSender<Vec<T>>,
         batch_config: BatchConfig,
+        processors: Vec<String>,
     ) -> Self {
         Self {
             receiver,
             sender,
             batch_config,
+            processors,
         }
     }
 
@@ -49,8 +59,27 @@ where
         if let Err(e) = res {
             error!(error = e, "Pipeline returned from run loop with error");
         }
-
         Ok(())
+    }
+
+    fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
+        let mut processor_modules = vec![];
+        let path = env::current_dir()?;
+        if !self.processors.is_empty() {
+            PROCESSOR_INIT.call_once(|| {
+                pyo3::append_to_inittab!(rotel_python_processor_sdk);
+                pyo3::prepare_freethreaded_python();
+            });
+        }
+        let processor_idx = 0;
+        for file in &self.processors {
+            let script = format!("{}/{}", path.clone().to_str().unwrap(), file);
+            let code = std::fs::read_to_string(script)?;
+            let module = format!("rotel_processor_{}", processor_idx);
+            register_processor(code, file.clone(), module.clone())?;
+            processor_modules.push(module)
+        }
+        Ok(processor_modules)
     }
 
     async fn run(
@@ -60,8 +89,9 @@ where
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let mut batch =
             NestedBatch::<T>::new(self.batch_config.max_size, self.batch_config.timeout);
-
         let mut batch_timer = tokio::time::interval(batch.get_timeout());
+
+        let processor_modules = self.initialize_processors()?;
 
         loop {
             select! {
@@ -106,13 +136,22 @@ where
                         return Ok(());
                     }
 
-                    let item = item.unwrap();
-
+                    let mut items = item.unwrap();
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
-                    inspector.inspect(&item);
-
-                    let maybe_popped = batch.offer(item);
+                    inspector.inspect(&items);
+                    for p in &processor_modules {
+                       let mut new_items = Vec::new();
+                       while !items.is_empty() {
+                           let item = items.pop();
+                           if item.is_some() {
+                                let result = item.unwrap().process(p);
+                                new_items.push(result);
+                           }
+                       }
+                       items = new_items;
+                    }
+                    let maybe_popped = batch.offer(items);
                     if let Ok(Some(popped)) = maybe_popped { // todo: handle error?
                         if let Err(e) = self.send_item(popped, &pipeline_token).await {
                             return match e {
