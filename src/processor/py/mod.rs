@@ -129,7 +129,12 @@ impl PyArrayValue {
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
-
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
     fn __getitem__(&self, index: usize) -> PyResult<PyAnyValue> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")

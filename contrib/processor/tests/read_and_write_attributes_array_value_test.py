@@ -30,3 +30,6 @@ def process(resource):
     assert resource.attributes[0].key == "my_array"
     av = resource.attributes[0].value.value[0]
     assert av.value == "baz"
+
+    # Check len support
+    assert 1 == len(resource.attributes[0].value.value)
