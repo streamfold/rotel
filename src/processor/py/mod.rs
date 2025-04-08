@@ -113,10 +113,6 @@ impl PyAnyValue {
 #[derive(Clone)]
 pub struct PyArrayValue(pub Arc<Mutex<Vec<Arc<Mutex<Option<AnyValue>>>>>>);
 
-// pub struct PyArrayValue {
-//     pub inner: Arc<Mutex<Vec<Arc<Mutex<Option<AnyValue>>>>>>,
-// }
-
 #[pymethods]
 impl PyArrayValue {
     #[new]
