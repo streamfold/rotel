@@ -32,6 +32,8 @@ impl PyAnyValue {
             Some(BoolValue(b)) => Ok(b.into_py(py)),
             Some(IntValue(i)) => Ok(i.into_py(py)),
             Some(DoubleValue(d)) => Ok(d.into_py(py)),
+            None => Ok(py.None()),
+            // TODO add remaining types
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported value type".to_string(),
             )),

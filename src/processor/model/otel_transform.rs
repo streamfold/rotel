@@ -13,6 +13,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
         let kvs = build_rotel_sdk_resource(resource);
         let res = Arc::new(Mutex::new(Some(crate::processor::model::Resource {
             attributes: Arc::new(Mutex::new(kvs.clone())),
+            // TODO - copy dropped_attributes_count
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         })));
         resource_span.resource = res.clone()
@@ -34,10 +35,12 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                 kind: s.kind,
                 start_time_unix_nano: s.start_time_unix_nano,
                 end_time_unix_nano: s.end_time_unix_nano,
+                // TODO add attributes copy
                 attributes: Arc::new(Mutex::new(vec![])),
                 dropped_attributes_count: s.dropped_attributes_count,
                 dropped_events_count: s.dropped_events_count,
                 dropped_links_count: s.dropped_links_count,
+                // TODO add status copy
                 status: Arc::new(Mutex::new(None)),
             };
             scope_span
