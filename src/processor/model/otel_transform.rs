@@ -2,16 +2,6 @@ use crate::processor::model::Value::{BoolValue, BytesValue, DoubleValue, IntValu
 use crate::processor::model::{ResourceSpans, Span};
 use std::sync::{Arc, Mutex};
 
-// pub fn prepare_resource_spans_vec(
-//     value: Vec<opentelemetry_proto::tonic::trace::v1::ResourceSpans>,
-// ) -> Vec<ResourceSpans> {
-//     let mut resource_spans = vec![];
-//     for rs in value {
-//         resource_spans.push(prepare_resource_spans(rs))
-//     }
-//     resource_spans
-// }
-
 pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> ResourceSpans {
     let mut resource_span = ResourceSpans {
         resource: Arc::new(Mutex::new(None)),
@@ -71,86 +61,66 @@ fn build_rotel_sdk_resource(
         let any_value = a.value;
         match any_value {
             None => {}
-            Some(v) => {
-                let v = v;
-                match v.value {
-                    None => {
+            Some(v) => match v.value {
+                None => {
+                    let kv = crate::processor::model::KeyValue {
+                        key,
+                        value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                            value: Arc::new(Mutex::new(None)),
+                        }))),
+                    };
+                    kvs.push(Arc::new(Mutex::new(kv)));
+                }
+                Some(v) => match v {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
                         let kv = crate::processor::model::KeyValue {
                             key,
                             value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
-                                value: Arc::new(Mutex::new(None)),
+                                value: Arc::new(Mutex::new(Some(StringValue(s)))),
                             }))),
                         };
                         kvs.push(Arc::new(Mutex::new(kv)));
                     }
-                    Some(v) => match v {
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
-                            s,
-                        ) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(StringValue(s)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(BoolValue(b)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(IntValue(i)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(
-                            d,
-                        ) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(DoubleValue(d)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(_) => {
-                        }
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(
-                            _,
-                        ) => {}
-                        opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b) => {
-                            let kv = crate::processor::model::KeyValue {
-                                key,
-                                value: Arc::new(Mutex::new(Some(
-                                    crate::processor::model::AnyValue {
-                                        value: Arc::new(Mutex::new(Some(BytesValue(b)))),
-                                    },
-                                ))),
-                            };
-                            kvs.push(Arc::new(Mutex::new(kv)));
-                        }
-                    },
-                }
-            }
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(BoolValue(b)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(IntValue(i)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(DoubleValue(d)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(_) => {}
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(_) => {}
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b) => {
+                        let kv = crate::processor::model::KeyValue {
+                            key,
+                            value: Arc::new(Mutex::new(Some(crate::processor::model::AnyValue {
+                                value: Arc::new(Mutex::new(Some(BytesValue(b)))),
+                            }))),
+                        };
+                        kvs.push(Arc::new(Mutex::new(kv)));
+                    }
+                },
+            },
         }
     }
     kvs

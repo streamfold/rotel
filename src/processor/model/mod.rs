@@ -86,23 +86,6 @@ pub struct Status {
     pub code: i32,
 }
 
-// static INIT: Once = Once::new();
-//
-// pub fn initialize(processor: &str) {
-//     INIT.call_once(|| {
-//         pyo3::append_to_inittab!(rotel_python_processor_sdk);
-//         pyo3::prepare_freethreaded_python();
-//         let res = Python::with_gil(|py| -> PyResult<()> {
-//             let py_mod = PyModule::from_code(
-//                 py,
-//                 CString::new(processor)?.as_c_str(),
-//                 c_str!("example.py"),
-//                 c_str!("example"),
-//             )?;
-//             Ok(())
-//         });
-//     });
-// }
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
     let res = Python::with_gil(|py| -> PyResult<()> {
         PyModule::from_code(
@@ -125,21 +108,15 @@ pub trait PythonProcessable {
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
     fn process(self, processor: &str) -> Self {
-        //initialize(processor);
         let inner = otel_transform::transform(self);
         // Build the PyObject
         let spans = PyResourceSpans {
             resource: inner.resource.clone(),
             scope_spans: inner.scope_spans.clone(),
+            // TODO actually copy schema_url
             schema_url: Arc::new(Default::default()),
         };
         let res = Python::with_gil(|py| -> PyResult<()> {
-            // let py_mod = PyModule::from_code(
-            //     py,
-            //     CString::new(processor)?.as_c_str(),
-            //     c_str!("example.py"),
-            //     c_str!("example"),
-            // )?;
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process")?.call1((spans,));
             if result_py_object.is_err() {
@@ -165,7 +142,6 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
             .unwrap()
             .into_inner()
             .unwrap();
-        //let scope_spans = inner.scope_spans.lock().unwrap();
         resource_span.scope_spans = py_transform::transform_spans(scope_spans);
         resource_span
     }
