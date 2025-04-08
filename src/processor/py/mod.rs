@@ -1,4 +1,4 @@
-use crate::processor::model::Value::{BoolValue, DoubleValue, IntValue, StringValue};
+use crate::processor::model::Value::{ArrayValue, BoolValue, DoubleValue, IntValue, StringValue};
 use crate::processor::model::{AnyValue, KeyValue, Resource, ScopeSpans, Span};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,7 @@ impl PyAnyValue {
             Some(BoolValue(b)) => Ok(b.into_py(py)),
             Some(IntValue(i)) => Ok(i.into_py(py)),
             Some(DoubleValue(d)) => Ok(d.into_py(py)),
+            Some(ArrayValue(a)) => Ok(a.convert_to_py(py)?),
             None => Ok(py.None()),
             // TODO add remaining types
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -94,6 +95,11 @@ impl PyAnyValue {
             .replace(DoubleValue(new_value));
         Ok(())
     }
+}
+
+#[pyclass]
+pub struct PyArrayValue {
+    pub inner: Arc<Mutex<Vec<AnyValue>>>,
 }
 
 #[pyclass]

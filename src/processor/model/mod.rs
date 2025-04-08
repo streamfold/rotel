@@ -27,7 +27,17 @@ pub enum Value {
 
 #[derive(Debug, Clone)]
 pub struct ArrayValue {
-    pub values: Vec<AnyValue>,
+    pub values: Arc<Mutex<Vec<AnyValue>>>,
+}
+
+#[allow(deprecated)]
+impl ArrayValue {
+    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
+        Ok(crate::processor::py::PyArrayValue {
+            inner: self.values.clone(),
+        }
+        .into_py(py))
+    }
 }
 
 #[derive(Debug, Clone)]
