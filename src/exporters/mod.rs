@@ -4,5 +4,6 @@ pub mod blackhole;
 pub mod datadog;
 pub mod otlp;
 
+mod crypto_init_tests;
 mod http;
 mod retry;

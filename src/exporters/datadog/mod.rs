@@ -21,13 +21,13 @@ use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{timeout_at, Instant};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, Service, ServiceBuilder};
-use tracing::{Level, debug, error, event};
+use tracing::{debug, error, event, Level};
 
 mod api_request;
 mod request_builder;
@@ -284,7 +284,8 @@ impl DatadogTraceExporter {
 mod tests {
     extern crate utilities;
 
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::datadog::{DatadogTraceExporter, Region};
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;
@@ -297,6 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn success_and_retry() {
+        init_crypto();
         let server = MockServer::start();
         let addr = format!("http://127.0.0.1:{}", server.port());
 
