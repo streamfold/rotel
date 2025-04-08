@@ -45,6 +45,8 @@ impl PyAnyValue {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
+
+        // TODO, can we unwrap here or need a None check?
         v.clone()
             .unwrap()
             .value
@@ -164,7 +166,7 @@ impl PyKeyValue {
     }
     #[getter]
     #[allow(deprecated)]
-    fn key<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn key(&self, py: Python) -> PyResult<PyObject> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
