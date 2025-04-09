@@ -75,6 +75,12 @@ All CLI arguments can also be passed as environment variable by prefixing with `
 | --otlp-http-endpoint                   | localhost:4318       |                          |
 | --otlp-grpc-max-recv-msg-size-mib      | 4                    |                          |
 | --exporter                             | otlp                 | otlp, blackhole, datadog |
+| --otlp-receiver-traces-disabled        |                      |                          |
+| --otlp-receiver-metrics-disabled       |                      |                          |
+| --otlp-receiver-logs-disabled          |                      |                          |
+| --otlp-receiver-traces-http-path       | /v1/traces           |                          |
+| --otlp-receiver-metrics-http-path      | /v1/metrics          |                          |
+| --otlp-receiver-logs-http-path         | /v1/logs             |                          |
 
 ### OTLP exporter configuration
 
@@ -82,12 +88,6 @@ The OTLP exporter is the default, or can be explicitly selected with `--exporter
 
 | Option                                 | Default              | Options                  |
 |----------------------------------------|----------------------|--------------------------|
-| --otlp-receiver-traces-disabled        |                      |                          |
-| --otlp-receiver-metrics-disabled       |                      |                          |
-| --otlp-receiver-logs-disabled          |                      |                          |
-| --otlp-receiver-traces-http-path       | /v1/traces           |                          |
-| --otlp-receiver-metrics-http-path      | /v1/metrics          |                          |
-| --otlp-receiver-logs-http-path         | /v1/logs             |                          |
 | --otlp-exporter-endpoint               |                      |                          |
 | --otlp-exporter-protocol               | grpc                 | grpc, http               |
 | --otlp-exporter-custom-headers         |                      |                          |
