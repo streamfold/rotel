@@ -58,21 +58,21 @@ pub struct KeyValue {
 #[derive(Debug, Clone)]
 pub struct Resource {
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
-    pub dropped_attributes_count: Arc<Mutex<u32>>,
+    pub dropped_attributes_count: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResourceSpans {
     pub resource: Arc<Mutex<Option<Resource>>>,
     pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>,
-    pub _schema_url: Arc<Mutex<String>>,
+    pub schema_url: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct ScopeSpans {
     //pub scope: ::core::option::Option<super::super::common::v1::InstrumentationScope>,
     pub spans: Arc<Mutex<Vec<Arc<Mutex<Span>>>>>,
-    pub schema_url: Arc<Mutex<String>>,
+    pub schema_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +145,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
         let mut resource_span = opentelemetry_proto::tonic::trace::v1::ResourceSpans {
             resource: None,
             scope_spans: vec![],
-            schema_url: "".to_string(),
+            schema_url: inner.schema_url,
         };
         let mut resource = inner.resource.lock().unwrap();
         let resource = resource.take();

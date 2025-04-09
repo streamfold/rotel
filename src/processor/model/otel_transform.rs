@@ -8,7 +8,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     let mut resource_span = ResourceSpans {
         resource: Arc::new(Mutex::new(None)),
         scope_spans: Arc::new(Mutex::new(vec![])),
-        _schema_url: Arc::new(Mutex::new("".to_string())),
+        schema_url: rs.schema_url,
     };
     if rs.resource.is_some() {
         let resource = rs.resource.unwrap();
@@ -16,7 +16,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
         let res = Arc::new(Mutex::new(Some(crate::processor::model::Resource {
             attributes: Arc::new(Mutex::new(kvs.clone())),
             // TODO - copy dropped_attributes_count
-            dropped_attributes_count: Arc::new(Mutex::new(0)),
+            dropped_attributes_count: 0,
         })));
         resource_span.resource = res.clone()
     }
@@ -24,7 +24,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     for ss in rs.scope_spans {
         let scope_span = crate::processor::model::ScopeSpans {
             spans: Arc::new(Mutex::new(vec![])),
-            schema_url: Arc::new(Mutex::new("".to_string())),
+            schema_url: ss.schema_url,
         };
         for s in ss.spans {
             let span = Span {
@@ -65,7 +65,10 @@ fn build_rotel_sdk_resource(
         let key = Arc::new(Mutex::new(a.key));
         let any_value = a.value;
         match any_value {
-            None => {}
+            None => kvs.push(Arc::new(Mutex::new(KeyValue {
+                key,
+                value: Arc::new(Mutex::new(None)),
+            }))),
             Some(v) => {
                 let converted = convert_value(v);
                 kvs.push(Arc::new(Mutex::new(KeyValue {
