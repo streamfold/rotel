@@ -1,7 +1,7 @@
 use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, StringValue,
 };
-use crate::processor::model::{AnyValue, KeyValue, ResourceSpans, Span};
+use crate::processor::model::{AnyValue, InstrumentationScope, KeyValue, ResourceSpans, Span};
 use std::sync::{Arc, Mutex};
 
 pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> ResourceSpans {
@@ -22,7 +22,18 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     }
     let mut scope_spans = vec![];
     for ss in rs.scope_spans {
+        let mut scope = None;
+        if ss.scope.is_some() {
+            let s = ss.scope.unwrap();
+            scope = Some(InstrumentationScope {
+                name: s.name,
+                version: s.version,
+                attributes: Arc::new(Mutex::new(vec![])),
+                dropped_attributes_count: s.dropped_attributes_count,
+            })
+        }
         let scope_span = crate::processor::model::ScopeSpans {
+            scope: Arc::new(Mutex::new(scope)),
             spans: Arc::new(Mutex::new(vec![])),
             schema_url: ss.schema_url,
         };

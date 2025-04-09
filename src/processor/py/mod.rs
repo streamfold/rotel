@@ -1,7 +1,9 @@
 use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
-use crate::processor::model::{AnyValue, KeyValue, Resource, ScopeSpans, Span};
+use crate::processor::model::{
+    AnyValue, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span,
+};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -559,25 +561,44 @@ impl PyResourceSpans {
         }))
     }
     #[getter]
-    fn scope_spans(&self) -> PyResult<Option<PyScopeSpans>> {
-        Ok(Some(PyScopeSpans(self.scope_spans.clone())))
+    fn scope_spans(&self) -> PyResult<Option<PyScopeSpansWrapper>> {
+        Ok(Some(PyScopeSpansWrapper(self.scope_spans.clone())))
     }
 }
 
 #[pyclass]
-struct PyScopeSpans(Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>);
+struct PyScopeSpansWrapper(Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>);
 
 #[pymethods]
-impl PyScopeSpans {
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyScopeSpansIter>> {
+impl PyScopeSpansWrapper {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyScopeSpansWrapperIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyScopeSpansIter {
+        let iter = PyScopeSpansWrapperIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<PyScopeSpans> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => {
+                let item = item.lock().unwrap();
+                Ok(PyScopeSpans {
+                    scope: item.scope.clone(),
+                    spans: item.spans.clone(),
+                    schema_url: item.schema_url.clone(),
+                })
+            }
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
     }
 
     fn __len__(&self) -> PyResult<usize> {
@@ -589,39 +610,201 @@ impl PyScopeSpans {
 }
 
 #[pyclass]
-struct PyScopeSpansIter {
+struct PyScopeSpansWrapperIter {
     inner: std::vec::IntoIter<Arc<Mutex<ScopeSpans>>>,
 }
 
 #[pymethods]
-impl PyScopeSpansIter {
+impl PyScopeSpansWrapperIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyScopeSpan>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyScopeSpans>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        let x = Ok(Some(PyScopeSpan {
-            spans: inner.lock().unwrap().spans.clone(),
+        let inner = inner.lock().unwrap();
+        let x = Ok(Some(PyScopeSpans {
+            scope: inner.scope.clone(),
+            spans: inner.spans.clone(),
+            schema_url: inner.schema_url.clone(),
         }));
         x
     }
 }
 
 #[pyclass]
-struct PyScopeSpan {
+struct PyScopeSpans {
+    scope: Arc<Mutex<Option<InstrumentationScope>>>,
     spans: Arc<Mutex<Vec<Arc<Mutex<Span>>>>>,
+    schema_url: String,
 }
 
 #[pymethods]
-impl PyScopeSpan {
+impl PyScopeSpans {
     #[getter]
     fn spans(&self) -> PyResult<PySpans> {
         Ok(PySpans(self.spans.clone()))
+    }
+    #[getter]
+    fn scope<'py>(&self, py: Python<'py>) -> PyResult<Option<PyInstrumentationScope>> {
+        {
+            let v = self.scope.lock().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+            })?;
+            if v.is_none() {
+                return Ok(None);
+            }
+        }
+        Ok(Some(PyInstrumentationScope(self.scope.clone())))
+    }
+    #[getter]
+    fn schema_url(&self) -> String {
+        self.schema_url.clone()
+    }
+}
+
+#[pyclass]
+struct PyInstrumentationScope(Arc<Mutex<Option<InstrumentationScope>>>);
+
+#[pymethods]
+impl PyInstrumentationScope {
+    #[getter]
+    fn name<'py>(&self, py: Python<'py>) -> String {
+        let binding = self.0.lock().unwrap().clone().unwrap();
+        binding.name.clone()
+    }
+    #[setter]
+    fn set_name<'py>(&self, new_value: String) -> PyResult<()> {
+        let mut binding = self.0.lock().unwrap();
+        if binding.is_none() {
+            binding.replace(InstrumentationScope {
+                name: new_value,
+                version: "".to_string(),
+                attributes: Arc::new(Mutex::new(vec![])),
+                dropped_attributes_count: 0,
+            });
+        } else {
+            let x = binding.clone().unwrap();
+            binding.replace(InstrumentationScope {
+                name: new_value,
+                version: x.version,
+                attributes: x.attributes,
+                dropped_attributes_count: x.dropped_attributes_count,
+            });
+        }
+        Ok(())
+    }
+    #[getter]
+    fn version(&self) -> String {
+        let binding = self.0.lock().unwrap().clone().unwrap();
+        binding.version.clone()
+    }
+    #[getter]
+    fn attributes(&self) -> PyResult<PyInstrumentationScopeAttributes> {
+        let binding = self.0.lock().unwrap().clone().unwrap();
+        Ok(PyInstrumentationScopeAttributes(binding.attributes.clone()))
+    }
+    #[getter]
+    fn dropped_attributes_count(&self) -> u32 {
+        let binding = self.0.lock().unwrap().clone().unwrap();
+        binding.dropped_attributes_count
+    }
+}
+
+#[pyclass]
+struct PyInstrumentationScopeAttributes(Arc<Mutex<Vec<KeyValue>>>);
+
+#[pymethods]
+impl PyInstrumentationScopeAttributes {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyInstrumentationScopeAttributes(Arc::new(Mutex::new(
+            vec![],
+        ))))
+    }
+
+    fn __iter__<'py>(
+        &'py self,
+        py: Python<'py>,
+    ) -> PyResult<Py<PyInstrumentationScopeAttributesIter>> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let iter = PyInstrumentationScopeAttributesIter {
+            inner: inner.clone().into_iter(),
+        };
+        // Convert to a Python-managed object
+        Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<PyKeyValue> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => Ok(PyKeyValue {
+                inner: Arc::new(Mutex::new(item.clone())),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+
+    fn append<'py>(&self, item: &PyKeyValue) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let inner = item.inner.lock().unwrap();
+        let inner = inner.clone();
+        k.push(inner);
+        Ok(())
+    }
+
+    // fn append_attributes<'py>(&self, py: Python<'py>, items: Vec<PyObject>) -> PyResult<()> {
+    //     let mut k = self.0.lock().map_err(|_| {
+    //         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+    //     })?;
+    //
+    //     for i in items.iter() {
+    //         let x = i.extract::<PyKeyValue>(py)?;
+    //         k.push(x.inner.clone());
+    //     }
+    //     Ok(())
+    // }
+
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+struct PyInstrumentationScopeAttributesIter {
+    inner: std::vec::IntoIter<KeyValue>,
+}
+
+#[pymethods]
+impl PyInstrumentationScopeAttributesIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyKeyValue>> {
+        let kv = slf.inner.next();
+        if kv.is_none() {
+            return Ok(None);
+        }
+        let inner = kv.unwrap();
+        Ok(Some(PyKeyValue {
+            inner: Arc::new(Mutex::new(inner)),
+        }))
     }
 }
 
@@ -887,6 +1070,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKeyValue>()?;
     m.add_class::<PyResource>()?;
     m.add_class::<PyAttributes>()?;
+    m.add_class::<PyScopeSpans>()?;
     m.add_class::<PySpan>()?;
     Ok(())
 }
@@ -1429,11 +1613,33 @@ mod tests {
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: Arc::new(Mutex::new("".to_string())),
         };
-
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
         })
         .unwrap();
         println!("{:#?}", resource_spans.resource.lock().unwrap());
+    }
+
+    #[test]
+    fn scope_spans_instrumentation_scope() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans = crate::processor::model::otel_transform::transform(
+            export_req.resource_spans[0].clone(),
+        );
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: Arc::new(Mutex::new("".to_string())),
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "scope_spans_instrumentation_scope_test.py",
+                py,
+                py_resource_spans,
+            )
+        })
+        .unwrap();
+        println!("{:#?}", resource_spans.scope_spans.lock().unwrap());
     }
 }

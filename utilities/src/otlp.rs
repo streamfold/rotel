@@ -3,7 +3,7 @@ use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
-use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
+use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value;
@@ -171,7 +171,12 @@ impl FakeOTLP {
         let spans = Self::trace_spans(num_spans);
 
         let scope_spans = ScopeSpans {
-            scope: None,
+            scope: Some(InstrumentationScope {
+                name: "scope".to_string(),
+                version: "0.0.1".to_string(),
+                attributes: vec![string_attr("module", "api")],
+                dropped_attributes_count: 0,
+            }),
             spans,
             schema_url: "https://opentelemetry.io/schemas/1.21.0".to_string(),
         };

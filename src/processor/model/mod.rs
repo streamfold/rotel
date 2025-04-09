@@ -70,9 +70,17 @@ pub struct ResourceSpans {
 
 #[derive(Debug, Clone)]
 pub struct ScopeSpans {
-    //pub scope: ::core::option::Option<super::super::common::v1::InstrumentationScope>,
+    pub scope: Arc<Mutex<Option<InstrumentationScope>>>,
     pub spans: Arc<Mutex<Vec<Arc<Mutex<Span>>>>>,
     pub schema_url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstrumentationScope {
+    pub name: String,
+    pub version: String,
+    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub dropped_attributes_count: u32,
 }
 
 #[derive(Debug, Clone)]
