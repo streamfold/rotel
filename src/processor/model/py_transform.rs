@@ -1,5 +1,7 @@
-use crate::processor::model::Value::{BoolValue, BytesValue, DoubleValue, IntValue, StringValue};
-use crate::processor::model::{AnyValue, Resource, ScopeSpans, Span, Value};
+use crate::processor::model::Value::{
+    ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
+};
+use crate::processor::model::{AnyValue, Resource, ScopeSpans, Span};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -73,7 +75,8 @@ pub fn transform_resource(
         let mut any_value = kv.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
-            None => {}
+            None => new_attrs
+                .push(opentelemetry_proto::tonic::common::v1::KeyValue { key, value: None }),
             Some(v) => {
                 let converted = convert_value(v);
                 new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
@@ -108,10 +111,11 @@ pub fn convert_value(v: AnyValue) -> opentelemetry_proto::tonic::common::v1::Any
         DoubleValue(d) => opentelemetry_proto::tonic::common::v1::AnyValue {
             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)),
         },
-        Value::ArrayValue(a) => {
+        ArrayValue(a) => {
             let mut values = vec![];
             let inner_values = Arc::into_inner(a.values).unwrap();
             let inner_values = inner_values.into_inner().unwrap();
+            // TODO: We might need to remove these from the vec?
             for v in inner_values.iter() {
                 let inner_v = Arc::into_inner(v.clone()).unwrap();
                 let inner_v = inner_v.into_inner().unwrap();
@@ -130,11 +134,35 @@ pub fn convert_value(v: AnyValue) -> opentelemetry_proto::tonic::common::v1::Any
                 ),
             }
         }
+        KvListValue(kvl) => {
+            let mut values = vec![];
+            let inner_values = Arc::into_inner(kvl.values).unwrap();
+            let inner_values = inner_values.into_inner().unwrap();
+            // TODO: We might need to remove these from the vec?
+            for kv in inner_values {
+                let key = Arc::into_inner(kv.key).unwrap();
+                let key = key.into_inner().unwrap();
+                let value = Arc::into_inner(kv.value).unwrap();
+                let value = value.into_inner().unwrap();
+                let mut new_value = None;
+                if value.is_some() {
+                    new_value = Some(convert_value(value.unwrap()));
+                }
+                values.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key,
+                    value: new_value,
+                });
+            }
+            opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(
+                        opentelemetry_proto::tonic::common::v1::KeyValueList { values },
+                    ),
+                ),
+            }
+        }
         BytesValue(b) => opentelemetry_proto::tonic::common::v1::AnyValue {
             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b)),
         },
-        // TODO get rid of after limplementing KV list
-        _ => opentelemetry_proto::tonic::common::v1::AnyValue { value: None },
-        //Value::KvListValue(_) => {}
     }
 }
