@@ -3,7 +3,6 @@
 pub mod bounded_channel;
 pub mod exporters;
 pub mod init;
-pub mod lambda;
 pub mod listener;
 mod processor;
 pub mod receivers;
