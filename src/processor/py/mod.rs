@@ -1207,8 +1207,9 @@ mod tests {
 
         let kv_arc = Arc::new(Mutex::new(kv));
 
+        let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
-            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+            attributes: attrs_arc.clone(),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -1219,6 +1220,44 @@ mod tests {
             )
         })
         .unwrap();
+
+        let mut value = attrs_arc.lock().unwrap();
+        let value = value.pop().unwrap();
+        let value = Arc::into_inner(value).unwrap().into_inner().unwrap();
+        let value = Arc::into_inner(value.value).unwrap().into_inner().unwrap();
+        let value = value.unwrap().value;
+        let value = Arc::into_inner(value)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        match value {
+            KvListValue(k) => {
+                let mut value = k.values.lock().unwrap().clone();
+                let value = value.pop();
+                match value {
+                    None => {
+                        panic!("wrong type")
+                    }
+                    Some(v) => {
+                        let v = v.value.lock().unwrap().clone();
+                        match v {
+                            None => {
+                                panic!("wrong type")
+                            }
+                            Some(v) => {
+                                let value = v.value.lock().unwrap().clone().unwrap();
+                                match value {
+                                    StringValue(s) => assert_eq!("baz", s),
+                                    _ => panic!("wrong type"),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => panic!("wrong type"),
+        }
     }
 
     #[test]

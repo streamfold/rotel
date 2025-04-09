@@ -110,13 +110,30 @@ pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> Any
                     )))),
                 }
             }
+            opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(kvl) => {
+                let mut key_values = vec![];
+                for kv in kvl.values {
+                    let mut new_value = None;
+                    if kv.value.is_some() {
+                        new_value = Some(convert_value(kv.value.unwrap()));
+                    }
+                    key_values.push(KeyValue {
+                        key: Arc::new(Mutex::new(kv.key)),
+                        value: Arc::new(Mutex::new(new_value)),
+                    })
+                }
+                AnyValue {
+                    value: Arc::new(Mutex::new(Some(
+                        crate::processor::model::Value::KvListValue(
+                            crate::processor::model::KeyValueList {
+                                values: Arc::new(Mutex::new(key_values)),
+                            },
+                        ),
+                    ))),
+                }
+            }
             opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b) => AnyValue {
                 value: Arc::new(Mutex::new(Some(BytesValue(b)))),
-            },
-            // Value::KvlistValue(_) => {}
-            // TODO remove after implementing KvlistValue
-            _ => AnyValue {
-                value: Arc::new(Mutex::new(None)),
             },
         },
     }
