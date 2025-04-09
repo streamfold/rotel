@@ -1,4 +1,6 @@
-use crate::processor::model::Value::{ArrayValue, BoolValue, DoubleValue, IntValue, StringValue};
+use crate::processor::model::Value::{
+    ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
+};
 use crate::processor::model::{AnyValue, KeyValue, Resource, ScopeSpans, Span};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -32,12 +34,10 @@ impl PyAnyValue {
             Some(BoolValue(b)) => Ok(b.into_py(py)),
             Some(IntValue(i)) => Ok(i.into_py(py)),
             Some(DoubleValue(d)) => Ok(d.into_py(py)),
+            Some(BytesValue(b)) => Ok(b.into_py(py)),
             Some(ArrayValue(a)) => Ok(a.convert_to_py(py)?),
+            Some(KvListValue(k)) => Ok(k.convert_to_py(py)?),
             None => Ok(py.None()),
-            // TODO add remaining types
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Unsupported value type".to_string(),
-            )),
         };
         x // to avoid dropping
     }
@@ -105,6 +105,21 @@ impl PyAnyValue {
                 values: new_value.0.clone(),
             },
         ));
+        Ok(())
+    }
+    #[setter]
+    fn set_key_value_list_value(&mut self, new_value: PyKeyValueList) -> PyResult<()> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clone()
+            .unwrap()
+            .value
+            .lock()
+            .unwrap()
+            .replace(KvListValue(crate::processor::model::KeyValueList {
+                values: new_value.0.clone(),
+            }));
         Ok(())
     }
 }
@@ -176,6 +191,87 @@ impl PyArrayValueIter {
         let inner = kv.unwrap();
         Ok(Some(PyAnyValue {
             inner: inner.clone(),
+        }))
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyKeyValueList(pub Arc<Mutex<Vec<KeyValue>>>);
+
+#[pymethods]
+impl PyKeyValueList {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyKeyValueList(Arc::new(Mutex::new(vec![]))))
+    }
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyKeyValueListIter>> {
+        let iter = PyKeyValueListIter {
+            inner: self.0.clone(),
+            idx: 0,
+        };
+        // Convert to a Python-managed object
+        Py::new(py, iter)
+    }
+    fn __getitem__(&self, index: usize) -> PyResult<PyKeyValue> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => Ok(PyKeyValue {
+                inner: Arc::new(Mutex::new(item.clone())),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
+    fn append(&self, item: PyKeyValue) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let inner = item.inner.lock().unwrap();
+        let inner = inner.clone();
+        k.push(inner);
+        Ok(())
+    }
+}
+
+#[pyclass]
+struct PyKeyValueListIter {
+    inner: Arc<Mutex<Vec<KeyValue>>>,
+    idx: usize,
+}
+
+#[pymethods]
+impl PyKeyValueListIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<PyKeyValue>> {
+        // Acquire a lock on the Mutex to access the inner Vec
+        let guard = self.inner.lock().unwrap();
+        if self.idx > guard.len() - 1 {
+            return Ok(None);
+        }
+        let v = guard.get(self.idx);
+        if v.is_none() {
+            return Ok(None);
+        }
+        let kv = v.unwrap();
+        self.idx += 1;
+        Ok(Some(PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue {
+                key: kv.key.clone(),
+                value: kv.value.clone(),
+            })),
         }))
     }
 }
@@ -255,6 +351,22 @@ impl PyKeyValue {
         let value = AnyValue {
             value: Arc::new(Mutex::new(Some(ArrayValue(
                 crate::processor::model::ArrayValue {
+                    values: value.0.clone(),
+                },
+            )))),
+        };
+        let value = Arc::new(Mutex::new(Some(value)));
+        Ok(PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        })
+    }
+    // Helper methods for class
+    #[staticmethod]
+    fn new_kv_list(key: &str, value: PyKeyValueList) -> PyResult<PyKeyValue> {
+        let key = Arc::new(Mutex::new(key.to_string()));
+        let value = AnyValue {
+            value: Arc::new(Mutex::new(Some(KvListValue(
+                crate::processor::model::KeyValueList {
                     values: value.0.clone(),
                 },
             )))),
@@ -771,6 +883,7 @@ impl LoggingStdout {
 pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAnyValue>()?;
     m.add_class::<PyArrayValue>()?;
+    m.add_class::<PyKeyValueList>()?;
     m.add_class::<PyKeyValue>()?;
     m.add_class::<PyResource>()?;
     m.add_class::<PyAttributes>()?;
@@ -1052,6 +1165,55 @@ mod tests {
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
                 "read_and_write_attributes_array_value_test.py",
+                py,
+                resource,
+            )
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn read_and_write_attributes_key_value_list_value() {
+        initialize();
+
+        let value = Some(StringValue("foo".to_string()));
+        let any_value = Some(AnyValue {
+            value: Arc::new(Mutex::new(value)),
+        });
+        let any_value_arc = Arc::new(Mutex::new(any_value));
+        let arc_key = Arc::new(Mutex::new("inner_key".to_string()));
+
+        let kev_value = KeyValue {
+            key: arc_key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_list = crate::processor::model::KeyValueList {
+            values: Arc::new(Mutex::new(vec![kev_value])),
+        };
+
+        let array_value_arc = Arc::new(Mutex::new(Some(KvListValue(kv_list))));
+        let any_value_array_value_wrapper = Some(AnyValue {
+            value: array_value_arc.clone(),
+        });
+
+        let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
+
+        let key = Arc::new(Mutex::new("key".to_string()));
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_array_value_wrapper_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+
+        let resource = PyResource {
+            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "read_and_write_attributes_key_value_list_test.py",
                 py,
                 resource,
             )

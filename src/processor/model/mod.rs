@@ -39,7 +39,14 @@ impl ArrayValue {
 
 #[derive(Debug, Clone)]
 pub struct KeyValueList {
-    pub values: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
+    pub values: Arc<Mutex<Vec<KeyValue>>>,
+}
+
+#[allow(deprecated)]
+impl KeyValueList {
+    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
+        Ok(crate::processor::py::PyKeyValueList(self.values.clone()).into_py(py))
+    }
 }
 
 #[derive(Debug, Clone)]
