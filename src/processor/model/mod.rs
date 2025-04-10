@@ -1,7 +1,10 @@
+#[cfg(feature = "pyo3")]
 pub mod otel_transform;
+#[cfg(feature = "pyo3")]
 mod py_transform;
 
 use crate::processor::py::PyResourceSpans;
+use crate::topology::generic_pipeline::PythonProcessable;
 use pyo3::prelude::*;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
@@ -114,10 +117,6 @@ pub fn register_processor(code: String, script: String, module: String) -> Resul
         Ok(_) => Ok(()),
         Err(e) => Err(BoxError::from(e.to_string())),
     }
-}
-
-pub trait PythonProcessable {
-    fn process(self, processor: &str) -> Self;
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {

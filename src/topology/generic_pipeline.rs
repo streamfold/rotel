@@ -1,23 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
-use crate::processor::model::{PythonProcessable, register_processor};
+#[cfg(feature = "pyo3")]
+use crate::processor::model::register_processor;
+#[cfg(feature = "pyo3")]
 use crate::processor::py::rotel_python_processor_sdk;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
+#[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
+#[cfg(feature = "pyo3")]
 use std::sync::Once;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+#[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::{debug, error};
 
 #[derive(Clone)]
+#[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
     receiver: BoundedReceiver<Vec<T>>,
     sender: BoundedSender<Vec<T>>,
@@ -29,6 +35,35 @@ pub trait Inspect<T> {
     fn inspect(&self, value: &[T]);
 }
 
+pub trait PythonProcessable {
+    fn process(self, processor: &str) -> Self;
+}
+
+#[cfg(not(feature = "pyo3"))]
+impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
+    fn process(self, _processor: &str) -> Self {
+        // Noop
+        self
+    }
+}
+
+#[cfg(not(feature = "pyo3"))]
+impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
+    fn process(self, _processor: &str) -> Self {
+        // Noop
+        self
+    }
+}
+
+#[cfg(not(feature = "pyo3"))]
+impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
+    fn process(self, _processor: &str) -> Self {
+        // Noop
+        self
+    }
+}
+
+#[cfg(feature = "pyo3")]
 static PROCESSOR_INIT: Once = Once::new();
 
 impl<T> Pipeline<T>
@@ -62,6 +97,7 @@ where
         Ok(())
     }
 
+    #[cfg(feature = "pyo3")]
     fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
         let mut processor_modules = vec![];
         let path = env::current_dir()?;
@@ -91,7 +127,10 @@ where
             NestedBatch::<T>::new(self.batch_config.max_size, self.batch_config.timeout);
         let mut batch_timer = tokio::time::interval(batch.get_timeout());
 
+        #[cfg(feature = "pyo3")]
         let processor_modules = self.initialize_processors()?;
+        #[cfg(not(feature = "pyo3"))]
+        let processor_modules: Vec<String> = vec![];
 
         loop {
             select! {
