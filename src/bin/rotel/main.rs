@@ -148,7 +148,7 @@ async fn run_agent(
         let agent_fut = async move {
             let agent = Agent::default();
             agent
-                .run(agent_args, port_map, SENDING_QUEUE_SIZE, env, token)
+                .run(agent_args, port_map, SENDING_QUEUE_SIZE, env, token, None)
                 .await
         };
 
