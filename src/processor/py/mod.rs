@@ -561,21 +561,21 @@ impl PyResourceSpans {
         }))
     }
     #[getter]
-    fn scope_spans(&self) -> PyResult<Option<PyScopeSpansWrapper>> {
-        Ok(Some(PyScopeSpansWrapper(self.scope_spans.clone())))
+    fn scope_spans(&self) -> PyResult<PyScopeSpansList> {
+        Ok(PyScopeSpansList(self.scope_spans.clone()))
     }
 }
 
 #[pyclass]
-struct PyScopeSpansWrapper(Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>);
+struct PyScopeSpansList(Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>);
 
 #[pymethods]
-impl PyScopeSpansWrapper {
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyScopeSpansWrapperIter>> {
+impl PyScopeSpansList {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyScopeSpansListIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyScopeSpansWrapperIter {
+        let iter = PyScopeSpansListIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
@@ -610,16 +610,15 @@ impl PyScopeSpansWrapper {
 }
 
 #[pyclass]
-struct PyScopeSpansWrapperIter {
+struct PyScopeSpansListIter {
     inner: std::vec::IntoIter<Arc<Mutex<ScopeSpans>>>,
 }
 
 #[pymethods]
-impl PyScopeSpansWrapperIter {
+impl PyScopeSpansListIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
-
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyScopeSpans>> {
         let kv = slf.inner.next();
         if kv.is_none() {
@@ -650,7 +649,7 @@ impl PyScopeSpans {
         Ok(PySpans(self.spans.clone()))
     }
     #[getter]
-    fn scope<'py>(&self, py: Python<'py>) -> PyResult<Option<PyInstrumentationScope>> {
+    fn scope(&self) -> PyResult<Option<PyInstrumentationScope>> {
         {
             let v = self.scope.lock().map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -673,9 +672,16 @@ struct PyInstrumentationScope(Arc<Mutex<Option<InstrumentationScope>>>);
 #[pymethods]
 impl PyInstrumentationScope {
     #[getter]
-    fn name<'py>(&self, py: Python<'py>) -> String {
-        let binding = self.0.lock().unwrap().clone().unwrap();
-        binding.name.clone()
+    fn name(&self) -> PyResult<String> {
+        let binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = binding
+            .clone()
+            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "InstrumentationScope is None",
+            ))?;
+        Ok(v.name)
     }
     #[setter]
     fn set_name<'py>(&self, new_value: String) -> PyResult<()> {
