@@ -1,4 +1,4 @@
-use crate::bounded_channel::bounded;
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
@@ -50,6 +50,7 @@ impl Agent {
         sending_queue_size: usize,
         environment: String,
         agent_cancel: CancellationToken,
+        logs_rx: Option<BoundedReceiver<ResourceLogs>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         info!(
             grpc_endpoint = agent.otlp_grpc_endpoint.to_string(),
@@ -426,6 +427,36 @@ impl Agent {
             let receivers_cancel = receivers_cancel.clone();
             receivers_task_set
                 .spawn(async move { http_srv.serve(http_listener, receivers_cancel).await });
+        }
+
+        //
+        // Logs input receiver
+        //
+        if let Some(mut logs_rx) = logs_rx {
+            let receivers_cancel = receivers_cancel.clone();
+            let logs_output = logs_output.clone();
+
+            receivers_task_set.spawn(async move {
+                loop {
+                    select! {
+                        rl = logs_rx.next() => {
+                            match rl {
+                                None => break,
+                                Some(rl) => {
+                                    if let Some(out) = &logs_output {
+                                        if let Err(e) = out.send(vec![rl]).await {
+                                            // todo: is this possibly in a logging loop path?
+                                            warn!("Unable to send logs to logs output: {}", e)
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        _ = receivers_cancel.cancelled() => break,
+                    }
+                }
+                Ok(())
+            });
         }
 
         #[cfg(feature = "pprof")]
