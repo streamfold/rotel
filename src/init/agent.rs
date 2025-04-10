@@ -1,4 +1,4 @@
-use crate::bounded_channel::{bounded, BoundedReceiver};
+use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
