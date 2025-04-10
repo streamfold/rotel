@@ -75,7 +75,7 @@ pub struct ScopeSpans {
     pub schema_url: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InstrumentationScope {
     pub name: String,
     pub version: String,

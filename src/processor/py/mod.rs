@@ -684,30 +684,56 @@ impl PyInstrumentationScope {
         Ok(v.name)
     }
     #[setter]
-    fn set_name<'py>(&self, new_value: String) -> PyResult<()> {
-        let mut binding = self.0.lock().unwrap();
+    fn set_name(&self, name: String) -> PyResult<()> {
+        let mut binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
         if binding.is_none() {
             binding.replace(InstrumentationScope {
-                name: new_value,
-                version: "".to_string(),
-                attributes: Arc::new(Mutex::new(vec![])),
-                dropped_attributes_count: 0,
+                name,
+                ..Default::default()
             });
         } else {
-            let x = binding.clone().unwrap();
+            let current = binding.clone().unwrap();
             binding.replace(InstrumentationScope {
-                name: new_value,
-                version: x.version,
-                attributes: x.attributes,
-                dropped_attributes_count: x.dropped_attributes_count,
+                name,
+                version: current.version,
+                attributes: current.attributes,
+                dropped_attributes_count: current.dropped_attributes_count,
             });
         }
         Ok(())
     }
     #[getter]
-    fn version(&self) -> String {
-        let binding = self.0.lock().unwrap().clone().unwrap();
-        binding.version.clone()
+    fn version(&self) -> PyResult<String> {
+        let binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = binding
+            .clone()
+            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "InstrumentationScope is None",
+            ))?;
+        Ok(v.version)
+    }
+    #[setter]
+    fn set_version(&self, version: String) -> PyResult<()> {
+        let mut binding = self.0.lock().unwrap();
+        if binding.is_none() {
+            binding.replace(InstrumentationScope {
+                version,
+                ..Default::default()
+            });
+        } else {
+            let current = binding.clone().unwrap();
+            binding.replace(InstrumentationScope {
+                version,
+                name: current.name,
+                attributes: current.attributes,
+                dropped_attributes_count: current.dropped_attributes_count,
+            });
+        }
+        Ok(())
     }
     #[getter]
     fn attributes(&self) -> PyResult<PyInstrumentationScopeAttributes> {
@@ -718,6 +744,25 @@ impl PyInstrumentationScope {
     fn dropped_attributes_count(&self) -> u32 {
         let binding = self.0.lock().unwrap().clone().unwrap();
         binding.dropped_attributes_count
+    }
+    #[setter]
+    fn set_dropped_attributes_count(&self, dropped_attributes_count: u32) -> PyResult<()> {
+        let mut binding = self.0.lock().unwrap();
+        if binding.is_none() {
+            binding.replace(InstrumentationScope {
+                dropped_attributes_count,
+                ..Default::default()
+            });
+        } else {
+            let current = binding.clone().unwrap();
+            binding.replace(InstrumentationScope {
+                version: current.version,
+                name: current.name,
+                attributes: current.attributes,
+                dropped_attributes_count,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1640,7 +1685,7 @@ mod tests {
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
-                "scope_spans_instrumentation_scope_test.py",
+                "read_and_write_instrumentation_scope_test.py",
                 py,
                 py_resource_spans,
             )
