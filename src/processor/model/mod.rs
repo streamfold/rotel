@@ -1,6 +1,4 @@
-#[cfg(feature = "pyo3")]
 pub mod otel_transform;
-#[cfg(feature = "pyo3")]
 mod py_transform;
 
 use crate::processor::py::PyResourceSpans;
