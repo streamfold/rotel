@@ -6,7 +6,7 @@ use crate::processor::model::register_processor;
 #[cfg(feature = "pyo3")]
 use crate::processor::py::rotel_python_processor_sdk;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{FlushListener, FlushRequest};
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
@@ -31,7 +31,7 @@ pub struct Pipeline<T> {
     sender: BoundedSender<Vec<T>>,
     batch_config: BatchConfig,
     processors: Vec<String>,
-    flush_listener: Option<FlushListener>,
+    flush_listener: Option<FlushReceiver>,
 }
 
 pub trait Inspect<T> {
@@ -77,7 +77,7 @@ where
     pub fn new(
         receiver: BoundedReceiver<Vec<T>>,
         sender: BoundedSender<Vec<T>>,
-        flush_listener: Option<FlushListener>,
+        flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
         processors: Vec<String>,
     ) -> Self {
@@ -269,13 +269,6 @@ where
                 Err(SendItemError::Cancelled)
             }
         }
-    }
-}
-
-async fn conditional_flush(flush_listener: &mut Option<FlushListener>) -> Option<(Option<FlushRequest>, &mut FlushListener)> {
-    match flush_listener {
-        None => None,
-        Some(fl) => Some((fl.next().await, fl))
     }
 }
 

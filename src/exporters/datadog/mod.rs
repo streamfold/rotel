@@ -27,7 +27,9 @@ use tokio_util::sync::CancellationToken;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, Service, ServiceBuilder};
-use tracing::{Level, debug, error, event};
+use tracing::{Level, debug, error, event, info};
+use tracing::log::warn;
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 
 mod api_request;
 mod request_builder;
@@ -68,6 +70,7 @@ pub struct DatadogTraceExporter {
     export_drain_max_time: Duration,
     req_builder: RequestBuilder<ResourceSpans, Transformer>,
     svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<(), DatadogTraceDecoder>>>,
+    flush_receiver: Option<FlushReceiver>,
 }
 
 pub struct DatadogTraceExporterBuilder {
@@ -77,6 +80,7 @@ pub struct DatadogTraceExporterBuilder {
     environment: String,
     hostname: String,
     retry_config: RetryConfig,
+    flush_receiver: Option<FlushReceiver>
 }
 
 impl Default for DatadogTraceExporterBuilder {
@@ -88,6 +92,7 @@ impl Default for DatadogTraceExporterBuilder {
             environment: "dev".to_string(),
             hostname: "hostname".to_string(),
             retry_config: Default::default(),
+            flush_receiver: None,
         }
     }
 }
@@ -106,6 +111,11 @@ impl DatadogTraceExporterBuilder {
     #[allow(dead_code)]
     pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
+        self
+    }
+
+    pub fn with_flush_receiver(mut self, flush_receiver: Option<FlushReceiver>) -> Self {
+        self.flush_receiver = flush_receiver;
         self
     }
 
@@ -139,6 +149,7 @@ impl DatadogTraceExporterBuilder {
             svc,
             encode_drain_max_time: Duration::from_secs(1),
             export_drain_max_time: Duration::from_secs(2),
+            flush_receiver: self.flush_receiver,
         })
     }
 }
@@ -165,15 +176,10 @@ impl DatadogTraceExporter {
         let rx = self.rx.clone();
         let mut enc_stream = RequestBuilderMapper::new(rx.stream(), self.req_builder.clone());
         let mut export_futures: FuturesUnordered<ExportFuture> = FuturesUnordered::new();
-
+        let mut flush_receiver = self.flush_receiver.take();
         loop {
             select! {
                 biased;
-
-                _ = token.cancelled() => {
-                    event!(Level::INFO, "DatadogExporter received shutdown signal, exiting main processing loop");
-                    break;
-                },
 
                 Some(resp) = export_futures.next() => {
                   match resp {
@@ -200,20 +206,42 @@ impl DatadogTraceExporter {
                         }
                     }
                 },
+
+                Some(resp) = conditional_flush(&mut flush_receiver) => {
+                    match resp {
+                        (Some(req), listener) => {
+                            info!("received force flush in datadog exporter: {:?}", req);
+
+                            if let Err(res) = self.drain_futures(&mut enc_stream, &mut export_futures).await {
+                                warn!("unable to drain exporter: {}", res);
+                            }
+
+                            if let Err(e) = listener.ack(req).await {
+                                warn!("unable to ack flush request: {}", e);
+                            }
+                        },
+                        (None, _) => warn!("flush channel was closed")
+                    }
+                },
+
+                _ = token.cancelled() => {
+                    event!(Level::INFO, "DatadogExporter received shutdown signal, exiting main processing loop");
+                    break;
+                },
             }
         }
 
-        self.drain_futures(enc_stream, export_futures).await
+        self.drain_futures(&mut enc_stream, &mut export_futures).await
     }
 
     async fn drain_futures(
         &mut self,
-        mut enc_stream: RequestBuilderMapper<
+        enc_stream: &mut RequestBuilderMapper<
             RecvStream<'_, Vec<ResourceSpans>>,
             ResourceSpans,
             RequestBuilder<ResourceSpans, Transformer>,
         >,
-        mut export_futures: FuturesUnordered<ExportFuture>,
+        export_futures: &mut FuturesUnordered<ExportFuture>,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let finish_encoding = Instant::now().add(self.encode_drain_max_time);
         let finish_sending = Instant::now().add(self.export_drain_max_time);

@@ -18,6 +18,7 @@ use crate::exporters::otlp::{errors, get_meter, request};
 use crate::exporters::retry::RetryPolicy;
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::OTLPFrom;
 use futures::stream::FuturesUnordered;
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -45,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tower::retry::{Retry, RetryLayer};
 use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
@@ -66,6 +67,7 @@ type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<EncodedRequest, 
 pub fn build_traces_exporter(
     traces_config: OTLPExporterTracesConfig,
     trace_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -107,6 +109,7 @@ pub fn build_traces_exporter(
         trace_rx.clone(),
         traces_config.encode_drain_max_time,
         traces_config.export_drain_max_time,
+        flush_receiver,
     ))
 }
 
@@ -121,6 +124,7 @@ pub fn build_traces_exporter(
 pub fn build_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -137,7 +141,7 @@ pub fn build_metrics_exporter(
         .build();
     let sent = RotelCounter::OTELCounter(sent);
     let send_failed = RotelCounter::OTELCounter(send_failed);
-    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx)
+    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx, flush_receiver)
 }
 
 /// Creates a configured OTLP logs exporter
@@ -151,6 +155,7 @@ pub fn build_metrics_exporter(
 pub fn build_logs_exporter(
     logs_config: OTLPExporterLogsConfig,
     logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -190,6 +195,7 @@ pub fn build_logs_exporter(
         logs_rx.clone(),
         logs_config.encode_drain_max_time,
         logs_config.export_drain_max_time,
+        flush_receiver,
     ))
 }
 
@@ -204,13 +210,14 @@ pub fn build_logs_exporter(
 pub fn build_internal_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
 > {
     let sent = RotelCounter::NoOpCounter;
     let send_failed = RotelCounter::NoOpCounter;
-    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx)
+    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx, flush_receiver)
 }
 
 fn _build_metrics_exporter(
@@ -218,6 +225,7 @@ fn _build_metrics_exporter(
     send_failed: RotelCounter<u64>,
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -247,6 +255,7 @@ fn _build_metrics_exporter(
         metrics_rx.clone(),
         metrics_config.encode_drain_max_time,
         metrics_config.export_drain_max_time,
+        flush_receiver,
     ))
 }
 
@@ -270,6 +279,7 @@ where
     svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
+    flush_receiver: Option<FlushReceiver>,
 }
 
 impl<Resource, Request, Response> Exporter<Resource, Request, Response>
@@ -293,6 +303,7 @@ where
         rx: BoundedReceiver<Vec<Resource>>,
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
+        flush_receiver: Option<FlushReceiver>,
     ) -> Self {
         Self {
             type_name,
@@ -303,6 +314,7 @@ where
             export_futures: FuturesUnordered::new(),
             encode_drain_max_time,
             export_drain_max_time,
+            flush_receiver,
         }
     }
 
@@ -320,6 +332,7 @@ where
         token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let type_name = self.type_name.to_string();
+        let mut flush_receiver = self.flush_receiver.take();
         loop {
             select! {
                 biased;
@@ -379,6 +392,23 @@ where
                     }
                 },
 
+                Some(resp) = conditional_flush(&mut flush_receiver) => {
+                    match resp {
+                        (Some(req), listener) => {
+                            info!(exporter_type = type_name, "received force flush in OTLP exporter: {:?}", req);
+
+                            if let Err(res) = self.drain_futures().await {
+                                warn!(exporter_type = type_name, "unable to drain exporter: {}", res);
+                            }
+
+                            if let Err(e) = listener.ack(req).await {
+                                warn!(exporter_type = type_name, "unable to ack flush request: {}", e);
+                            }
+                        },
+                        (None, _) => warn!("flush channel was closed")
+                    }
+                },
+
                 _ = token.cancelled() => {
                     debug!(
                         exporter_type = type_name,
@@ -391,7 +421,7 @@ where
         self.drain_futures().await
     }
 
-    /// Drains in-flight requests during shutdown
+    /// Drains in-flight requests during shutdown or on a forced flush
     ///
     /// Attempts to complete processing of:
     /// - Requests being encoded

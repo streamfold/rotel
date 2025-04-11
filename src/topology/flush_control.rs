@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tower::BoxError;
-use tracing::log::warn;
+use tracing::{warn};
 use crate::bounded_channel::{bounded, BoundedReceiver, BoundedSender};
 
 const FLUSH_CHAN_SIZE:usize = 20;
@@ -57,8 +57,8 @@ impl FlushBroadcast {
         }
     }
 
-    pub fn into_parts(self) -> (FlushPublisher, FlushSubscriber) {
-        let publisher = FlushPublisher{
+    pub fn into_parts(self) -> (FlushSender, FlushSubscriber) {
+        let publisher = FlushSender {
             inner: self.inner.clone(),
             next_req_id: 1,
             req_tx: self.req_tx.clone(),
@@ -74,14 +74,14 @@ impl FlushBroadcast {
     }
 }
 
-pub struct FlushPublisher {
+pub struct FlushSender {
     inner: Arc<Mutex<Inner>>,
     next_req_id: u64,
     req_tx: Sender<FlushRequest>,
     resp_rx: BoundedReceiver<FlushResponse>,
 }
 
-impl FlushPublisher {
+impl FlushSender {
     pub async fn broadcast(&mut self) -> Result<(), BoxError> {
         let curr_listeners = self.inner.lock().unwrap().listeners;
         let req_id = self.next_req_id;
@@ -122,10 +122,10 @@ pub struct FlushSubscriber {
 }
 
 impl FlushSubscriber {
-    pub fn subscribe(&mut self) -> FlushListener {
+    pub fn subscribe(&mut self) -> FlushReceiver {
         self.inner.lock().unwrap().add_subscriber();
 
-        FlushListener {
+        FlushReceiver {
             rx: self.req_tx.subscribe(),
             tx: self.resp_tx.clone(),
         }
@@ -133,12 +133,12 @@ impl FlushSubscriber {
     }
 }
 
-pub struct FlushListener {
+pub struct FlushReceiver {
     rx: Receiver<FlushRequest>,
     tx: BoundedSender<FlushResponse>
 }
 
-impl FlushListener {
+impl FlushReceiver {
     pub async fn next(&mut self) -> Option<FlushRequest> {
         match self.rx.recv().await {
             Ok(item) => Some(item),
@@ -152,3 +152,9 @@ impl FlushListener {
     }
 }
 
+pub async fn conditional_flush(flush_receiver: &mut Option<FlushReceiver>) -> Option<(Option<FlushRequest>, &mut FlushReceiver)> {
+    match flush_receiver {
+        None => None,
+        Some(receiver) => Some((receiver.next().await, receiver))
+    }
+}

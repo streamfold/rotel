@@ -47,6 +47,7 @@ pub struct Agent {
     environment: String,
     logs_rx: Option<BoundedReceiver<ResourceLogs>>,
     pipeline_flush_sub: Option<FlushSubscriber>,
+    exporters_flush_sub: Option<FlushSubscriber>,
 }
 
 impl Agent {
@@ -63,6 +64,7 @@ impl Agent {
             environment,
             logs_rx: None,
             pipeline_flush_sub: None,
+            exporters_flush_sub: None,
         }
     }
 
@@ -73,6 +75,11 @@ impl Agent {
 
     pub fn with_pipeline_flush(mut self, pipeline_flush_sub: FlushSubscriber) -> Self {
         self.pipeline_flush_sub = Some(pipeline_flush_sub);
+        self
+    }
+
+    pub fn with_exporters_flush(mut self, exporters_flush_sub: FlushSubscriber) -> Self {
+        self.exporters_flush_sub = Some(exporters_flush_sub);
         self
     }
 
@@ -278,6 +285,7 @@ impl Agent {
                     let mut traces = otlp::exporter::build_traces_exporter(
                         traces_config,
                         trace_pipeline_out_rx.clone(),
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
@@ -299,6 +307,7 @@ impl Agent {
                     let mut metrics = otlp::exporter::build_metrics_exporter(
                         metrics_config.clone(),
                         metrics_pipeline_out_rx.clone(),
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
@@ -317,6 +326,7 @@ impl Agent {
                     let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
                         metrics_config.clone(),
                         internal_metrics_pipeline_out_rx.clone(),
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
@@ -337,6 +347,7 @@ impl Agent {
                     let mut logs = otlp::exporter::build_logs_exporter(
                         logs_config,
                         logs_pipeline_out_rx.clone(),
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
@@ -371,7 +382,8 @@ impl Agent {
                         .clone(),
                     api_key,
                 )
-                .with_environment(self.environment.clone());
+                    .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
+                    .with_environment(self.environment.clone());
 
                 if let Some(hostname) = hostname {
                     builder = builder.with_hostname(hostname);
