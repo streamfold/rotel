@@ -529,7 +529,8 @@ mod tests {
         .with_ca_file(server_root_ca_cert_file)
         .with_header("authorization", "bar");
 
-        let mut traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let mut traces =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
@@ -720,7 +721,8 @@ mod tests {
         .with_initial_backoff(Duration::from_millis(5))
         .with_max_elapsed_time(Duration::from_millis(50));
 
-        let mut traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let mut traces =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();

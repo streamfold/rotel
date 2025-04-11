@@ -1,11 +1,11 @@
+use crate::bounded_channel::{BoundedReceiver, BoundedSender, bounded};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tower::BoxError;
-use tracing::{warn};
-use crate::bounded_channel::{bounded, BoundedReceiver, BoundedSender};
+use tracing::warn;
 
-const FLUSH_CHAN_SIZE:usize = 20;
+const FLUSH_CHAN_SIZE: usize = 20;
 
 #[derive(Debug, Clone)]
 pub struct FlushRequest {
@@ -33,7 +33,7 @@ struct Inner {
 
 impl Inner {
     fn new(req_rx: Receiver<FlushRequest>) -> Self {
-        Self{
+        Self {
             listeners: 0,
             _req_rx: req_rx,
         }
@@ -86,7 +86,7 @@ impl FlushSender {
         let curr_listeners = self.inner.lock().unwrap().listeners;
         let req_id = self.next_req_id;
         self.next_req_id += 1;
-        let req = FlushRequest{id: req_id};
+        let req = FlushRequest { id: req_id };
 
         if let Err(e) = self.req_tx.send(req) {
             return Err(format!("Unable to send broadcast message: {}", e).into());
@@ -95,7 +95,7 @@ impl FlushSender {
         let mut acked = 0u64;
         loop {
             if acked == curr_listeners as u64 {
-                break
+                break;
             }
             match self.resp_rx.next().await {
                 None => {
@@ -103,8 +103,11 @@ impl FlushSender {
                 }
                 Some(resp) => {
                     if resp.id != req_id {
-                        warn!("invalid response id received, expected {}, got {}", req_id, resp.id);
-                        continue
+                        warn!(
+                            "invalid response id received, expected {}, got {}",
+                            req_id, resp.id
+                        );
+                        continue;
                     }
                     acked += 1;
                 }
@@ -112,7 +115,6 @@ impl FlushSender {
         }
         Ok(())
     }
-
 }
 
 pub struct FlushSubscriber {
@@ -129,13 +131,12 @@ impl FlushSubscriber {
             rx: self.req_tx.subscribe(),
             tx: self.resp_tx.clone(),
         }
-
     }
 }
 
 pub struct FlushReceiver {
     rx: Receiver<FlushRequest>,
-    tx: BoundedSender<FlushResponse>
+    tx: BoundedSender<FlushResponse>,
 }
 
 impl FlushReceiver {
@@ -146,27 +147,31 @@ impl FlushReceiver {
         }
     }
 
-    pub async fn ack(&mut self, req: FlushRequest) -> Result<(), BoxError>{
-        let resp = FlushResponse{id: req.id};
-        self.tx.send(resp).await.map_err(|e| format!("failed to ack: {}", e).into())
+    pub async fn ack(&mut self, req: FlushRequest) -> Result<(), BoxError> {
+        let resp = FlushResponse { id: req.id };
+        self.tx
+            .send(resp)
+            .await
+            .map_err(|e| format!("failed to ack: {}", e).into())
     }
 }
 
-pub async fn conditional_flush(flush_receiver: &mut Option<FlushReceiver>) -> Option<(Option<FlushRequest>, &mut FlushReceiver)> {
+pub async fn conditional_flush(
+    flush_receiver: &mut Option<FlushReceiver>,
+) -> Option<(Option<FlushRequest>, &mut FlushReceiver)> {
     match flush_receiver {
         None => None,
-        Some(receiver) => Some((receiver.next().await, receiver))
+        Some(receiver) => Some((receiver.next().await, receiver)),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::time::Duration;
     use tokio::join;
     use tokio::time::timeout;
     use tokio_test::{assert_err, assert_ok};
-    use super::*;
 
     #[tokio::test]
     async fn test_broadcast_and_receive() {
@@ -215,7 +220,6 @@ mod tests {
             assert_ok!(join!(h).0);
         }
     }
-
 
     #[tokio::test]
     async fn test_can_timeout() {

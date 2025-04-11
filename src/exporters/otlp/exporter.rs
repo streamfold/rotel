@@ -46,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tower::retry::{Retry, RetryLayer};
 use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
@@ -141,7 +141,13 @@ pub fn build_metrics_exporter(
         .build();
     let sent = RotelCounter::OTELCounter(sent);
     let send_failed = RotelCounter::OTELCounter(send_failed);
-    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx, flush_receiver)
+    _build_metrics_exporter(
+        sent,
+        send_failed,
+        metrics_config,
+        metrics_rx,
+        flush_receiver,
+    )
 }
 
 /// Creates a configured OTLP logs exporter
@@ -217,7 +223,13 @@ pub fn build_internal_metrics_exporter(
 > {
     let sent = RotelCounter::NoOpCounter;
     let send_failed = RotelCounter::NoOpCounter;
-    _build_metrics_exporter(sent, send_failed, metrics_config, metrics_rx, flush_receiver)
+    _build_metrics_exporter(
+        sent,
+        send_failed,
+        metrics_config,
+        metrics_rx,
+        flush_receiver,
+    )
 }
 
 fn _build_metrics_exporter(

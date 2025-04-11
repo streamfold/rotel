@@ -6,7 +6,7 @@ use crate::processor::model::register_processor;
 #[cfg(feature = "pyo3")]
 use crate::processor::py::rotel_python_processor_sdk;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature

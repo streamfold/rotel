@@ -11,6 +11,7 @@ use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::types::ContentEncoding;
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use futures::stream::FuturesUnordered;
@@ -27,9 +28,8 @@ use tokio_util::sync::CancellationToken;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, Service, ServiceBuilder};
-use tracing::{Level, debug, error, event, info};
 use tracing::log::warn;
-use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use tracing::{Level, debug, error, event, info};
 
 mod api_request;
 mod request_builder;
@@ -80,7 +80,7 @@ pub struct DatadogTraceExporterBuilder {
     environment: String,
     hostname: String,
     retry_config: RetryConfig,
-    flush_receiver: Option<FlushReceiver>
+    flush_receiver: Option<FlushReceiver>,
 }
 
 impl Default for DatadogTraceExporterBuilder {
@@ -231,7 +231,8 @@ impl DatadogTraceExporter {
             }
         }
 
-        self.drain_futures(&mut enc_stream, &mut export_futures).await
+        self.drain_futures(&mut enc_stream, &mut export_futures)
+            .await
     }
 
     async fn drain_futures(

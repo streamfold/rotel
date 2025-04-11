@@ -382,8 +382,8 @@ impl Agent {
                         .clone(),
                     api_key,
                 )
-                    .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
-                    .with_environment(self.environment.clone());
+                .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
+                .with_environment(self.environment.clone());
 
                 if let Some(hostname) = hostname {
                     builder = builder.with_hostname(hostname);
