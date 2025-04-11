@@ -49,7 +49,7 @@ impl PyAnyValue {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
 
-        // TODO, can we unwrap here or need a None check?
+        // TODO WE need none checks on these setters
         v.clone()
             .unwrap()
             .value
@@ -660,6 +660,17 @@ impl PyScopeSpans {
         }
         Ok(Some(PyInstrumentationScope(self.scope.clone())))
     }
+    #[setter]
+    fn set_scope(&mut self, scope: PyInstrumentationScope) -> PyResult<()> {
+        let mut v = self.scope.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let inner = scope.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.replace(inner.clone().unwrap());
+        Ok(())
+    }
     #[getter]
     fn schema_url(&self) -> String {
         self.schema_url.clone()
@@ -667,10 +678,23 @@ impl PyScopeSpans {
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct PyInstrumentationScope(Arc<Mutex<Option<InstrumentationScope>>>);
 
 #[pymethods]
 impl PyInstrumentationScope {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyInstrumentationScope(Arc::new(Mutex::new(Some(
+            InstrumentationScope {
+                // TODO: Probably provide the otel defaults here?
+                name: "".to_string(),
+                version: "".to_string(),
+                attributes: Arc::new(Mutex::new(vec![])),
+                dropped_attributes_count: 0,
+            },
+        )))))
+    }
     #[getter]
     fn name(&self) -> PyResult<String> {
         let binding = self.0.lock().map_err(|_| {
@@ -688,20 +712,19 @@ impl PyInstrumentationScope {
         let mut binding = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        if binding.is_none() {
-            binding.replace(InstrumentationScope {
-                name,
-                ..Default::default()
-            });
-        } else {
-            let current = binding.clone().unwrap();
-            binding.replace(InstrumentationScope {
+        let updated_scope = match binding.take() {
+            Some(current) => InstrumentationScope {
                 name,
                 version: current.version,
                 attributes: current.attributes,
                 dropped_attributes_count: current.dropped_attributes_count,
-            });
-        }
+            },
+            None => InstrumentationScope {
+                name,
+                ..Default::default()
+            },
+        };
+        binding.replace(updated_scope);
         Ok(())
     }
     #[getter]
@@ -718,21 +741,22 @@ impl PyInstrumentationScope {
     }
     #[setter]
     fn set_version(&self, version: String) -> PyResult<()> {
-        let mut binding = self.0.lock().unwrap();
-        if binding.is_none() {
-            binding.replace(InstrumentationScope {
-                version,
-                ..Default::default()
-            });
-        } else {
-            let current = binding.clone().unwrap();
-            binding.replace(InstrumentationScope {
+        let mut binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let updated_scope = match binding.take() {
+            Some(current) => InstrumentationScope {
                 version,
                 name: current.name,
                 attributes: current.attributes,
                 dropped_attributes_count: current.dropped_attributes_count,
-            });
-        }
+            },
+            None => InstrumentationScope {
+                version,
+                ..Default::default()
+            },
+        };
+        binding.replace(updated_scope);
         Ok(())
     }
     #[getter]
@@ -741,31 +765,44 @@ impl PyInstrumentationScope {
         Ok(PyInstrumentationScopeAttributes(binding.attributes.clone()))
     }
     #[getter]
-    fn dropped_attributes_count(&self) -> u32 {
-        let binding = self.0.lock().unwrap().clone().unwrap();
-        binding.dropped_attributes_count
+    fn dropped_attributes_count(&self) -> PyResult<u32> {
+        let binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = binding
+            .clone()
+            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "InstrumentationScope is None",
+            ))?;
+        Ok(v.dropped_attributes_count)
     }
     #[setter]
     fn set_dropped_attributes_count(&self, dropped_attributes_count: u32) -> PyResult<()> {
-        let mut binding = self.0.lock().unwrap();
-        if binding.is_none() {
-            binding.replace(InstrumentationScope {
-                dropped_attributes_count,
-                ..Default::default()
-            });
-        } else {
-            let current = binding.clone().unwrap();
-            binding.replace(InstrumentationScope {
-                version: current.version,
+        let mut binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let updated_scope = match binding.take() {
+            Some(current) => InstrumentationScope {
                 name: current.name,
+                version: current.version,
                 attributes: current.attributes,
                 dropped_attributes_count,
-            });
-        }
+            },
+            None => InstrumentationScope {
+                dropped_attributes_count,
+                ..Default::default()
+            },
+        };
+        binding.replace(updated_scope);
         Ok(())
     }
 }
 
+// TODO: Remove this and update PyAttributesIter to use a Arc<Mutex<Vec<KeyValue>>>.
+// Careful observer will notice this looks like PyAttributes called from PyResource, however
+// that class has additional ArcMutexes around the KeyValues. We tried out a new pattern here for the scope attributes
+// and it appears to be working well. For the sake of safety I want to finish additional testing before going back and
+// refactoring. WHen we do we should be able to remove this and share a single attributes and attributes iter type.
 #[pyclass]
 struct PyInstrumentationScopeAttributes(Arc<Mutex<Vec<KeyValue>>>);
 
@@ -777,7 +814,6 @@ impl PyInstrumentationScopeAttributes {
             vec![],
         ))))
     }
-
     fn __iter__<'py>(
         &'py self,
         py: Python<'py>,
@@ -805,7 +841,6 @@ impl PyInstrumentationScopeAttributes {
             )),
         }
     }
-
     fn append<'py>(&self, item: &PyKeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -815,19 +850,18 @@ impl PyInstrumentationScopeAttributes {
         k.push(inner);
         Ok(())
     }
-
-    // fn append_attributes<'py>(&self, py: Python<'py>, items: Vec<PyObject>) -> PyResult<()> {
-    //     let mut k = self.0.lock().map_err(|_| {
-    //         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-    //     })?;
-    //
-    //     for i in items.iter() {
-    //         let x = i.extract::<PyKeyValue>(py)?;
-    //         k.push(x.inner.clone());
-    //     }
-    //     Ok(())
-    // }
-
+    fn append_attributes<'py>(&self, py: Python<'py>, items: Vec<PyObject>) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        for i in items.iter() {
+            let item = i.extract::<PyKeyValue>(py)?;
+            let inner = item.inner.lock().unwrap();
+            let inner = inner.clone();
+            k.push(inner.clone());
+        }
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1122,6 +1156,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyResource>()?;
     m.add_class::<PyAttributes>()?;
     m.add_class::<PyScopeSpans>()?;
+    m.add_class::<PyInstrumentationScope>()?;
     m.add_class::<PySpan>()?;
     Ok(())
 }
@@ -1672,7 +1707,7 @@ mod tests {
     }
 
     #[test]
-    fn scope_spans_instrumentation_scope() {
+    fn read_and_write_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::processor::model::otel_transform::transform(
@@ -1691,6 +1726,89 @@ mod tests {
             )
         })
         .unwrap();
-        println!("{:#?}", resource_spans.scope_spans.lock().unwrap());
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans =
+            crate::processor::model::py_transform::transform_spans(scope_spans_vec);
+        let scope_spans = scope_spans.pop().unwrap();
+        let scope = scope_spans.scope.unwrap();
+        assert_eq!("name_changed", scope.name);
+        assert_eq!("0.0.2", scope.version);
+        assert_eq!(100, scope.dropped_attributes_count);
+        assert_eq!(scope.attributes.len(), 2);
+        for attr in &scope.attributes {
+            let value = attr.value.clone().unwrap();
+            let value = value.value.unwrap();
+            match attr.key.as_str() {
+                "key_changed" => match value {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i) => {
+                        assert_eq!(i, 200);
+                    }
+                    _ => {
+                        panic!("wrong type for key_changed: {:?}", value);
+                    }
+                },
+                "severity" => match value {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
+                        assert_eq!(s, "WARN");
+                    }
+                    _ => {
+                        panic!("wrong type for severity: {:?}", value);
+                    }
+                },
+                _ => {
+                    panic!("unexpected key")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn set_instrumentation_scope() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans = crate::processor::model::otel_transform::transform(
+            export_req.resource_spans[0].clone(),
+        );
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: Arc::new(Mutex::new("".to_string())),
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans =
+            crate::processor::model::py_transform::transform_spans(scope_spans_vec);
+        let scope_spans = scope_spans.pop().unwrap();
+        let scope = scope_spans.scope.unwrap();
+        assert_eq!("name_changed", scope.name);
+        assert_eq!("0.0.2", scope.version);
+        assert_eq!(100, scope.dropped_attributes_count);
+        assert_eq!(scope.attributes.len(), 1);
+        for attr in &scope.attributes {
+            let value = attr.value.clone().unwrap();
+            let value = value.value.unwrap();
+            match attr.key.as_str() {
+                "severity" => match value {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
+                        assert_eq!(s, "WARN");
+                    }
+                    _ => {
+                        panic!("wrong type for severity: {:?}", value);
+                    }
+                },
+                _ => {
+                    panic!("unexpected key")
+                }
+            }
+        }
     }
 }

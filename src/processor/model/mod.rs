@@ -1,5 +1,5 @@
 pub mod otel_transform;
-mod py_transform;
+pub mod py_transform;
 
 use crate::processor::py::PyResourceSpans;
 use crate::topology::generic_pipeline::PythonProcessable;

@@ -1,7 +1,9 @@
 use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
-use crate::processor::model::{AnyValue, Resource, ScopeSpans, Span};
+use crate::processor::model::{
+    AnyValue, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span,
+};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -11,8 +13,10 @@ pub fn transform_spans(
     let mut new_scope_spans = vec![];
     for ss in scope_spans.iter() {
         let ss = ss.lock().unwrap();
+        let schema = ss.schema_url.clone();
+        let scope = convert_scope(ss.scope.clone());
         let ss = ss.spans.lock().unwrap();
-        let mut new_spans = vec![];
+        let mut spans = vec![];
         for span in ss.iter() {
             let mut guard = span.lock().unwrap();
             let moved_data = mem::replace(
@@ -34,7 +38,7 @@ pub fn transform_spans(
                     status: Arc::new(Default::default()),
                 },
             );
-            new_spans.push(opentelemetry_proto::tonic::trace::v1::Span {
+            spans.push(opentelemetry_proto::tonic::trace::v1::Span {
                 trace_id: moved_data.trace_id,
                 span_id: moved_data.span_id,
                 trace_state: moved_data.trace_state,
@@ -54,12 +58,56 @@ pub fn transform_spans(
             })
         }
         new_scope_spans.push(opentelemetry_proto::tonic::trace::v1::ScopeSpans {
-            scope: None,
-            spans: new_spans,
-            schema_url: "".to_string(),
+            scope,
+            spans,
+            schema_url: schema,
         })
     }
     new_scope_spans
+}
+
+fn convert_scope(
+    scope: Arc<Mutex<Option<InstrumentationScope>>>,
+) -> Option<opentelemetry_proto::tonic::common::v1::InstrumentationScope> {
+    let guard = scope.lock().unwrap();
+    if guard.is_none() {
+        return None;
+    }
+    let scope = guard.clone().unwrap();
+    let attrs = convert_attributes(scope.attributes);
+    Some(
+        opentelemetry_proto::tonic::common::v1::InstrumentationScope {
+            name: scope.name,
+            version: scope.version,
+            attributes: attrs,
+            dropped_attributes_count: scope.dropped_attributes_count,
+        },
+    )
+}
+
+fn convert_attributes(
+    attrs: Arc<Mutex<Vec<KeyValue>>>,
+) -> Vec<opentelemetry_proto::tonic::common::v1::KeyValue> {
+    let attrs = attrs.lock().unwrap();
+    let mut new_attrs = vec![];
+    for attr in attrs.iter() {
+        let key = attr.key.lock().unwrap();
+        let key = key.to_string();
+        let mut any_value = attr.value.lock().unwrap();
+        let any_value = any_value.take();
+        match any_value {
+            None => new_attrs
+                .push(opentelemetry_proto::tonic::common::v1::KeyValue { key, value: None }),
+            Some(v) => {
+                let converted = convert_value(v);
+                new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key,
+                    value: Some(converted),
+                })
+            }
+        }
+    }
+    new_attrs
 }
 
 pub fn transform_resource(

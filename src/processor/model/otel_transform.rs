@@ -28,7 +28,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
             scope = Some(InstrumentationScope {
                 name: s.name,
                 version: s.version,
-                attributes: Arc::new(Mutex::new(vec![])),
+                attributes: Arc::new(Mutex::new(convert_attributes(s.attributes))),
                 dropped_attributes_count: s.dropped_attributes_count,
             })
         }
@@ -66,6 +66,30 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     }
     resource_span.scope_spans = Arc::new(Mutex::new(scope_spans));
     resource_span
+}
+
+fn convert_attributes(
+    attributes: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
+) -> Vec<crate::processor::model::KeyValue> {
+    let mut kvs = vec![];
+    for a in attributes {
+        let key = Arc::new(Mutex::new(a.key));
+        let any_value = a.value;
+        match any_value {
+            None => kvs.push(KeyValue {
+                key,
+                value: Arc::new(Mutex::new(None)),
+            }),
+            Some(v) => {
+                let converted = convert_value(v);
+                kvs.push(KeyValue {
+                    key,
+                    value: Arc::new(Mutex::new(Some(converted))),
+                })
+            }
+        }
+    }
+    kvs
 }
 
 fn build_rotel_sdk_resource(
