@@ -761,8 +761,15 @@ impl PyInstrumentationScope {
     }
     #[getter]
     fn attributes(&self) -> PyResult<PyInstrumentationScopeAttributes> {
-        let binding = self.0.lock().unwrap().clone().unwrap();
-        Ok(PyInstrumentationScopeAttributes(binding.attributes.clone()))
+        let binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = binding
+            .clone()
+            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "InstrumentationScope is None",
+            ))?;
+        Ok(PyInstrumentationScopeAttributes(v.attributes))
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
