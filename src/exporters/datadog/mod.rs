@@ -29,7 +29,7 @@ use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::log::warn;
-use tracing::{Level, debug, error, event, info};
+use tracing::{Level, debug, error, event};
 
 mod api_request;
 mod request_builder;
@@ -210,7 +210,7 @@ impl DatadogTraceExporter {
                 Some(resp) = conditional_flush(&mut flush_receiver) => {
                     match resp {
                         (Some(req), listener) => {
-                            info!("received force flush in datadog exporter: {:?}", req);
+                            debug!("received force flush in datadog exporter: {:?}", req);
 
                             if let Err(res) = self.drain_futures(&mut enc_stream, &mut export_futures).await {
                                 warn!("unable to drain exporter: {}", res);
