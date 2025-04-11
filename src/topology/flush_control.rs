@@ -158,3 +158,113 @@ pub async fn conditional_flush(flush_receiver: &mut Option<FlushReceiver>) -> Op
         Some(receiver) => Some((receiver.next().await, receiver))
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use tokio::join;
+    use tokio::time::timeout;
+    use tokio_test::{assert_err, assert_ok};
+    use super::*;
+
+    #[tokio::test]
+    async fn test_broadcast_and_receive() {
+        let (mut publisher, mut subscriber) = FlushBroadcast::new().into_parts();
+
+        let mut receiver = subscriber.subscribe();
+        let jh = tokio::spawn(async move {
+            let req = receiver.next().await.unwrap();
+            assert_eq!(req.id, 1);
+
+            assert_ok!(receiver.ack(req).await);
+
+            let req = receiver.next().await.unwrap();
+            assert_eq!(req.id, 2);
+
+            assert_ok!(receiver.ack(req).await);
+        });
+
+        publisher.broadcast().await.unwrap();
+
+        publisher.broadcast().await.unwrap();
+
+        assert_ok!(join!(jh).0);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_receivers() {
+        let (mut publisher, mut subscriber) = FlushBroadcast::new().into_parts();
+
+        let mut handles = vec![];
+        for _i in 0..10 {
+            let mut receiver = subscriber.subscribe();
+            let jh = tokio::spawn(async move {
+                let req = receiver.next().await.unwrap();
+                assert_eq!(req.id, 1);
+
+                assert_ok!(receiver.ack(req).await);
+            });
+
+            handles.push(jh);
+        }
+
+        publisher.broadcast().await.unwrap();
+
+        for h in handles {
+            assert_ok!(join!(h).0);
+        }
+    }
+
+
+    #[tokio::test]
+    async fn test_can_timeout() {
+        let (mut publisher, mut subscriber) = FlushBroadcast::new().into_parts();
+
+        let _receiver = subscriber.subscribe();
+
+        let res = timeout(Duration::from_millis(50), publisher.broadcast()).await;
+        assert_err!(res);
+    }
+
+    #[tokio::test]
+    async fn test_ignores_invalid_ack() {
+        let (mut publisher, mut subscriber) = FlushBroadcast::new().into_parts();
+
+        let mut receiver = subscriber.subscribe();
+        let jh = tokio::spawn(async move {
+            let mut req = receiver.next().await.unwrap();
+            assert_eq!(req.id, 1);
+
+            req.id += 1;
+            assert_ok!(receiver.ack(req).await);
+        });
+
+        // Should timeout
+        let res = timeout(Duration::from_millis(50), publisher.broadcast()).await;
+        assert_err!(res);
+
+        assert_ok!(join!(jh).0);
+    }
+
+    #[tokio::test]
+    async fn test_conditional_flush() {
+        let (mut publisher, mut subscriber) = FlushBroadcast::new().into_parts();
+
+        let mut receiver = None;
+        let req = conditional_flush(&mut receiver).await;
+        assert!(req.is_none());
+
+        let mut receiver = Some(subscriber.subscribe());
+        let jh = tokio::spawn(async move {
+            let (req, lis) = conditional_flush(&mut receiver).await.unwrap();
+            assert!(req.is_some());
+
+            assert_ok!(lis.ack(req.unwrap()).await);
+        });
+
+        publisher.broadcast().await.unwrap();
+
+        assert_ok!(join!(jh).0);
+    }
+}
