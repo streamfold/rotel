@@ -146,10 +146,8 @@ async fn run_agent(
         let token = cancel_token.clone();
         let env = env.clone();
         let agent_fut = async move {
-            let agent = Agent::default();
-            agent
-                .run(agent_args, port_map, SENDING_QUEUE_SIZE, env, token, None)
-                .await
+            let agent = Agent::new(agent_args, port_map, SENDING_QUEUE_SIZE, env);
+            agent.run(token).await
         };
 
         agent_join_set.spawn(agent_fut);

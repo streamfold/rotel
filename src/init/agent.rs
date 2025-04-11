@@ -38,23 +38,53 @@ use tracing::{debug, error, info};
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
 
-// todo: split out argument processing into some type of AgentBuilder interface
-#[derive(Default)]
-pub struct Agent {}
+use crate::topology::flush_control::FlushSubscriber;
+
+pub struct Agent {
+    config: Box<AgentRun>,
+    port_map: HashMap<SocketAddr, Listener>,
+    sending_queue_size: usize,
+    environment: String,
+    logs_rx: Option<BoundedReceiver<ResourceLogs>>,
+    pipeline_flush_sub: Option<FlushSubscriber>,
+}
 
 impl Agent {
-    pub async fn run(
-        &self,
-        agent: Box<AgentRun>,
-        mut port_map: HashMap<SocketAddr, Listener>,
+    pub fn new(
+        config: Box<AgentRun>,
+        port_map: HashMap<SocketAddr, Listener>,
         sending_queue_size: usize,
         environment: String,
+    ) -> Self {
+        Self {
+            config,
+            port_map,
+            sending_queue_size,
+            environment,
+            logs_rx: None,
+            pipeline_flush_sub: None,
+        }
+    }
+
+    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<ResourceLogs>) -> Self {
+        self.logs_rx = Some(logs_rx);
+        self
+    }
+
+    pub fn with_pipeline_flush(mut self, pipeline_flush_sub: FlushSubscriber) -> Self {
+        self.pipeline_flush_sub = Some(pipeline_flush_sub);
+        self
+    }
+
+    pub async fn run(
+        mut self,
         agent_cancel: CancellationToken,
-        logs_rx: Option<BoundedReceiver<ResourceLogs>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let config = self.config;
+
         info!(
-            grpc_endpoint = agent.otlp_grpc_endpoint.to_string(),
-            http_endpoint = agent.otlp_http_endpoint.to_string(),
+            grpc_endpoint = config.otlp_grpc_endpoint.to_string(),
+            http_endpoint = config.otlp_http_endpoint.to_string(),
             "Starting Rotel.",
         );
 
@@ -73,7 +103,7 @@ impl Agent {
         let pipeline_cancel = CancellationToken::new();
         let exporters_cancel = CancellationToken::new();
 
-        let activation = TelemetryActivation::from_config(&agent);
+        let activation = TelemetryActivation::from_config(&config);
 
         // If there are no listeners, suggest the blackhole exporter
         if activation.traces == TelemetryState::NoListeners
@@ -100,25 +130,25 @@ impl Agent {
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
             bounded::<Vec<ResourceSpans>>(max(4, num_cpus));
         let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
-            bounded::<Vec<ResourceSpans>>(sending_queue_size);
+            bounded::<Vec<ResourceSpans>>(self.sending_queue_size);
         let trace_otlp_output = OTLPOutput::new(trace_pipeline_in_tx);
 
         let (metrics_pipeline_in_tx, metrics_pipeline_in_rx) =
             bounded::<Vec<ResourceMetrics>>(max(4, num_cpus));
         let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
-            bounded::<Vec<ResourceMetrics>>(sending_queue_size);
+            bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let metrics_otlp_output = OTLPOutput::new(metrics_pipeline_in_tx);
 
         let (logs_pipeline_in_tx, logs_pipeline_in_rx) =
             bounded::<Vec<ResourceLogs>>(max(4, num_cpus));
         let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
-            bounded::<Vec<ResourceLogs>>(sending_queue_size);
+            bounded::<Vec<ResourceLogs>>(self.sending_queue_size);
         let logs_otlp_output = OTLPOutput::new(logs_pipeline_in_tx);
 
         let (internal_metrics_pipeline_in_tx, internal_metrics_pipeline_in_rx) =
             bounded::<Vec<ResourceMetrics>>(max(4, num_cpus));
         let (internal_metrics_pipeline_out_tx, internal_metrics_pipeline_out_rx) =
-            bounded::<Vec<ResourceMetrics>>(sending_queue_size);
+            bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
         let mut traces_output = None;
@@ -171,24 +201,29 @@ impl Agent {
             }
         }
 
+        let mut pipeline_flush_sub = self.pipeline_flush_sub.take();
+
         let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
-            build_traces_batch_config(agent.otlp_exporter.clone()),
-            agent.otlp_with_trace_processor.clone(),
+            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+            build_traces_batch_config(config.otlp_exporter.clone()),
+            config.otlp_with_trace_processor.clone(),
         );
 
         let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
             metrics_pipeline_in_rx.clone(),
             metrics_pipeline_out_tx,
-            build_metrics_batch_config(agent.otlp_exporter.clone()),
+            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+            build_metrics_batch_config(config.otlp_exporter.clone()),
             vec![],
         );
 
         let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
             logs_pipeline_in_rx.clone(),
             logs_pipeline_out_tx,
-            build_logs_batch_config(agent.otlp_exporter.clone()),
+            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+            build_logs_batch_config(config.otlp_exporter.clone()),
             vec![],
         );
 
@@ -201,7 +236,8 @@ impl Agent {
         let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
             internal_metrics_pipeline_in_rx.clone(),
             internal_metrics_pipeline_out_tx,
-            build_metrics_batch_config(agent.otlp_exporter.clone()),
+            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+            build_metrics_batch_config(config.otlp_exporter.clone()),
             vec![],
         );
 
@@ -223,7 +259,7 @@ impl Agent {
         global::set_meter_provider(meter_provider.clone());
 
         let token = exporters_cancel.clone();
-        match agent.exporter {
+        match config.exporter {
             Exporter::Blackhole => {
                 let mut exp = BlackholeExporter::new(
                     trace_pipeline_out_rx.clone(),
@@ -236,9 +272,9 @@ impl Agent {
                 });
             }
             Exporter::Otlp => {
-                let endpoint = agent.otlp_exporter.otlp_exporter_endpoint.as_ref();
+                let endpoint = config.otlp_exporter.otlp_exporter_endpoint.as_ref();
                 if activation.traces == TelemetryState::Active {
-                    let traces_config = build_traces_config(agent.otlp_exporter.clone(), endpoint);
+                    let traces_config = build_traces_config(config.otlp_exporter.clone(), endpoint);
                     let mut traces = otlp::exporter::build_traces_exporter(
                         traces_config,
                         trace_pipeline_out_rx.clone(),
@@ -259,7 +295,7 @@ impl Agent {
                 }
                 if activation.metrics == TelemetryState::Active {
                     let metrics_config =
-                        build_metrics_config(agent.otlp_exporter.clone(), endpoint);
+                        build_metrics_config(config.otlp_exporter.clone(), endpoint);
                     let mut metrics = otlp::exporter::build_metrics_exporter(
                         metrics_config.clone(),
                         metrics_pipeline_out_rx.clone(),
@@ -297,7 +333,7 @@ impl Agent {
                     });
                 }
                 if activation.logs == TelemetryState::Active {
-                    let logs_config = build_logs_config(agent.otlp_exporter.clone(), endpoint);
+                    let logs_config = build_logs_config(config.otlp_exporter.clone(), endpoint);
                     let mut logs = otlp::exporter::build_logs_exporter(
                         logs_config,
                         logs_pipeline_out_rx.clone(),
@@ -319,23 +355,23 @@ impl Agent {
             }
 
             Exporter::Datadog => {
-                if agent.datadog_exporter.datadog_exporter_api_key.is_none() {
+                if config.datadog_exporter.datadog_exporter_api_key.is_none() {
                     // todo: is there a way to make this config required with the exporter mode?
                     return Err("must specify Datadog exporter API key".into());
                 }
-                let api_key = agent.datadog_exporter.datadog_exporter_api_key.unwrap();
+                let api_key = config.datadog_exporter.datadog_exporter_api_key.unwrap();
 
                 let hostname = get_hostname();
 
                 let mut builder = DatadogTraceExporter::builder(
-                    agent.datadog_exporter.datadog_exporter_region.into(),
-                    agent
+                    config.datadog_exporter.datadog_exporter_region.into(),
+                    config
                         .datadog_exporter
                         .datadog_exporter_custom_endpoint
                         .clone(),
                     api_key,
                 )
-                .with_environment(environment.clone());
+                .with_environment(self.environment.clone());
 
                 if let Some(hostname) = hostname {
                     builder = builder.with_hostname(hostname);
@@ -358,7 +394,7 @@ impl Agent {
         }
 
         if traces_output.is_some() {
-            let log_traces = agent.debug_log.contains(&DebugLogParam::Traces);
+            let log_traces = config.debug_log.contains(&DebugLogParam::Traces);
             let dbg_log = DebugLogger::new(log_traces);
 
             let pipeline_cancel = pipeline_cancel.clone();
@@ -366,7 +402,7 @@ impl Agent {
                 .spawn(async move { trace_pipeline.start(dbg_log, pipeline_cancel).await });
         }
         if metrics_output.is_some() {
-            let log_metrics = agent.debug_log.contains(&DebugLogParam::Metrics);
+            let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
             let dbg_log = DebugLogger::new(log_metrics);
 
             let pipeline_cancel = pipeline_cancel.clone();
@@ -374,7 +410,7 @@ impl Agent {
                 .spawn(async move { metrics_pipeline.start(dbg_log, pipeline_cancel).await });
         }
         if logs_output.is_some() {
-            let log_logs = agent.debug_log.contains(&DebugLogParam::Logs);
+            let log_logs = config.debug_log.contains(&DebugLogParam::Logs);
             let dbg_log = DebugLogger::new(log_logs);
 
             let pipeline_cancel = pipeline_cancel.clone();
@@ -382,7 +418,7 @@ impl Agent {
                 .spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
         }
         if internal_metrics_output.is_some() {
-            let log_metrics = agent.debug_log.contains(&DebugLogParam::Metrics);
+            let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
             let dbg_log = DebugLogger::new(log_metrics);
 
             let pipeline_cancel = pipeline_cancel.clone();
@@ -397,13 +433,13 @@ impl Agent {
         // OTLP GRPC server
         //
         let grpc_srv = OTLPGrpcServer::builder()
-            .with_max_recv_msg_size_mib(agent.otlp_grpc_max_recv_msg_size_mib as usize)
+            .with_max_recv_msg_size_mib(config.otlp_grpc_max_recv_msg_size_mib as usize)
             .with_traces_output(traces_output.clone())
             .with_metrics_output(metrics_output.clone())
             .with_logs_output(logs_output.clone())
             .build();
 
-        let grpc_listener = port_map.remove(&agent.otlp_grpc_endpoint).unwrap();
+        let grpc_listener = self.port_map.remove(&config.otlp_grpc_endpoint).unwrap();
         {
             let receivers_cancel = receivers_cancel.clone();
             receivers_task_set
@@ -417,12 +453,12 @@ impl Agent {
             .with_traces_output(traces_output.clone())
             .with_metrics_output(metrics_output.clone())
             .with_logs_output(logs_output.clone())
-            .with_traces_path(agent.otlp_receiver_traces_http_path.clone())
-            .with_metrics_path(agent.otlp_receiver_metrics_http_path.clone())
-            .with_logs_path(agent.otlp_receiver_logs_http_path.clone())
+            .with_traces_path(config.otlp_receiver_traces_http_path.clone())
+            .with_metrics_path(config.otlp_receiver_metrics_http_path.clone())
+            .with_logs_path(config.otlp_receiver_logs_http_path.clone())
             .build();
 
-        let http_listener = port_map.remove(&agent.otlp_http_endpoint).unwrap();
+        let http_listener = self.port_map.remove(&config.otlp_http_endpoint).unwrap();
         {
             let receivers_cancel = receivers_cancel.clone();
             receivers_task_set
@@ -432,7 +468,7 @@ impl Agent {
         //
         // Logs input receiver
         //
-        if let Some(mut logs_rx) = logs_rx {
+        if let Some(mut logs_rx) = self.logs_rx {
             let receivers_cancel = receivers_cancel.clone();
             let logs_output = logs_output.clone();
 
@@ -460,12 +496,12 @@ impl Agent {
         }
 
         #[cfg(feature = "pprof")]
-        let guard = if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph
-        {
-            pprof::pprof_guard()
-        } else {
-            None
-        };
+        let guard =
+            if config.profile_group.pprof_flame_graph || config.profile_group.pprof_call_graph {
+                pprof::pprof_guard()
+            } else {
+                None
+            };
 
         let mut result = Ok(());
         select! {
@@ -473,8 +509,8 @@ impl Agent {
                 debug!("Agent cancellation signaled.");
 
                 #[cfg(feature = "pprof")]
-                if agent.profile_group.pprof_flame_graph || agent.profile_group.pprof_call_graph {
-                    pprof::pprof_finish(guard, agent.profile_group.pprof_flame_graph, agent.profile_group.pprof_call_graph);
+                if config.profile_group.pprof_flame_graph || config.profile_group.pprof_call_graph {
+                    pprof::pprof_finish(guard, config.profile_group.pprof_flame_graph, config.profile_group.pprof_call_graph);
                 }
             },
             e = wait::wait_for_any_task(&mut receivers_task_set) => {

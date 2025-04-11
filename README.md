@@ -146,7 +146,6 @@ The following example demonstrates how to send OTLP data to [Axiom](https://axio
 ```shell
 ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS="Authorization=Bearer ${AXIOM_API_KEY},X-Axiom-Dataset=${AXIOM_DATASET}" \
  ./rotel start --otlp-exporter-endpoint https://api.axiom.co --otlp-exporter-protocol http
-
 ```
 
 In another window run the telemetry generator again:
