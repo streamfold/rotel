@@ -395,7 +395,7 @@ where
                 Some(resp) = conditional_flush(&mut flush_receiver) => {
                     match resp {
                         (Some(req), listener) => {
-                            info!(exporter_type = type_name, "received force flush in OTLP exporter: {:?}", req);
+                            debug!(exporter_type = type_name, "received force flush in OTLP exporter: {:?}", req);
 
                             if let Err(res) = self.drain_futures().await {
                                 warn!(exporter_type = type_name, "unable to drain exporter: {}", res);

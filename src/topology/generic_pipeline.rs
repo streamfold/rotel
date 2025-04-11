@@ -217,7 +217,7 @@ where
                 Some(resp) = conditional_flush(&mut flush_listener) => {
                     match resp {
                         (Some(req), listener) => {
-                            info!("received force flush in pipeline: {:?}", req);
+                            debug!("received force flush in pipeline: {:?}", req);
 
                             let to_send = batch.take_batch();
                             if !to_send.is_empty() {
