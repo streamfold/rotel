@@ -35,9 +35,11 @@ pub fn transform_spans(
                     dropped_attributes_count: 0,
                     dropped_events_count: 0,
                     dropped_links_count: 0,
-                    status: Arc::new(Default::default()),
+                    status: Arc::new(Mutex::new(None)),
                 },
             );
+            let status = Arc::into_inner(moved_data.status).unwrap();
+            let status = status.into_inner().unwrap();
             spans.push(opentelemetry_proto::tonic::trace::v1::Span {
                 trace_id: moved_data.trace_id,
                 span_id: moved_data.span_id,
@@ -54,7 +56,10 @@ pub fn transform_spans(
                 dropped_events_count: moved_data.dropped_events_count,
                 links: vec![],
                 dropped_links_count: moved_data.dropped_links_count,
-                status: None,
+                status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
+                    message: s.message,
+                    code: s.code,
+                }),
             })
         }
         new_scope_spans.push(opentelemetry_proto::tonic::trace::v1::ScopeSpans {

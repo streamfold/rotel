@@ -2,7 +2,7 @@ use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
 use crate::processor::model::{
-    AnyValue, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span,
+    AnyValue, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span, Status,
 };
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -1140,7 +1140,70 @@ impl PySpan {
         v.dropped_links_count = new_value;
         Ok(())
     }
-    // pub status: Arc<Mutex<Option<Status>>>,
+    #[getter]
+    fn status(&self) -> PyResult<Option<PyStatus>> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        {
+            let status = v.status.lock().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+            })?;
+            if status.is_none() {
+                return Ok(None);
+            }
+        }
+        Ok(Some(PyStatus(v.status.clone())))
+    }
+}
+
+#[pyclass]
+struct PyStatus(Arc<Mutex<Option<Status>>>);
+
+#[pymethods]
+impl PyStatus {
+    #[getter]
+    fn message(&self) -> PyResult<String> {
+        let binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = binding
+            .clone()
+            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Status is None",
+            ))?;
+        Ok(v.message)
+    }
+    #[setter]
+    fn set_message(&mut self, message: String) -> PyResult<()> {
+        let mut binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let updated_status = match binding.take() {
+            Some(current) => Status {
+                message,
+                code: current.code,
+            },
+            None => Status {
+                message,
+                ..Default::default()
+            },
+        };
+        binding.replace(updated_status);
+        Ok(())
+    }
+    #[getter]
+    fn code(&self) -> PyResult<i32> {
+        let binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let v = binding
+            .clone()
+            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Status is None",
+            ))?;
+        Ok(v.code)
+    }
 }
 
 #[pyclass]
