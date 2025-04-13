@@ -1,11 +1,16 @@
 use crate::bounded_channel::{BoundedReceiver, BoundedSender, bounded};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::time::timeout;
 use tower::BoxError;
 use tracing::warn;
 
 const FLUSH_CHAN_SIZE: usize = 20;
+
+// This should not block
+const FLUSH_ACK_TIMEOUT_MILLIS: u64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct FlushRequest {
@@ -84,6 +89,7 @@ pub struct FlushSender {
 impl FlushSender {
     pub async fn broadcast(&mut self) -> Result<(), BoxError> {
         let curr_listeners = self.inner.lock().unwrap().listeners;
+
         let req_id = self.next_req_id;
         self.next_req_id += 1;
         let req = FlushRequest { id: req_id };
@@ -141,18 +147,16 @@ pub struct FlushReceiver {
 
 impl FlushReceiver {
     pub async fn next(&mut self) -> Option<FlushRequest> {
-        match self.rx.recv().await {
-            Ok(item) => Some(item),
-            Err(_e) => None, // disconnected
-        }
+        self.rx.recv().await.ok()
     }
 
     pub async fn ack(&mut self, req: FlushRequest) -> Result<(), BoxError> {
         let resp = FlushResponse { id: req.id };
-        self.tx
-            .send(resp)
-            .await
-            .map_err(|e| format!("failed to ack: {}", e).into())
+        match timeout(Duration::from_millis(FLUSH_ACK_TIMEOUT_MILLIS), self.tx.send(resp)).await {
+            Ok(Err(e)) => Err(format!("Failed to send ack: {}", e).into()),
+            Err(_) => Err("timeout while acking message".into()),
+            _ => Ok(()),
+        }
     }
 }
 
