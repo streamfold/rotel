@@ -152,7 +152,12 @@ impl FlushReceiver {
 
     pub async fn ack(&mut self, req: FlushRequest) -> Result<(), BoxError> {
         let resp = FlushResponse { id: req.id };
-        match timeout(Duration::from_millis(FLUSH_ACK_TIMEOUT_MILLIS), self.tx.send(resp)).await {
+        match timeout(
+            Duration::from_millis(FLUSH_ACK_TIMEOUT_MILLIS),
+            self.tx.send(resp),
+        )
+        .await
+        {
             Ok(Err(e)) => Err(format!("Failed to send ack: {}", e).into()),
             Err(_) => Err("timeout while acking message".into()),
             _ => Ok(()),
