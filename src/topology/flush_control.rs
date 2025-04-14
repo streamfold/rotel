@@ -87,6 +87,8 @@ pub struct FlushSender {
 }
 
 impl FlushSender {
+    // This should always be called with a timeout, since it is possible to
+    // loop in here if a receiver does not ack the broadcast message.
     pub async fn broadcast(&mut self) -> Result<(), BoxError> {
         let curr_listeners = self.inner.lock().unwrap().listeners;
 
