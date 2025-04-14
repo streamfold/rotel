@@ -6,6 +6,7 @@ use crate::processor::model::register_processor;
 #[cfg(feature = "pyo3")]
 use crate::processor::py::rotel_python_processor_sdk;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
@@ -20,15 +21,17 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
+use tracing::log::warn;
 use tracing::{debug, error};
 
-#[derive(Clone)]
+//#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
     receiver: BoundedReceiver<Vec<T>>,
     sender: BoundedSender<Vec<T>>,
     batch_config: BatchConfig,
     processors: Vec<String>,
+    flush_listener: Option<FlushReceiver>,
 }
 
 pub trait Inspect<T> {
@@ -74,12 +77,14 @@ where
     pub fn new(
         receiver: BoundedReceiver<Vec<T>>,
         sender: BoundedSender<Vec<T>>,
+        flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
         processors: Vec<String>,
     ) -> Self {
         Self {
             receiver,
             sender,
+            flush_listener,
             batch_config,
             processors,
         }
@@ -131,6 +136,8 @@ where
         let processor_modules = self.initialize_processors()?;
         #[cfg(not(feature = "pyo3"))]
         let processor_modules: Vec<String> = vec![];
+
+        let mut flush_listener = self.flush_listener.take();
 
         loop {
             select! {
@@ -204,6 +211,35 @@ where
                                 }
                             }
                         }
+                    }
+                },
+
+                Some(resp) = conditional_flush(&mut flush_listener) => {
+                    match resp {
+                        (Some(req), listener) => {
+                            debug!("received force flush in pipeline: {:?}", req);
+
+                            let to_send = batch.take_batch();
+                            if !to_send.is_empty() {
+                                debug!(batch_size = to_send.len(), "Flushing a batch on flush message");
+
+                                if let Err(e) = self.send_item(to_send, &pipeline_token).await {
+                                    match e {
+                                        SendItemError::Cancelled => {
+                                            debug!("Pipeline received shutdown signal.");
+                                        }
+                                        SendItemError::Error(e) => {
+                                            error!(error = ?e, "Unable to send item, exiting.");
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Err(e) = listener.ack(req).await {
+                                warn!("unable to ack flush request: {}", e);
+                            }
+                        },
+                        (None, _) => warn!("flush channel was closed")
                     }
                 },
 
