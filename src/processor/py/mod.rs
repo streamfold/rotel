@@ -915,7 +915,19 @@ impl PySpans {
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
-
+    fn __getitem__(&self, index: usize) -> PyResult<PySpan> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => Ok(PySpan {
+                inner: item.clone(),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1155,13 +1167,34 @@ impl PySpan {
         }
         Ok(Some(PyStatus(v.status.clone())))
     }
+    #[setter]
+    fn set_status(&self, status: PyStatus) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let new_status = status.0.lock().unwrap();
+        if new_status.is_none() {
+            v.status = Arc::new(Mutex::new(None));
+        } else {
+            v.status = Arc::new(Mutex::new(new_status.clone()));
+        }
+        Ok(())
+    }
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct PyStatus(Arc<Mutex<Option<Status>>>);
 
 #[pymethods]
 impl PyStatus {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyStatus(Arc::new(Mutex::new(Some(Status {
+            message: "".to_string(),
+            code: 0,
+        })))))
+    }
     #[getter]
     fn message(&self) -> PyResult<String> {
         let binding = self.0.lock().map_err(|_| {
@@ -1204,6 +1237,55 @@ impl PyStatus {
             ))?;
         Ok(v.code)
     }
+    #[setter]
+    fn set_code(&mut self, code: PyStatusCode) -> PyResult<()> {
+        let mut binding = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let updated_status = match binding.take() {
+            Some(current) => Status {
+                message: current.message,
+                code: code as i32,
+            },
+            None => Status {
+                code: code as i32,
+                ..Default::default()
+            },
+        };
+        binding.replace(updated_status);
+        Ok(())
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PyStatusCode {
+    /// The default status.
+    Unset = 0,
+    /// The Span has been validated by an Application developer or Operator to
+    /// have completed successfully.
+    Ok = 1,
+    /// The Span contains an error.
+    Error = 2,
+}
+
+#[pymethods]
+impl PyStatusCode {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyStatusCode::Unset)
+    }
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unset => "STATUS_CODE_UNSET",
+            Self::Ok => "STATUS_CODE_OK",
+            Self::Error => "STATUS_CODE_ERROR",
+        }
+    }
 }
 
 #[pyclass]
@@ -1228,6 +1310,8 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScopeSpans>()?;
     m.add_class::<PyInstrumentationScope>()?;
     m.add_class::<PySpan>()?;
+    m.add_class::<PyStatus>()?;
+    m.add_class::<PyStatusCode>()?;
     Ok(())
 }
 
@@ -1880,5 +1964,44 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn read_and_write_spans() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans = crate::processor::model::otel_transform::transform(
+            export_req.resource_spans[0].clone(),
+        );
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: Arc::new(Mutex::new("".to_string())),
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_and_write_spans_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans =
+            crate::processor::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = scope_spans.pop().unwrap();
+        let span = scope_spans.spans.pop().unwrap();
+        assert_eq!(b"5555555555".to_vec(), span.trace_id);
+        assert_eq!(b"6666666666".to_vec(), span.span_id);
+        assert_eq!("test=1234567890", span.trace_state);
+        assert_eq!(b"7777777777".to_vec(), span.parent_span_id);
+        assert_eq!(1, span.flags);
+        assert_eq!("py_processed_span", span.name);
+        assert_eq!(4, span.kind);
+        assert_eq!(1234567890, span.start_time_unix_nano);
+        assert_eq!(1234567890, span.end_time_unix_nano);
+        assert_eq!(100, span.dropped_attributes_count);
+        assert_eq!(200, span.dropped_events_count);
+        assert_eq!(300, span.dropped_links_count);
+        assert_eq!("error message", span.status.clone().unwrap().message);
+        assert_eq!(2, span.status.unwrap().code);
     }
 }

@@ -109,46 +109,16 @@ pub struct Status {
     pub code: i32,
 }
 
-/// Nested message and enum types in `Status`.
-pub mod status {
-    /// For the semantics of status codes see
-    /// <https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/api.md#set-status>
-    #[cfg_attr(feature = "with-schemars", derive(schemars::JsonSchema))]
-    #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "with-serde", serde(rename_all = "camelCase"))]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-    #[repr(i32)]
-    pub enum StatusCode {
-        /// The default status.
-        Unset = 0,
-        /// The Span has been validated by an Application developer or Operator to
-        /// have completed successfully.
-        Ok = 1,
-        /// The Span contains an error.
-        Error = 2,
-    }
-    impl StatusCode {
-        /// String value of the enum field names used in the ProtoBuf definition.
-        ///
-        /// The values are not transformed in any way and thus are considered stable
-        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-        pub fn as_str_name(&self) -> &'static str {
-            match self {
-                Self::Unset => "STATUS_CODE_UNSET",
-                Self::Ok => "STATUS_CODE_OK",
-                Self::Error => "STATUS_CODE_ERROR",
-            }
-        }
-        /// Creates an enum from field names used in the ProtoBuf definition.
-        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-            match value {
-                "STATUS_CODE_UNSET" => Some(Self::Unset),
-                "STATUS_CODE_OK" => Some(Self::Ok),
-                "STATUS_CODE_ERROR" => Some(Self::Error),
-                _ => None,
-            }
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[allow(dead_code)]
+pub enum StatusCode {
+    /// The default status.
+    Unset = 0,
+    /// The Span has been validated by an Application developer or Operator to
+    /// have completed successfully.
+    Ok = 1,
+    /// The Span contains an error.
+    Error = 2,
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
