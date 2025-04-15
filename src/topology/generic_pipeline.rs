@@ -18,12 +18,12 @@ use std::error::Error;
 use std::sync::Once;
 use std::time::Duration;
 use tokio::select;
-use tokio::time::{Instant, Interval};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
