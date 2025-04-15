@@ -145,7 +145,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
             resource: inner.resource.clone(),
             scope_spans: inner.scope_spans.clone(),
             // TODO actually copy schema_url
-            schema_url: Arc::new(Default::default()),
+            schema_url: inner.schema_url.clone(),
         };
         let res = Python::with_gil(|py| -> PyResult<()> {
             let py_mod = PyModule::import(py, processor)?;
