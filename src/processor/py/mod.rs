@@ -542,7 +542,7 @@ impl PyAttributesIter {
 pub struct PyResourceSpans {
     pub resource: Arc<Mutex<Option<Resource>>>,
     pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>,
-    pub schema_url: Arc<Mutex<String>>,
+    pub schema_url: String,
 }
 
 #[pymethods]
@@ -563,6 +563,15 @@ impl PyResourceSpans {
     #[getter]
     fn scope_spans(&self) -> PyResult<PyScopeSpansList> {
         Ok(PyScopeSpansList(self.scope_spans.clone()))
+    }
+    #[getter]
+    fn schema_url(&self) -> PyResult<String> {
+        Ok(self.schema_url.clone())
+    }
+    #[setter]
+    fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
+        self.schema_url = schema_url;
+        Ok(())
     }
 }
 
@@ -674,6 +683,11 @@ impl PyScopeSpans {
     #[getter]
     fn schema_url(&self) -> String {
         self.schema_url.clone()
+    }
+    #[setter]
+    fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
+        self.schema_url = schema_url;
+        Ok(())
     }
 }
 
@@ -1832,7 +1846,7 @@ mod tests {
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
-            schema_url: Arc::new(Mutex::new("".to_string())),
+            schema_url: resource_spans.schema_url,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_append_attribute.py", py, py_resource_spans)
@@ -1851,7 +1865,7 @@ mod tests {
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: Arc::new(Mutex::new("".to_string())),
+            schema_url: resource_spans.schema_url,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
@@ -1870,7 +1884,7 @@ mod tests {
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: Arc::new(Mutex::new("".to_string())),
+            schema_url: resource_spans.schema_url,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
@@ -1929,7 +1943,7 @@ mod tests {
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: Arc::new(Mutex::new("".to_string())),
+            schema_url: resource_spans.schema_url,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
@@ -1975,7 +1989,7 @@ mod tests {
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: Arc::new(Mutex::new("".to_string())),
+            schema_url: resource_spans.schema_url,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("read_and_write_spans_test.py", py, py_resource_spans)
