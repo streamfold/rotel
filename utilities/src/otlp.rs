@@ -13,7 +13,7 @@ use opentelemetry_proto::tonic::metrics::v1::{
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
-use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
+use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Status};
 
 pub struct FakeOTLP;
 
@@ -224,7 +224,7 @@ impl FakeOTLP {
                 dropped_events_count: 0,
                 links: vec![],
                 dropped_links_count: 0,
-                status: None,
+                status: Some(Status::default()),
             };
             spans.push(span);
         }

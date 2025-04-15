@@ -1,7 +1,9 @@
 use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, StringValue,
 };
-use crate::processor::model::{AnyValue, InstrumentationScope, KeyValue, ResourceSpans, Span};
+use crate::processor::model::{
+    AnyValue, InstrumentationScope, KeyValue, ResourceSpans, Span, Status,
+};
 use std::sync::{Arc, Mutex};
 
 pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> ResourceSpans {
@@ -53,8 +55,10 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                 dropped_attributes_count: s.dropped_attributes_count,
                 dropped_events_count: s.dropped_events_count,
                 dropped_links_count: s.dropped_links_count,
-                // TODO add status copy
-                status: Arc::new(Mutex::new(None)),
+                status: Arc::new(Mutex::new(s.status.map(|status| Status {
+                    message: status.message,
+                    code: status.code,
+                }))),
             };
             scope_span
                 .spans

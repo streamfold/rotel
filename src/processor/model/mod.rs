@@ -103,10 +103,22 @@ pub struct Span {
     pub dropped_links_count: u32,
     pub status: Arc<Mutex<Option<Status>>>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Status {
     pub message: String,
     pub code: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[allow(dead_code)]
+pub enum StatusCode {
+    /// The default status.
+    Unset = 0,
+    /// The Span has been validated by an Application developer or Operator to
+    /// have completed successfully.
+    Ok = 1,
+    /// The Span contains an error.
+    Error = 2,
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
