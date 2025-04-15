@@ -220,7 +220,12 @@ impl FakeOTLP {
                     string_attr("http.request.path", "/items"),
                 ],
                 dropped_attributes_count: 0,
-                events: vec![],
+                events: vec![v1::span::Event {
+                    time_unix_nano: now_ns as u64,
+                    name: "a test event".to_string(),
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                }],
                 dropped_events_count: 0,
                 links: vec![],
                 dropped_links_count: 0,

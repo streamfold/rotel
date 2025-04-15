@@ -25,3 +25,13 @@ def process(resource_spans):
     status.code = PyStatusCode.Error
     status.message = "error message"
     span.status = status
+
+    event = span.events[0]
+    print(f"event.time_unix_nano: {event.time_unix_nano}")
+    print(f"event.name: {event.name}")
+
+    event.name = "py_processed_event"
+    span = resource_spans.scope_spans[0].spans[0]
+    event = span.events[0]
+    print(f"event.time_unix_nano: {event.time_unix_nano}")
+    print(f"event.name: {event.name}")

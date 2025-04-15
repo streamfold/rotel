@@ -2,7 +2,7 @@ use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, StringValue,
 };
 use crate::processor::model::{
-    AnyValue, InstrumentationScope, KeyValue, ResourceSpans, Span, Status,
+    AnyValue, Event, InstrumentationScope, KeyValue, ResourceSpans, Span, Status,
 };
 use std::sync::{Arc, Mutex};
 
@@ -50,6 +50,19 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                 kind: s.kind,
                 start_time_unix_nano: s.start_time_unix_nano,
                 end_time_unix_nano: s.end_time_unix_nano,
+                events: Arc::new(Mutex::new(
+                    s.events
+                        .iter()
+                        .map(|e| {
+                            Arc::new(Mutex::new(Event {
+                                time_unix_nano: e.time_unix_nano,
+                                name: e.name.clone(),
+                                attributes: Arc::new(Mutex::new(vec![])),
+                                dropped_attributes_count: 0,
+                            }))
+                        })
+                        .collect(),
+                )),
                 // TODO add attributes copy
                 attributes: Arc::new(Mutex::new(vec![])),
                 dropped_attributes_count: s.dropped_attributes_count,
