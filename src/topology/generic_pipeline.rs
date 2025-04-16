@@ -16,6 +16,7 @@ use std::env;
 use std::error::Error;
 #[cfg(feature = "pyo3")]
 use std::sync::Once;
+use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -130,7 +131,15 @@ where
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let mut batch =
             NestedBatch::<T>::new(self.batch_config.max_size, self.batch_config.timeout);
-        let mut batch_timer = tokio::time::interval(batch.get_timeout());
+
+        let mut batch_timeout = batch.get_timeout();
+        if batch_timeout.is_zero() {
+            // Disable the timer in this case because we are manually driven, we set a
+            // large value and then reset it anytime a manual flush occurs
+            batch_timeout = Duration::from_secs(3600 * 24);
+        }
+        let mut batch_timer = tokio::time::interval(batch_timeout);
+        batch_timer.tick().await; // consume the immediate tick
 
         #[cfg(feature = "pyo3")]
         let processor_modules = self.initialize_processors()?;
@@ -218,6 +227,7 @@ where
                     match resp {
                         (Some(req), listener) => {
                             debug!("received force flush in pipeline: {:?}", req);
+                            batch_timer.reset();
 
                             let to_send = batch.take_batch();
                             if !to_send.is_empty() {
