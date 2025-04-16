@@ -2,7 +2,7 @@ use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
 use crate::processor::model::{
-    AnyValue, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span, Status,
+    AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span, Status,
 };
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -774,7 +774,7 @@ impl PyInstrumentationScope {
         Ok(())
     }
     #[getter]
-    fn attributes(&self) -> PyResult<PyInstrumentationScopeAttributes> {
+    fn attributes(&self) -> PyResult<PyAttributesList> {
         let binding = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -783,7 +783,7 @@ impl PyInstrumentationScope {
             .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "InstrumentationScope is None",
             ))?;
-        Ok(PyInstrumentationScopeAttributes(v.attributes))
+        Ok(PyAttributesList(v.attributes))
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
@@ -825,24 +825,19 @@ impl PyInstrumentationScope {
 // and it appears to be working well. For the sake of safety I want to finish additional testing before going back and
 // refactoring. WHen we do we should be able to remove this and share a single attributes and attributes iter type.
 #[pyclass]
-struct PyInstrumentationScopeAttributes(Arc<Mutex<Vec<KeyValue>>>);
+struct PyAttributesList(Arc<Mutex<Vec<KeyValue>>>);
 
 #[pymethods]
-impl PyInstrumentationScopeAttributes {
+impl PyAttributesList {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyInstrumentationScopeAttributes(Arc::new(Mutex::new(
-            vec![],
-        ))))
+        Ok(PyAttributesList(Arc::new(Mutex::new(vec![]))))
     }
-    fn __iter__<'py>(
-        &'py self,
-        py: Python<'py>,
-    ) -> PyResult<Py<PyInstrumentationScopeAttributesIter>> {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyAttributesListIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyInstrumentationScopeAttributesIter {
+        let iter = PyAttributesListIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
@@ -892,12 +887,12 @@ impl PyInstrumentationScopeAttributes {
 }
 
 #[pyclass]
-struct PyInstrumentationScopeAttributesIter {
+struct PyAttributesListIter {
     inner: std::vec::IntoIter<KeyValue>,
 }
 
 #[pymethods]
-impl PyInstrumentationScopeAttributesIter {
+impl PyAttributesListIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
@@ -1132,8 +1127,11 @@ impl PySpan {
         v.dropped_attributes_count = new_value;
         Ok(())
     }
-    // TODO
-    // //pub events: ::prost::alloc::vec::Vec<span::Event>,
+    #[getter]
+    fn events(&self) -> PyResult<PyEvents> {
+        let v = self.inner.lock().unwrap();
+        Ok(PyEvents(v.events.clone()))
+    }
     #[getter]
     fn dropped_events_count(&self) -> PyResult<u32> {
         let v = self.inner.lock().map_err(|_| {
@@ -1192,6 +1190,141 @@ impl PySpan {
         } else {
             v.status = Arc::new(Mutex::new(new_status.clone()));
         }
+        Ok(())
+    }
+}
+
+#[pyclass]
+struct PyEvents(Arc<Mutex<Vec<Arc<Mutex<Event>>>>>);
+
+#[pymethods]
+impl PyEvents {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyEventsIter>> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let iter = PyEventsIter {
+            inner: inner.clone().into_iter(),
+        };
+        // Convert to a Python-managed object
+        Py::new(py, iter)
+    }
+    fn __getitem__(&self, index: usize) -> PyResult<PyEvent> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => Ok(PyEvent {
+                inner: item.clone(),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+struct PyEventsIter {
+    inner: std::vec::IntoIter<Arc<Mutex<Event>>>,
+}
+
+#[pymethods]
+impl PyEventsIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyEvent>> {
+        let kv = slf.inner.next();
+        if kv.is_none() {
+            return Ok(None);
+        }
+        let inner = kv.unwrap();
+        Ok(Some(PyEvent {
+            inner: inner.clone(),
+        }))
+    }
+}
+
+#[pyclass]
+#[derive(Debug)]
+struct PyEvent {
+    inner: Arc<Mutex<Event>>,
+}
+
+#[pymethods]
+impl PyEvent {
+    #[getter]
+    fn time_unix_nano(&self) -> PyResult<u64> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.time_unix_nano)
+    }
+    #[setter]
+    fn set_time_unix_nano(&mut self, unix_nano: u64) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.time_unix_nano = unix_nano;
+        Ok(())
+    }
+    #[getter]
+    fn name(&self) -> PyResult<String> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.name.clone())
+    }
+    #[setter]
+    fn set_name(&mut self, name: String) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.name = name;
+        Ok(())
+    }
+    #[getter]
+    fn attributes(&self) -> PyResult<PyAttributesList> {
+        let binding = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(PyAttributesList(binding.attributes.clone()))
+    }
+    #[setter]
+    fn set_attributes(&mut self, attrs: &PyAttributesList) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut v = inner.attributes.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clear();
+        for kv in attrs.0.lock().unwrap().iter() {
+            v.push(kv.clone())
+        }
+        Ok(())
+    }
+    #[getter]
+    fn dropped_attributes_count(&self) -> PyResult<u32> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.dropped_attributes_count)
+    }
+    #[setter]
+    fn set_dropped_attributes_count(&mut self, count: u32) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.dropped_attributes_count = count;
         Ok(())
     }
 }
@@ -1334,6 +1467,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use crate::processor::model::Value::{BoolValue, StringValue};
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use pyo3::ffi::c_str;
     use std::ffi::CString;
     use std::sync::Once;
@@ -2017,5 +2151,23 @@ mod tests {
         assert_eq!(300, span.dropped_links_count);
         assert_eq!("error message", span.status.clone().unwrap().message);
         assert_eq!(2, span.status.unwrap().code);
+        assert_eq!(1, span.events.len());
+        assert_eq!("py_processed_event", span.events[0].name);
+        assert_eq!(1234567890, span.events[0].time_unix_nano);
+        assert_eq!(400, span.events[0].dropped_attributes_count);
+        assert_eq!(1, span.events[0].attributes.len());
+        assert_eq!("event_attr_key", &span.events[0].attributes[0].key);
+        let value = span.events[0].attributes[0]
+            .value
+            .clone()
+            .unwrap()
+            .value
+            .unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("event_attr_value", s)
+            }
+            _ => panic!("unexpected type"),
+        }
     }
 }

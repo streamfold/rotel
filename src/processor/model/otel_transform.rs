@@ -2,7 +2,7 @@ use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, StringValue,
 };
 use crate::processor::model::{
-    AnyValue, InstrumentationScope, KeyValue, ResourceSpans, Span, Status,
+    AnyValue, Event, InstrumentationScope, KeyValue, ResourceSpans, Span, Status,
 };
 use std::sync::{Arc, Mutex};
 
@@ -14,11 +14,11 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     };
     if rs.resource.is_some() {
         let resource = rs.resource.unwrap();
+        let dropped_attributes_count = resource.dropped_attributes_count;
         let kvs = build_rotel_sdk_resource(resource);
         let res = Arc::new(Mutex::new(Some(crate::processor::model::Resource {
-            attributes: Arc::new(Mutex::new(kvs.clone())),
-            // TODO - copy dropped_attributes_count
-            dropped_attributes_count: 0,
+            attributes: Arc::new(Mutex::new(kvs.to_owned())),
+            dropped_attributes_count,
         })));
         resource_span.resource = res.clone()
     }
@@ -50,6 +50,21 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                 kind: s.kind,
                 start_time_unix_nano: s.start_time_unix_nano,
                 end_time_unix_nano: s.end_time_unix_nano,
+                events: Arc::new(Mutex::new(
+                    s.events
+                        .iter()
+                        .map(|e| {
+                            Arc::new(Mutex::new(Event {
+                                time_unix_nano: e.time_unix_nano,
+                                name: e.name.clone(),
+                                attributes: Arc::new(Mutex::new(convert_attributes(
+                                    e.attributes.to_owned(),
+                                ))),
+                                dropped_attributes_count: 0,
+                            }))
+                        })
+                        .collect(),
+                )),
                 // TODO add attributes copy
                 attributes: Arc::new(Mutex::new(vec![])),
                 dropped_attributes_count: s.dropped_attributes_count,
@@ -74,7 +89,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
 
 fn convert_attributes(
     attributes: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
-) -> Vec<crate::processor::model::KeyValue> {
+) -> Vec<KeyValue> {
     let mut kvs = vec![];
     for a in attributes {
         let key = Arc::new(Mutex::new(a.key));

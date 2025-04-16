@@ -2,7 +2,7 @@ use crate::processor::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
 use crate::processor::model::{
-    AnyValue, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span,
+    AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span,
 };
 use std::mem;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,7 @@ pub fn transform_spans(
                     flags: 0,
                     name: "".to_string(),
                     kind: 0,
+                    events: Arc::new(Mutex::new(vec![])),
                     start_time_unix_nano: 0,
                     end_time_unix_nano: 0,
                     attributes: Arc::new(Default::default()),
@@ -52,7 +53,7 @@ pub fn transform_spans(
                 end_time_unix_nano: moved_data.end_time_unix_nano,
                 attributes: vec![],
                 dropped_attributes_count: moved_data.dropped_attributes_count,
-                events: vec![],
+                events: convert_events(moved_data.events),
                 dropped_events_count: moved_data.dropped_events_count,
                 links: vec![],
                 dropped_links_count: moved_data.dropped_links_count,
@@ -69,6 +70,26 @@ pub fn transform_spans(
         })
     }
     new_scope_spans
+}
+
+fn convert_events(
+    events: Arc<Mutex<Vec<Arc<Mutex<Event>>>>>,
+) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Event> {
+    let events = Arc::into_inner(events).unwrap();
+    let mut events = events.into_inner().unwrap();
+    events
+        .drain(..) // Creates an iterator that removes all elements
+        .map(|e| {
+            let e = Arc::into_inner(e).unwrap();
+            let e = e.into_inner().unwrap();
+            opentelemetry_proto::tonic::trace::v1::span::Event {
+                time_unix_nano: e.time_unix_nano,
+                name: e.name.clone(),
+                attributes: convert_attributes(e.attributes),
+                dropped_attributes_count: e.dropped_attributes_count,
+            }
+        })
+        .collect()
 }
 
 fn convert_scope(

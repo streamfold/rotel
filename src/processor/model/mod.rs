@@ -97,12 +97,21 @@ pub struct Span {
     pub end_time_unix_nano: u64,
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
     pub dropped_attributes_count: u32,
-    //pub events: ::prost::alloc::vec::Vec<span::Event>,
+    pub events: Arc<Mutex<Vec<Arc<Mutex<Event>>>>>,
     pub dropped_events_count: u32,
     //pub links: ::prost::alloc::vec::Vec<span::Link>,
     pub dropped_links_count: u32,
     pub status: Arc<Mutex<Option<Status>>>,
 }
+
+#[derive(Debug, Clone)]
+pub struct Event {
+    pub time_unix_nano: u64,
+    pub name: String,
+    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub dropped_attributes_count: u32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Status {
     pub message: String,

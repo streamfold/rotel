@@ -1,4 +1,4 @@
-from rotel_python_processor_sdk import PyStatus, PyStatusCode
+from rotel_python_processor_sdk import PyStatus, PyStatusCode, PyKeyValue
 
 
 def process(resource_spans):
@@ -25,3 +25,9 @@ def process(resource_spans):
     status.code = PyStatusCode.Error
     status.message = "error message"
     span.status = status
+
+    event = span.events[0]
+    event.time_unix_nano = 1234567890
+    event.name = "py_processed_event"
+    event.attributes.append(PyKeyValue.new_string_value("event_attr_key", "event_attr_value"))
+    event.dropped_attributes_count = 400
