@@ -14,11 +14,11 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
     };
     if rs.resource.is_some() {
         let resource = rs.resource.unwrap();
+        let dropped_attributes_count = resource.dropped_attributes_count;
         let kvs = build_rotel_sdk_resource(resource);
         let res = Arc::new(Mutex::new(Some(crate::processor::model::Resource {
-            attributes: Arc::new(Mutex::new(kvs.clone())),
-            // TODO - copy dropped_attributes_count
-            dropped_attributes_count: 0,
+            attributes: Arc::new(Mutex::new(kvs.to_owned())),
+            dropped_attributes_count,
         })));
         resource_span.resource = res.clone()
     }
@@ -57,7 +57,9 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                             Arc::new(Mutex::new(Event {
                                 time_unix_nano: e.time_unix_nano,
                                 name: e.name.clone(),
-                                attributes: Arc::new(Mutex::new(vec![])),
+                                attributes: Arc::new(Mutex::new(convert_attributes(
+                                    e.attributes.to_owned(),
+                                ))),
                                 dropped_attributes_count: 0,
                             }))
                         })
@@ -87,7 +89,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
 
 fn convert_attributes(
     attributes: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
-) -> Vec<crate::processor::model::KeyValue> {
+) -> Vec<KeyValue> {
     let mut kvs = vec![];
     for a in attributes {
         let key = Arc::new(Mutex::new(a.key));
