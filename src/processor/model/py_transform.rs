@@ -85,7 +85,7 @@ fn convert_events(
             opentelemetry_proto::tonic::trace::v1::span::Event {
                 time_unix_nano: e.time_unix_nano,
                 name: e.name.clone(),
-                attributes: vec![],
+                attributes: convert_attributes(e.attributes),
                 dropped_attributes_count: e.dropped_attributes_count,
             }
         })

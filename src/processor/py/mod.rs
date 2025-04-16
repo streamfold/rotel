@@ -1467,6 +1467,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use crate::processor::model::Value::{BoolValue, StringValue};
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use pyo3::ffi::c_str;
     use std::ffi::CString;
     use std::sync::Once;
@@ -2150,5 +2151,23 @@ mod tests {
         assert_eq!(300, span.dropped_links_count);
         assert_eq!("error message", span.status.clone().unwrap().message);
         assert_eq!(2, span.status.unwrap().code);
+        assert_eq!(1, span.events.len());
+        assert_eq!("py_processed_event", span.events[0].name);
+        assert_eq!(1234567890, span.events[0].time_unix_nano);
+        assert_eq!(400, span.events[0].dropped_attributes_count);
+        assert_eq!(1, span.events[0].attributes.len());
+        assert_eq!("event_attr_key", &span.events[0].attributes[0].key);
+        let value = span.events[0].attributes[0]
+            .value
+            .clone()
+            .unwrap()
+            .value
+            .unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("event_attr_value", s)
+            }
+            _ => panic!("unexpected type"),
+        }
     }
 }
