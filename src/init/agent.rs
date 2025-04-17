@@ -269,8 +269,9 @@ impl Agent {
         match config.exporter {
             Exporter::Blackhole => {
                 let mut exp = BlackholeExporter::new(
-                    trace_pipeline_out_rx.clone(),
-                    metrics_pipeline_out_rx.clone(),
+                    trace_pipeline_out_rx,
+                    metrics_pipeline_out_rx,
+                    logs_pipeline_out_rx,
                 );
 
                 exporters_task_set.spawn(async move {

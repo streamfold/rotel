@@ -1,35 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use crate::bounded_channel::BoundedReceiver;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 pub struct BlackholeExporter {
     traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
 }
 
 impl BlackholeExporter {
     pub fn new(
         traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
         metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+        logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     ) -> Self {
         BlackholeExporter {
             traces_rx,
             metrics_rx,
+            logs_rx,
         }
     }
 
     pub async fn start(&mut self, cancel_token: CancellationToken) {
         loop {
             select! {
-                _ = self.traces_rx.next() => {},
-                _ = self.metrics_rx.next() => {},
+                m = self.traces_rx.next() => if m.is_none() { break },
+                m = self.metrics_rx.next() => if m.is_none() { break },
+                m = self.logs_rx.next() => if m.is_none() { break },
                 _ = cancel_token.cancelled() => break,
             }
         }
+        debug!("exiting blackhole exporter")
     }
 }
 
