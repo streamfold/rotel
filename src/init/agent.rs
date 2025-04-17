@@ -284,7 +284,7 @@ impl Agent {
                     let traces_config = build_traces_config(config.otlp_exporter.clone(), endpoint);
                     let mut traces = otlp::exporter::build_traces_exporter(
                         traces_config,
-                        trace_pipeline_out_rx.clone(),
+                        trace_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
@@ -306,7 +306,7 @@ impl Agent {
                         build_metrics_config(config.otlp_exporter.clone(), endpoint);
                     let mut metrics = otlp::exporter::build_metrics_exporter(
                         metrics_config.clone(),
-                        metrics_pipeline_out_rx.clone(),
+                        metrics_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
@@ -325,7 +325,7 @@ impl Agent {
 
                     let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
                         metrics_config.clone(),
-                        internal_metrics_pipeline_out_rx.clone(),
+                        internal_metrics_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
