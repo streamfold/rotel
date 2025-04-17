@@ -18,6 +18,10 @@ Rotel can be easily bundled with popular runtimes as packages. Its Rust implemen
 - **Python:** [streamfold/pyrotel](https://github.com/streamfold/pyrotel)
 - **Node.js:** [streamfold/rotel-nodejs](https://github.com/streamfold/rotel-nodejs)
 
+We also have a custom AWS Lambda Extension layer that embeds the Rotel collector to provide an OpenTelemetry collector with minimal coldstart latency:
+
+- **Rotel Lambda Extension**: [streamfold/rotel-lambda-extension](https://github.com/streamfold/rotel-lambda-extension)
+
 Rotel is fully open-sourced and licensed under the Apache 2.0 license. 
 
 _Rotel is currently in early development, and we are actively looking for feedback from the community. It is not recommended for production use at this time._
