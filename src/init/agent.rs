@@ -263,7 +263,7 @@ impl Agent {
             .with_resource(Resource::builder().with_service_name("rotel").build())
             .build();
 
-        global::set_meter_provider(meter_provider.clone());
+        global::set_meter_provider(meter_provider);
 
         let token = exporters_cancel.clone();
         match config.exporter {
@@ -562,6 +562,12 @@ impl Agent {
         drop(traces_output);
         drop(metrics_output);
         drop(logs_output);
+        drop(internal_metrics_output);
+
+        // Construct a noop meter provider that will allow all pipelines to drop their input channels
+        let noop_meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .build();
+        global::set_meter_provider(noop_meter_provider);
 
         // Set a maximum duration for exporters to exit, this way if the pipelines exit quickly,
         // the entire wall time is left for exporters to finish flushing (which may require longer if
