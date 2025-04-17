@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use crate::bounded_channel::BoundedReceiver;
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use tokio::select;

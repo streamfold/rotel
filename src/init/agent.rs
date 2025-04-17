@@ -566,8 +566,7 @@ impl Agent {
         drop(internal_metrics_output);
 
         // Construct a noop meter provider that will allow all pipelines to drop their input channels
-        let noop_meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-            .build();
+        let noop_meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder().build();
         global::set_meter_provider(noop_meter_provider);
 
         // Set a maximum duration for exporters to exit, this way if the pipelines exit quickly,
