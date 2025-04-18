@@ -44,18 +44,17 @@ impl BlackholeExporter {
 mod tests {
     use crate::bounded_channel::bounded;
     use crate::exporters::blackhole::BlackholeExporter;
-    use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
-    use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use tokio::{join, spawn};
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
     #[tokio::test]
     async fn send_request() {
-        let (tr_tx, tr_rx) = bounded::<Vec<ResourceSpans>>(1);
-        let (met_tx, met_rx) = bounded::<Vec<ResourceMetrics>>(1);
+        let (tr_tx, tr_rx) = bounded(1);
+        let (met_tx, met_rx) = bounded(1);
+        let (logs_tx, logs_rx) = bounded(1);
 
-        let mut exp = BlackholeExporter::new(tr_rx, met_rx);
+        let mut exp = BlackholeExporter::new(tr_rx, met_rx, logs_rx);
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
@@ -70,6 +69,11 @@ mod tests {
             .send(From::from(
                 FakeOTLP::metrics_service_request().resource_metrics,
             ))
+            .await;
+        assert!(&res.is_ok());
+
+        let res = logs_tx
+            .send(From::from(FakeOTLP::logs_service_request().resource_logs))
             .await;
         assert!(&res.is_ok());
 
