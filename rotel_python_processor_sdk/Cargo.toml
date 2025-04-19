@@ -1,0 +1,25 @@
+[package]
+name = "processor_py"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pyo3 = { version = "0.24.1" }
+opentelemetry-proto = { version = "0.29.0" }
+tower = "0.5.2"
+utilities = { path = "../utilities" }
+tracing = "0.1"
+tracing-log = "0.2.0"
+pyo3-stub-gen = "0.7.0"
+pyo3-stub-gen-derive = "0.7.0"
+
+[lib]
+# The name of the native library. This is the name which will be used in Python to import the
+# library (i.e. `import string_sum`). If you change this, you must also change the name of the
+# `#[pymodule]` in `src/lib.rs`.
+name = "rotel_python_processor_sdk"
+# "cdylib" is necessary to produce a shared library for Python to import from.
+#
+# Downstream Rust code (including code in `bin/`, `examples/`, and `tests/`) will not be able
+# to `use string_sum;` unless the "rlib" or "lib" crate type is also included, e.g.:
+crate-type = ["cdylib", "rlib"]

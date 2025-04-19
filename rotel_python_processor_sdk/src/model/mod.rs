@@ -1,8 +1,7 @@
 pub mod otel_transform;
 pub mod py_transform;
 
-use crate::processor::py::PyResourceSpans;
-use crate::topology::generic_pipeline::PythonProcessable;
+use crate::py::{rotel_python_processor_sdk, PyResourceSpans};
 use pyo3::prelude::*;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
@@ -34,7 +33,7 @@ pub struct ArrayValue {
 #[allow(deprecated)]
 impl ArrayValue {
     pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(crate::processor::py::PyArrayValue(self.values.clone()).into_py(py))
+        Ok(crate::py::PyArrayValue(self.values.clone()).into_py(py))
     }
 }
 
@@ -46,7 +45,7 @@ pub struct KeyValueList {
 #[allow(deprecated)]
 impl KeyValueList {
     pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(crate::processor::py::PyKeyValueList(self.values.clone()).into_py(py))
+        Ok(crate::py::PyKeyValueList(self.values.clone()).into_py(py))
     }
 }
 
@@ -131,6 +130,9 @@ pub enum StatusCode {
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
+    pyo3::append_to_inittab!(rotel_python_processor_sdk);
+    pyo3::prepare_freethreaded_python();
+
     let res = Python::with_gil(|py| -> PyResult<()> {
         PyModule::from_code(
             py,
@@ -146,6 +148,10 @@ pub fn register_processor(code: String, script: String, module: String) -> Resul
     }
 }
 
+pub trait PythonProcessable {
+    fn process(self, processor: &str) -> Self;
+}
+
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
     fn process(self, processor: &str) -> Self {
         let inner = otel_transform::transform(self);
@@ -153,7 +159,6 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
         let spans = PyResourceSpans {
             resource: inner.resource.clone(),
             scope_spans: inner.scope_spans.clone(),
-            // TODO actually copy schema_url
             schema_url: inner.schema_url.clone(),
         };
         let res = Python::with_gil(|py| -> PyResult<()> {

@@ -2421,6 +2421,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "processor-bridge"
+version = "0.0.1"
+
+[[package]]
+name = "processor_py"
+version = "0.1.0"
+dependencies = [
+ "opentelemetry-proto",
+ "processor-bridge",
+ "pyo3",
+ "tower 0.5.2",
+ "tracing",
+ "tracing-log 0.2.0",
+ "utilities",
+]
+
+[[package]]
 name = "prost"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2808,6 +2825,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pin-project",
  "pprof",
+ "processor_py",
  "prost 0.13.4",
  "prost-build 0.13.4",
  "pyo3",

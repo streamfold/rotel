@@ -1,3 +1,4 @@
 utilities/target/
 tmp/
 target/
+rotel_python_processor_sdk/.env/
