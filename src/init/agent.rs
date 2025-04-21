@@ -263,14 +263,15 @@ impl Agent {
             .with_resource(Resource::builder().with_service_name("rotel").build())
             .build();
 
-        global::set_meter_provider(meter_provider.clone());
+        global::set_meter_provider(meter_provider);
 
         let token = exporters_cancel.clone();
         match config.exporter {
             Exporter::Blackhole => {
                 let mut exp = BlackholeExporter::new(
-                    trace_pipeline_out_rx.clone(),
-                    metrics_pipeline_out_rx.clone(),
+                    trace_pipeline_out_rx,
+                    metrics_pipeline_out_rx,
+                    logs_pipeline_out_rx,
                 );
 
                 exporters_task_set.spawn(async move {
@@ -284,7 +285,7 @@ impl Agent {
                     let traces_config = build_traces_config(config.otlp_exporter.clone(), endpoint);
                     let mut traces = otlp::exporter::build_traces_exporter(
                         traces_config,
-                        trace_pipeline_out_rx.clone(),
+                        trace_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
@@ -306,7 +307,7 @@ impl Agent {
                         build_metrics_config(config.otlp_exporter.clone(), endpoint);
                     let mut metrics = otlp::exporter::build_metrics_exporter(
                         metrics_config.clone(),
-                        metrics_pipeline_out_rx.clone(),
+                        metrics_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
@@ -325,7 +326,7 @@ impl Agent {
 
                     let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
                         metrics_config.clone(),
-                        internal_metrics_pipeline_out_rx.clone(),
+                        internal_metrics_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
@@ -562,6 +563,11 @@ impl Agent {
         drop(traces_output);
         drop(metrics_output);
         drop(logs_output);
+        drop(internal_metrics_output);
+
+        // Construct a noop meter provider that will allow all pipelines to drop their input channels
+        let noop_meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder().build();
+        global::set_meter_provider(noop_meter_provider);
 
         // Set a maximum duration for exporters to exit, this way if the pipelines exit quickly,
         // the entire wall time is left for exporters to finish flushing (which may require longer if
