@@ -1482,7 +1482,7 @@ mod tests {
     fn run_script<'py, T: IntoPyObject<'py>>(script: &str, py: Python<'py>, pv: T) -> PyResult<()> {
         let sys = py.import("sys")?;
         sys.setattr("stdout", LoggingStdout.into_py(py))?;
-        let code = std::fs::read_to_string(format!("./contrib/processor/tests/{}", script))?;
+        let code = std::fs::read_to_string(format!("../contrib/processor/tests/{}", script))?;
         let py_mod = PyModule::from_code(
             py,
             CString::new(code)?.as_c_str(),

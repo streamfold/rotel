@@ -9,13 +9,16 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
 use rotel_python_processor_sdk::model::{register_processor, PythonProcessable};
+#[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
+#[cfg(feature = "pyo3")]
 use std::sync::Once;
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+#[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::log::warn;
 use tracing::{debug, error};

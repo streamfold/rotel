@@ -1,5 +1,5 @@
 [package]
-name = "processor_py"
+name = "rotel_python_processor_sdk"
 version = "0.1.0"
 edition = "2021"
 
