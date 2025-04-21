@@ -2,18 +2,16 @@
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_python_processor_sdk::model::{PythonProcessable, register_processor};
+use rotel_python_processor_sdk::model::{register_processor, PythonProcessable};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
-#[cfg(feature = "pyo3")]
-use std::sync::Once;
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
@@ -66,9 +64,6 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
     }
 }
 
-#[cfg(feature = "pyo3")]
-static PROCESSOR_INIT: Once = Once::new();
-
 impl<T> Pipeline<T>
 where
     T: BatchSizer + BatchSplittable + PythonProcessable,
@@ -106,12 +101,6 @@ where
     fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
         let mut processor_modules = vec![];
         let path = env::current_dir()?;
-        if !self.processors.is_empty() {
-            PROCESSOR_INIT.call_once(|| {
-                // pyo3::append_to_inittab!(rotel_python_processor_sdk);
-                // pyo3::prepare_freethreaded_python();
-            });
-        }
         let processor_idx = 0;
         for file in &self.processors {
             let script = format!("{}/{}", path.clone().to_str().unwrap(), file);

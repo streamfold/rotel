@@ -4,9 +4,11 @@ pub mod py_transform;
 use crate::py::{rotel_python_processor_sdk, PyResourceSpans};
 use pyo3::prelude::*;
 use std::ffi::CString;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use tower::BoxError;
 use tracing::error;
+
+static PROCESSOR_INIT: Once = Once::new();
 
 #[derive(Debug, Clone)]
 pub struct AnyValue {
@@ -130,8 +132,10 @@ pub enum StatusCode {
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
-    pyo3::append_to_inittab!(rotel_python_processor_sdk);
-    pyo3::prepare_freethreaded_python();
+    PROCESSOR_INIT.call_once(|| {
+        pyo3::append_to_inittab!(rotel_python_processor_sdk);
+        pyo3::prepare_freethreaded_python();
+    });
 
     let res = Python::with_gil(|py| -> PyResult<()> {
         PyModule::from_code(
