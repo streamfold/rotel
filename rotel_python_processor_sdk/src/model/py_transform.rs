@@ -1,9 +1,7 @@
-use crate::processor::model::Value::{
+use crate::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
-use crate::processor::model::{
-    AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span,
-};
+use crate::model::{AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span};
 use std::mem;
 use std::sync::{Arc, Mutex};
 

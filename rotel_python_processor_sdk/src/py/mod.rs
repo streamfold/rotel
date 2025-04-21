@@ -1,7 +1,7 @@
-use crate::processor::model::Value::{
+use crate::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
-use crate::processor::model::{
+use crate::model::{
     AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span, Status,
 };
 use pyo3::prelude::*;
@@ -102,11 +102,14 @@ impl PyAnyValue {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        v.clone().unwrap().value.lock().unwrap().replace(ArrayValue(
-            crate::processor::model::ArrayValue {
+        v.clone()
+            .unwrap()
+            .value
+            .lock()
+            .unwrap()
+            .replace(ArrayValue(crate::model::ArrayValue {
                 values: new_value.0.clone(),
-            },
-        ));
+            }));
         Ok(())
     }
     #[setter]
@@ -119,7 +122,7 @@ impl PyAnyValue {
             .value
             .lock()
             .unwrap()
-            .replace(KvListValue(crate::processor::model::KeyValueList {
+            .replace(KvListValue(crate::model::KeyValueList {
                 values: new_value.0.clone(),
             }));
         Ok(())
@@ -256,7 +259,6 @@ impl PyKeyValueListIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
-
     fn __next__(&mut self) -> PyResult<Option<PyKeyValue>> {
         // Acquire a lock on the Mutex to access the inner Vec
         let guard = self.inner.lock().unwrap();
@@ -351,11 +353,9 @@ impl PyKeyValue {
     fn new_array_value(key: &str, value: PyArrayValue) -> PyResult<PyKeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = AnyValue {
-            value: Arc::new(Mutex::new(Some(ArrayValue(
-                crate::processor::model::ArrayValue {
-                    values: value.0.clone(),
-                },
-            )))),
+            value: Arc::new(Mutex::new(Some(ArrayValue(crate::model::ArrayValue {
+                values: value.0.clone(),
+            })))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
         Ok(PyKeyValue {
@@ -367,11 +367,9 @@ impl PyKeyValue {
     fn new_kv_list(key: &str, value: PyKeyValueList) -> PyResult<PyKeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = AnyValue {
-            value: Arc::new(Mutex::new(Some(KvListValue(
-                crate::processor::model::KeyValueList {
-                    values: value.0.clone(),
-                },
-            )))),
+            value: Arc::new(Mutex::new(Some(KvListValue(crate::model::KeyValueList {
+                values: value.0.clone(),
+            })))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
         Ok(PyKeyValue {
@@ -1466,7 +1464,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::processor::model::Value::{BoolValue, StringValue};
+    use crate::model::Value::{BoolValue, StringValue};
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use pyo3::ffi::c_str;
     use std::ffi::CString;
@@ -1484,7 +1482,7 @@ mod tests {
     fn run_script<'py, T: IntoPyObject<'py>>(script: &str, py: Python<'py>, pv: T) -> PyResult<()> {
         let sys = py.import("sys")?;
         sys.setattr("stdout", LoggingStdout.into_py(py))?;
-        let code = std::fs::read_to_string(format!("./contrib/processor/tests/{}", script))?;
+        let code = std::fs::read_to_string(format!("../contrib/processor/tests/{}", script))?;
         let py_mod = PyModule::from_code(
             py,
             CString::new(code)?.as_c_str(),
@@ -1710,7 +1708,7 @@ mod tests {
         let any_value_arc = Some(AnyValue {
             value: Arc::new(Mutex::new(arc_value)),
         });
-        let array_value = crate::processor::model::ArrayValue {
+        let array_value = crate::model::ArrayValue {
             values: Arc::new(Mutex::new(vec![Arc::new(Mutex::new(
                 any_value_arc.clone(),
             ))])),
@@ -1760,7 +1758,7 @@ mod tests {
             value: any_value_arc.clone(),
         };
 
-        let kv_list = crate::processor::model::KeyValueList {
+        let kv_list = crate::model::KeyValueList {
             values: Arc::new(Mutex::new(vec![kev_value])),
         };
 
@@ -1974,9 +1972,8 @@ mod tests {
     fn resource_spans_append_attributes() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::processor::model::otel_transform::transform(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
@@ -1993,9 +1990,8 @@ mod tests {
     fn resource_spans_iterate_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::processor::model::otel_transform::transform(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2012,9 +2008,8 @@ mod tests {
     fn read_and_write_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::processor::model::otel_transform::transform(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2032,8 +2027,7 @@ mod tests {
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
 
-        let mut scope_spans =
-            crate::processor::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
         let scope_spans = scope_spans.pop().unwrap();
         let scope = scope_spans.scope.unwrap();
         assert_eq!("name_changed", scope.name);
@@ -2071,9 +2065,8 @@ mod tests {
     fn set_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::processor::model::otel_transform::transform(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2087,8 +2080,7 @@ mod tests {
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
 
-        let mut scope_spans =
-            crate::processor::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
         let scope_spans = scope_spans.pop().unwrap();
         let scope = scope_spans.scope.unwrap();
         assert_eq!("name_changed", scope.name);
@@ -2117,9 +2109,8 @@ mod tests {
     fn read_and_write_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::processor::model::otel_transform::transform(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
         let py_resource_spans = PyResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2133,8 +2124,7 @@ mod tests {
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
 
-        let mut scope_spans =
-            crate::processor::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
         let mut scope_spans = scope_spans.pop().unwrap();
         let span = scope_spans.spans.pop().unwrap();
         assert_eq!(b"5555555555".to_vec(), span.trace_id);
