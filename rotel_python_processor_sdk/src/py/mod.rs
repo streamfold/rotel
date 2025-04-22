@@ -1150,6 +1150,20 @@ impl PySpan {
         let v = self.inner.lock().unwrap();
         Ok(PyLinks(v.links.clone()))
     }
+    #[setter]
+    fn set_links(&self, links: &PyLinks) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut v = inner.links.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clear();
+        for link in links.0.lock().unwrap().iter() {
+            v.push(link.clone())
+        }
+        Ok(())
+    }
     #[getter]
     fn dropped_links_count(&self) -> PyResult<u32> {
         let v = self.inner.lock().map_err(|_| {
@@ -1644,6 +1658,7 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyInstrumentationScope>()?;
     m.add_class::<PySpan>()?;
     m.add_class::<PyLink>()?;
+    m.add_class::<PyLinks>()?;
     m.add_class::<PyStatus>()?;
     m.add_class::<PyStatusCode>()?;
     Ok(())
