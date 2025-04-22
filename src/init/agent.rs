@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
+use rustls::crypto::CryptoProvider;
 use tokio::select;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -96,8 +97,10 @@ impl Agent {
         );
 
         // Initialize the TLS library, we may want to do this conditionally
-        if let Err(e) = rustls::crypto::ring::default_provider().install_default() {
-            return Err(format!("failed to initialize crypto library: {:?}", e).into());
+        if CryptoProvider::get_default().is_none() {
+            if let Err(e) = rustls::crypto::ring::default_provider().install_default() {
+                return Err(format!("failed to initialize crypto library: {:?}", e).into());
+            }
         }
 
         let num_cpus = num_cpus::get();
