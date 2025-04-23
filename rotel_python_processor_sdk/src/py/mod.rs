@@ -98,6 +98,19 @@ impl PyAnyValue {
         Ok(())
     }
     #[setter]
+    fn set_bytes_value(&mut self, new_value: Vec<u8>) -> PyResult<()> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clone()
+            .unwrap()
+            .value
+            .lock()
+            .unwrap()
+            .replace(BytesValue(new_value));
+        Ok(())
+    }
+    #[setter]
     fn set_array_value(&mut self, new_value: PyArrayValue) -> PyResult<()> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -342,6 +355,19 @@ impl PyKeyValue {
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = AnyValue {
             value: Arc::new(Mutex::new(Some(DoubleValue(f)))),
+        };
+        let value = Arc::new(Mutex::new(Some(value)));
+        Ok(PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        })
+    }
+    // Helper methods for class
+    #[staticmethod]
+    fn new_bytes_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+        let f = value.extract::<Vec<u8>>(py)?;
+        let key = Arc::new(Mutex::new(key.to_string()));
+        let value = AnyValue {
+            value: Arc::new(Mutex::new(Some(BytesValue(f)))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
         Ok(PyKeyValue {
@@ -1805,6 +1831,29 @@ mod tests {
     }
 
     #[test]
+    fn write_bytes_any_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+
+        let pv = PyAnyValue {
+            inner: any_value_arc.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> { run_script("write_bytes_value_test.py", py, pv) })
+            .unwrap();
+        match arc_value.lock().unwrap().clone().unwrap() {
+            BytesValue(b) => {
+                assert_eq!(b"111111".to_vec(), b);
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
     fn read_key_value_key() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
@@ -1904,6 +1953,35 @@ mod tests {
         match arc_value.lock().unwrap().clone().unwrap() {
             StringValue(s) => {
                 assert_eq!(s, "changed");
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn write_key_value_bytes_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue {
+                key: key.clone(),
+                value: any_value_arc.clone(),
+            })),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_bytes_value_test.py", py, kv)
+        })
+        .unwrap();
+        match arc_value.lock().unwrap().clone().unwrap() {
+            BytesValue(s) => {
+                assert_eq!(b"111111".to_vec(), s);
             }
             _ => panic!("wrong type"),
         }
