@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod bounded_channel;
+pub mod crypto;
 pub mod exporters;
 pub mod init;
 pub mod listener;
