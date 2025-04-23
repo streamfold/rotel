@@ -52,7 +52,7 @@ pub fn transform_spans(
                 kind: moved_data.kind,
                 start_time_unix_nano: moved_data.start_time_unix_nano,
                 end_time_unix_nano: moved_data.end_time_unix_nano,
-                attributes: vec![],
+                attributes: convert_attributes(moved_data.attributes),
                 dropped_attributes_count: moved_data.dropped_attributes_count,
                 events: convert_events(moved_data.events),
                 links: convert_links(moved_data.links),

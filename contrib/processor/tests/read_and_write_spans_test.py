@@ -12,6 +12,12 @@ def process(resource_spans):
     assert span.name == "foo"
     assert span.kind == 1
     assert span.dropped_attributes_count == 0
+    assert len(span.attributes) == 2
+    for attr in span.attributes:
+        if attr.key == "http.method":
+            assert attr.value.value == "POST"
+        elif attr.key == "http.request.path":
+            assert attr.value.value == "/items"
     for event in span.events:
         assert event.name == "a test event"
         assert len(event.attributes) == 0
@@ -41,8 +47,8 @@ def process(resource_spans):
     span.kind = 4  # producer
     span.start_time_unix_nano = 1234567890
     span.end_time_unix_nano = 1234567890
-    # TODO add attributes
-    # span.attributes
+
+    span.attributes.append(PyKeyValue.new_string_value("span_attr_key", "span_attr_value"))
     span.dropped_attributes_count = 100
     # TODO add events
     # span.events
