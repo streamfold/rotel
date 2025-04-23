@@ -96,7 +96,7 @@ pub struct Span {
     pub kind: i32,
     pub start_time_unix_nano: u64,
     pub end_time_unix_nano: u64,
-    pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
+    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
     pub dropped_attributes_count: u32,
     pub events: Arc<Mutex<Vec<Arc<Mutex<Event>>>>>,
     pub dropped_events_count: u32,

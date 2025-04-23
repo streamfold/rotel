@@ -80,8 +80,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                         })
                         .collect(),
                 )),
-                // TODO add attributes copy
-                attributes: Arc::new(Mutex::new(vec![])),
+                attributes: Arc::new(Mutex::new(convert_attributes(s.attributes))),
                 dropped_attributes_count: s.dropped_attributes_count,
                 dropped_events_count: s.dropped_events_count,
                 dropped_links_count: s.dropped_links_count,

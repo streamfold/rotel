@@ -1108,8 +1108,27 @@ impl PySpan {
         v.end_time_unix_nano = new_value;
         Ok(())
     }
-    // TODO
-    // pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
+    #[getter]
+    fn attributes(&self) -> PyResult<PyAttributesList> {
+        let binding = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(PyAttributesList(binding.attributes.clone()))
+    }
+    #[setter]
+    fn set_attributes(&mut self, attrs: &PyAttributesList) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut v = inner.attributes.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clear();
+        for kv in attrs.0.lock().unwrap().iter() {
+            v.push(kv.clone())
+        }
+        Ok(())
+    }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
         let v = self.inner.lock().map_err(|_| {
@@ -2377,6 +2396,17 @@ mod tests {
         match value {
             Value::StringValue(s) => {
                 assert_eq!("link_attr_value", s)
+            }
+            _ => panic!("unexpected type"),
+        }
+
+        assert_eq!(3, span.attributes.len());
+        let new_attr = span.attributes.remove(2);
+        assert_eq!("span_attr_key", new_attr.key);
+        let value = new_attr.value.clone().unwrap().value.unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("span_attr_value", s)
             }
             _ => panic!("unexpected type"),
         }
