@@ -1721,613 +1721,613 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_read_any_value() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //
-    //     let pv = PyAnyValue {
-    //         inner: any_value_arc.clone(),
-    //     };
-    //     Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
-    //         .unwrap();
-    //     let av = any_value_arc.lock().unwrap().clone().unwrap();
-    //     let avx = av.value.lock().unwrap().clone();
-    //     match avx.unwrap() {
-    //         StringValue(s) => {
-    //             assert_eq!(s, "foo");
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    //     println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
-    // }
-    //
-    // #[test]
-    // fn write_string_any_value() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let pv = PyAnyValue {
-    //         inner: any_value_arc.clone(),
-    //     };
-    //     Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
-    //         .unwrap();
-    //     let av = any_value_arc.lock().unwrap().clone().unwrap();
-    //     let avx = av.value.lock().unwrap().clone();
-    //     match avx.unwrap() {
-    //         StringValue(s) => {
-    //             assert_eq!(s, "changed");
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    //     println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
-    // }
-    //
-    // #[test]
-    // fn write_bool_any_value() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //
-    //     let pv = PyAnyValue {
-    //         inner: any_value_arc.clone(),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
-    //         .unwrap();
-    //     match arc_value.lock().unwrap().clone().unwrap() {
-    //         BoolValue(b) => {
-    //             assert!(b);
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    //     println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
-    // }
-    //
-    // #[test]
-    // fn read_key_value_key() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = PyKeyValue {
-    //         inner: Arc::new(Mutex::new(KeyValue {
-    //             key: key.clone(),
-    //             value: any_value_arc.clone(),
-    //         })),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> { run_script("read_key_value_key_test.py", py, kv) })
-    //         .unwrap();
-    //     let av = key.clone().lock().unwrap().clone();
-    //     assert_eq!(av, "key".to_string());
-    //     println!("{:?}", av);
-    // }
-    //
-    // #[test]
-    // fn write_key_value_key() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = PyKeyValue {
-    //         inner: Arc::new(Mutex::new(KeyValue {
-    //             key: key.clone(),
-    //             value: any_value_arc.clone(),
-    //         })),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("write_key_value_key_test.py", py, kv)
-    //     })
-    //     .unwrap();
-    //     let av = key.clone().lock().unwrap().clone();
-    //     assert_eq!(av, "new_key".to_string());
-    //     println!("{:?}", av);
-    // }
-    //
-    // #[test]
-    // fn read_key_value_value() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = PyKeyValue {
-    //         inner: Arc::new(Mutex::new(KeyValue {
-    //             key: key.clone(),
-    //             value: any_value_arc.clone(),
-    //         })),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("read_key_value_value_test.py", py, kv)
-    //     })
-    //     .unwrap();
-    //     match arc_value.lock().unwrap().clone().unwrap() {
-    //         StringValue(s) => {
-    //             assert_eq!(s, "foo");
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    //     println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
-    // }
-    //
-    // #[test]
-    // fn write_key_value_value() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = PyKeyValue {
-    //         inner: Arc::new(Mutex::new(KeyValue {
-    //             key: key.clone(),
-    //             value: any_value_arc.clone(),
-    //         })),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("write_key_value_value_test.py", py, kv)
-    //     })
-    //     .unwrap();
-    //     match arc_value.lock().unwrap().clone().unwrap() {
-    //         StringValue(s) => {
-    //             assert_eq!(s, "changed");
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    //     println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
-    // }
-    //
-    // #[test]
-    // fn read_resource_attributes() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //
-    //     let resource = PyResource {
-    //         attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("read_resource_attributes_test.py", py, resource)
-    //     })
-    //     .unwrap();
-    // }
-    //
-    // #[test]
-    // fn read_and_write_attributes_array_value() {
-    //     initialize();
-    //
-    //     let arc_value = Some(StringValue("foo".to_string()));
-    //     let any_value_arc = Some(AnyValue {
-    //         value: Arc::new(Mutex::new(arc_value)),
-    //     });
-    //     let array_value = crate::model::ArrayValue {
-    //         values: Arc::new(Mutex::new(vec![Arc::new(Mutex::new(
-    //             any_value_arc.clone(),
-    //         ))])),
-    //     };
-    //     let array_value_arc = Arc::new(Mutex::new(Some(ArrayValue(array_value))));
-    //     let any_value_array_value_wrapper = Some(AnyValue {
-    //         value: array_value_arc.clone(),
-    //     });
-    //
-    //     let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
-    //
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_array_value_wrapper_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //
-    //     let resource = PyResource {
-    //         attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script(
-    //             "read_and_write_attributes_array_value_test.py",
-    //             py,
-    //             resource,
-    //         )
-    //     })
-    //     .unwrap();
-    // }
-    //
-    // #[test]
-    // fn read_and_write_attributes_key_value_list_value() {
-    //     initialize();
-    //
-    //     let value = Some(StringValue("foo".to_string()));
-    //     let any_value = Some(AnyValue {
-    //         value: Arc::new(Mutex::new(value)),
-    //     });
-    //     let any_value_arc = Arc::new(Mutex::new(any_value));
-    //     let arc_key = Arc::new(Mutex::new("inner_key".to_string()));
-    //
-    //     let kev_value = KeyValue {
-    //         key: arc_key.clone(),
-    //         value: any_value_arc.clone(),
-    //     };
-    //
-    //     let kv_list = crate::model::KeyValueList {
-    //         values: Arc::new(Mutex::new(vec![kev_value])),
-    //     };
-    //
-    //     let array_value_arc = Arc::new(Mutex::new(Some(KvListValue(kv_list))));
-    //     let any_value_array_value_wrapper = Some(AnyValue {
-    //         value: array_value_arc.clone(),
-    //     });
-    //
-    //     let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
-    //
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_array_value_wrapper_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //
-    //     let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
-    //     let resource = PyResource {
-    //         attributes: attrs_arc.clone(),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script(
-    //             "read_and_write_attributes_key_value_list_test.py",
-    //             py,
-    //             resource,
-    //         )
-    //     })
-    //     .unwrap();
-    //
-    //     let mut value = attrs_arc.lock().unwrap();
-    //     let value = value.pop().unwrap();
-    //     let value = Arc::into_inner(value).unwrap().into_inner().unwrap();
-    //     let value = Arc::into_inner(value.value).unwrap().into_inner().unwrap();
-    //     let value = value.unwrap().value;
-    //     let value = Arc::into_inner(value)
-    //         .unwrap()
-    //         .into_inner()
-    //         .unwrap()
-    //         .unwrap();
-    //     match value {
-    //         KvListValue(k) => {
-    //             let mut value = k.values.lock().unwrap().clone();
-    //             let value = value.pop();
-    //             match value {
-    //                 None => {
-    //                     panic!("wrong type")
-    //                 }
-    //                 Some(v) => {
-    //                     let v = v.value.lock().unwrap().clone();
-    //                     match v {
-    //                         None => {
-    //                             panic!("wrong type")
-    //                         }
-    //                         Some(v) => {
-    //                             let value = v.value.lock().unwrap().clone().unwrap();
-    //                             match value {
-    //                                 StringValue(s) => assert_eq!("baz", s),
-    //                                 _ => panic!("wrong type"),
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    // }
-    //
-    // #[test]
-    // fn write_resource_attributes_key_value_key() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //
-    //     let resource = PyResource {
-    //         attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script(
-    //             "write_resource_attributes_key_value_key_test.py",
-    //             py,
-    //             resource,
-    //         )
-    //     })
-    //     .unwrap();
-    //     let av = key.clone().lock().unwrap().clone();
-    //     assert_eq!(av, "new_key".to_string());
-    //     println!("{:?}", av);
-    // }
-    //
-    // #[test]
-    // fn write_resource_attributes_key_value_value() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //
-    //     let resource = PyResource {
-    //         attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script(
-    //             "write_resource_attributes_key_value_value_test.py",
-    //             py,
-    //             resource,
-    //         )
-    //     })
-    //     .unwrap();
-    //     match arc_value.lock().unwrap().clone().unwrap() {
-    //         StringValue(s) => {
-    //             assert_eq!(s, "changed");
-    //         }
-    //         _ => panic!("wrong type"),
-    //     }
-    //     println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
-    // }
-    //
-    // #[test]
-    // fn resource_attributes_append_attribute() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //     let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
-    //     let resource = PyResource {
-    //         attributes: attrs_arc.clone(),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("resource_attributes_append_attribute.py", py, resource)
-    //     })
-    //     .unwrap();
-    //     println!("{:#?}", attrs_arc.lock().unwrap());
-    // }
-    //
-    // #[test]
-    // fn resource_attributes_set_attributes() {
-    //     initialize();
-    //     let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-    //     let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
-    //         value: arc_value.clone(),
-    //     })));
-    //     let key = Arc::new(Mutex::new("key".to_string()));
-    //
-    //     let kv = KeyValue {
-    //         key: key.clone(),
-    //         value: any_value_arc.clone(),
-    //     };
-    //
-    //     let kv_arc = Arc::new(Mutex::new(kv));
-    //     let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
-    //     let resource = PyResource {
-    //         attributes: attrs_arc.clone(),
-    //     };
-    //
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("resource_attributes_set_attributes.py", py, resource)
-    //     })
-    //     .unwrap();
-    //     println!("{:#?}", attrs_arc.lock().unwrap());
-    //     let attrs = attrs_arc.lock().unwrap();
-    //     assert_eq!(2, attrs.len());
-    //     for kv in attrs.iter() {
-    //         let guard = kv.lock();
-    //         let kv_guard = guard.unwrap();
-    //         let key = kv_guard.key.lock().unwrap().to_string();
-    //         let value = kv_guard.value.lock().unwrap();
-    //         assert_ne!(key, "key");
-    //         assert!(key == "os.name" || key == "os.version");
-    //         assert!(value.is_some());
-    //         let av = value.clone().unwrap();
-    //         let value = av.value.lock().unwrap();
-    //         assert!(value.is_some());
-    //     }
-    // }
-    //
-    // #[test]
-    // fn resource_spans_append_attributes() {
-    //     initialize();
-    //     let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-    //     let resource_spans =
-    //         crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-    //     let py_resource_spans = PyResourceSpans {
-    //         resource: resource_spans.resource.clone(),
-    //         scope_spans: Arc::new(Mutex::new(vec![])),
-    //         schema_url: resource_spans.schema_url,
-    //     };
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("resource_spans_append_attribute.py", py, py_resource_spans)
-    //     })
-    //     .unwrap();
-    //     println!("{:#?}", resource_spans.resource.lock().unwrap());
-    // }
-    //
-    // #[test]
-    // fn resource_spans_iterate_spans() {
-    //     initialize();
-    //     let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-    //     let resource_spans =
-    //         crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-    //     let py_resource_spans = PyResourceSpans {
-    //         resource: resource_spans.resource.clone(),
-    //         scope_spans: resource_spans.scope_spans.clone(),
-    //         schema_url: resource_spans.schema_url,
-    //     };
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
-    //     })
-    //     .unwrap();
-    //     println!("{:#?}", resource_spans.resource.lock().unwrap());
-    // }
-    //
-    // #[test]
-    // fn read_and_write_instrumentation_scope() {
-    //     initialize();
-    //     let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-    //     let resource_spans =
-    //         crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-    //     let py_resource_spans = PyResourceSpans {
-    //         resource: resource_spans.resource.clone(),
-    //         scope_spans: resource_spans.scope_spans.clone(),
-    //         schema_url: resource_spans.schema_url,
-    //     };
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script(
-    //             "read_and_write_instrumentation_scope_test.py",
-    //             py,
-    //             py_resource_spans,
-    //         )
-    //     })
-    //     .unwrap();
-    //
-    //     let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-    //     let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-    //
-    //     let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
-    //     let scope_spans = scope_spans.pop().unwrap();
-    //     let scope = scope_spans.scope.unwrap();
-    //     assert_eq!("name_changed", scope.name);
-    //     assert_eq!("0.0.2", scope.version);
-    //     assert_eq!(100, scope.dropped_attributes_count);
-    //     assert_eq!(scope.attributes.len(), 2);
-    //     for attr in &scope.attributes {
-    //         let value = attr.value.clone().unwrap();
-    //         let value = value.value.unwrap();
-    //         match attr.key.as_str() {
-    //             "key_changed" => match value {
-    //                 opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i) => {
-    //                     assert_eq!(i, 200);
-    //                 }
-    //                 _ => {
-    //                     panic!("wrong type for key_changed: {:?}", value);
-    //                 }
-    //             },
-    //             "severity" => match value {
-    //                 opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
-    //                     assert_eq!(s, "WARN");
-    //                 }
-    //                 _ => {
-    //                     panic!("wrong type for severity: {:?}", value);
-    //                 }
-    //             },
-    //             _ => {
-    //                 panic!("unexpected key")
-    //             }
-    //         }
-    //     }
-    // }
-    //
-    // #[test]
-    // fn set_instrumentation_scope() {
-    //     initialize();
-    //     let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-    //     let resource_spans =
-    //         crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-    //     let py_resource_spans = PyResourceSpans {
-    //         resource: resource_spans.resource.clone(),
-    //         scope_spans: resource_spans.scope_spans.clone(),
-    //         schema_url: resource_spans.schema_url,
-    //     };
-    //     Python::with_gil(|py| -> PyResult<()> {
-    //         run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
-    //     })
-    //     .unwrap();
-    //
-    //     let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-    //     let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-    //
-    //     let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
-    //     let scope_spans = scope_spans.pop().unwrap();
-    //     let scope = scope_spans.scope.unwrap();
-    //     assert_eq!("name_changed", scope.name);
-    //     assert_eq!("0.0.2", scope.version);
-    //     assert_eq!(100, scope.dropped_attributes_count);
-    //     assert_eq!(scope.attributes.len(), 1);
-    //     for attr in &scope.attributes {
-    //         let value = attr.value.clone().unwrap();
-    //         let value = value.value.unwrap();
-    //         match attr.key.as_str() {
-    //             "severity" => match value {
-    //                 opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
-    //                     assert_eq!(s, "WARN");
-    //                 }
-    //                 _ => {
-    //                     panic!("wrong type for severity: {:?}", value);
-    //                 }
-    //             },
-    //             _ => {
-    //                 panic!("unexpected key")
-    //             }
-    //         }
-    //     }
-    // }
+    #[test]
+    fn test_read_any_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+
+        let pv = PyAnyValue {
+            inner: any_value_arc.clone(),
+        };
+        Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
+            .unwrap();
+        let av = any_value_arc.lock().unwrap().clone().unwrap();
+        let avx = av.value.lock().unwrap().clone();
+        match avx.unwrap() {
+            StringValue(s) => {
+                assert_eq!(s, "foo");
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn write_string_any_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let pv = PyAnyValue {
+            inner: any_value_arc.clone(),
+        };
+        Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
+            .unwrap();
+        let av = any_value_arc.lock().unwrap().clone().unwrap();
+        let avx = av.value.lock().unwrap().clone();
+        match avx.unwrap() {
+            StringValue(s) => {
+                assert_eq!(s, "changed");
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn write_bool_any_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+
+        let pv = PyAnyValue {
+            inner: any_value_arc.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
+            .unwrap();
+        match arc_value.lock().unwrap().clone().unwrap() {
+            BoolValue(b) => {
+                assert!(b);
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn read_key_value_key() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue {
+                key: key.clone(),
+                value: any_value_arc.clone(),
+            })),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> { run_script("read_key_value_key_test.py", py, kv) })
+            .unwrap();
+        let av = key.clone().lock().unwrap().clone();
+        assert_eq!(av, "key".to_string());
+        println!("{:?}", av);
+    }
+
+    #[test]
+    fn write_key_value_key() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue {
+                key: key.clone(),
+                value: any_value_arc.clone(),
+            })),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_key_test.py", py, kv)
+        })
+        .unwrap();
+        let av = key.clone().lock().unwrap().clone();
+        assert_eq!(av, "new_key".to_string());
+        println!("{:?}", av);
+    }
+
+    #[test]
+    fn read_key_value_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue {
+                key: key.clone(),
+                value: any_value_arc.clone(),
+            })),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_key_value_value_test.py", py, kv)
+        })
+        .unwrap();
+        match arc_value.lock().unwrap().clone().unwrap() {
+            StringValue(s) => {
+                assert_eq!(s, "foo");
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn write_key_value_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = PyKeyValue {
+            inner: Arc::new(Mutex::new(KeyValue {
+                key: key.clone(),
+                value: any_value_arc.clone(),
+            })),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_value_test.py", py, kv)
+        })
+        .unwrap();
+        match arc_value.lock().unwrap().clone().unwrap() {
+            StringValue(s) => {
+                assert_eq!(s, "changed");
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn read_resource_attributes() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+
+        let resource = PyResource {
+            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_resource_attributes_test.py", py, resource)
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn read_and_write_attributes_array_value() {
+        initialize();
+
+        let arc_value = Some(StringValue("foo".to_string()));
+        let any_value_arc = Some(AnyValue {
+            value: Arc::new(Mutex::new(arc_value)),
+        });
+        let array_value = crate::model::ArrayValue {
+            values: Arc::new(Mutex::new(vec![Arc::new(Mutex::new(
+                any_value_arc.clone(),
+            ))])),
+        };
+        let array_value_arc = Arc::new(Mutex::new(Some(ArrayValue(array_value))));
+        let any_value_array_value_wrapper = Some(AnyValue {
+            value: array_value_arc.clone(),
+        });
+
+        let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
+
+        let key = Arc::new(Mutex::new("key".to_string()));
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_array_value_wrapper_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+
+        let resource = PyResource {
+            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "read_and_write_attributes_array_value_test.py",
+                py,
+                resource,
+            )
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn read_and_write_attributes_key_value_list_value() {
+        initialize();
+
+        let value = Some(StringValue("foo".to_string()));
+        let any_value = Some(AnyValue {
+            value: Arc::new(Mutex::new(value)),
+        });
+        let any_value_arc = Arc::new(Mutex::new(any_value));
+        let arc_key = Arc::new(Mutex::new("inner_key".to_string()));
+
+        let kev_value = KeyValue {
+            key: arc_key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_list = crate::model::KeyValueList {
+            values: Arc::new(Mutex::new(vec![kev_value])),
+        };
+
+        let array_value_arc = Arc::new(Mutex::new(Some(KvListValue(kv_list))));
+        let any_value_array_value_wrapper = Some(AnyValue {
+            value: array_value_arc.clone(),
+        });
+
+        let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
+
+        let key = Arc::new(Mutex::new("key".to_string()));
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_array_value_wrapper_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+
+        let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
+        let resource = PyResource {
+            attributes: attrs_arc.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "read_and_write_attributes_key_value_list_test.py",
+                py,
+                resource,
+            )
+        })
+        .unwrap();
+
+        let mut value = attrs_arc.lock().unwrap();
+        let value = value.pop().unwrap();
+        let value = Arc::into_inner(value).unwrap().into_inner().unwrap();
+        let value = Arc::into_inner(value.value).unwrap().into_inner().unwrap();
+        let value = value.unwrap().value;
+        let value = Arc::into_inner(value)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        match value {
+            KvListValue(k) => {
+                let mut value = k.values.lock().unwrap().clone();
+                let value = value.pop();
+                match value {
+                    None => {
+                        panic!("wrong type")
+                    }
+                    Some(v) => {
+                        let v = v.value.lock().unwrap().clone();
+                        match v {
+                            None => {
+                                panic!("wrong type")
+                            }
+                            Some(v) => {
+                                let value = v.value.lock().unwrap().clone().unwrap();
+                                match value {
+                                    StringValue(s) => assert_eq!("baz", s),
+                                    _ => panic!("wrong type"),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => panic!("wrong type"),
+        }
+    }
+
+    #[test]
+    fn write_resource_attributes_key_value_key() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+
+        let resource = PyResource {
+            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "write_resource_attributes_key_value_key_test.py",
+                py,
+                resource,
+            )
+        })
+        .unwrap();
+        let av = key.clone().lock().unwrap().clone();
+        assert_eq!(av, "new_key".to_string());
+        println!("{:?}", av);
+    }
+
+    #[test]
+    fn write_resource_attributes_key_value_value() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+
+        let resource = PyResource {
+            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "write_resource_attributes_key_value_value_test.py",
+                py,
+                resource,
+            )
+        })
+        .unwrap();
+        match arc_value.lock().unwrap().clone().unwrap() {
+            StringValue(s) => {
+                assert_eq!(s, "changed");
+            }
+            _ => panic!("wrong type"),
+        }
+        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+    }
+
+    #[test]
+    fn resource_attributes_append_attribute() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+        let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
+        let resource = PyResource {
+            attributes: attrs_arc.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_attributes_append_attribute.py", py, resource)
+        })
+        .unwrap();
+        println!("{:#?}", attrs_arc.lock().unwrap());
+    }
+
+    #[test]
+    fn resource_attributes_set_attributes() {
+        initialize();
+        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
+        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+            value: arc_value.clone(),
+        })));
+        let key = Arc::new(Mutex::new("key".to_string()));
+
+        let kv = KeyValue {
+            key: key.clone(),
+            value: any_value_arc.clone(),
+        };
+
+        let kv_arc = Arc::new(Mutex::new(kv));
+        let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
+        let resource = PyResource {
+            attributes: attrs_arc.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_attributes_set_attributes.py", py, resource)
+        })
+        .unwrap();
+        println!("{:#?}", attrs_arc.lock().unwrap());
+        let attrs = attrs_arc.lock().unwrap();
+        assert_eq!(2, attrs.len());
+        for kv in attrs.iter() {
+            let guard = kv.lock();
+            let kv_guard = guard.unwrap();
+            let key = kv_guard.key.lock().unwrap().to_string();
+            let value = kv_guard.value.lock().unwrap();
+            assert_ne!(key, "key");
+            assert!(key == "os.name" || key == "os.version");
+            assert!(value.is_some());
+            let av = value.clone().unwrap();
+            let value = av.value.lock().unwrap();
+            assert!(value.is_some());
+        }
+    }
+
+    #[test]
+    fn resource_spans_append_attributes() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: Arc::new(Mutex::new(vec![])),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_spans_append_attribute.py", py, py_resource_spans)
+        })
+        .unwrap();
+        println!("{:#?}", resource_spans.resource.lock().unwrap());
+    }
+
+    #[test]
+    fn resource_spans_iterate_spans() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
+        })
+        .unwrap();
+        println!("{:#?}", resource_spans.resource.lock().unwrap());
+    }
+
+    #[test]
+    fn read_and_write_instrumentation_scope() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "read_and_write_instrumentation_scope_test.py",
+                py,
+                py_resource_spans,
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let scope_spans = scope_spans.pop().unwrap();
+        let scope = scope_spans.scope.unwrap();
+        assert_eq!("name_changed", scope.name);
+        assert_eq!("0.0.2", scope.version);
+        assert_eq!(100, scope.dropped_attributes_count);
+        assert_eq!(scope.attributes.len(), 2);
+        for attr in &scope.attributes {
+            let value = attr.value.clone().unwrap();
+            let value = value.value.unwrap();
+            match attr.key.as_str() {
+                "key_changed" => match value {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i) => {
+                        assert_eq!(i, 200);
+                    }
+                    _ => {
+                        panic!("wrong type for key_changed: {:?}", value);
+                    }
+                },
+                "severity" => match value {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
+                        assert_eq!(s, "WARN");
+                    }
+                    _ => {
+                        panic!("wrong type for severity: {:?}", value);
+                    }
+                },
+                _ => {
+                    panic!("unexpected key")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn set_instrumentation_scope() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = PyResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let scope_spans = scope_spans.pop().unwrap();
+        let scope = scope_spans.scope.unwrap();
+        assert_eq!("name_changed", scope.name);
+        assert_eq!("0.0.2", scope.version);
+        assert_eq!(100, scope.dropped_attributes_count);
+        assert_eq!(scope.attributes.len(), 1);
+        for attr in &scope.attributes {
+            let value = attr.value.clone().unwrap();
+            let value = value.value.unwrap();
+            match attr.key.as_str() {
+                "severity" => match value {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
+                        assert_eq!(s, "WARN");
+                    }
+                    _ => {
+                        panic!("wrong type for severity: {:?}", value);
+                    }
+                },
+                _ => {
+                    panic!("unexpected key")
+                }
+            }
+        }
+    }
     #[test]
     fn read_and_write_spans() {
         initialize();
