@@ -16,7 +16,7 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
         let kvs = build_rotel_sdk_resource(resource);
         let res = Arc::new(Mutex::new(Some(crate::model::Resource {
             attributes: Arc::new(Mutex::new(kvs.to_owned())),
-            dropped_attributes_count,
+            dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
         })));
         resource_span.resource = res.clone()
     }

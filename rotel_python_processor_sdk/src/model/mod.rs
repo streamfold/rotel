@@ -60,7 +60,7 @@ pub struct KeyValue {
 #[derive(Debug, Clone)]
 pub struct Resource {
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
-    pub dropped_attributes_count: u32,
+    pub dropped_attributes_count: Arc<Mutex<u32>>,
 }
 
 #[derive(Debug, Clone)]

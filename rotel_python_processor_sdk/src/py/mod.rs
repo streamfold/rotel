@@ -425,6 +425,7 @@ impl PyKeyValue {
 #[pyclass]
 pub struct PyResource {
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
+    pub dropped_attributes_count: Arc<Mutex<u32>>,
 }
 
 #[pymethods]
@@ -445,6 +446,17 @@ impl PyResource {
         for kv in v.iter() {
             attrs.push(kv.clone())
         }
+        Ok(())
+    }
+    #[getter]
+    fn dropped_attributes_count(&self) -> PyResult<u32> {
+        let dropped = self.dropped_attributes_count.lock().unwrap();
+        Ok(dropped.clone())
+    }
+    #[setter]
+    fn set_dropped_attributes_count(&mut self, new_value: u32) -> PyResult<()> {
+        let mut dropped = self.dropped_attributes_count.lock().unwrap();
+        *dropped = new_value;
         Ok(())
     }
 }
@@ -556,6 +568,7 @@ impl PyResourceSpans {
         let inner = v.clone().unwrap();
         Ok(Some(PyResource {
             attributes: inner.attributes.clone(),
+            dropped_attributes_count: inner.dropped_attributes_count.clone(),
         }))
     }
     #[getter]
@@ -1915,6 +1928,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -1953,6 +1967,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2003,6 +2018,7 @@ mod tests {
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
             attributes: attrs_arc.clone(),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2071,6 +2087,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2104,6 +2121,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2141,6 +2159,7 @@ mod tests {
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
             attributes: attrs_arc.clone(),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2168,6 +2187,7 @@ mod tests {
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
             attributes: attrs_arc.clone(),
+            dropped_attributes_count: 0,
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2343,6 +2363,13 @@ mod tests {
             run_script("read_and_write_spans_test.py", py, py_resource_spans)
         })
         .unwrap();
+
+        let resource = Arc::into_inner(resource_spans.resource);
+        let resource = resource.unwrap().into_inner().unwrap().unwrap();
+        let dropped = Arc::into_inner(resource.dropped_attributes_count);
+        let dropped = dropped.unwrap().into_inner().unwrap();
+
+        assert_eq!(15, dropped);
 
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
