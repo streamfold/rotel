@@ -1928,7 +1928,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -1967,7 +1967,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2018,7 +2018,7 @@ mod tests {
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
             attributes: attrs_arc.clone(),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2087,7 +2087,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2121,7 +2121,7 @@ mod tests {
 
         let resource = PyResource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2159,7 +2159,7 @@ mod tests {
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
             attributes: attrs_arc.clone(),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -2187,7 +2187,7 @@ mod tests {
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = PyResource {
             attributes: attrs_arc.clone(),
-            dropped_attributes_count: 0,
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
