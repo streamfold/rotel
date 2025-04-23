@@ -42,14 +42,12 @@ pub fn is_retryable_error(status: &ExporterError) -> bool {
     match status {
         ExporterError::Generic(_) => false, // todo: further classify errors here
         ExporterError::Connect => true,
-        ExporterError::Http(status, _) => {
-            match status.as_u16() {
-                200..=202 => false,
-                408 | 429 => true,
-                500..=504 => true,
-                _ => false,
-            }
-        }
+        ExporterError::Http(status, _) => match status.as_u16() {
+            200..=202 => false,
+            408 | 429 => true,
+            500..=504 => true,
+            _ => false,
+        },
         ExporterError::Grpc(status) => matches!(
             status.code(),
             tonic::Code::Unavailable |     // Service temporarily unavailable
