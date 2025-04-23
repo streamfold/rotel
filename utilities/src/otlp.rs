@@ -227,7 +227,17 @@ impl FakeOTLP {
                     dropped_attributes_count: 0,
                 }],
                 dropped_events_count: 0,
-                links: vec![],
+                links: vec![v1::span::Link {
+                    trace_id: vec![3, 3, 3, 3, 3, 3, 3, 3],
+                    span_id: vec![4, 4, 4, 4, 4, 4, 4, 4],
+                    trace_state: "mojo=00f067aa0ba902b7".to_string(),
+                    attributes: vec![
+                        string_attr("http.method", "GET"),
+                        string_attr("http.request.path", "/item/0"),
+                    ],
+                    dropped_attributes_count: 10,
+                    flags: 0,
+                }],
                 dropped_links_count: 0,
                 status: Some(Status::default()),
             };

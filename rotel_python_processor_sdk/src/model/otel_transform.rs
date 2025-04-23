@@ -1,5 +1,7 @@
 use crate::model::Value::{ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, StringValue};
-use crate::model::{AnyValue, Event, InstrumentationScope, KeyValue, ResourceSpans, Span, Status};
+use crate::model::{
+    AnyValue, Event, InstrumentationScope, KeyValue, Link, ResourceSpans, Span, Status,
+};
 use std::sync::{Arc, Mutex};
 
 pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> ResourceSpans {
@@ -57,6 +59,23 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> Re
                                     e.attributes.to_owned(),
                                 ))),
                                 dropped_attributes_count: 0,
+                            }))
+                        })
+                        .collect(),
+                )),
+                links: Arc::new(Mutex::new(
+                    s.links
+                        .iter()
+                        .map(|l| {
+                            Arc::new(Mutex::new(Link {
+                                trace_id: l.trace_id.to_owned(),
+                                span_id: l.span_id.to_owned(),
+                                trace_state: l.trace_state.to_owned(),
+                                attributes: Arc::new(Mutex::new(convert_attributes(
+                                    l.attributes.to_owned(),
+                                ))),
+                                dropped_attributes_count: l.dropped_attributes_count,
+                                flags: l.flags,
                             }))
                         })
                         .collect(),

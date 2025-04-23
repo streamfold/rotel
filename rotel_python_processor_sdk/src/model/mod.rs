@@ -100,7 +100,7 @@ pub struct Span {
     pub dropped_attributes_count: u32,
     pub events: Arc<Mutex<Vec<Arc<Mutex<Event>>>>>,
     pub dropped_events_count: u32,
-    //pub links: ::prost::alloc::vec::Vec<span::Link>,
+    pub links: Arc<Mutex<Vec<Arc<Mutex<Link>>>>>,
     pub dropped_links_count: u32,
     pub status: Arc<Mutex<Option<Status>>>,
 }
@@ -129,6 +129,16 @@ pub enum StatusCode {
     Ok = 1,
     /// The Span contains an error.
     Error = 2,
+}
+
+#[derive(Debug, Clone)]
+pub struct Link {
+    pub trace_id: Vec<u8>,
+    pub span_id: Vec<u8>,
+    pub trace_state: String,
+    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub dropped_attributes_count: u32,
+    pub flags: u32,
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {

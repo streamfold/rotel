@@ -2,7 +2,7 @@ use crate::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
 use crate::model::{
-    AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span, Status,
+    AnyValue, Event, InstrumentationScope, KeyValue, Link, Resource, ScopeSpans, Span, Status,
 };
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -1145,8 +1145,25 @@ impl PySpan {
         v.dropped_events_count = new_value;
         Ok(())
     }
-    // TODO
-    // //pub links: ::prost::alloc::vec::Vec<span::Link>,
+    #[getter]
+    fn links(&self) -> PyResult<PyLinks> {
+        let v = self.inner.lock().unwrap();
+        Ok(PyLinks(v.links.clone()))
+    }
+    #[setter]
+    fn set_links(&self, links: &PyLinks) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut v = inner.links.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clear();
+        for link in links.0.lock().unwrap().iter() {
+            v.push(link.clone())
+        }
+        Ok(())
+    }
     #[getter]
     fn dropped_links_count(&self) -> PyResult<u32> {
         let v = self.inner.lock().map_err(|_| {
@@ -1328,6 +1345,191 @@ impl PyEvent {
 }
 
 #[pyclass]
+struct PyLinks(Arc<Mutex<Vec<Arc<Mutex<Link>>>>>);
+
+#[pymethods]
+impl PyLinks {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyLinksIter>> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let iter = PyLinksIter {
+            inner: inner.clone().into_iter(),
+        };
+        // Convert to a Python-managed object
+        Py::new(py, iter)
+    }
+    fn __getitem__(&self, index: usize) -> PyResult<PyLink> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => Ok(PyLink {
+                inner: item.clone(),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+    fn append<'py>(&self, item: &PyLink) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        k.push(item.inner.clone());
+        Ok(())
+    }
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+struct PyLinksIter {
+    inner: std::vec::IntoIter<Arc<Mutex<Link>>>,
+}
+
+#[pymethods]
+impl PyLinksIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyLink>> {
+        let kv = slf.inner.next();
+        if kv.is_none() {
+            return Ok(None);
+        }
+        let inner = kv.unwrap();
+        Ok(Some(PyLink {
+            inner: inner.clone(),
+        }))
+    }
+}
+
+#[pyclass]
+#[derive(Debug)]
+struct PyLink {
+    inner: Arc<Mutex<Link>>,
+}
+
+#[pymethods]
+impl PyLink {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(PyLink {
+            inner: Arc::new(Mutex::new(Link {
+                trace_id: vec![],
+                span_id: vec![],
+                trace_state: "".to_string(),
+                attributes: Arc::new(Mutex::new(vec![])),
+                dropped_attributes_count: 0,
+                flags: 0,
+            })),
+        })
+    }
+    #[getter]
+    fn trace_id(&self) -> PyResult<Vec<u8>> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.trace_id.clone())
+    }
+    #[setter]
+    fn set_trace_id(&mut self, trace_id: Vec<u8>) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.trace_id = trace_id;
+        Ok(())
+    }
+    #[getter]
+    fn span_id(&self) -> PyResult<Vec<u8>> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.span_id.clone())
+    }
+    #[setter]
+    fn set_span_id(&mut self, span_id: Vec<u8>) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.span_id = span_id;
+        Ok(())
+    }
+    #[getter]
+    fn trace_state(&self) -> PyResult<String> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.trace_state.clone())
+    }
+    #[setter]
+    fn set_trace_state(&mut self, trace_state: String) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.trace_state = trace_state;
+        Ok(())
+    }
+    #[getter]
+    fn attributes(&self) -> PyResult<PyAttributesList> {
+        let binding = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(PyAttributesList(binding.attributes.clone()))
+    }
+    #[setter]
+    fn set_attributes(&mut self, attrs: &PyAttributesList) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut v = inner.attributes.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.clear();
+        for kv in attrs.0.lock().unwrap().iter() {
+            v.push(kv.clone())
+        }
+        Ok(())
+    }
+    #[getter]
+    fn dropped_attributes_count(&self) -> PyResult<u32> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.dropped_attributes_count)
+    }
+    #[setter]
+    fn set_dropped_attributes_count(&self, new_value: u32) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.dropped_attributes_count = new_value;
+        Ok(())
+    }
+    #[getter]
+    fn flags(&self) -> PyResult<u32> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.flags)
+    }
+    #[setter]
+    fn set_flags(&self, new_value: u32) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.flags = new_value;
+        Ok(())
+    }
+}
+
+#[pyclass]
 #[derive(Clone)]
 struct PyStatus(Arc<Mutex<Option<Status>>>);
 
@@ -1455,6 +1657,8 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScopeSpans>()?;
     m.add_class::<PyInstrumentationScope>()?;
     m.add_class::<PySpan>()?;
+    m.add_class::<PyLink>()?;
+    m.add_class::<PyLinks>()?;
     m.add_class::<PyStatus>()?;
     m.add_class::<PyStatusCode>()?;
     Ok(())
@@ -1464,7 +1668,6 @@ pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::model::Value::{BoolValue, StringValue};
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use pyo3::ffi::c_str;
     use std::ffi::CString;
@@ -1495,6 +1698,7 @@ mod tests {
             let err = result_py_object.unwrap_err();
             return Err(err);
         }
+        // For debugging python stdout -- println!("{:?}", result_py_object.unwrap());
         Ok(())
     }
 
@@ -2126,7 +2330,7 @@ mod tests {
 
         let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
         let mut scope_spans = scope_spans.pop().unwrap();
-        let span = scope_spans.spans.pop().unwrap();
+        let mut span = scope_spans.spans.pop().unwrap();
         assert_eq!(b"5555555555".to_vec(), span.trace_id);
         assert_eq!(b"6666666666".to_vec(), span.span_id);
         assert_eq!("test=1234567890", span.trace_state);
@@ -2156,6 +2360,23 @@ mod tests {
         match value {
             Value::StringValue(s) => {
                 assert_eq!("event_attr_value", s)
+            }
+            _ => panic!("unexpected type"),
+        }
+
+        assert_eq!(2, span.links.len());
+        // get the newly added link
+        let new_link = span.links.remove(1);
+        assert_eq!(b"88888888".to_vec(), new_link.trace_id);
+        assert_eq!(b"99999999".to_vec(), new_link.span_id);
+        assert_eq!("test=1234567890", new_link.trace_state);
+        assert_eq!(300, new_link.dropped_attributes_count);
+        assert_eq!(1, new_link.flags);
+        assert_eq!(1, new_link.attributes.len());
+        let value = new_link.attributes[0].value.clone().unwrap().value.unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("link_attr_value", s)
             }
             _ => panic!("unexpected type"),
         }

@@ -1,7 +1,9 @@
 use crate::model::Value::{
     ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
 };
-use crate::model::{AnyValue, Event, InstrumentationScope, KeyValue, Resource, ScopeSpans, Span};
+use crate::model::{
+    AnyValue, Event, InstrumentationScope, KeyValue, Link, Resource, ScopeSpans, Span,
+};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +30,7 @@ pub fn transform_spans(
                     name: "".to_string(),
                     kind: 0,
                     events: Arc::new(Mutex::new(vec![])),
+                    links: Arc::new(Mutex::new(vec![])),
                     start_time_unix_nano: 0,
                     end_time_unix_nano: 0,
                     attributes: Arc::new(Default::default()),
@@ -52,8 +55,8 @@ pub fn transform_spans(
                 attributes: vec![],
                 dropped_attributes_count: moved_data.dropped_attributes_count,
                 events: convert_events(moved_data.events),
+                links: convert_links(moved_data.links),
                 dropped_events_count: moved_data.dropped_events_count,
-                links: vec![],
                 dropped_links_count: moved_data.dropped_links_count,
                 status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
                     message: s.message,
@@ -85,6 +88,28 @@ fn convert_events(
                 name: e.name.clone(),
                 attributes: convert_attributes(e.attributes),
                 dropped_attributes_count: e.dropped_attributes_count,
+            }
+        })
+        .collect()
+}
+
+fn convert_links(
+    links: Arc<Mutex<Vec<Arc<Mutex<Link>>>>>,
+) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Link> {
+    let links = Arc::into_inner(links).unwrap();
+    let mut links = links.into_inner().unwrap();
+    links
+        .drain(..) // Creates an iterator that removes all elements
+        .map(|l| {
+            let l = Arc::into_inner(l).unwrap();
+            let l = l.into_inner().unwrap();
+            opentelemetry_proto::tonic::trace::v1::span::Link {
+                trace_id: l.trace_id,
+                span_id: l.span_id,
+                attributes: convert_attributes(l.attributes),
+                dropped_attributes_count: l.dropped_attributes_count,
+                trace_state: l.trace_state,
+                flags: l.flags,
             }
         })
         .collect()
