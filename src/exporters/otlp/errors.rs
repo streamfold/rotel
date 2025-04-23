@@ -43,8 +43,12 @@ pub fn is_retryable_error(status: &ExporterError) -> bool {
         ExporterError::Generic(_) => false, // todo: further classify errors here
         ExporterError::Connect => true,
         ExporterError::Http(status, _) => {
-            let code = status.as_u16();
-            (500..505).contains(&code)
+            match status.as_u16() {
+                200..=202 => false,
+                408 | 429 => true,
+                500..=503 => true,
+                _ => false,
+            }
         }
         ExporterError::Grpc(status) => matches!(
             status.code(),

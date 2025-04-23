@@ -939,9 +939,8 @@ mod tests {
 
         let hello_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/traces");
-            then.status(200)
+            then.status(429)
                 .header("content-type", "application/x-protobuf")
-                .status(429)
                 .body(resp_buf);
         });
 
@@ -964,8 +963,9 @@ mod tests {
         let res = send_test_traces_msgs_and_stop(otlp_exp, trace_btx, 2).await;
         assert_err!(res);
 
-        // There is randomness, so at a minimum we should try twice, at max 3
-        assert!((2..=3).contains(&(hello_mock.hits() as i32)));
+        // Each message will have 2-3 attempts, so double that range. There is randomness
+        // due to the jitter
+        assert!((4..=6).contains(&(hello_mock.hits() as i32)));
     }
 
     #[tokio::test]
