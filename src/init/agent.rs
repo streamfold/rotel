@@ -1,4 +1,5 @@
 use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
@@ -9,6 +10,8 @@ use crate::init::otlp_exporter::{
     build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
     build_traces_batch_config, build_traces_config,
 };
+#[cfg(feature = "pprof")]
+use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
 use crate::receivers::otlp_grpc::OTLPGrpcServer;
@@ -34,9 +37,6 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
-
-#[cfg(feature = "pprof")]
-use crate::init::pprof;
 
 use crate::topology::flush_control::FlushSubscriber;
 
@@ -96,9 +96,7 @@ impl Agent {
         );
 
         // Initialize the TLS library, we may want to do this conditionally
-        if let Err(e) = rustls::crypto::ring::default_provider().install_default() {
-            return Err(format!("failed to initialize crypto library: {:?}", e).into());
-        }
+        init_crypto_provider()?;
 
         let num_cpus = num_cpus::get();
 
