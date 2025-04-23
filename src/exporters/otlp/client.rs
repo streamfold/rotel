@@ -112,7 +112,7 @@ where
         match self.client.request(encoded_request.request).await {
             Ok(response) => {
                 let (mut body, encoding) =
-                    process_head(response, self.send_failed.clone(), encoded_request.size)?;
+                    process_head(response, self.send_failed.clone(), encoded_request.size).await?;
                 let mut resp = T::default();
                 while let Some(next) = body.frame().await {
                     match next {
@@ -221,7 +221,7 @@ where
 ///
 /// # Returns
 /// * `Result<(Incoming, Option<HeaderValue>), ExporterError>` - The processed body and content encoding
-fn process_head(
+async fn process_head(
     response: Response<Incoming>,
     failed: RotelCounter<u64>,
     count: usize,
@@ -229,6 +229,14 @@ fn process_head(
     let (head, body) = response.into_parts();
 
     if head.status != 200 {
+        let resp = match body.collect().await {
+            Ok(b) => match String::from_utf8(b.to_bytes().to_vec()) {
+                Ok(text) => Some(text),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
         failed.add(
             count as u64,
             &[
@@ -236,7 +244,7 @@ fn process_head(
                 KeyValue::new("value", head.status.to_string()),
             ],
         );
-        return Err(ExporterError::Http(head.status));
+        return Err(ExporterError::Http(head.status, resp));
     }
 
     // grpc responses encode the compression within the payload, for HTTP responses

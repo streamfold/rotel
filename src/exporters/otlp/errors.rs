@@ -15,7 +15,7 @@ pub enum ExporterError {
     Connect,
 
     /// HTTP error resulting in invalid status code
-    Http(StatusCode),
+    Http(StatusCode, Option<String>),
 
     /// GRPC Error status, from tonic
     Grpc(Status),
@@ -26,7 +26,10 @@ impl fmt::Display for ExporterError {
         match self {
             ExporterError::Generic(msg) => write!(f, "Generic error: {}", msg),
             ExporterError::Connect => write!(f, "Failed to connect"),
-            ExporterError::Http(status) => write!(f, "HTTP error: {}", status),
+            ExporterError::Http(status, resp) => match resp {
+                None => write!(f, "HTTP error: {}", status),
+                Some(text) => write!(f, "HTTP error: {}:{}", status, text),
+            },
             ExporterError::Grpc(status) => write!(f, "GRPC error: {}", status),
         }
     }
@@ -39,7 +42,7 @@ pub fn is_retryable_error(status: &ExporterError) -> bool {
     match status {
         ExporterError::Generic(_) => false, // todo: further classify errors here
         ExporterError::Connect => true,
-        ExporterError::Http(status) => {
+        ExporterError::Http(status, _) => {
             let code = status.as_u16();
             (500..505).contains(&code)
         }
