@@ -46,7 +46,7 @@ pub fn is_retryable_error(status: &ExporterError) -> bool {
             match status.as_u16() {
                 200..=202 => false,
                 408 | 429 => true,
-                500..=503 => true,
+                500..=504 => true,
                 _ => false,
             }
         }
