@@ -4,6 +4,7 @@ from rotel_python_processor_sdk import PyStatus, PyStatusCode, PyKeyValue, PyLin
 def process(resource_spans):
     # assert expected initial state
     span = resource_spans.scope_spans[0].spans[0]
+    assert resource_spans.resource.dropped_attributes_count == 0
     assert span.trace_id == b'\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01'
     assert span.span_id == b'\x02\x02\x02\x02\x02\x02\x02\x02'
     assert span.trace_state == "rojo=00f067aa0ba902b7"
@@ -37,6 +38,8 @@ def process(resource_spans):
     assert link.dropped_attributes_count == 10
     assert link.flags == 0
 
+    # mutate resource
+    resource_spans.resource.dropped_attributes_count = 15
     # mutate span
     span.trace_id = b"5555555555"
     span.span_id = b"6666666666"
