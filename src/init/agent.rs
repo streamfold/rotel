@@ -37,7 +37,8 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
-
+use crate::exporters::clickhouse::ClickhouseExporter;
+use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::topology::flush_control::FlushSubscriber;
 
 pub struct Agent {
@@ -401,6 +402,34 @@ impl Agent {
 
                     Ok(())
                 });
+            }
+
+            Exporter::Clickhouse => {
+                if config.clickhouse_exporter.clickhouse_exporter_endpoint.is_none() {
+                    return Err("must specify a Clickhouse exporter endpoint".into())
+                }
+
+                let mut builder = ClickhouseExporter::builder(
+                    config.clickhouse_exporter.clickhouse_exporter_endpoint.unwrap(),
+                )
+                    .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()));
+
+                let exp = builder.build(trace_pipeline_out_rx)?;
+
+                exporters_task_set.spawn(async move {
+                    let res = exp.start(token).await;
+                    if let Err(e) = res {
+                        error!(
+                            error = e,
+                            "Clickhouse exporter returned from run loop with error."
+                        );
+                    }
+
+                    Ok(())
+                });
+
+
+
             }
         }
 

@@ -6,6 +6,7 @@ pub mod wait;
 
 mod datadog_exporter;
 mod otlp_exporter;
+mod clickhouse_exporter;
 
 #[cfg(feature = "pprof")]
 pub mod pprof;

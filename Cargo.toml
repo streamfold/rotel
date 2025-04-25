@@ -50,6 +50,10 @@ pin-project = "1.1.10"
 futures-util = "0.3.31"
 rotel_python_processor_sdk = { path = "rotel_python_processor_sdk", optional = true }
 pyo3 = { version = "0.24.1", optional = true }
+clickhouse = { version = "0.13.2", features = ["inserter"] }
+chrono = "0.4.40"
+serde = { version = "1.0.217", features = ["derive"] }
+thiserror = "2.0.12"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

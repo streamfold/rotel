@@ -16,6 +16,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tower::{BoxError, Service};
+use tracing::info;
 use tracing::log::warn;
 
 #[derive(Clone)]
