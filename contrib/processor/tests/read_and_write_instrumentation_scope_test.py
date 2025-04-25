@@ -1,4 +1,4 @@
-from rotel.open_telemetry.common.v1 import KeyValue
+from rotel_sdk.open_telemetry.common.v1 import KeyValue
 
 
 def process(resource_spans):

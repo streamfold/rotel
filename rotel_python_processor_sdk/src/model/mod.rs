@@ -2,7 +2,7 @@ pub mod otel_transform;
 pub mod py_transform;
 
 use crate::py;
-use crate::py::{rotel, ResourceSpans};
+use crate::py::{rotel_sdk, ResourceSpans};
 use pyo3::prelude::*;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, Once};
@@ -144,7 +144,7 @@ pub struct RLink {
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
     PROCESSOR_INIT.call_once(|| {
-        pyo3::append_to_inittab!(rotel);
+        pyo3::append_to_inittab!(rotel_sdk);
         pyo3::prepare_freethreaded_python();
     });
 

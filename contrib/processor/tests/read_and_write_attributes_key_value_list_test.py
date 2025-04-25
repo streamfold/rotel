@@ -1,4 +1,4 @@
-from rotel.open_telemetry.common.v1 import KeyValueList, KeyValue, Attributes
+from rotel_sdk.open_telemetry.common.v1 import KeyValueList, KeyValue, Attributes
 
 
 def process(resource):

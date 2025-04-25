@@ -1706,7 +1706,7 @@ impl LoggingStdout {
 
 // Python module definition
 #[pymodule]
-pub fn rotel(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let open_telemetry_module = PyModule::new(m.py(), "open_telemetry")?;
     let trace_module = PyModule::new(open_telemetry_module.py(), "trace")?;
     let resource_module = PyModule::new(open_telemetry_module.py(), "resource")?;
@@ -1726,34 +1726,34 @@ pub fn rotel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry", &open_telemetry_module)?;
+        .set_item("rotel_sdk.open_telemetry", &open_telemetry_module)?;
 
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry.trace", &trace_module)?;
+        .set_item("rotel_sdk.open_telemetry.trace", &trace_module)?;
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry.trace.v1", &trace_v1_module)?;
+        .set_item("rotel_sdk.open_telemetry.trace.v1", &trace_v1_module)?;
 
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry.resource", &resource_module)?;
+        .set_item("rotel_sdk.open_telemetry.resource", &resource_module)?;
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry.resource.v1", &resource_v1_module)?;
+        .set_item("rotel_sdk.open_telemetry.resource.v1", &resource_v1_module)?;
 
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry.common", &common_module)?;
+        .set_item("rotel_sdk.open_telemetry.common", &common_module)?;
     m.py()
         .import("sys")?
         .getattr("modules")?
-        .set_item("rotel.open_telemetry.common.v1", &common_v1_module)?;
+        .set_item("rotel_sdk.open_telemetry.common.v1", &common_v1_module)?;
 
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
@@ -1787,7 +1787,7 @@ mod tests {
 
     pub fn initialize() {
         INIT.call_once(|| {
-            pyo3::append_to_inittab!(rotel);
+            pyo3::append_to_inittab!(rotel_sdk);
             pyo3::prepare_freethreaded_python();
         });
     }
