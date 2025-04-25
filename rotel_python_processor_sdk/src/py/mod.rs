@@ -1,24 +1,25 @@
-use crate::model::Value::{
-    ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
+use crate::model::RValue::{
+    BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
 use crate::model::{
-    AnyValue, Event, InstrumentationScope, KeyValue, Link, Resource, ScopeSpans, Span, Status,
+    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans, RSpan,
+    RStatus,
 };
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 
 // Wrapper for AnyValue that can be exposed to Python
 #[pyclass]
-struct PyAnyValue {
-    inner: Arc<Mutex<Option<AnyValue>>>,
+struct AnyValue {
+    inner: Arc<Mutex<Option<RAnyValue>>>,
 }
 
 #[pymethods]
-impl PyAnyValue {
+impl AnyValue {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyAnyValue {
-            inner: Arc::new(Mutex::new(Some(AnyValue {
+        Ok(AnyValue {
+            inner: Arc::new(Mutex::new(Some(RAnyValue {
                 value: Arc::new(Mutex::new(Some(StringValue("".to_string())))),
             }))),
         })
@@ -37,7 +38,7 @@ impl PyAnyValue {
             Some(IntValue(i)) => Ok(i.into_py(py)),
             Some(DoubleValue(d)) => Ok(d.into_py(py)),
             Some(BytesValue(b)) => Ok(b.into_py(py)),
-            Some(ArrayValue(a)) => Ok(a.convert_to_py(py)?),
+            Some(RVArrayValue(a)) => Ok(a.convert_to_py(py)?),
             Some(KvListValue(k)) => Ok(k.convert_to_py(py)?),
             None => Ok(py.None()),
         };
@@ -111,7 +112,7 @@ impl PyAnyValue {
         Ok(())
     }
     #[setter]
-    fn set_array_value(&mut self, new_value: PyArrayValue) -> PyResult<()> {
+    fn set_array_value(&mut self, new_value: ArrayValue) -> PyResult<()> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -120,13 +121,13 @@ impl PyAnyValue {
             .value
             .lock()
             .unwrap()
-            .replace(ArrayValue(crate::model::ArrayValue {
+            .replace(RVArrayValue(crate::model::RArrayValue {
                 values: new_value.0.clone(),
             }));
         Ok(())
     }
     #[setter]
-    fn set_key_value_list_value(&mut self, new_value: PyKeyValueList) -> PyResult<()> {
+    fn set_key_value_list_value(&mut self, new_value: KeyValueList) -> PyResult<()> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -135,7 +136,7 @@ impl PyAnyValue {
             .value
             .lock()
             .unwrap()
-            .replace(KvListValue(crate::model::KeyValueList {
+            .replace(KvListValue(crate::model::RKeyValueList {
                 values: new_value.0.clone(),
             }));
         Ok(())
@@ -144,19 +145,19 @@ impl PyAnyValue {
 
 #[pyclass]
 #[derive(Clone)]
-pub struct PyArrayValue(pub Arc<Mutex<Vec<Arc<Mutex<Option<AnyValue>>>>>>);
+pub struct ArrayValue(pub Arc<Mutex<Vec<Arc<Mutex<Option<RAnyValue>>>>>>);
 
 #[pymethods]
-impl PyArrayValue {
+impl ArrayValue {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyArrayValue(Arc::new(Mutex::new(vec![]))))
+        Ok(ArrayValue(Arc::new(Mutex::new(vec![]))))
     }
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyArrayValueIter>> {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<ArrayValueIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyArrayValueIter {
+        let iter = ArrayValueIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
@@ -168,12 +169,12 @@ impl PyArrayValue {
         })?;
         Ok(inner.len())
     }
-    fn __getitem__(&self, index: usize) -> PyResult<PyAnyValue> {
+    fn __getitem__(&self, index: usize) -> PyResult<AnyValue> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PyAnyValue {
+            Some(item) => Ok(AnyValue {
                 inner: item.clone(),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -181,7 +182,7 @@ impl PyArrayValue {
             )),
         }
     }
-    fn append(&self, item: &PyAnyValue) -> PyResult<()> {
+    fn append(&self, item: &AnyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -191,23 +192,23 @@ impl PyArrayValue {
 }
 
 #[pyclass]
-struct PyArrayValueIter {
-    inner: std::vec::IntoIter<Arc<Mutex<Option<AnyValue>>>>,
+struct ArrayValueIter {
+    inner: std::vec::IntoIter<Arc<Mutex<Option<RAnyValue>>>>,
 }
 
 #[pymethods]
-impl PyArrayValueIter {
+impl ArrayValueIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyAnyValue>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<AnyValue>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        Ok(Some(PyAnyValue {
+        Ok(Some(AnyValue {
             inner: inner.clone(),
         }))
     }
@@ -215,28 +216,28 @@ impl PyArrayValueIter {
 
 #[pyclass]
 #[derive(Clone)]
-pub struct PyKeyValueList(pub Arc<Mutex<Vec<KeyValue>>>);
+pub struct KeyValueList(pub Arc<Mutex<Vec<RKeyValue>>>);
 
 #[pymethods]
-impl PyKeyValueList {
+impl KeyValueList {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyKeyValueList(Arc::new(Mutex::new(vec![]))))
+        Ok(KeyValueList(Arc::new(Mutex::new(vec![]))))
     }
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyKeyValueListIter>> {
-        let iter = PyKeyValueListIter {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<KeyValueListIter>> {
+        let iter = KeyValueListIter {
             inner: self.0.clone(),
             idx: 0,
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
-    fn __getitem__(&self, index: usize) -> PyResult<PyKeyValue> {
+    fn __getitem__(&self, index: usize) -> PyResult<KeyValue> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PyKeyValue {
+            Some(item) => Ok(KeyValue {
                 inner: Arc::new(Mutex::new(item.clone())),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -250,7 +251,7 @@ impl PyKeyValueList {
         })?;
         Ok(inner.len())
     }
-    fn append(&self, item: PyKeyValue) -> PyResult<()> {
+    fn append(&self, item: KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -262,17 +263,17 @@ impl PyKeyValueList {
 }
 
 #[pyclass]
-struct PyKeyValueListIter {
-    inner: Arc<Mutex<Vec<KeyValue>>>,
+struct KeyValueListIter {
+    inner: Arc<Mutex<Vec<RKeyValue>>>,
     idx: usize,
 }
 
 #[pymethods]
-impl PyKeyValueListIter {
+impl KeyValueListIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
-    fn __next__(&mut self) -> PyResult<Option<PyKeyValue>> {
+    fn __next__(&mut self) -> PyResult<Option<KeyValue>> {
         // Acquire a lock on the Mutex to access the inner Vec
         let guard = self.inner.lock().unwrap();
         if self.idx > guard.len() - 1 {
@@ -284,8 +285,8 @@ impl PyKeyValueListIter {
         }
         let kv = v.unwrap();
         self.idx += 1;
-        Ok(Some(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        Ok(Some(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: kv.key.clone(),
                 value: kv.value.clone(),
             })),
@@ -295,16 +296,16 @@ impl PyKeyValueListIter {
 
 #[pyclass]
 #[derive(Clone)]
-struct PyKeyValue {
-    inner: Arc<Mutex<KeyValue>>,
+struct KeyValue {
+    inner: Arc<Mutex<RKeyValue>>,
 }
 
 #[pymethods]
-impl PyKeyValue {
+impl KeyValue {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: Arc::new(Mutex::new("".to_string())),
                 value: Arc::new(Mutex::new(None)),
             })),
@@ -312,94 +313,94 @@ impl PyKeyValue {
     }
     // Helper methods creating new inner value types
     #[staticmethod]
-    fn new_string_value(key: &str, value: &str) -> PyResult<PyKeyValue> {
+    fn new_string_value(key: &str, value: &str) -> PyResult<KeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
+        let value = RAnyValue {
             value: Arc::new(Mutex::new(Some(StringValue(value.to_string())))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_bool_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+    fn new_bool_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
         let b = value.extract::<bool>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
+        let value = RAnyValue {
             value: Arc::new(Mutex::new(Some(BoolValue(b)))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_int_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+    fn new_int_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
         let i = value.extract::<i64>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
+        let value = RAnyValue {
             value: Arc::new(Mutex::new(Some(IntValue(i)))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_double_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+    fn new_double_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
         let f = value.extract::<f64>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
+        let value = RAnyValue {
             value: Arc::new(Mutex::new(Some(DoubleValue(f)))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_bytes_value(key: &str, py: Python, value: PyObject) -> PyResult<PyKeyValue> {
+    fn new_bytes_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
         let f = value.extract::<Vec<u8>>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
+        let value = RAnyValue {
             value: Arc::new(Mutex::new(Some(BytesValue(f)))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_array_value(key: &str, value: PyArrayValue) -> PyResult<PyKeyValue> {
+    fn new_array_value(key: &str, value: ArrayValue) -> PyResult<KeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
-            value: Arc::new(Mutex::new(Some(ArrayValue(crate::model::ArrayValue {
+        let value = RAnyValue {
+            value: Arc::new(Mutex::new(Some(RVArrayValue(crate::model::RArrayValue {
                 values: value.0.clone(),
             })))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_kv_list(key: &str, value: PyKeyValueList) -> PyResult<PyKeyValue> {
+    fn new_kv_list(key: &str, value: KeyValueList) -> PyResult<KeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
-        let value = AnyValue {
-            value: Arc::new(Mutex::new(Some(KvListValue(crate::model::KeyValueList {
+        let value = RAnyValue {
+            value: Arc::new(Mutex::new(Some(KvListValue(crate::model::RKeyValueList {
                 values: value.0.clone(),
             })))),
         };
         let value = Arc::new(Mutex::new(Some(value)));
-        Ok(PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue { key, value })),
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue { key, value })),
         })
     }
     #[getter]
@@ -425,17 +426,17 @@ impl PyKeyValue {
         Ok(())
     }
     #[getter]
-    fn value(&self) -> PyResult<PyAnyValue> {
+    fn value(&self) -> PyResult<AnyValue> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         let binding = v.value.clone();
-        Ok(PyAnyValue {
+        Ok(AnyValue {
             inner: binding.clone(),
         })
     }
     #[setter]
-    fn set_value(&mut self, new_value: &PyAnyValue) -> PyResult<()> {
+    fn set_value(&mut self, new_value: &AnyValue) -> PyResult<()> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -449,19 +450,19 @@ impl PyKeyValue {
 }
 
 #[pyclass]
-pub struct PyResource {
-    pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
+pub struct Resource {
+    pub attributes: Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>,
     pub dropped_attributes_count: Arc<Mutex<u32>>,
 }
 
 #[pymethods]
-impl PyResource {
+impl Resource {
     #[getter]
-    fn attributes(&self) -> PyResult<PyAttributes> {
-        Ok(PyAttributes(self.attributes.clone()))
+    fn attributes(&self) -> PyResult<Attributes> {
+        Ok(Attributes(self.attributes.clone()))
     }
     #[setter]
-    fn set_attributes(&mut self, new_value: &PyAttributes) -> PyResult<()> {
+    fn set_attributes(&mut self, new_value: &Attributes) -> PyResult<()> {
         let mut attrs = self.attributes.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -488,32 +489,32 @@ impl PyResource {
 }
 
 #[pyclass]
-struct PyAttributes(Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>);
+struct Attributes(Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>);
 
 #[pymethods]
-impl PyAttributes {
+impl Attributes {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyAttributes(Arc::new(Mutex::new(vec![]))))
+        Ok(Attributes(Arc::new(Mutex::new(vec![]))))
     }
 
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyAttributesIter>> {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<AttributesIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyAttributesIter {
+        let iter = AttributesIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
 
-    fn __getitem__(&self, index: usize) -> PyResult<PyKeyValue> {
+    fn __getitem__(&self, index: usize) -> PyResult<KeyValue> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PyKeyValue {
+            Some(item) => Ok(KeyValue {
                 inner: item.clone(),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -522,7 +523,7 @@ impl PyAttributes {
         }
     }
 
-    fn append<'py>(&self, item: &PyKeyValue) -> PyResult<()> {
+    fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -536,7 +537,7 @@ impl PyAttributes {
         })?;
 
         for i in items.iter() {
-            let x = i.extract::<PyKeyValue>(py)?;
+            let x = i.extract::<KeyValue>(py)?;
             k.push(x.inner.clone());
         }
         Ok(())
@@ -551,23 +552,23 @@ impl PyAttributes {
 }
 
 #[pyclass]
-struct PyAttributesIter {
-    inner: std::vec::IntoIter<Arc<Mutex<KeyValue>>>,
+struct AttributesIter {
+    inner: std::vec::IntoIter<Arc<Mutex<RKeyValue>>>,
 }
 
 #[pymethods]
-impl PyAttributesIter {
+impl AttributesIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyKeyValue>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<KeyValue>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        Ok(Some(PyKeyValue {
+        Ok(Some(KeyValue {
             inner: inner.clone(),
         }))
     }
@@ -575,16 +576,16 @@ impl PyAttributesIter {
 
 #[pyclass]
 #[derive(Clone)]
-pub struct PyResourceSpans {
-    pub resource: Arc<Mutex<Option<Resource>>>,
-    pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>,
+pub struct ResourceSpans {
+    pub resource: Arc<Mutex<Option<RResource>>>,
+    pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>,
     pub schema_url: String,
 }
 
 #[pymethods]
-impl PyResourceSpans {
+impl ResourceSpans {
     #[getter]
-    fn resource(&self) -> PyResult<Option<PyResource>> {
+    fn resource(&self) -> PyResult<Option<Resource>> {
         let v = self.resource.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -592,14 +593,14 @@ impl PyResourceSpans {
             return Ok(None);
         }
         let inner = v.clone().unwrap();
-        Ok(Some(PyResource {
+        Ok(Some(Resource {
             attributes: inner.attributes.clone(),
             dropped_attributes_count: inner.dropped_attributes_count.clone(),
         }))
     }
     #[getter]
-    fn scope_spans(&self) -> PyResult<PyScopeSpansList> {
-        Ok(PyScopeSpansList(self.scope_spans.clone()))
+    fn scope_spans(&self) -> PyResult<ScopeSpansList> {
+        Ok(ScopeSpansList(self.scope_spans.clone()))
     }
     #[getter]
     fn schema_url(&self) -> PyResult<String> {
@@ -613,29 +614,29 @@ impl PyResourceSpans {
 }
 
 #[pyclass]
-struct PyScopeSpansList(Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>);
+struct ScopeSpansList(Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>);
 
 #[pymethods]
-impl PyScopeSpansList {
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyScopeSpansListIter>> {
+impl ScopeSpansList {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<ScopeSpansListIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyScopeSpansListIter {
+        let iter = ScopeSpansListIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
 
-    fn __getitem__(&self, index: usize) -> PyResult<PyScopeSpans> {
+    fn __getitem__(&self, index: usize) -> PyResult<ScopeSpans> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
             Some(item) => {
                 let item = item.lock().unwrap();
-                Ok(PyScopeSpans {
+                Ok(ScopeSpans {
                     scope: item.scope.clone(),
                     spans: item.spans.clone(),
                     schema_url: item.schema_url.clone(),
@@ -656,23 +657,23 @@ impl PyScopeSpansList {
 }
 
 #[pyclass]
-struct PyScopeSpansListIter {
-    inner: std::vec::IntoIter<Arc<Mutex<ScopeSpans>>>,
+struct ScopeSpansListIter {
+    inner: std::vec::IntoIter<Arc<Mutex<RScopeSpans>>>,
 }
 
 #[pymethods]
-impl PyScopeSpansListIter {
+impl ScopeSpansListIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyScopeSpans>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<ScopeSpans>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
         let inner = inner.lock().unwrap();
-        let x = Ok(Some(PyScopeSpans {
+        let x = Ok(Some(ScopeSpans {
             scope: inner.scope.clone(),
             spans: inner.spans.clone(),
             schema_url: inner.schema_url.clone(),
@@ -682,20 +683,20 @@ impl PyScopeSpansListIter {
 }
 
 #[pyclass]
-struct PyScopeSpans {
-    scope: Arc<Mutex<Option<InstrumentationScope>>>,
-    spans: Arc<Mutex<Vec<Arc<Mutex<Span>>>>>,
+struct ScopeSpans {
+    scope: Arc<Mutex<Option<RInstrumentationScope>>>,
+    spans: Arc<Mutex<Vec<Arc<Mutex<RSpan>>>>>,
     schema_url: String,
 }
 
 #[pymethods]
-impl PyScopeSpans {
+impl ScopeSpans {
     #[getter]
-    fn spans(&self) -> PyResult<PySpans> {
-        Ok(PySpans(self.spans.clone()))
+    fn spans(&self) -> PyResult<Spans> {
+        Ok(Spans(self.spans.clone()))
     }
     #[getter]
-    fn scope(&self) -> PyResult<Option<PyInstrumentationScope>> {
+    fn scope(&self) -> PyResult<Option<InstrumentationScope>> {
         {
             let v = self.scope.lock().map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -704,10 +705,10 @@ impl PyScopeSpans {
                 return Ok(None);
             }
         }
-        Ok(Some(PyInstrumentationScope(self.scope.clone())))
+        Ok(Some(InstrumentationScope(self.scope.clone())))
     }
     #[setter]
-    fn set_scope(&mut self, scope: PyInstrumentationScope) -> PyResult<()> {
+    fn set_scope(&mut self, scope: InstrumentationScope) -> PyResult<()> {
         let mut v = self.scope.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -730,14 +731,14 @@ impl PyScopeSpans {
 
 #[pyclass]
 #[derive(Clone)]
-struct PyInstrumentationScope(Arc<Mutex<Option<InstrumentationScope>>>);
+struct InstrumentationScope(Arc<Mutex<Option<RInstrumentationScope>>>);
 
 #[pymethods]
-impl PyInstrumentationScope {
+impl InstrumentationScope {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyInstrumentationScope(Arc::new(Mutex::new(Some(
-            InstrumentationScope {
+        Ok(InstrumentationScope(Arc::new(Mutex::new(Some(
+            RInstrumentationScope {
                 // TODO: Probably provide the otel defaults here?
                 name: "".to_string(),
                 version: "".to_string(),
@@ -764,13 +765,13 @@ impl PyInstrumentationScope {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         let updated_scope = match binding.take() {
-            Some(current) => InstrumentationScope {
+            Some(current) => RInstrumentationScope {
                 name,
                 version: current.version,
                 attributes: current.attributes,
                 dropped_attributes_count: current.dropped_attributes_count,
             },
-            None => InstrumentationScope {
+            None => RInstrumentationScope {
                 name,
                 ..Default::default()
             },
@@ -796,13 +797,13 @@ impl PyInstrumentationScope {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         let updated_scope = match binding.take() {
-            Some(current) => InstrumentationScope {
+            Some(current) => RInstrumentationScope {
                 version,
                 name: current.name,
                 attributes: current.attributes,
                 dropped_attributes_count: current.dropped_attributes_count,
             },
-            None => InstrumentationScope {
+            None => RInstrumentationScope {
                 version,
                 ..Default::default()
             },
@@ -811,7 +812,7 @@ impl PyInstrumentationScope {
         Ok(())
     }
     #[getter]
-    fn attributes(&self) -> PyResult<PyAttributesList> {
+    fn attributes(&self) -> PyResult<AttributesList> {
         let binding = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -820,7 +821,7 @@ impl PyInstrumentationScope {
             .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "InstrumentationScope is None",
             ))?;
-        Ok(PyAttributesList(v.attributes))
+        Ok(AttributesList(v.attributes))
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
@@ -840,13 +841,13 @@ impl PyInstrumentationScope {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         let updated_scope = match binding.take() {
-            Some(current) => InstrumentationScope {
+            Some(current) => RInstrumentationScope {
                 name: current.name,
                 version: current.version,
                 attributes: current.attributes,
                 dropped_attributes_count,
             },
-            None => InstrumentationScope {
+            None => RInstrumentationScope {
                 dropped_attributes_count,
                 ..Default::default()
             },
@@ -862,31 +863,31 @@ impl PyInstrumentationScope {
 // and it appears to be working well. For the sake of safety I want to finish additional testing before going back and
 // refactoring. WHen we do we should be able to remove this and share a single attributes and attributes iter type.
 #[pyclass]
-struct PyAttributesList(Arc<Mutex<Vec<KeyValue>>>);
+struct AttributesList(Arc<Mutex<Vec<RKeyValue>>>);
 
 #[pymethods]
-impl PyAttributesList {
+impl AttributesList {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyAttributesList(Arc::new(Mutex::new(vec![]))))
+        Ok(AttributesList(Arc::new(Mutex::new(vec![]))))
     }
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyAttributesListIter>> {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<AttributesListIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyAttributesListIter {
+        let iter = AttributesListIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
 
-    fn __getitem__(&self, index: usize) -> PyResult<PyKeyValue> {
+    fn __getitem__(&self, index: usize) -> PyResult<KeyValue> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PyKeyValue {
+            Some(item) => Ok(KeyValue {
                 inner: Arc::new(Mutex::new(item.clone())),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -894,7 +895,7 @@ impl PyAttributesList {
             )),
         }
     }
-    fn append<'py>(&self, item: &PyKeyValue) -> PyResult<()> {
+    fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -908,7 +909,7 @@ impl PyAttributesList {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         for i in items.iter() {
-            let item = i.extract::<PyKeyValue>(py)?;
+            let item = i.extract::<KeyValue>(py)?;
             let inner = item.inner.lock().unwrap();
             let inner = inner.clone();
             k.push(inner.clone());
@@ -924,49 +925,49 @@ impl PyAttributesList {
 }
 
 #[pyclass]
-struct PyAttributesListIter {
-    inner: std::vec::IntoIter<KeyValue>,
+struct AttributesListIter {
+    inner: std::vec::IntoIter<RKeyValue>,
 }
 
 #[pymethods]
-impl PyAttributesListIter {
+impl AttributesListIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyKeyValue>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<KeyValue>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        Ok(Some(PyKeyValue {
+        Ok(Some(KeyValue {
             inner: Arc::new(Mutex::new(inner)),
         }))
     }
 }
 
 #[pyclass]
-struct PySpans(Arc<Mutex<Vec<Arc<Mutex<Span>>>>>);
+struct Spans(Arc<Mutex<Vec<Arc<Mutex<RSpan>>>>>);
 
 #[pymethods]
-impl PySpans {
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PySpansIter>> {
+impl Spans {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<SpansIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PySpansIter {
+        let iter = SpansIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
-    fn __getitem__(&self, index: usize) -> PyResult<PySpan> {
+    fn __getitem__(&self, index: usize) -> PyResult<Span> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PySpan {
+            Some(item) => Ok(Span {
                 inner: item.clone(),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -983,35 +984,35 @@ impl PySpans {
 }
 
 #[pyclass]
-struct PySpansIter {
-    inner: std::vec::IntoIter<Arc<Mutex<Span>>>,
+struct SpansIter {
+    inner: std::vec::IntoIter<Arc<Mutex<RSpan>>>,
 }
 
 #[pymethods]
-impl PySpansIter {
+impl SpansIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PySpan>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<Span>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        Ok(Some(PySpan {
+        Ok(Some(Span {
             inner: inner.clone(),
         }))
     }
 }
 
 #[pyclass]
-struct PySpan {
-    inner: Arc<Mutex<Span>>,
+struct Span {
+    inner: Arc<Mutex<RSpan>>,
 }
 
 #[pymethods]
-impl PySpan {
+impl Span {
     #[getter]
     fn trace_id(&self) -> PyResult<Vec<u8>> {
         let v = self.inner.lock().map_err(|_| {
@@ -1148,14 +1149,14 @@ impl PySpan {
         Ok(())
     }
     #[getter]
-    fn attributes(&self) -> PyResult<PyAttributesList> {
+    fn attributes(&self) -> PyResult<AttributesList> {
         let binding = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        Ok(PyAttributesList(binding.attributes.clone()))
+        Ok(AttributesList(binding.attributes.clone()))
     }
     #[setter]
-    fn set_attributes(&mut self, attrs: &PyAttributesList) -> PyResult<()> {
+    fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
         let inner = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1184,9 +1185,9 @@ impl PySpan {
         Ok(())
     }
     #[getter]
-    fn events(&self) -> PyResult<PyEvents> {
+    fn events(&self) -> PyResult<Events> {
         let v = self.inner.lock().unwrap();
-        Ok(PyEvents(v.events.clone()))
+        Ok(Events(v.events.clone()))
     }
     #[getter]
     fn dropped_events_count(&self) -> PyResult<u32> {
@@ -1204,12 +1205,12 @@ impl PySpan {
         Ok(())
     }
     #[getter]
-    fn links(&self) -> PyResult<PyLinks> {
+    fn links(&self) -> PyResult<Links> {
         let v = self.inner.lock().unwrap();
-        Ok(PyLinks(v.links.clone()))
+        Ok(Links(v.links.clone()))
     }
     #[setter]
-    fn set_links(&self, links: &PyLinks) -> PyResult<()> {
+    fn set_links(&self, links: &Links) -> PyResult<()> {
         let inner = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1238,7 +1239,7 @@ impl PySpan {
         Ok(())
     }
     #[getter]
-    fn status(&self) -> PyResult<Option<PyStatus>> {
+    fn status(&self) -> PyResult<Option<Status>> {
         let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1250,10 +1251,10 @@ impl PySpan {
                 return Ok(None);
             }
         }
-        Ok(Some(PyStatus(v.status.clone())))
+        Ok(Some(Status(v.status.clone())))
     }
     #[setter]
-    fn set_status(&self, status: PyStatus) -> PyResult<()> {
+    fn set_status(&self, status: Status) -> PyResult<()> {
         let mut v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1268,26 +1269,26 @@ impl PySpan {
 }
 
 #[pyclass]
-struct PyEvents(Arc<Mutex<Vec<Arc<Mutex<Event>>>>>);
+struct Events(Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>);
 
 #[pymethods]
-impl PyEvents {
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyEventsIter>> {
+impl Events {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<EventsIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyEventsIter {
+        let iter = EventsIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
-    fn __getitem__(&self, index: usize) -> PyResult<PyEvent> {
+    fn __getitem__(&self, index: usize) -> PyResult<Event> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PyEvent {
+            Some(item) => Ok(Event {
                 inner: item.clone(),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -1304,23 +1305,23 @@ impl PyEvents {
 }
 
 #[pyclass]
-struct PyEventsIter {
-    inner: std::vec::IntoIter<Arc<Mutex<Event>>>,
+struct EventsIter {
+    inner: std::vec::IntoIter<Arc<Mutex<REvent>>>,
 }
 
 #[pymethods]
-impl PyEventsIter {
+impl EventsIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyEvent>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<Event>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        Ok(Some(PyEvent {
+        Ok(Some(Event {
             inner: inner.clone(),
         }))
     }
@@ -1328,12 +1329,12 @@ impl PyEventsIter {
 
 #[pyclass]
 #[derive(Debug)]
-struct PyEvent {
-    inner: Arc<Mutex<Event>>,
+struct Event {
+    inner: Arc<Mutex<REvent>>,
 }
 
 #[pymethods]
-impl PyEvent {
+impl Event {
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
         let v = self.inner.lock().map_err(|_| {
@@ -1365,14 +1366,14 @@ impl PyEvent {
         Ok(())
     }
     #[getter]
-    fn attributes(&self) -> PyResult<PyAttributesList> {
+    fn attributes(&self) -> PyResult<AttributesList> {
         let binding = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        Ok(PyAttributesList(binding.attributes.clone()))
+        Ok(AttributesList(binding.attributes.clone()))
     }
     #[setter]
-    fn set_attributes(&mut self, attrs: &PyAttributesList) -> PyResult<()> {
+    fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
         let inner = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1403,26 +1404,26 @@ impl PyEvent {
 }
 
 #[pyclass]
-struct PyLinks(Arc<Mutex<Vec<Arc<Mutex<Link>>>>>);
+struct Links(Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>);
 
 #[pymethods]
-impl PyLinks {
-    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<PyLinksIter>> {
+impl Links {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<LinksIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let iter = PyLinksIter {
+        let iter = LinksIter {
             inner: inner.clone().into_iter(),
         };
         // Convert to a Python-managed object
         Py::new(py, iter)
     }
-    fn __getitem__(&self, index: usize) -> PyResult<PyLink> {
+    fn __getitem__(&self, index: usize) -> PyResult<Link> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         match inner.get(index) {
-            Some(item) => Ok(PyLink {
+            Some(item) => Ok(Link {
                 inner: item.clone(),
             }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
@@ -1430,7 +1431,7 @@ impl PyLinks {
             )),
         }
     }
-    fn append<'py>(&self, item: &PyLink) -> PyResult<()> {
+    fn append<'py>(&self, item: &Link) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1446,23 +1447,23 @@ impl PyLinks {
 }
 
 #[pyclass]
-struct PyLinksIter {
-    inner: std::vec::IntoIter<Arc<Mutex<Link>>>,
+struct LinksIter {
+    inner: std::vec::IntoIter<Arc<Mutex<RLink>>>,
 }
 
 #[pymethods]
-impl PyLinksIter {
+impl LinksIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyLink>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<Link>> {
         let kv = slf.inner.next();
         if kv.is_none() {
             return Ok(None);
         }
         let inner = kv.unwrap();
-        Ok(Some(PyLink {
+        Ok(Some(Link {
             inner: inner.clone(),
         }))
     }
@@ -1470,16 +1471,16 @@ impl PyLinksIter {
 
 #[pyclass]
 #[derive(Debug)]
-struct PyLink {
-    inner: Arc<Mutex<Link>>,
+struct Link {
+    inner: Arc<Mutex<RLink>>,
 }
 
 #[pymethods]
-impl PyLink {
+impl Link {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyLink {
-            inner: Arc::new(Mutex::new(Link {
+        Ok(Link {
+            inner: Arc::new(Mutex::new(RLink {
                 trace_id: vec![],
                 span_id: vec![],
                 trace_state: "".to_string(),
@@ -1535,14 +1536,14 @@ impl PyLink {
         Ok(())
     }
     #[getter]
-    fn attributes(&self) -> PyResult<PyAttributesList> {
+    fn attributes(&self) -> PyResult<AttributesList> {
         let binding = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        Ok(PyAttributesList(binding.attributes.clone()))
+        Ok(AttributesList(binding.attributes.clone()))
     }
     #[setter]
-    fn set_attributes(&mut self, attrs: &PyAttributesList) -> PyResult<()> {
+    fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
         let inner = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
@@ -1589,13 +1590,13 @@ impl PyLink {
 
 #[pyclass]
 #[derive(Clone)]
-struct PyStatus(Arc<Mutex<Option<Status>>>);
+struct Status(Arc<Mutex<Option<RStatus>>>);
 
 #[pymethods]
-impl PyStatus {
+impl Status {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyStatus(Arc::new(Mutex::new(Some(Status {
+        Ok(Status(Arc::new(Mutex::new(Some(RStatus {
             message: "".to_string(),
             code: 0,
         })))))
@@ -1618,11 +1619,11 @@ impl PyStatus {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         let updated_status = match binding.take() {
-            Some(current) => Status {
+            Some(current) => RStatus {
                 message,
                 code: current.code,
             },
-            None => Status {
+            None => RStatus {
                 message,
                 ..Default::default()
             },
@@ -1643,16 +1644,16 @@ impl PyStatus {
         Ok(v.code)
     }
     #[setter]
-    fn set_code(&mut self, code: PyStatusCode) -> PyResult<()> {
+    fn set_code(&mut self, code: StatusCode) -> PyResult<()> {
         let mut binding = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
         let updated_status = match binding.take() {
-            Some(current) => Status {
+            Some(current) => RStatus {
                 message: current.message,
                 code: code as i32,
             },
-            None => Status {
+            None => RStatus {
                 code: code as i32,
                 ..Default::default()
             },
@@ -1664,7 +1665,7 @@ impl PyStatus {
 
 #[pyclass]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum PyStatusCode {
+pub enum StatusCode {
     /// The default status.
     Unset = 0,
     /// The Span has been validated by an Application developer or Operator to
@@ -1675,10 +1676,10 @@ pub enum PyStatusCode {
 }
 
 #[pymethods]
-impl PyStatusCode {
+impl StatusCode {
     #[new]
     fn new() -> PyResult<Self> {
-        Ok(PyStatusCode::Unset)
+        Ok(StatusCode::Unset)
     }
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
@@ -1703,22 +1704,73 @@ impl LoggingStdout {
     }
 }
 
-// Module initialization
+// Python module definition
 #[pymodule]
-pub fn rotel_python_processor_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyAnyValue>()?;
-    m.add_class::<PyArrayValue>()?;
-    m.add_class::<PyKeyValueList>()?;
-    m.add_class::<PyKeyValue>()?;
-    m.add_class::<PyResource>()?;
-    m.add_class::<PyAttributes>()?;
-    m.add_class::<PyScopeSpans>()?;
-    m.add_class::<PyInstrumentationScope>()?;
-    m.add_class::<PySpan>()?;
-    m.add_class::<PyLink>()?;
-    m.add_class::<PyLinks>()?;
-    m.add_class::<PyStatus>()?;
-    m.add_class::<PyStatusCode>()?;
+pub fn rotel(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let open_telemetry_module = PyModule::new(m.py(), "open_telemetry")?;
+    let trace_module = PyModule::new(open_telemetry_module.py(), "trace")?;
+    let resource_module = PyModule::new(open_telemetry_module.py(), "resource")?;
+    let common_module = PyModule::new(open_telemetry_module.py(), "common")?;
+    let trace_v1_module = PyModule::new(trace_module.py(), "v1")?;
+    let common_v1_module = PyModule::new(common_module.py(), "v1")?;
+    let resource_v1_module = PyModule::new(resource_module.py(), "v1")?;
+
+    trace_module.add_submodule(&trace_v1_module)?;
+    common_module.add_submodule(&common_v1_module)?;
+    resource_module.add_submodule(&resource_v1_module)?;
+    open_telemetry_module.add_submodule(&trace_module)?;
+    open_telemetry_module.add_submodule(&resource_module)?;
+    open_telemetry_module.add_submodule(&common_module)?;
+    m.add_submodule(&open_telemetry_module)?;
+
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry", &open_telemetry_module)?;
+
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry.trace", &trace_module)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry.trace.v1", &trace_v1_module)?;
+
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry.resource", &resource_module)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry.resource.v1", &resource_v1_module)?;
+
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry.common", &common_module)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel.open_telemetry.common.v1", &common_v1_module)?;
+
+    common_v1_module.add_class::<AnyValue>()?;
+    common_v1_module.add_class::<ArrayValue>()?;
+    common_v1_module.add_class::<KeyValueList>()?;
+    common_v1_module.add_class::<KeyValue>()?;
+    common_v1_module.add_class::<Attributes>()?;
+    common_v1_module.add_class::<InstrumentationScope>()?;
+
+    resource_v1_module.add_class::<Resource>()?;
+
+    trace_v1_module.add_class::<ScopeSpans>()?;
+    trace_v1_module.add_class::<Span>()?;
+    trace_v1_module.add_class::<Link>()?;
+    trace_v1_module.add_class::<Links>()?;
+    trace_v1_module.add_class::<Status>()?;
+    trace_v1_module.add_class::<StatusCode>()?;
+
     Ok(())
 }
 
@@ -1735,7 +1787,7 @@ mod tests {
 
     pub fn initialize() {
         INIT.call_once(|| {
-            pyo3::append_to_inittab!(rotel_python_processor_sdk);
+            pyo3::append_to_inittab!(rotel);
             pyo3::prepare_freethreaded_python();
         });
     }
@@ -1764,11 +1816,11 @@ mod tests {
     fn test_read_any_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
 
-        let pv = PyAnyValue {
+        let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
         Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
@@ -1788,10 +1840,10 @@ mod tests {
     fn write_string_any_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
-        let pv = PyAnyValue {
+        let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
         Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
@@ -1811,11 +1863,11 @@ mod tests {
     fn write_bool_any_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
 
-        let pv = PyAnyValue {
+        let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
 
@@ -1834,11 +1886,11 @@ mod tests {
     fn write_bytes_any_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
 
-        let pv = PyAnyValue {
+        let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
 
@@ -1857,13 +1909,13 @@ mod tests {
     fn read_key_value_key() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        let kv = KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: key.clone(),
                 value: any_value_arc.clone(),
             })),
@@ -1880,13 +1932,13 @@ mod tests {
     fn write_key_value_key() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        let kv = KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: key.clone(),
                 value: any_value_arc.clone(),
             })),
@@ -1905,13 +1957,13 @@ mod tests {
     fn read_key_value_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        let kv = KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: key.clone(),
                 value: any_value_arc.clone(),
             })),
@@ -1934,13 +1986,13 @@ mod tests {
     fn write_key_value_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        let kv = KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: key.clone(),
                 value: any_value_arc.clone(),
             })),
@@ -1963,13 +2015,13 @@ mod tests {
     fn write_key_value_bytes_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = PyKeyValue {
-            inner: Arc::new(Mutex::new(KeyValue {
+        let kv = KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
                 key: key.clone(),
                 value: any_value_arc.clone(),
             })),
@@ -1992,19 +2044,19 @@ mod tests {
     fn read_resource_attributes() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_arc.clone(),
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
 
-        let resource = PyResource {
+        let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2020,30 +2072,30 @@ mod tests {
         initialize();
 
         let arc_value = Some(StringValue("foo".to_string()));
-        let any_value_arc = Some(AnyValue {
+        let any_value_arc = Some(RAnyValue {
             value: Arc::new(Mutex::new(arc_value)),
         });
-        let array_value = crate::model::ArrayValue {
+        let array_value = crate::model::RArrayValue {
             values: Arc::new(Mutex::new(vec![Arc::new(Mutex::new(
                 any_value_arc.clone(),
             ))])),
         };
-        let array_value_arc = Arc::new(Mutex::new(Some(ArrayValue(array_value))));
-        let any_value_array_value_wrapper = Some(AnyValue {
+        let array_value_arc = Arc::new(Mutex::new(Some(RVArrayValue(array_value))));
+        let any_value_array_value_wrapper = Some(RAnyValue {
             value: array_value_arc.clone(),
         });
 
         let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
 
         let key = Arc::new(Mutex::new("key".to_string()));
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_array_value_wrapper_arc.clone(),
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
 
-        let resource = PyResource {
+        let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2063,30 +2115,30 @@ mod tests {
         initialize();
 
         let value = Some(StringValue("foo".to_string()));
-        let any_value = Some(AnyValue {
+        let any_value = Some(RAnyValue {
             value: Arc::new(Mutex::new(value)),
         });
         let any_value_arc = Arc::new(Mutex::new(any_value));
         let arc_key = Arc::new(Mutex::new("inner_key".to_string()));
 
-        let kev_value = KeyValue {
+        let kev_value = RKeyValue {
             key: arc_key.clone(),
             value: any_value_arc.clone(),
         };
 
-        let kv_list = crate::model::KeyValueList {
+        let kv_list = crate::model::RKeyValueList {
             values: Arc::new(Mutex::new(vec![kev_value])),
         };
 
         let array_value_arc = Arc::new(Mutex::new(Some(KvListValue(kv_list))));
-        let any_value_array_value_wrapper = Some(AnyValue {
+        let any_value_array_value_wrapper = Some(RAnyValue {
             value: array_value_arc.clone(),
         });
 
         let any_value_array_value_wrapper_arc = Arc::new(Mutex::new(any_value_array_value_wrapper));
 
         let key = Arc::new(Mutex::new("key".to_string()));
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_array_value_wrapper_arc.clone(),
         };
@@ -2094,7 +2146,7 @@ mod tests {
         let kv_arc = Arc::new(Mutex::new(kv));
 
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
-        let resource = PyResource {
+        let resource = Resource {
             attributes: attrs_arc.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2151,19 +2203,19 @@ mod tests {
     fn write_resource_attributes_key_value_key() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_arc.clone(),
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
 
-        let resource = PyResource {
+        let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2185,19 +2237,19 @@ mod tests {
     fn write_resource_attributes_key_value_value() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_arc.clone(),
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
 
-        let resource = PyResource {
+        let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2223,19 +2275,19 @@ mod tests {
     fn resource_attributes_append_attribute() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_arc.clone(),
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
-        let resource = PyResource {
+        let resource = Resource {
             attributes: attrs_arc.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2251,19 +2303,19 @@ mod tests {
     fn resource_attributes_set_attributes() {
         initialize();
         let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(AnyValue {
+        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
             value: arc_value.clone(),
         })));
         let key = Arc::new(Mutex::new("key".to_string()));
 
-        let kv = KeyValue {
+        let kv = RKeyValue {
             key: key.clone(),
             value: any_value_arc.clone(),
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
-        let resource = PyResource {
+        let resource = Resource {
             attributes: attrs_arc.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
@@ -2295,7 +2347,7 @@ mod tests {
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans =
             crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-        let py_resource_spans = PyResourceSpans {
+        let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
             schema_url: resource_spans.schema_url,
@@ -2313,7 +2365,7 @@ mod tests {
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans =
             crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-        let py_resource_spans = PyResourceSpans {
+        let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
@@ -2331,7 +2383,7 @@ mod tests {
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans =
             crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-        let py_resource_spans = PyResourceSpans {
+        let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
@@ -2388,7 +2440,7 @@ mod tests {
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans =
             crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-        let py_resource_spans = PyResourceSpans {
+        let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
@@ -2432,7 +2484,7 @@ mod tests {
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans =
             crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
-        let py_resource_spans = PyResourceSpans {
+        let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,

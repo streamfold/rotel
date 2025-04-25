@@ -1,4 +1,5 @@
-from rotel_python_processor_sdk import PyStatus, PyStatusCode, PyKeyValue, PyLink
+from rotel.open_telemetry.common.v1 import KeyValue
+from rotel.open_telemetry.trace.v1 import Status, StatusCode, Link
 
 
 def process(resource_spans):
@@ -51,29 +52,29 @@ def process(resource_spans):
     span.start_time_unix_nano = 1234567890
     span.end_time_unix_nano = 1234567890
 
-    span.attributes.append(PyKeyValue.new_string_value("span_attr_key", "span_attr_value"))
+    span.attributes.append(KeyValue.new_string_value("span_attr_key", "span_attr_value"))
     span.dropped_attributes_count = 100
     # TODO add events
     # span.events
     span.dropped_links_count = 300
     span.dropped_events_count = 200
     # Append a new link
-    new_link = PyLink()
+    new_link = Link()
     new_link.trace_id = b"88888888"
     new_link.span_id = b"99999999"
     new_link.trace_state = "test=1234567890"
-    new_link.attributes.append(PyKeyValue.new_string_value("link_attr_key", "link_attr_value"))
+    new_link.attributes.append(KeyValue.new_string_value("link_attr_key", "link_attr_value"))
     new_link.dropped_attributes_count = 300
     new_link.flags = 1
     span.links.append(new_link)
 
-    status = PyStatus()
-    status.code = PyStatusCode.Error
+    status = Status()
+    status.code = StatusCode.Error
     status.message = "error message"
     span.status = status
 
     event = span.events[0]
     event.time_unix_nano = 1234567890
     event.name = "py_processed_event"
-    event.attributes.append(PyKeyValue.new_string_value("event_attr_key", "event_attr_value"))
+    event.attributes.append(KeyValue.new_string_value("event_attr_key", "event_attr_value"))
     event.dropped_attributes_count = 400

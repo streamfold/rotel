@@ -1,13 +1,13 @@
 import platform
 
-from rotel_python_processor_sdk import PyKeyValue, PyAttributes
+from rotel.open_telemetry.common.v1 import KeyValue, Attributes
 
 
 def process(resource):
-    new_attributes = PyAttributes()
+    new_attributes = Attributes()
     os_name = platform.system()
     os_version = platform.release()
     # Add individual attributes
-    new_attributes.append(PyKeyValue.new_string_value("os.name", os_name))
-    new_attributes.append(PyKeyValue.new_string_value("os.version", os_version))
+    new_attributes.append(KeyValue.new_string_value("os.name", os_name))
+    new_attributes.append(KeyValue.new_string_value("os.version", os_version))
     resource.attributes = new_attributes

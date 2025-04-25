@@ -1,4 +1,4 @@
-from rotel_python_processor_sdk import PyKeyValue
+from rotel.open_telemetry.common.v1 import KeyValue
 
 
 def process(resource_spans):
@@ -34,7 +34,7 @@ def process(resource_spans):
         assert 200 == attr.value.value
 
     # Append a new attribute
-    kv = PyKeyValue.new_string_value("severity", "WARN")
+    kv = KeyValue.new_string_value("severity", "WARN")
     resource_spans.scope_spans[0].scope.attributes.append(kv)
 
     assert len(resource_spans.scope_spans[0].scope.attributes) == 2

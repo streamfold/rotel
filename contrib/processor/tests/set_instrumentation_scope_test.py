@@ -1,4 +1,4 @@
-from rotel_python_processor_sdk import PyInstrumentationScope, PyKeyValue
+from rotel.open_telemetry.common.v1 import InstrumentationScope, KeyValue
 
 
 def process(resource_spans):
@@ -9,7 +9,7 @@ def process(resource_spans):
     # assert 0 == scope.dropped_attributes_count
 
     # Now create a new InstrumentationScope
-    scope = PyInstrumentationScope()
+    scope = InstrumentationScope()
     scope.name = "name_changed"
     scope.version = "0.0.2"
     scope.dropped_attributes_count = 100
@@ -23,7 +23,7 @@ def process(resource_spans):
     assert 100 == scope_spans.scope.dropped_attributes_count
 
     # Append a new attribute
-    kv = PyKeyValue.new_string_value("severity", "WARN")
+    kv = KeyValue.new_string_value("severity", "WARN")
     resource_spans.scope_spans[0].scope.attributes.append(kv)
 
     assert len(resource_spans.scope_spans[0].scope.attributes) == 1

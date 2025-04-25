@@ -1,8 +1,3 @@
-from rotel_python_processor_sdk import PyAnyValue, PyKeyValue, PySpan
-import platform
-import os
-from datetime import datetime
-
 def process(resource_spans):
     print("Hello from python attributes before mutating")
     for scope_spans in resource_spans.scope_spans:
@@ -17,4 +12,3 @@ def process(resource_spans):
             print(f"trace_id:  {span.trace_id}")
             print(f"span_id:  {span.span_id}")
             print(f"name_id:  {span.name}")
-
