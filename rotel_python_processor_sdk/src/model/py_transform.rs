@@ -1,14 +1,14 @@
-use crate::model::Value::{
-    ArrayValue, BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, StringValue,
+use crate::model::RValue::{
+    BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
 use crate::model::{
-    AnyValue, Event, InstrumentationScope, KeyValue, Link, Resource, ScopeSpans, Span,
+    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans, RSpan,
 };
 use std::mem;
 use std::sync::{Arc, Mutex};
 
 pub fn transform_spans(
-    scope_spans: Vec<Arc<Mutex<ScopeSpans>>>,
+    scope_spans: Vec<Arc<Mutex<RScopeSpans>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::ScopeSpans> {
     let mut new_scope_spans = vec![];
     for ss in scope_spans.iter() {
@@ -21,7 +21,7 @@ pub fn transform_spans(
             let mut guard = span.lock().unwrap();
             let moved_data = mem::replace(
                 &mut *guard,
-                Span {
+                RSpan {
                     trace_id: vec![],
                     span_id: vec![],
                     trace_state: "".to_string(),
@@ -74,7 +74,7 @@ pub fn transform_spans(
 }
 
 fn convert_events(
-    events: Arc<Mutex<Vec<Arc<Mutex<Event>>>>>,
+    events: Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Event> {
     let events = Arc::into_inner(events).unwrap();
     let mut events = events.into_inner().unwrap();
@@ -94,7 +94,7 @@ fn convert_events(
 }
 
 fn convert_links(
-    links: Arc<Mutex<Vec<Arc<Mutex<Link>>>>>,
+    links: Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Link> {
     let links = Arc::into_inner(links).unwrap();
     let mut links = links.into_inner().unwrap();
@@ -116,7 +116,7 @@ fn convert_links(
 }
 
 fn convert_scope(
-    scope: Arc<Mutex<Option<InstrumentationScope>>>,
+    scope: Arc<Mutex<Option<RInstrumentationScope>>>,
 ) -> Option<opentelemetry_proto::tonic::common::v1::InstrumentationScope> {
     let guard = scope.lock().unwrap();
     if guard.is_none() {
@@ -135,7 +135,7 @@ fn convert_scope(
 }
 
 fn convert_attributes(
-    attrs: Arc<Mutex<Vec<KeyValue>>>,
+    attrs: Arc<Mutex<Vec<RKeyValue>>>,
 ) -> Vec<opentelemetry_proto::tonic::common::v1::KeyValue> {
     let attrs = attrs.lock().unwrap();
     let mut new_attrs = vec![];
@@ -160,7 +160,7 @@ fn convert_attributes(
 }
 
 pub fn transform_resource(
-    resource: Resource,
+    resource: RResource,
 ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
     let attributes = Arc::into_inner(resource.attributes).unwrap();
     let attributes = attributes.into_inner().unwrap();
@@ -191,7 +191,7 @@ pub fn transform_resource(
     })
 }
 
-pub fn convert_value(v: AnyValue) -> opentelemetry_proto::tonic::common::v1::AnyValue {
+pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::AnyValue {
     let inner_value = Arc::into_inner(v.value).unwrap();
     let inner_value = inner_value.into_inner().unwrap();
     if inner_value.is_none() {
@@ -210,7 +210,7 @@ pub fn convert_value(v: AnyValue) -> opentelemetry_proto::tonic::common::v1::Any
         DoubleValue(d) => opentelemetry_proto::tonic::common::v1::AnyValue {
             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)),
         },
-        ArrayValue(a) => {
+        RVArrayValue(a) => {
             let mut values = vec![];
             let inner_values = Arc::into_inner(a.values).unwrap();
             let inner_values = inner_values.into_inner().unwrap();

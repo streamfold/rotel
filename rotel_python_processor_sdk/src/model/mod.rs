@@ -1,7 +1,8 @@
 pub mod otel_transform;
 pub mod py_transform;
 
-use crate::py::{rotel_python_processor_sdk, PyResourceSpans};
+use crate::py;
+use crate::py::{rotel_sdk, ResourceSpans};
 use pyo3::prelude::*;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, Once};
@@ -11,82 +12,82 @@ use tracing::error;
 static PROCESSOR_INIT: Once = Once::new();
 
 #[derive(Debug, Clone)]
-pub struct AnyValue {
-    pub value: Arc<Mutex<Option<Value>>>,
+pub struct RAnyValue {
+    pub value: Arc<Mutex<Option<RValue>>>,
 }
 
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
-pub enum Value {
+pub enum RValue {
     StringValue(String),
     BoolValue(bool),
     IntValue(i64),
     DoubleValue(f64),
-    ArrayValue(ArrayValue),
-    KvListValue(KeyValueList),
+    RVArrayValue(RArrayValue),
+    KvListValue(RKeyValueList),
     BytesValue(Vec<u8>),
 }
 
 #[derive(Debug, Clone)]
-pub struct ArrayValue {
-    pub values: Arc<Mutex<Vec<Arc<Mutex<Option<AnyValue>>>>>>,
+pub struct RArrayValue {
+    pub values: Arc<Mutex<Vec<Arc<Mutex<Option<RAnyValue>>>>>>,
 }
 
 #[allow(deprecated)]
-impl ArrayValue {
+impl RArrayValue {
     pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(crate::py::PyArrayValue(self.values.clone()).into_py(py))
+        Ok(py::ArrayValue(self.values.clone()).into_py(py))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct KeyValueList {
-    pub values: Arc<Mutex<Vec<KeyValue>>>,
+pub struct RKeyValueList {
+    pub values: Arc<Mutex<Vec<RKeyValue>>>,
 }
 
 #[allow(deprecated)]
-impl KeyValueList {
+impl RKeyValueList {
     pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(crate::py::PyKeyValueList(self.values.clone()).into_py(py))
+        Ok(py::KeyValueList(self.values.clone()).into_py(py))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct KeyValue {
+pub struct RKeyValue {
     pub key: Arc<Mutex<String>>,
-    pub value: Arc<Mutex<Option<AnyValue>>>,
+    pub value: Arc<Mutex<Option<RAnyValue>>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Resource {
-    pub attributes: Arc<Mutex<Vec<Arc<Mutex<KeyValue>>>>>,
+pub struct RResource {
+    pub attributes: Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>,
     pub dropped_attributes_count: Arc<Mutex<u32>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ResourceSpans {
-    pub resource: Arc<Mutex<Option<Resource>>>,
-    pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<ScopeSpans>>>>>,
+pub struct RResourceSpans {
+    pub resource: Arc<Mutex<Option<RResource>>>,
+    pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>,
     pub schema_url: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct ScopeSpans {
-    pub scope: Arc<Mutex<Option<InstrumentationScope>>>,
-    pub spans: Arc<Mutex<Vec<Arc<Mutex<Span>>>>>,
+pub struct RScopeSpans {
+    pub scope: Arc<Mutex<Option<RInstrumentationScope>>>,
+    pub spans: Arc<Mutex<Vec<Arc<Mutex<RSpan>>>>>,
     pub schema_url: String,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct InstrumentationScope {
+pub struct RInstrumentationScope {
     pub name: String,
     pub version: String,
-    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
     pub dropped_attributes_count: u32,
 }
 
 #[derive(Debug, Clone)]
-pub struct Span {
+pub struct RSpan {
     pub trace_id: Vec<u8>,
     pub span_id: Vec<u8>,
     pub trace_state: String,
@@ -96,32 +97,32 @@ pub struct Span {
     pub kind: i32,
     pub start_time_unix_nano: u64,
     pub end_time_unix_nano: u64,
-    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
     pub dropped_attributes_count: u32,
-    pub events: Arc<Mutex<Vec<Arc<Mutex<Event>>>>>,
+    pub events: Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>,
     pub dropped_events_count: u32,
-    pub links: Arc<Mutex<Vec<Arc<Mutex<Link>>>>>,
+    pub links: Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>,
     pub dropped_links_count: u32,
-    pub status: Arc<Mutex<Option<Status>>>,
+    pub status: Arc<Mutex<Option<RStatus>>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Event {
+pub struct REvent {
     pub time_unix_nano: u64,
     pub name: String,
-    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
     pub dropped_attributes_count: u32,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Status {
+pub struct RStatus {
     pub message: String,
     pub code: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[allow(dead_code)]
-pub enum StatusCode {
+pub enum RStatusCode {
     /// The default status.
     Unset = 0,
     /// The Span has been validated by an Application developer or Operator to
@@ -132,18 +133,18 @@ pub enum StatusCode {
 }
 
 #[derive(Debug, Clone)]
-pub struct Link {
+pub struct RLink {
     pub trace_id: Vec<u8>,
     pub span_id: Vec<u8>,
     pub trace_state: String,
-    pub attributes: Arc<Mutex<Vec<KeyValue>>>,
+    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
     pub dropped_attributes_count: u32,
     pub flags: u32,
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
     PROCESSOR_INIT.call_once(|| {
-        pyo3::append_to_inittab!(rotel_python_processor_sdk);
+        pyo3::append_to_inittab!(rotel_sdk);
         pyo3::prepare_freethreaded_python();
     });
 
@@ -170,7 +171,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
     fn process(self, processor: &str) -> Self {
         let inner = otel_transform::transform(self);
         // Build the PyObject
-        let spans = PyResourceSpans {
+        let spans = ResourceSpans {
             resource: inner.resource.clone(),
             scope_spans: inner.scope_spans.clone(),
             schema_url: inner.schema_url.clone(),

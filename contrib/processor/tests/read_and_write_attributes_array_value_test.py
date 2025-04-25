@@ -1,4 +1,4 @@
-from rotel_python_processor_sdk import PyAnyValue, PyArrayValue, PyAttributes, PyKeyValue
+from rotel_sdk.open_telemetry.common.v1 import AnyValue, ArrayValue, Attributes, KeyValue
 
 
 def process(resource):
@@ -17,13 +17,13 @@ def process(resource):
         assert av.value == "bar"
 
     # Create a new ArrayValue and update resource.attributes
-    new_array_value = PyArrayValue()
-    new_any_value = PyAnyValue()
+    new_array_value = ArrayValue()
+    new_any_value = AnyValue()
     new_any_value.string_value = "baz"
     new_array_value.append(new_any_value)
 
-    kv = PyKeyValue.new_array_value("my_array", new_array_value)
-    new_attributes = PyAttributes()
+    kv = KeyValue.new_array_value("my_array", new_array_value)
+    new_attributes = Attributes()
     new_attributes.append(kv)
     resource.attributes = new_attributes
 

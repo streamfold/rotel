@@ -17,7 +17,7 @@ pyo3-stub-gen-derive = "0.7.0"
 # The name of the native library. This is the name which will be used in Python to import the
 # library (i.e. `import string_sum`). If you change this, you must also change the name of the
 # `#[pymodule]` in `src/lib.rs`.
-name = "rotel_python_processor_sdk"
+name = "rotel_sdk"
 # "cdylib" is necessary to produce a shared library for Python to import from.
 #
 # Downstream Rust code (including code in `bin/`, `examples/`, and `tests/`) will not be able

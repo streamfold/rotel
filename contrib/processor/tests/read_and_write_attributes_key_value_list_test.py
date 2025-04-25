@@ -1,4 +1,4 @@
-from rotel_python_processor_sdk import PyKeyValueList, PyKeyValue, PyAttributes
+from rotel_sdk.open_telemetry.common.v1 import KeyValueList, KeyValue, Attributes
 
 
 def process(resource):
@@ -18,12 +18,12 @@ def process(resource):
         assert kv.value.value == "bar"
 
     # Create a new KeyValueList and update resource.attributes
-    new_key_value_list = PyKeyValueList()
-    new_kv = PyKeyValue.new_string_value("new_key", "baz")
+    new_key_value_list = KeyValueList()
+    new_kv = KeyValue.new_string_value("new_key", "baz")
     new_key_value_list.append(new_kv)
 
-    kvl = PyKeyValue.new_kv_list("my_kv_list", new_key_value_list)
-    new_attributes = PyAttributes()
+    kvl = KeyValue.new_kv_list("my_kv_list", new_key_value_list)
+    new_attributes = Attributes()
     new_attributes.append(kvl)
     resource.attributes = new_attributes
 

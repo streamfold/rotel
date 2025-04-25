@@ -1,5 +1,3 @@
-from rotel_python_processor_sdk import PyAnyValue
-
 def process(resource):
     attributes = resource.attributes
     attributes[0].key = "new_key"

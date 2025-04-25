@@ -1,5 +1,3 @@
-from rotel_python_processor_sdk import PyAnyValue
-
 def process(resource):
     attributes = resource.attributes
     print(f"resource.attributes: {attributes}")
