@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 use crate::semconv;
 use opentelemetry_semantic_conventions::attribute;
 use std::str::FromStr;
-use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 
 #[allow(dead_code)]
 const EC2_TAG_PREFIX: &str = "ec2.tag.";

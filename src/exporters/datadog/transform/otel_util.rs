@@ -5,6 +5,7 @@ use crate::exporters::datadog::transform::attributes::{
     find_key_in_attrlist, find_with_resource_precedence,
 };
 use crate::exporters::datadog::transform::db_types;
+use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 use crate::semconv::misc::MESSAGING_DESTINATION;
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
 use opentelemetry_proto::tonic::trace::v1::Span as OTelSpan;
@@ -13,7 +14,6 @@ use opentelemetry_semantic_conventions::attribute;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
-use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 
 pub const TAG_STATUS_CODE: &str = "http.status_code";
 const MAX_RESOURCE_LEN: usize = 5_000;
@@ -320,6 +320,7 @@ mod tests {
     use crate::exporters::datadog::transform::otel_util::{
         get_otel_resource_v2, get_otel_service, get_otel_span_type,
     };
+    use crate::otlp::cvattr::ConvertedAttrMap;
     use crate::semconv::db_system::{CASSANDRA, COUCHDB, ELASTICSEARCH, OPENSEARCH, POSTGRESQL};
     use opentelemetry_proto::tonic::trace::v1::Span;
     use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
@@ -330,7 +331,6 @@ mod tests {
     use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
     use std::collections::HashMap;
     use utilities::otlp::{FakeOTLP, string_attr};
-    use crate::otlp::cvattr::ConvertedAttrMap;
 
     // Constants for span types matching the Go file
     const MAX_SERVICE_LEN: usize = 100;

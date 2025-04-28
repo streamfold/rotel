@@ -7,6 +7,8 @@ use crate::exporters::datadog::transform::sampler::KEY_SAMPLING_RATE_EVENT_EXTRA
 use crate::exporters::datadog::transform::source::SourceKind::AWSECSFargateKind;
 use crate::exporters::datadog::transform::{attributes, otel_mapping, otel_util, source};
 use crate::exporters::datadog::types;
+use crate::otlp::cvattr;
+use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrMap, ConvertedAttrValue};
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
 use opentelemetry_proto::tonic::trace::v1::span::{Event, SpanKind};
 use opentelemetry_proto::tonic::trace::v1::status::StatusCode;
@@ -15,8 +17,6 @@ use opentelemetry_semantic_conventions::{attribute, resource};
 use std::collections::HashMap;
 use std::rc::Rc;
 use types::pb::{Span as DDSpan, TraceChunk, TracerPayload};
-use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrMap, ConvertedAttrValue};
-use crate::otlp::cvattr;
 
 const TAG_CONTAINER_TAGS: &str = "_dd.tags.container";
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::otlp::cvattr::ConvertedAttrMap;
 use crate::semconv::containers::CONTAINER_IMAGE_TAG;
 use opentelemetry_semantic_conventions::attribute;
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use crate::otlp::cvattr::ConvertedAttrMap;
 
 pub const CUSTOM_CONTAINER_TAG_PREFIX: &str = "datadog.container.tag.";
 
