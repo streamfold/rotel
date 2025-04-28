@@ -15,6 +15,7 @@ use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use futures::stream::FuturesUnordered;
+use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::error::Error;
 use std::future::Future;
@@ -69,7 +70,7 @@ pub struct DatadogTraceExporter {
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     req_builder: RequestBuilder<ResourceSpans, Transformer>,
-    svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<(), DatadogTraceDecoder>>>,
+    svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), DatadogTraceDecoder>>>,
     flush_receiver: Option<FlushReceiver>,
 }
 

@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::types::Request;
-use bytes::Bytes;
 use http::header::USER_AGENT;
-use http::{HeaderMap, HeaderName, HeaderValue, Method};
-use http_body_util::Full;
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Request};
 use std::error::Error;
+use std::marker::PhantomData;
 use tower::BoxError;
 
 #[derive(Clone)]
@@ -14,14 +12,19 @@ pub enum RequestUri {
 }
 
 #[derive(Clone)]
-pub struct BaseRequestBuilder {
+pub struct BaseRequestBuilder<ReqBody: Clone> {
     pub uri: Option<RequestUri>,
     pub header_map: HeaderMap,
+    _phantom: PhantomData<ReqBody>,
 }
 
-impl BaseRequestBuilder {
+impl<ReqBody: Clone> BaseRequestBuilder<ReqBody> {
     pub fn new(uri: Option<RequestUri>, header_map: HeaderMap) -> Self {
-        let mut base = BaseRequestBuilder { uri, header_map };
+        let mut base = Self {
+            uri,
+            header_map,
+            _phantom: PhantomData::default(),
+        };
 
         // add base headers here
         base.header_map.insert(
@@ -32,7 +35,7 @@ impl BaseRequestBuilder {
         base
     }
 
-    pub fn builder(&self) -> RequestBuilder {
+    pub fn builder(&self) -> RequestBuilder<ReqBody> {
         RequestBuilder {
             // could we reduce clones here?
             uri: self.uri.clone(),
@@ -42,13 +45,13 @@ impl BaseRequestBuilder {
     }
 }
 
-pub struct RequestBuilder {
+pub struct RequestBuilder<ReqBody> {
     uri: Option<RequestUri>,
     header_map: HeaderMap,
-    body: Option<Full<Bytes>>,
+    body: Option<ReqBody>,
 }
 
-impl RequestBuilder {
+impl<ReqBody> RequestBuilder<ReqBody> {
     #[allow(dead_code)]
     pub fn post<T: TryInto<url::Url>>(mut self, uri: T) -> Result<Self, T::Error> {
         let uri = uri.try_into()?;
@@ -73,14 +76,14 @@ impl RequestBuilder {
         Ok(self)
     }
 
-    pub fn body<T: TryInto<Full<Bytes>>>(mut self, body: T) -> Result<Self, T::Error> {
+    pub fn body<T: TryInto<ReqBody>>(mut self, body: T) -> Result<Self, T::Error> {
         let body = body.try_into()?;
 
         self.body = Some(body);
         Ok(self)
     }
 
-    pub fn build(self) -> Result<Request, BoxError> {
+    pub fn build(self) -> Result<Request<ReqBody>, BoxError> {
         let uri = match self.uri {
             None => return Err("URI is not set".into()),
             Some(RequestUri::Post(u)) => u,

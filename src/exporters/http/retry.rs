@@ -2,7 +2,7 @@
 
 use crate::exporters::http::client::ConnectError;
 use crate::exporters::http::response::Response;
-use crate::exporters::http::types::Request;
+use http::Request;
 use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Sub;
@@ -93,15 +93,16 @@ impl<Resp> RetryPolicy<Resp> {
     }
 }
 
-impl<Resp> Policy<Request, Response<Resp>, BoxError> for RetryPolicy<Resp>
+impl<ReqBody, Resp> Policy<Request<ReqBody>, Response<Resp>, BoxError> for RetryPolicy<Resp>
 where
     Resp: Debug,
+    ReqBody: Clone,
 {
     type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     fn retry(
         &mut self,
-        _req: &mut Request,
+        _req: &mut Request<ReqBody>,
         result: &mut Result<Response<Resp>, BoxError>,
     ) -> Option<Self::Future> {
         // Should never happen
@@ -160,7 +161,7 @@ where
         }
     }
 
-    fn clone_request(&mut self, req: &Request) -> Option<Request> {
+    fn clone_request(&mut self, req: &Request<ReqBody>) -> Option<Request<ReqBody>> {
         // Set the request start time
         if self.request_start.is_none() {
             self.request_start = Some(Instant::now());
