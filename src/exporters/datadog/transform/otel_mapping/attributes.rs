@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::attributes::ConvertedAttrMap;
+use crate::otlp::cvattr::ConvertedAttrMap;
 use crate::semconv::containers::CONTAINER_IMAGE_TAG;
 use opentelemetry_semantic_conventions::attribute;
 use std::collections::HashMap;

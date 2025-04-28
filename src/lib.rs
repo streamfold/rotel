@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod exporters;
 pub mod init;
 pub mod listener;
+pub mod otlp;
 pub mod receivers;
 pub mod semconv;
 pub mod telemetry;

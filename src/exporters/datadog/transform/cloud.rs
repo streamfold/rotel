@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::attributes::{ConvertedAttrMap, ConvertedAttrValue};
+use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 use crate::semconv;
 use opentelemetry_semantic_conventions::attribute;
 use std::str::FromStr;

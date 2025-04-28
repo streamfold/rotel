@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::attributes::{
-    ConvertedAttrMap, ConvertedAttrValue, find_first_in_resource,
-};
+use crate::exporters::datadog::transform::attributes::find_first_in_resource;
 use crate::exporters::datadog::transform::attributes::{
     find_key_in_attrlist, find_with_resource_precedence,
 };
 use crate::exporters::datadog::transform::db_types;
+use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 use crate::semconv::misc::MESSAGING_DESTINATION;
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
 use opentelemetry_proto::tonic::trace::v1::Span as OTelSpan;
@@ -318,10 +317,10 @@ pub fn get_otel_env(res_attributes: &ConvertedAttrMap) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::exporters::datadog::transform::attributes::ConvertedAttrMap;
     use crate::exporters::datadog::transform::otel_util::{
         get_otel_resource_v2, get_otel_service, get_otel_span_type,
     };
+    use crate::otlp::cvattr::ConvertedAttrMap;
     use crate::semconv::db_system::{CASSANDRA, COUCHDB, ELASTICSEARCH, OPENSEARCH, POSTGRESQL};
     use opentelemetry_proto::tonic::trace::v1::Span;
     use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
