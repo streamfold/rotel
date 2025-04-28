@@ -302,15 +302,6 @@ struct KeyValue {
 
 #[pymethods]
 impl KeyValue {
-    #[new]
-    fn new() -> PyResult<Self> {
-        Ok(KeyValue {
-            inner: Arc::new(Mutex::new(RKeyValue {
-                key: Arc::new(Mutex::new("".to_string())),
-                value: Arc::new(Mutex::new(None)),
-            })),
-        })
-    }
     // Helper methods creating new inner value types
     #[staticmethod]
     fn new_string_value(key: &str, value: &str) -> PyResult<KeyValue> {
@@ -450,6 +441,7 @@ impl KeyValue {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct Resource {
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>,
     pub dropped_attributes_count: Arc<Mutex<u32>>,
@@ -457,6 +449,13 @@ pub struct Resource {
 
 #[pymethods]
 impl Resource {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(Resource {
+            attributes: Arc::new(Mutex::new(vec![])),
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
+        })
+    }
     #[getter]
     fn attributes(&self) -> PyResult<Attributes> {
         Ok(Attributes(self.attributes.clone()))
@@ -598,9 +597,38 @@ impl ResourceSpans {
             dropped_attributes_count: inner.dropped_attributes_count.clone(),
         }))
     }
+    #[setter]
+    fn set_resource(&mut self, resource: Resource) -> PyResult<()> {
+        let mut inner = self.resource.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        *inner = Some(RResource {
+            attributes: resource.attributes,
+            dropped_attributes_count: resource.dropped_attributes_count,
+        });
+        Ok(())
+    }
     #[getter]
     fn scope_spans(&self) -> PyResult<ScopeSpansList> {
         Ok(ScopeSpansList(self.scope_spans.clone()))
+    }
+    #[setter]
+    fn set_scope_spans<'py>(
+        &mut self,
+        py: Python<'py>,
+        scope_spans: Vec<PyObject>,
+    ) -> PyResult<()> {
+        let mut inner = self.scope_spans.lock().unwrap();
+        inner.clear();
+        for po in scope_spans {
+            let sc = po.extract::<ScopeSpans>(py)?;
+            inner.push(Arc::new(Mutex::new(RScopeSpans {
+                scope: sc.scope.clone(),
+                spans: sc.spans.clone(),
+                schema_url: sc.schema_url.clone(),
+            })));
+        }
+        Ok(())
     }
     #[getter]
     fn schema_url(&self) -> PyResult<String> {
@@ -683,6 +711,7 @@ impl ScopeSpansListIter {
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct ScopeSpans {
     scope: Arc<Mutex<Option<RInstrumentationScope>>>,
     spans: Arc<Mutex<Vec<Arc<Mutex<RSpan>>>>>,
@@ -691,9 +720,27 @@ struct ScopeSpans {
 
 #[pymethods]
 impl ScopeSpans {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(ScopeSpans {
+            scope: Arc::new(Mutex::new(None)),
+            spans: Arc::new(Mutex::new(vec![])),
+            schema_url: "".to_string(),
+        })
+    }
     #[getter]
     fn spans(&self) -> PyResult<Spans> {
         Ok(Spans(self.spans.clone()))
+    }
+    #[setter]
+    fn set_spans<'py>(&mut self, py: Python<'py>, spans: Vec<PyObject>) -> PyResult<()> {
+        let mut inner = self.spans.lock().unwrap();
+        inner.clear();
+        for po in spans {
+            let sc = po.extract::<Span>(py)?;
+            inner.push(sc.inner);
+        }
+        Ok(())
     }
     #[getter]
     fn scope(&self) -> PyResult<Option<InstrumentationScope>> {
@@ -975,6 +1022,13 @@ impl Spans {
             )),
         }
     }
+    fn append(&self, item: &Span) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        k.push(item.inner.clone());
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1007,12 +1061,36 @@ impl SpansIter {
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct Span {
     inner: Arc<Mutex<RSpan>>,
 }
 
 #[pymethods]
 impl Span {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(Span {
+            inner: Arc::new(Mutex::new(RSpan {
+                trace_id: vec![],
+                span_id: vec![],
+                trace_state: "".to_string(),
+                parent_span_id: vec![],
+                flags: 0,
+                name: "".to_string(),
+                kind: 0,
+                start_time_unix_nano: 0,
+                end_time_unix_nano: 0,
+                attributes: Arc::new(Mutex::new(vec![])),
+                dropped_attributes_count: 0,
+                events: Arc::new(Mutex::new(vec![])),
+                dropped_events_count: 0,
+                links: Arc::new(Mutex::new(vec![])),
+                dropped_links_count: 0,
+                status: Arc::new(Mutex::new(None)),
+            })),
+        })
+    }
     #[getter]
     fn trace_id(&self) -> PyResult<Vec<u8>> {
         let v = self.inner.lock().map_err(|_| {
@@ -1189,6 +1267,19 @@ impl Span {
         let v = self.inner.lock().unwrap();
         Ok(Events(v.events.clone()))
     }
+    #[setter]
+    fn set_events<'py>(&self, py: Python<'py>, events: Vec<PyObject>) -> PyResult<()> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut guard = v.events.lock().unwrap();
+        guard.clear();
+        for po in events {
+            let event = po.extract::<Event>(py)?;
+            guard.push(event.inner);
+        }
+        Ok(())
+    }
     #[getter]
     fn dropped_events_count(&self) -> PyResult<u32> {
         let v = self.inner.lock().map_err(|_| {
@@ -1302,6 +1393,13 @@ impl Events {
         })?;
         Ok(inner.len())
     }
+    fn append(&self, item: &Event) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        k.push(item.inner.clone());
+        Ok(())
+    }
 }
 
 #[pyclass]
@@ -1328,13 +1426,24 @@ impl EventsIter {
 }
 
 #[pyclass]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Event {
     inner: Arc<Mutex<REvent>>,
 }
 
 #[pymethods]
 impl Event {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(Event {
+            inner: Arc::new(Mutex::new(REvent {
+                time_unix_nano: 0,
+                name: "".to_string(),
+                attributes: Arc::new(Mutex::new(vec![])),
+                dropped_attributes_count: 0,
+            })),
+        })
+    }
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
         let v = self.inner.lock().map_err(|_| {
@@ -1764,10 +1873,11 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     resource_v1_module.add_class::<Resource>()?;
 
+    trace_v1_module.add_class::<ResourceSpans>()?;
     trace_v1_module.add_class::<ScopeSpans>()?;
     trace_v1_module.add_class::<Span>()?;
+    trace_v1_module.add_class::<Event>()?;
     trace_v1_module.add_class::<Link>()?;
-    trace_v1_module.add_class::<Links>()?;
     trace_v1_module.add_class::<Status>()?;
     trace_v1_module.add_class::<StatusCode>()?;
 
@@ -2433,7 +2543,6 @@ mod tests {
             }
         }
     }
-
     #[test]
     fn set_instrumentation_scope() {
         initialize();
@@ -2478,6 +2587,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn read_and_write_spans() {
         initialize();
@@ -2567,5 +2677,183 @@ mod tests {
             }
             _ => panic!("unexpected type"),
         }
+    }
+    #[test]
+    fn set_resource_spans_resource() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = ResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script(
+                "write_resource_spans_resource_test.py",
+                py,
+                py_resource_spans,
+            )
+        })
+        .unwrap();
+
+        let resource = Arc::into_inner(resource_spans.resource).unwrap();
+        let resource = resource.into_inner().unwrap().unwrap();
+        let resource = crate::model::py_transform::transform_resource(resource).unwrap();
+        assert_eq!(2, resource.attributes.len());
+        assert_eq!(35, resource.dropped_attributes_count);
+        for attr in &resource.attributes {
+            match attr.key.as_str() {
+                "key" => assert_eq!(
+                    Value::StringValue("value".to_string()),
+                    attr.value.clone().unwrap().value.unwrap()
+                ),
+                "boolean" => assert_eq!(
+                    Value::BoolValue(true),
+                    attr.value.clone().unwrap().value.unwrap()
+                ),
+                _ => panic!("unexpected attribute key"),
+            }
+        }
+    }
+    #[test]
+    fn set_span_events() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = ResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_span_events_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = scope_spans.pop().unwrap();
+        let span = scope_spans.spans.pop().unwrap();
+
+        assert_eq!(2, span.events.len());
+        let event = &span.events[0];
+        assert_eq!("first_event", event.name);
+        assert_eq!(123, event.time_unix_nano);
+        assert_eq!(1, event.dropped_attributes_count);
+        assert_eq!(1, event.attributes.len());
+        let attr = &event.attributes[0];
+        assert_eq!("first_event_attr_key", attr.key);
+        assert_eq!(
+            Value::StringValue("first_event_attr_value".to_string()),
+            attr.value.clone().unwrap().value.unwrap()
+        );
+
+        let event = &span.events[1];
+        assert_eq!("second_event", event.name);
+        assert_eq!(456, event.time_unix_nano);
+        assert_eq!(2, event.dropped_attributes_count);
+        assert_eq!(1, event.attributes.len());
+        let attr = &event.attributes[0];
+        assert_eq!("second_event_attr_key", attr.key);
+        assert_eq!(
+            Value::StringValue("second_event_attr_value".to_string()),
+            attr.value.clone().unwrap().value.unwrap()
+        )
+    }
+    #[test]
+    fn set_scope_spans() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = ResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_scope_spans_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = scope_spans.pop().unwrap();
+        assert_eq!(
+            "https://github.com/streamfold/rotel",
+            scope_spans.schema_url
+        );
+        let inst_scope = scope_spans.scope.unwrap();
+        assert_eq!("rotel-sdk", inst_scope.name);
+        assert_eq!("v1.0.0", inst_scope.version);
+        let attr = &inst_scope.attributes[0];
+        assert_eq!("rotel-sdk", attr.key);
+        assert_eq!(
+            Value::StringValue("v1.0.0".to_string()),
+            attr.value.clone().unwrap().value.unwrap()
+        );
+
+        let span = scope_spans.spans.pop().unwrap();
+        assert_eq!(b"5555555555".to_vec(), span.trace_id);
+        assert_eq!(b"6666666666".to_vec(), span.span_id);
+        assert_eq!("test=1234567890", span.trace_state);
+        assert_eq!(b"7777777777".to_vec(), span.parent_span_id);
+        assert_eq!(1, span.flags);
+        assert_eq!("py_processed_span", span.name);
+        assert_eq!(4, span.kind);
+        assert_eq!(1234567890, span.start_time_unix_nano);
+        assert_eq!(1234567890, span.end_time_unix_nano);
+        let attr = &span.attributes[0];
+        assert_eq!("span_attr_key", attr.key);
+        assert_eq!(
+            Value::StringValue("span_attr_value".to_string()),
+            attr.value.clone().unwrap().value.unwrap()
+        );
+    }
+
+    #[test]
+    fn set_spans() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = ResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_spans_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = scope_spans.pop().unwrap();
+        let span = scope_spans.spans.pop().unwrap();
+        assert_eq!(b"5555555555".to_vec(), span.trace_id);
+        assert_eq!(b"6666666666".to_vec(), span.span_id);
+        assert_eq!("test=1234567890", span.trace_state);
+        assert_eq!(b"7777777777".to_vec(), span.parent_span_id);
+        assert_eq!(1, span.flags);
+        assert_eq!("py_processed_span", span.name);
+        assert_eq!(4, span.kind);
+        assert_eq!(1234567890, span.start_time_unix_nano);
+        assert_eq!(1234567890, span.end_time_unix_nano);
+        let attr = &span.attributes[0];
+        assert_eq!("span_attr_key", attr.key);
+        assert_eq!(
+            Value::StringValue("span_attr_value".to_string()),
+            attr.value.clone().unwrap().value.unwrap()
+        );
     }
 }
