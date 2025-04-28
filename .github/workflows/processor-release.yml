@@ -59,7 +59,7 @@ jobs:
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rotel_py_processor_${{ github.ref_name }}_${{ matrix.target }}.tar.gz
+          name: rotel_py_processor_${{ matrix.target }}.tar.gz
           path: archive.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
