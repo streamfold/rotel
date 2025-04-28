@@ -1,5 +1,5 @@
 from rotel_sdk.open_telemetry.common.v1 import KeyValue
-from rotel_sdk.open_telemetry.trace.v1 import Events, Event
+from rotel_sdk.open_telemetry.trace.v1 import Event
 
 
 def process(resource_spans):
@@ -13,7 +13,7 @@ def process(resource_spans):
     # Create a new Events type and append events to it.
     # Then set on the spans event list.
 
-    events = Events()
+    events = []
     first_event = Event()
     first_event.name = "first_event"
     first_event.time_unix_nano = 123

@@ -1268,11 +1268,16 @@ impl Span {
         Ok(Events(v.events.clone()))
     }
     #[setter]
-    fn set_events(&self, new_value: &Events) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
+    fn set_events<'py>(&self, py: Python<'py>, events: Vec<PyObject>) -> PyResult<()> {
+        let v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        v.events = new_value.0.clone();
+        let mut guard = v.events.lock().unwrap();
+        guard.clear();
+        for po in events {
+            let event = po.extract::<Event>(py)?;
+            guard.push(event.inner);
+        }
         Ok(())
     }
     #[getter]
@@ -1359,12 +1364,6 @@ struct Events(Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>);
 
 #[pymethods]
 impl Events {
-    #[new]
-    fn new() -> PyResult<Self> {
-        Ok(Events {
-            0: Arc::new(Mutex::new(vec![])),
-        })
-    }
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<EventsIter>> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1427,7 +1426,7 @@ impl EventsIter {
 }
 
 #[pyclass]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Event {
     inner: Arc<Mutex<REvent>>,
 }
@@ -1877,10 +1876,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     trace_v1_module.add_class::<ResourceSpans>()?;
     trace_v1_module.add_class::<ScopeSpans>()?;
     trace_v1_module.add_class::<Span>()?;
-    trace_v1_module.add_class::<Events>()?;
     trace_v1_module.add_class::<Event>()?;
     trace_v1_module.add_class::<Link>()?;
-    trace_v1_module.add_class::<Links>()?;
     trace_v1_module.add_class::<Status>()?;
     trace_v1_module.add_class::<StatusCode>()?;
 
