@@ -4,7 +4,9 @@ use crate::exporters::datadog::Region;
 use crate::exporters::datadog::api_request::ApiRequestBuilder;
 use crate::exporters::datadog::request_builder_mapper::BuildRequest;
 use crate::exporters::datadog::types::pb::AgentPayload;
-use crate::exporters::http::types::Request;
+use bytes::Bytes;
+use http::Request;
+use http_body_util::Full;
 use std::marker::PhantomData;
 use tower::BoxError;
 
@@ -52,7 +54,7 @@ impl<Resource, Transform> BuildRequest<Resource> for RequestBuilder<Resource, Tr
 where
     Transform: TransformPayload<Resource>,
 {
-    fn build(&self, input: Vec<Resource>) -> Result<Request, BoxError> {
+    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError> {
         let payload = self.transformer.transform(input);
 
         self.api_req_builder.build(payload)

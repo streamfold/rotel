@@ -3,10 +3,11 @@
 use crate::exporters::http::client::{ConnectError, ResponseDecode, build_hyper_client};
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
-use crate::exporters::http::types::{ContentEncoding, Request};
-use bytes::Bytes;
+use crate::exporters::http::types::ContentEncoding;
+use http::Request;
 use http::header::CONTENT_ENCODING;
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
+use hyper::body::Body;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -18,13 +19,17 @@ use tonic::Status;
 use tower::{BoxError, Service};
 
 #[derive(Clone)]
-pub struct GrpcClient<Resp, Dec> {
-    inner: HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>,
+pub struct GrpcClient<ReqBody, Resp, Dec> {
+    inner: HyperClient<HttpsConnector<HttpConnector>, ReqBody>,
     decoder: Dec,
     _phantom: PhantomData<Resp>,
 }
 
-impl<Resp, Dec> GrpcClient<Resp, Dec> {
+impl<ReqBody, Resp, Dec> GrpcClient<ReqBody, Resp, Dec>
+where
+    ReqBody: Body + Send,
+    <ReqBody as Body>::Data: Send,
+{
     #[allow(dead_code)]
     pub fn build(tls_config: Config, decoder: Dec) -> Result<Self, BoxError> {
         let inner = build_hyper_client(tls_config, false)?;
@@ -37,12 +42,15 @@ impl<Resp, Dec> GrpcClient<Resp, Dec> {
     }
 }
 
-impl<Resp, Dec> GrpcClient<Resp, Dec>
+impl<ReqBody, Resp, Dec> GrpcClient<ReqBody, Resp, Dec>
 where
+    ReqBody: Body + Send + 'static + Unpin,
+    <ReqBody as Body>::Data: Send,
+    <ReqBody as Body>::Error: Into<BoxError>,
     Dec: ResponseDecode<Resp> + Clone,
     Resp: Default,
 {
-    async fn perform_request(&self, req: Request) -> Result<Response<Resp>, BoxError> {
+    async fn perform_request(&self, req: Request<ReqBody>) -> Result<Response<Resp>, BoxError> {
         match self.inner.request(req).await {
             Err(e) => {
                 if e.is_connect() {
@@ -113,9 +121,12 @@ where
     }
 }
 
-impl<Resp, Dec> Service<Request> for GrpcClient<Resp, Dec>
+impl<ReqBody, Resp, Dec> Service<Request<ReqBody>> for GrpcClient<ReqBody, Resp, Dec>
 where
     Dec: ResponseDecode<Resp> + Send + Clone + Sync + 'static,
+    ReqBody: Body + Clone + Send + 'static + Unpin,
+    <ReqBody as Body>::Data: Send,
+    <ReqBody as Body>::Error: Into<BoxError>,
     Resp: Default + Send + Clone + Sync + 'static,
 {
     type Response = Response<Resp>;
@@ -126,7 +137,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request) -> Self::Future {
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let this = self.clone();
 
         Box::pin(async move {

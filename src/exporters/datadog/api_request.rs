@@ -2,12 +2,12 @@
 
 use crate::exporters::datadog::types::pb::AgentPayload;
 use crate::exporters::http::request::{BaseRequestBuilder, RequestUri};
-use crate::exporters::http::types::Request;
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::read::GzEncoder;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
-use http::{HeaderMap, HeaderValue};
+use http::{HeaderMap, HeaderValue, Request};
+use http_body_util::Full;
 use prost::Message;
 use std::error::Error;
 use std::io::Read;
@@ -21,7 +21,7 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 
 #[derive(Clone)]
 pub struct ApiRequestBuilder {
-    base: BaseRequestBuilder,
+    base: BaseRequestBuilder<Full<Bytes>>,
 }
 
 impl ApiRequestBuilder {
@@ -49,7 +49,7 @@ impl ApiRequestBuilder {
         Ok(s)
     }
 
-    pub fn build(&self, payload: AgentPayload) -> Result<Request, BoxError> {
+    pub fn build(&self, payload: AgentPayload) -> Result<Request<Full<Bytes>>, BoxError> {
         let mut buf = Vec::new();
         if let Err(e) = payload.encode(&mut buf) {
             // todo: We pass these on as errors which the final service immediately returns,

@@ -3,7 +3,7 @@
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
 use bytes::Bytes;
-use http_body_util::Full;
+use hyper::body::Body;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -26,10 +26,14 @@ pub trait ResponseDecode<T> {
     fn decode(&self, body: Bytes, encoding: ContentEncoding) -> Result<T, BoxError>;
 }
 
-pub(crate) fn build_hyper_client(
+pub(crate) fn build_hyper_client<ReqBody>(
     tls_config: Config,
     http2_only: bool,
-) -> Result<HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>, BoxError> {
+) -> Result<HyperClient<HttpsConnector<HttpConnector>, ReqBody>, BoxError>
+where
+    ReqBody: Body + Send,
+    <ReqBody as Body>::Data: Send,
+{
     let client_config = tls_config.into_client_config()?;
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
@@ -44,7 +48,7 @@ pub(crate) fn build_hyper_client(
         .pool_max_idle_per_host(100)
         .http2_only(http2_only)
         .timer(TokioTimer::new())
-        .build::<_, Full<Bytes>>(https);
+        .build::<_, ReqBody>(https);
 
     Ok(client)
 }

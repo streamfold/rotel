@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::types::Request;
+use bytes::Bytes;
 use futures_util::{
     Stream, StreamExt, ready,
     stream::{Fuse, FuturesOrdered},
 };
+use http::Request;
+use http_body_util::Full;
 use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -16,7 +18,7 @@ use tracing::error;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
 
 pub trait BuildRequest<Resource> {
-    fn build(&self, input: Vec<Resource>) -> Result<Request, BoxError>;
+    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError>;
 }
 
 #[pin_project]
@@ -29,7 +31,7 @@ where
     input: Fuse<InStr>,
 
     req_builder: ReqBuilder,
-    encoding_futures: FuturesOrdered<JoinHandle<Result<Request, BoxError>>>,
+    encoding_futures: FuturesOrdered<JoinHandle<Result<Request<Full<Bytes>>, BoxError>>>,
 }
 
 impl<InStr, Resource, ReqBuilder> RequestBuilderMapper<InStr, Resource, ReqBuilder>
@@ -52,7 +54,7 @@ where
     Resource: Send + Clone + 'static,
     ReqBuilder: BuildRequest<Resource> + Send + Sync + Clone + 'static,
 {
-    type Item = Result<Request, BoxError>;
+    type Item = Result<Request<Full<Bytes>>, BoxError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
