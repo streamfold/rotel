@@ -7,18 +7,17 @@ use futures_util::{
 use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use bytes::Bytes;
 use http::Request;
-use http_body_util::Full;
 use tokio::task::JoinHandle;
 use tower::BoxError;
 use tracing::error;
+use crate::exporters::clickhouse::payload::ClickhousePayload;
 
 // todo: This seems high?
 const MAX_CONCURRENT_ENCODERS: usize = 20;
 
 pub trait BuildRequest<Resource> {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError>;
+    fn build(&self, input: Vec<Resource>) -> Result<Request<ClickhousePayload>, BoxError>;
 }
 
 #[pin_project]
@@ -31,7 +30,7 @@ where
     input: Fuse<InStr>,
 
     req_builder: ReqBuilder,
-    encoding_futures: FuturesOrdered<JoinHandle<Result<Request<Full<Bytes>>, BoxError>>>,
+    encoding_futures: FuturesOrdered<JoinHandle<Result<Request<ClickhousePayload>, BoxError>>>,
 }
 
 impl<InStr, Resource, ReqBuilder> RequestBuilderMapper<InStr, Resource, ReqBuilder>
@@ -54,7 +53,7 @@ where
     Resource: Send + Clone + 'static,
     ReqBuilder: BuildRequest<Resource> + Send + Sync + Clone + 'static,
 {
-    type Item = Result<Request<Full<Bytes>>, BoxError>;
+    type Item = Result<Request<ClickhousePayload>, BoxError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();

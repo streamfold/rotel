@@ -3,7 +3,7 @@ use serde::{
     ser::{Impossible, SerializeSeq, SerializeStruct, SerializeTuple, Serializer},
     Serialize,
 };
-use crate::exporters::clickhouse::rowbinary::error::{Error, Result};
+use crate::exporters::clickhouse::ch_error::{Error, Result};
 
 
 /// Serializes `value` using the RowBinary format and writes to `buffer`.

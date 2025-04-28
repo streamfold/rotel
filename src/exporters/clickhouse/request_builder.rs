@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::marker::PhantomData;
-use bytes::Bytes;
 use http::Request;
-use http_body_util::Full;
 use tower::BoxError;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder_mapper::BuildRequest;
-use crate::exporters::clickhouse::transformer::Transformer;
 
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<T>) -> ClickhousePayload;
+    fn transform(&self, input: Vec<T>) -> Result<ClickhousePayload, BoxError>;
 }
 
 // todo: identify the cost of recursively cloning these
@@ -46,8 +43,8 @@ impl<Resource, Transform> BuildRequest<Resource> for RequestBuilder<Resource, Tr
 where
     Transform: TransformPayload<Resource>,
 {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError> {
-        let payload = self.transformer.transform(input);
+    fn build(&self, input: Vec<Resource>) -> Result<Request<ClickhousePayload>, BoxError> {
+        let payload = self.transformer.transform(input)?;
 
         self.api_req_builder.build(payload)
     }

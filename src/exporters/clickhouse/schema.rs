@@ -1,4 +1,3 @@
-use clickhouse::Row;
 use serde::Serialize;
 
 #[derive(Debug, PartialEq, Serialize)]

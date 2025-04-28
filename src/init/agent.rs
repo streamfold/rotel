@@ -38,7 +38,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
 use crate::exporters::clickhouse::ClickhouseExporter;
-use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::topology::flush_control::FlushSubscriber;
 
 pub struct Agent {
@@ -412,7 +411,17 @@ impl Agent {
                 let mut builder = ClickhouseExporter::builder(
                     config.clickhouse_exporter.clickhouse_exporter_endpoint.unwrap(),
                 )
-                    .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()));
+                    .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
+                    .with_compression(config.clickhouse_exporter.clickhouse_exporter_compression)
+                ;
+                
+                if let Some(user) = config.clickhouse_exporter.clickhouse_exporter_user {
+                    builder = builder.with_user(user);
+                }
+
+                if let Some(password) = config.clickhouse_exporter.clickhouse_exporter_password {
+                    builder = builder.with_password(password);
+                }
 
                 let exp = builder.build(trace_pipeline_out_rx)?;
 

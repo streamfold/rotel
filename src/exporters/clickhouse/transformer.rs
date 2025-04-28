@@ -1,26 +1,30 @@
-use crate::exporters::clickhouse::payload::ClickhousePayload;
+use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
-use crate::exporters::clickhouse::rowbinary::serialize_into;
-use bytes::Bytes;
-use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span, Status};
+use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
+use tower::BoxError;
+use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::schema::{SpanRow, Timestamp64};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrKeyValue;
 
 #[derive(Clone)]
-pub struct Transformer {}
+pub struct Transformer {
+    compression: Compression,
+}
 
 impl Transformer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(compression: Compression) -> Self {
+        Self {
+            compression,
+        }
     }
 }
 
 impl TransformPayload<ResourceSpans> for Transformer {
-    fn transform(&self, input: Vec<ResourceSpans>) -> ClickhousePayload {
-        let mut cp = ClickhousePayload::default();
+    fn transform(&self, input: Vec<ResourceSpans>) -> Result<ClickhousePayload, BoxError> {
+        let mut payload_builder = ClickhousePayloadBuilder::new(self.compression.clone());
         for rs in input {
             let res_attrs = rs.resource.unwrap_or_default().attributes;
             let res_attrs = cvattr::convert(&res_attrs);
@@ -68,14 +72,12 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         }).collect(),
                     };
 
-                    let mut out = Vec::new();
-                    serialize_into(&mut out, &row).unwrap();
-                    cp.rows.push(Bytes::from(out));
+                    payload_builder.add_row(&row)?;
                 }
             }
         }
 
-        cp
+        payload_builder.finish()
     }
 }
 

@@ -1,16 +1,19 @@
 mod api_request;
+mod ch_error;
+mod compression;
 mod payload;
 mod request_builder;
 mod request_builder_mapper;
 mod rowbinary;
-mod transformer;
 mod schema;
+mod transformer;
 
-use std::error::Error;
-use std::ops::Add;
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
+use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
 use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
+use crate::exporters::clickhouse::schema::get_span_row_col_keys;
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http;
 use crate::exporters::http::client::ResponseDecode;
@@ -20,30 +23,45 @@ use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use bytes::Bytes;
+use flume::r#async::RecvStream;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::error::Error;
+use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
-use flume::r#async::RecvStream;
-use http_body_util::Full;
-use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use tokio::select;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
-use tower::{Service, BoxError, ServiceBuilder};
+use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{debug, error, info, warn};
-use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
-use crate::exporters::clickhouse::schema::{get_span_row_col_keys};
 
 type ExportFuture = Pin<Box<dyn Future<Output = Result<Response<()>, BoxError>> + Send>>;
 
-const MAX_CONCURRENT_REQUESTS: usize = 10;
+// Buffer sizes from Clickhouse driver
+pub(crate) const BUFFER_SIZE: usize = 256 * 1024;
+// Threshold to send a chunk. Should be slightly less than `BUFFER_SIZE`
+// to avoid extra reallocations in case of a big last row.
+pub(crate) const MIN_CHUNK_SIZE: usize = BUFFER_SIZE - 2048;
+
+pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 10;
+
+#[derive(Default, Clone, PartialEq)]
+pub enum Compression {
+    None,
+    #[default]
+    Lz4,
+}
 
 pub struct ClickhouseExporter {
     rx: BoundedReceiver<Vec<ResourceSpans>>,
-    svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), ClickhouseRespDecoder>>>,
+    svc: TowerRetry<
+        RetryPolicy<()>,
+        Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>,
+    >,
     req_builder: RequestBuilder<ResourceSpans, Transformer>,
     flush_receiver: Option<FlushReceiver>,
     encode_drain_max_time: Duration,
@@ -54,12 +72,32 @@ pub struct ClickhouseExporter {
 pub struct ClickhouseExporterBuilder {
     retry_config: RetryConfig,
     flush_receiver: Option<FlushReceiver>,
+    compression: Compression,
     endpoint: String,
+    database: String,
+    table_prefix: String,
+    auth_user: Option<String>,
+    auth_password: Option<String>,
 }
 
 impl ClickhouseExporterBuilder {
     pub fn with_flush_receiver(mut self, flush_receiver: Option<FlushReceiver>) -> Self {
         self.flush_receiver = flush_receiver;
+        self
+    }
+
+    pub fn with_compression(mut self, compression: impl Into<Compression>) -> Self {
+        self.compression = compression.into();
+        self
+    }
+
+    pub fn with_user(mut self, user: String) -> Self {
+        self.auth_user = Some(user);
+        self
+    }
+
+    pub fn with_password(mut self, password: String) -> Self {
+        self.auth_password = Some(password);
         self
     }
 
@@ -69,10 +107,17 @@ impl ClickhouseExporterBuilder {
     ) -> Result<ClickhouseExporter, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new();
+        let transformer = Transformer::new(self.compression.clone());
 
-        let logs_sql = get_logs_sql();
-        let api_req_builder = ApiRequestBuilder::new(self.endpoint, logs_sql);
+        let traces_sql = get_traces_sql(self.table_prefix);
+        let api_req_builder = ApiRequestBuilder::new(
+            self.endpoint,
+            self.database,
+            traces_sql,
+            self.compression.clone(),
+            self.auth_user,
+            self.auth_password,
+        )?;
 
         let req_builder = RequestBuilder::new(transformer, api_req_builder)?;
 
@@ -94,14 +139,12 @@ impl ClickhouseExporterBuilder {
     }
 }
 
-fn get_logs_sql() -> String {
-    format!("INSERT INTO otel_traces ({}) FORMAT RowBinary", get_span_row_col_keys())
-}
-
 impl ClickhouseExporter {
-    pub fn builder(endpoint: String) -> ClickhouseExporterBuilder {
+    pub fn builder(endpoint: String, database: String, table_prefix: String) -> ClickhouseExporterBuilder {
         ClickhouseExporterBuilder {
             endpoint,
+            database,
+            table_prefix,
             ..Default::default()
         }
     }
@@ -169,13 +212,14 @@ impl ClickhouseExporter {
             .await
     }
 
-    async fn drain_futures(&mut self,
-                           enc_stream: &mut RequestBuilderMapper<
-                               RecvStream<'_, Vec<ResourceSpans>>,
-                               ResourceSpans,
-                               RequestBuilder<ResourceSpans, Transformer>,
-                           >,
-                           export_futures: &mut FuturesUnordered<ExportFuture>,
+    async fn drain_futures(
+        &mut self,
+        enc_stream: &mut RequestBuilderMapper<
+            RecvStream<'_, Vec<ResourceSpans>>,
+            ResourceSpans,
+            RequestBuilder<ResourceSpans, Transformer>,
+        >,
+        export_futures: &mut FuturesUnordered<ExportFuture>,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let finish_encoding = Instant::now().add(self.encode_drain_max_time);
         let finish_sending = Instant::now().add(self.export_drain_max_time);
@@ -235,12 +279,24 @@ impl ClickhouseExporter {
                 "Failed draining export requests, {} requests failed",
                 drain_errors
             )
-                .into())
+            .into())
         } else {
             Ok(())
         }
     }
 }
+
+fn get_traces_sql(table_prefix: String) -> String {
+    format!(
+        "INSERT INTO {} ({}) FORMAT RowBinary",
+        get_table_name(table_prefix, "traces"), get_span_row_col_keys()
+    )
+}
+
+fn get_table_name(table_prefix: String, table: &str) -> String {
+    format!("{}_{}", table_prefix, table)
+}
+
 
 #[derive(Default, Clone)]
 pub struct ClickhouseRespDecoder;

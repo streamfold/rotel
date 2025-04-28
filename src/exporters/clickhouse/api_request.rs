@@ -1,46 +1,68 @@
-use bytes::Bytes;
-use http::{Method, Request};
-use http_body_util::Full;
-use tower::BoxError;
-use http::request::Request as HttpRequest;
-use url::Url;
+use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
+use crate::exporters::http::request::{BaseRequestBuilder, RequestUri};
+use http::{HeaderMap, HeaderName, Request};
+use tower::BoxError;
+use url::Url;
 
 #[derive(Clone)]
 pub struct ApiRequestBuilder {
-    pub endpoint: String,
-    pub query: String,
+    base: BaseRequestBuilder<ClickhousePayload>,
 }
 
 impl ApiRequestBuilder {
-    pub fn new(endpoint: String, query: String) -> Self {
-        Self {
-            endpoint,
-            query,
-        }
-    }
-
-    pub fn build(&self, payload: ClickhousePayload) -> Result<Request<Full<Bytes>>, BoxError> {
-        let full_url = format!("http://{}/", self.endpoint);
-        
+    pub fn new(
+        endpoint: String,
+        database: String,
+        query: String,
+        compression: Compression,
+        auth_user: Option<String>,
+        auth_password: Option<String>,
+    ) -> Result<Self, BoxError> {
+        let full_url = format!("http://{}/", endpoint);
         let mut uri = Url::parse(full_url.as_str())?;
 
-        let mut pairs = uri.query_pairs_mut();
-        pairs.clear();
+        {
+            let mut pairs = uri.query_pairs_mut();
+            pairs.clear();
 
-        pairs.append_pair("database", "otel");
-        pairs.append_pair("query", self.query.as_str());
-        pairs.append_pair("compress", "0");
-        drop(pairs);
+            pairs.append_pair("database", database.as_str());
+            pairs.append_pair("query", query.as_str());
+            if compression == Compression::Lz4 {
+                pairs.append_pair("decompress", "1");
+            }
+        }
 
-        // todo: if we could return a chunked body, then we could return these as chunks
-        let body = payload.rows.concat();
-        
-        let req = HttpRequest::builder()
-            .uri(uri.to_string())
-            .method(Method::POST)
-            .body(Full::from(Bytes::from(body)))?;
+        let mut headers = HeaderMap::new();
 
-        Ok(req)
+        if let Some(user) = auth_user {
+            headers.insert(
+                HeaderName::from_static("X-ClickHouse-User"),
+                user.clone().parse()?,
+            );
+        }
+        if let Some(password) = auth_password {
+            headers.insert(
+                HeaderName::from_static("X-ClickHouse-Key"),
+                password.clone().parse()?,
+            );
+        }
+
+        let base = BaseRequestBuilder::new(Some(RequestUri::Post(uri)), headers);
+
+        Ok(Self {
+            base,
+        })
+    }
+
+    pub fn build(
+        &self,
+        payload: ClickhousePayload,
+    ) -> Result<Request<ClickhousePayload>, BoxError> {
+        self.base
+            .builder()
+            .body(payload)?
+            .build()
+            .map_err(|e| format!("failed to build request: {:?}", e).into())
     }
 }

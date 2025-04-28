@@ -16,8 +16,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tower::{BoxError, Service};
-use tracing::info;
-use tracing::log::warn;
+use tracing::warn;
 
 #[derive(Clone)]
 pub struct HttpClient<ReqBody, Resp, Dec> {
