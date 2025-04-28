@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::cv_attributes::{ConvertedAttrMap, ConvertedAttrValue};
+use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 use crate::exporters::datadog::transform::transformer::ScopeSpan;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::trace::v1::Span as OTelSpan;

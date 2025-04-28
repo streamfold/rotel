@@ -5,7 +5,7 @@ use crate::exporters::datadog::transform::k8s;
 use crate::semconv;
 use opentelemetry_semantic_conventions::attribute;
 use std::fmt::{Display, Formatter};
-use crate::exporters::datadog::transform::cv_attributes::ConvertedAttrMap;
+use crate::otlp::cvattr::ConvertedAttrMap;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Source {

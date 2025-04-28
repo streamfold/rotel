@@ -13,7 +13,7 @@ use opentelemetry_semantic_conventions::attribute;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
-use crate::exporters::datadog::transform::cv_attributes::{ConvertedAttrMap, ConvertedAttrValue};
+use crate::otlp::cvattr::{ConvertedAttrMap, ConvertedAttrValue};
 
 pub const TAG_STATUS_CODE: &str = "http.status_code";
 const MAX_RESOURCE_LEN: usize = 5_000;
@@ -330,7 +330,7 @@ mod tests {
     use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
     use std::collections::HashMap;
     use utilities::otlp::{FakeOTLP, string_attr};
-    use crate::exporters::datadog::transform::cv_attributes::ConvertedAttrMap;
+    use crate::otlp::cvattr::ConvertedAttrMap;
 
     // Constants for span types matching the Go file
     const MAX_SERVICE_LEN: usize = 100;

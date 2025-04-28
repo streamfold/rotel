@@ -7,7 +7,6 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 mod attributes;
 pub mod cloud;
-mod cv_attributes;
 mod db_types;
 pub mod k8s;
 pub mod otel_mapping;
