@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::attributes::{
-    ConvertedAttrMap, ConvertedAttrValue, find_first_in_resource,
-};
+use crate::exporters::datadog::transform::attributes::find_first_in_resource;
 use crate::exporters::datadog::transform::attributes::{
     find_key_in_attrlist, find_with_resource_precedence,
 };
@@ -15,6 +13,7 @@ use opentelemetry_semantic_conventions::attribute;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
+use crate::exporters::datadog::transform::cv_attributes::{ConvertedAttrMap, ConvertedAttrValue};
 
 pub const TAG_STATUS_CODE: &str = "http.status_code";
 const MAX_RESOURCE_LEN: usize = 5_000;
@@ -318,7 +317,6 @@ pub fn get_otel_env(res_attributes: &ConvertedAttrMap) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::exporters::datadog::transform::attributes::ConvertedAttrMap;
     use crate::exporters::datadog::transform::otel_util::{
         get_otel_resource_v2, get_otel_service, get_otel_span_type,
     };
@@ -332,6 +330,7 @@ mod tests {
     use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
     use std::collections::HashMap;
     use utilities::otlp::{FakeOTLP, string_attr};
+    use crate::exporters::datadog::transform::cv_attributes::ConvertedAttrMap;
 
     // Constants for span types matching the Go file
     const MAX_SERVICE_LEN: usize = 100;

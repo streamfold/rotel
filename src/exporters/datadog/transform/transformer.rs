@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::attributes::{
-    ConvertedAttrKeyValue, ConvertedAttrMap, ConvertedAttrValue, find_key_in_attrlist,
-};
+use crate::exporters::datadog::transform::attributes::find_key_in_attrlist;
 use crate::exporters::datadog::transform::otel_mapping::attributes::HTTP_MAPPINGS;
 use crate::exporters::datadog::transform::otel_util::get_otel_env;
 use crate::exporters::datadog::transform::sampler::KEY_SAMPLING_RATE_EVENT_EXTRACTION;
 use crate::exporters::datadog::transform::source::SourceKind::AWSECSFargateKind;
-use crate::exporters::datadog::transform::{attributes, otel_mapping, otel_util, source};
+use crate::exporters::datadog::transform::{attributes, cv_attributes, otel_mapping, otel_util, source};
 use crate::exporters::datadog::types;
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
 use opentelemetry_proto::tonic::trace::v1::span::{Event, SpanKind};
@@ -17,6 +15,7 @@ use opentelemetry_semantic_conventions::{attribute, resource};
 use std::collections::HashMap;
 use std::rc::Rc;
 use types::pb::{Span as DDSpan, TraceChunk, TracerPayload};
+use crate::exporters::datadog::transform::cv_attributes::{ConvertedAttrKeyValue, ConvertedAttrMap, ConvertedAttrValue};
 
 const TAG_CONTAINER_TAGS: &str = "_dd.tags.container";
 
@@ -43,7 +42,7 @@ impl TraceTransformer {
 
         // Extract resource attributes
         let res_attrs = resource_spans.resource.unwrap_or_default().attributes;
-        let res_attrs = attributes::convert(&res_attrs);
+        let res_attrs = cv_attributes::convert(&res_attrs);
 
         let resource_attrs: ConvertedAttrMap = res_attrs.into();
 
@@ -188,7 +187,7 @@ impl TraceTransformer {
 
         let mut got_method_from_new_conv = false;
         let mut got_status_code_from_new_conv = false;
-        for (key, value) in attributes::convert(&otel_span.attributes)
+        for (key, value) in cv_attributes::convert(&otel_span.attributes)
             .iter()
             .map(|cv| (&cv.0, &cv.1))
         {

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::transform::attributes::ConvertedAttrMap;
 use crate::exporters::datadog::transform::cloud;
 use opentelemetry_semantic_conventions::attribute;
+use crate::exporters::datadog::transform::cv_attributes::ConvertedAttrMap;
 
 pub(crate) fn hostname_from_attrs(attrs: &ConvertedAttrMap) -> Option<String> {
     attrs
