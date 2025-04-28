@@ -1,12 +1,10 @@
 use bytes::Bytes;
-use http::Method;
+use http::{Method, Request};
 use http_body_util::Full;
 use tower::BoxError;
 use http::request::Request as HttpRequest;
-use tracing::info;
 use url::Url;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
-use crate::exporters::http::types::Request;
 
 #[derive(Clone)]
 pub struct ApiRequestBuilder {
@@ -22,7 +20,7 @@ impl ApiRequestBuilder {
         }
     }
 
-    pub fn build(&self, payload: ClickhousePayload) -> Result<Request, BoxError> {
+    pub fn build(&self, payload: ClickhousePayload) -> Result<Request<Full<Bytes>>, BoxError> {
         let full_url = format!("http://{}/", self.endpoint);
         
         let mut uri = Url::parse(full_url.as_str())?;

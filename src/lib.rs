@@ -10,4 +10,3 @@ pub mod receivers;
 pub mod semconv;
 pub mod telemetry;
 pub mod topology;
-mod otlp;

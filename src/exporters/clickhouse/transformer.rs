@@ -6,7 +6,8 @@ use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span, Status};
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use crate::exporters::clickhouse::schema::{SpanRow, Timestamp64};
-use crate::otlp::attributes::{convert, ConvertedAttrKeyValue, ConvertedAttrMap};
+use crate::otlp::cvattr;
+use crate::otlp::cvattr::ConvertedAttrKeyValue;
 
 #[derive(Clone)]
 pub struct Transformer {}
@@ -22,7 +23,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
         let mut cp = ClickhousePayload::default();
         for rs in input {
             let res_attrs = rs.resource.unwrap_or_default().attributes;
-            let res_attrs = convert(&res_attrs);
+            let res_attrs = cvattr::convert(&res_attrs);
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
 
             for ss in rs.scope_spans {
@@ -32,7 +33,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                 };
 
                 for span in ss.spans {
-                    let span_attrs = convert(&span.attributes);
+                    let span_attrs = cvattr::convert(&span.attributes);
                     let status_code = status_code(&span);
                     let status_message = status_message(&span);
 
@@ -55,14 +56,14 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         events_timestamp: span.events.iter().map(|e| Timestamp64(e.time_unix_nano)).collect(),
                         events_name: span.events.iter().map(|e| e.name.clone()).collect(),
                         events_attributes: span.events.iter().map(|e| {
-                            let event_attrs = convert(&e.attributes);
+                            let event_attrs = cvattr::convert(&e.attributes);
                             attrs_as_pairs(&event_attrs)
                         }).collect(),
                         links_trace_id: span.links.iter().map(|l| hex::encode(l.trace_id.clone())).collect(),
                         links_span_id: span.links.iter().map(|l|hex::encode(l.span_id.clone())).collect(),
                         links_trace_state: span.links.iter().map(|l| l.trace_state.clone()).collect(),
                         links_attributes: span.links.iter().map(|l| {
-                            let link_attrs = convert(&l.attributes);
+                            let link_attrs = cvattr::convert(&l.attributes);
                             attrs_as_pairs(&link_attrs)
                         }).collect(),
                     };

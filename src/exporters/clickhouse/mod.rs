@@ -25,6 +25,7 @@ use futures_util::stream::FuturesUnordered;
 use std::pin::Pin;
 use std::time::Duration;
 use flume::r#async::RecvStream;
+use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use tokio::select;
 use tokio::time::{timeout_at, Instant};
@@ -42,7 +43,7 @@ const MAX_CONCURRENT_REQUESTS: usize = 10;
 
 pub struct ClickhouseExporter {
     rx: BoundedReceiver<Vec<ResourceSpans>>,
-    svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<(), ClickhouseRespDecoder>>>,
+    svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), ClickhouseRespDecoder>>>,
     req_builder: RequestBuilder<ResourceSpans, Transformer>,
     flush_receiver: Option<FlushReceiver>,
     encode_drain_max_time: Duration,

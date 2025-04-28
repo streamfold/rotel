@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::types::Request;
 use std::marker::PhantomData;
+use bytes::Bytes;
+use http::Request;
+use http_body_util::Full;
 use tower::BoxError;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
@@ -44,7 +46,7 @@ impl<Resource, Transform> BuildRequest<Resource> for RequestBuilder<Resource, Tr
 where
     Transform: TransformPayload<Resource>,
 {
-    fn build(&self, input: Vec<Resource>) -> Result<Request, BoxError> {
+    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError> {
         let payload = self.transformer.transform(input);
 
         self.api_req_builder.build(payload)
