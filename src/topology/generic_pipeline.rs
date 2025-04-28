@@ -8,7 +8,7 @@ use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_python_processor_sdk::model::{PythonProcessable, register_processor};
+use rotel_sdk::model::{PythonProcessable, register_processor};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
