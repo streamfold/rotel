@@ -15,17 +15,22 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             os: ubuntu
             cross: false
+            python-version: 3.13
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             os: ubuntu
             cross: false
+            python-version: 3.12
           - target: aarch64-apple-darwin
-            runner: macos-latest
+            runner: macos-14
             os: macos
             cross: false
+            python-version: 3.13
+    env:
+      TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
       - name: update apt cache on linux
@@ -59,7 +64,7 @@ jobs:
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rotel_py_processor_${{ matrix.target }}.tar.gz
+          name: rotel_py_processor_${{matrix.python-version}}_${{ matrix.target }}.tar.gz
           path: archive.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
