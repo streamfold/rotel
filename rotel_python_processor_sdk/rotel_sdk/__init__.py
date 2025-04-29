@@ -1,1 +1,1 @@
-from rotel_sdk.open_telemetry import *
+from rotel_sdk import *
