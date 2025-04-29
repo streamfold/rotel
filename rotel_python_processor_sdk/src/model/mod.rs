@@ -5,6 +5,7 @@ use crate::py;
 use crate::py::{rotel_sdk, ResourceSpans};
 use pyo3::prelude::*;
 use std::ffi::CString;
+use std::mem;
 use std::sync::{Arc, Mutex, Once};
 use tower::BoxError;
 use tracing::error;
@@ -198,10 +199,12 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
         if resource.is_some() {
             resource_span.resource = py_transform::transform_resource(resource.unwrap());
         }
-        let scope_spans = Arc::into_inner(inner.scope_spans)
-            .unwrap()
-            .into_inner()
-            .unwrap();
+
+        let scope_spans = mem::replace(&mut *inner.scope_spans.lock().unwrap(), Default::default());
+        // let scope_spans = Arc::into_inner(inner.scope_spans)
+        //     .unwrap()
+        //     .into_inner()
+        //     .unwrap();
         resource_span.scope_spans = py_transform::transform_spans(scope_spans);
         resource_span
     }

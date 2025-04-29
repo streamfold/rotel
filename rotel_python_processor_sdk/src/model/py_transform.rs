@@ -40,8 +40,7 @@ pub fn transform_spans(
                     status: Arc::new(Mutex::new(None)),
                 },
             );
-            let status = Arc::into_inner(moved_data.status).unwrap();
-            let status = status.into_inner().unwrap();
+            let status = mem::replace(&mut *moved_data.status.lock().unwrap(), Default::default());
             spans.push(opentelemetry_proto::tonic::trace::v1::Span {
                 trace_id: moved_data.trace_id,
                 span_id: moved_data.span_id,
@@ -162,10 +161,18 @@ fn convert_attributes(
 pub fn transform_resource(
     resource: RResource,
 ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
-    let attributes = Arc::into_inner(resource.attributes).unwrap();
-    let attributes = attributes.into_inner().unwrap();
-    let dropped_attributes_count = Arc::into_inner(resource.dropped_attributes_count).unwrap();
-    let dropped_attributes_count = dropped_attributes_count.into_inner().unwrap();
+    // let attributes = Arc::into_inner(resource.attributes).unwrap();
+    // let attributes = attributes.into_inner().unwrap();
+    let attributes = mem::replace(
+        &mut *resource.attributes.lock().unwrap(),
+        Default::default(),
+    );
+    //let dropped_attributes_count = Arc::into_inner(resource.dropped_attributes_count).unwrap();
+    let dropped_attributes_count = mem::replace(
+        &mut *resource.dropped_attributes_count.lock().unwrap(),
+        Default::default(),
+    );
+    //let dropped_attributes_count = dropped_attributes_count.into_inner().unwrap();
     let mut new_attrs = vec![];
     for attr in attributes.iter() {
         let kv = attr.lock().unwrap();
@@ -192,8 +199,9 @@ pub fn transform_resource(
 }
 
 pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::AnyValue {
-    let inner_value = Arc::into_inner(v.value).unwrap();
-    let inner_value = inner_value.into_inner().unwrap();
+    // let inner_value = Arc::into_inner(v.value).unwrap();
+    // let inner_value = inner_value.into_inner().unwrap();
+    let inner_value = mem::replace(&mut *v.value.lock().unwrap(), Default::default());
     if inner_value.is_none() {
         return opentelemetry_proto::tonic::common::v1::AnyValue { value: None };
     }
@@ -235,14 +243,17 @@ pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::An
         }
         KvListValue(kvl) => {
             let mut values = vec![];
-            let inner_values = Arc::into_inner(kvl.values).unwrap();
-            let inner_values = inner_values.into_inner().unwrap();
+            // let inner_values = Arc::into_inner(kvl.values).unwrap();
+            // let inner_values = inner_values.into_inner().unwrap();
+            let inner_values = mem::replace(&mut *kvl.values.lock().unwrap(), Default::default());
             // TODO: We might need to remove these from the vec?
             for kv in inner_values {
-                let key = Arc::into_inner(kv.key).unwrap();
-                let key = key.into_inner().unwrap();
-                let value = Arc::into_inner(kv.value).unwrap();
-                let value = value.into_inner().unwrap();
+                let key = mem::replace(&mut *kv.key.lock().unwrap(), Default::default());
+                //let key = Arc::into_inner(kv.key).unwrap();
+                //let key = key.into_inner().unwrap();
+                // let value = Arc::into_inner(kv.value).unwrap();
+                // let value = value.into_inner().unwrap();
+                let value = mem::replace(&mut *kv.value.lock().unwrap(), Default::default());
                 let mut new_value = None;
                 if value.is_some() {
                     new_value = Some(convert_value(value.unwrap()));
