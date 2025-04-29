@@ -107,8 +107,6 @@ The OTLP exporter is the default, or can be explicitly selected with `--exporter
 | --otlp-exporter-retry-initial-backoff  | 5s                   |                          |
 | --otlp-exporter-retry-max-backoff      | 30s                  |                          |
 | --otlp-exporter-retry-max-elapsed-time | 300s                 |                          |
-| --otlp-exporter-batch-max-size         | 8192                 |                          |
-| --otlp-exporter-batch-timeout          | 200ms                |                          |
 
 ### Datadog exporter configuration
 
