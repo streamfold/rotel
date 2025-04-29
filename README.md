@@ -10,7 +10,7 @@ Rotel is a lightweight OpenTelemetry collector implemented in Rust.
 - Supports metrics, logs, and traces
 - OTLP receiver and exporters with gRPC and HTTP/Protobuf support
 - Built-in batching and retry mechanisms
-- Experimental Datadog Trace exporter (based on port from Go)
+- Experimental Clickhouse and Datadog Trace exporters
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage and a compact binary size, simplifying deployment without the need for a sidecar container.
 
@@ -67,24 +67,24 @@ rotel start --help
 
 All CLI arguments can also be passed as environment variable by prefixing with `ROTEL_` and switching hyphens to underscores. For example, `--log-level info` can also be specified by setting the environment variable `ROTEL_LOG_LEVEL=info`.
 
-| Option                                 | Default              | Options                  |
-|----------------------------------------|----------------------|--------------------------|
-| --daemon                               |                      |                          |
-| --log-level                            | info                 | debug, info, warn, error |
-| --log-format                           | text                 | json                     |
-| --pid-file                             | /tmp/rotel-agent.pid |                          |
-| --log-file                             | /tmp/rotel-agent.log |                          |
-| --debug-log                            |                      | metrics, traces, logs    |
-| --otlp-grpc-endpoint                   | localhost:4317       |                          |
-| --otlp-http-endpoint                   | localhost:4318       |                          |
-| --otlp-grpc-max-recv-msg-size-mib      | 4                    |                          |
-| --exporter                             | otlp                 | otlp, blackhole, datadog |
-| --otlp-receiver-traces-disabled        |                      |                          |
-| --otlp-receiver-metrics-disabled       |                      |                          |
-| --otlp-receiver-logs-disabled          |                      |                          |
-| --otlp-receiver-traces-http-path       | /v1/traces           |                          |
-| --otlp-receiver-metrics-http-path      | /v1/metrics          |                          |
-| --otlp-receiver-logs-http-path         | /v1/logs             |                          |
+| Option                                 | Default              | Options                              |
+|----------------------------------------|----------------------|--------------------------------------|
+| --daemon                               |                      |                                      |
+| --log-level                            | info                 | debug, info, warn, error             |
+| --log-format                           | text                 | json                                 |
+| --pid-file                             | /tmp/rotel-agent.pid |                                      |
+| --log-file                             | /tmp/rotel-agent.log |                                      |
+| --debug-log                            |                      | metrics, traces, logs                |
+| --otlp-grpc-endpoint                   | localhost:4317       |                                      |
+| --otlp-http-endpoint                   | localhost:4318       |                                      |
+| --otlp-grpc-max-recv-msg-size-mib      | 4                    |                                      |
+| --exporter                             | otlp                 | otlp, blackhole, datadog, clickhouse |
+| --otlp-receiver-traces-disabled        |                      |                                      |
+| --otlp-receiver-metrics-disabled       |                      |                                      |
+| --otlp-receiver-logs-disabled          |                      |                                      |
+| --otlp-receiver-traces-http-path       | /v1/traces           |                                      |
+| --otlp-receiver-metrics-http-path      | /v1/metrics          |                                      |
+| --otlp-receiver-logs-http-path         | /v1/logs             |                                      |
 
 ### OTLP exporter configuration
 
@@ -122,6 +122,33 @@ moment. For more information, see the [Datadog Exporter](src/exporters/datadog/R
 | --datadog-exporter-api-key         |         |                        |
 
 Specifying a custom endpoint will override the region selection.
+
+### Clickhouse exporter configuration
+
+The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter only supports traces at the
+moment.
+
+| Option                             | Default | Options   |
+|------------------------------------|---------|-----------|
+| --clickhouse-exporter-endpoint     |         |           |
+| --clickhouse-exporter-database     | otel    |           |
+| --clickhouse-exporter-table-prefix | otel    |           |
+| --clickhouse-exporter-compression  | lz4     | none, lz4 |
+| --clickhouse-exporter-user         |         |           |
+| --clickhouse-exporter-password     |         |           |
+
+The Clickhouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed onto
+the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to generate
+the full table name of `otel_traces`.
+
+The exporter will not generate the table schema if it does not exist. The [schema-migrate.sh](/contrib/clickhouse/schema-migrate.sh)
+script which is provided in this repo will output a Clickhouse schema that is supported by the exporter. It matches the
+schema used in the OpenTelemetry
+[Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
+
+_The Clickhouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse) crate._
+
+---
 
 **Notes**:
 

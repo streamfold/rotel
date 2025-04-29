@@ -1,3 +1,4 @@
+use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use clap::{Args, ValueEnum};
@@ -95,6 +96,9 @@ pub struct AgentRun {
     #[command(flatten)]
     pub datadog_exporter: DatadogExporterArgs,
 
+    #[command(flatten)]
+    pub clickhouse_exporter: ClickhouseExporterArgs,
+
     #[cfg(feature = "pprof")]
     #[clap(flatten)]
     pub profile_group: ProfileGroup,
@@ -132,6 +136,8 @@ pub enum Exporter {
     Blackhole,
 
     Datadog,
+
+    Clickhouse,
 }
 
 /// Parse a single key-value pair
