@@ -17,6 +17,11 @@ jobs:
             os: ubuntu
             cross: false
             python-version: 3.12
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            os: ubuntu
+            cross: false
+            python-version: 3.13
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             os: ubuntu
@@ -40,6 +45,11 @@ jobs:
       - name: install protoc macos
         if: matrix.os == 'macos'
         run: brew install protobuf
+      - name: update linux x86_64 python 3.13
+        if: matrix.os == 'ubuntu' && matrix.python-version == '3.13'
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.13
       - name: Set build env
         run: echo "BUILD_SHORT_SHA=$(echo -n $GITHUB_SHA | cut -c 1-7)" >> $GITHUB_ENV
       - uses: actions-rust-lang/setup-rust-toolchain@v1
