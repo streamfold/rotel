@@ -18,6 +18,7 @@ impl ApiRequestBuilder {
         compression: Compression,
         auth_user: Option<String>,
         auth_password: Option<String>,
+        async_insert: bool,
     ) -> Result<Self, BoxError> {
         let full_url = construct_full_url(endpoint);
         let mut uri = Url::parse(full_url.as_str())?;
@@ -30,6 +31,9 @@ impl ApiRequestBuilder {
             pairs.append_pair("query", query.as_str());
             if compression == Compression::Lz4 {
                 pairs.append_pair("decompress", "1");
+            }
+            if async_insert {
+                pairs.append_pair("async_insert", "1");
             }
         }
 
