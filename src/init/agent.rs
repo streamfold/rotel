@@ -6,11 +6,11 @@ use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
-use crate::init::datadog_exporter::DatadogRegion;
-use crate::init::otlp_exporter::{
-    build_logs_config, build_metrics_config,
-    build_traces_config,
+use crate::init::batch::{
+    build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
+use crate::init::datadog_exporter::DatadogRegion;
+use crate::init::otlp_exporter::{build_logs_config, build_metrics_config, build_traces_config};
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
 use crate::init::wait;
@@ -39,7 +39,6 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
-use crate::init::batch::{build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config};
 
 pub struct Agent {
     config: Box<AgentRun>,

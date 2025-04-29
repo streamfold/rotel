@@ -1,5 +1,5 @@
-use clap::Args;
 use crate::topology::batch::BatchConfig;
+use clap::Args;
 
 // Batch settings
 #[derive(Debug, Clone, Args)]
@@ -64,9 +64,7 @@ pub fn build_metrics_batch_config(config: BatchArgs) -> BatchConfig {
 
 pub fn build_logs_batch_config(config: BatchArgs) -> BatchConfig {
     BatchConfig {
-        max_size: config
-            .logs_batch_max_size
-            .unwrap_or(config.batch_max_size),
+        max_size: config.logs_batch_max_size.unwrap_or(config.batch_max_size),
         timeout: config
             .logs_batch_timeout
             .unwrap_or(config.batch_timeout)
