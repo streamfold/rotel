@@ -1,12 +1,17 @@
 use serde::Serialize;
 
-#[derive(Debug, PartialEq, Serialize)]
-pub(crate) struct Timestamp64(pub(crate) u64);
-
+//
+// *** NOTE ***
+//
+// The serde configuration of the column names here currently does not do anything. The column
+// names are statically configured in the list below and must match both the ordering of this
+// struct and the names created in the DB schema. If they ever get out of alignment, things
+// will break. We'll look at ways to fix this in the future.
+// *************
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "PascalCase")]
 pub struct SpanRow {
-    pub(crate) timestamp: Timestamp64,
+    pub(crate) timestamp: u64,
     pub(crate) trace_id: String,
     pub(crate) span_id: String,
     pub(crate) parent_span_id: String,
@@ -23,7 +28,7 @@ pub struct SpanRow {
     pub(crate) status_message: String,
 
     #[serde(rename = "Events.Timestamp")]
-    pub(crate) events_timestamp: Vec<Timestamp64>,
+    pub(crate) events_timestamp: Vec<u64>,
     #[serde(rename = "Events.Name")]
     pub(crate) events_name: Vec<String>,
     #[serde(rename = "Events.Attributes")]

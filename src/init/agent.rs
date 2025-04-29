@@ -410,6 +410,8 @@ impl Agent {
 
                 let mut builder = ClickhouseExporter::builder(
                     config.clickhouse_exporter.clickhouse_exporter_endpoint.unwrap(),
+                    config.clickhouse_exporter.clickhouse_exporter_database,
+                    config.clickhouse_exporter.clickhouse_exporter_table_prefix
                 )
                     .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
                     .with_compression(config.clickhouse_exporter.clickhouse_exporter_compression)

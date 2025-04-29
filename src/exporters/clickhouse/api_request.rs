@@ -19,7 +19,7 @@ impl ApiRequestBuilder {
         auth_user: Option<String>,
         auth_password: Option<String>,
     ) -> Result<Self, BoxError> {
-        let full_url = format!("http://{}/", endpoint);
+        let full_url = construct_full_url(endpoint);
         let mut uri = Url::parse(full_url.as_str())?;
 
         {
@@ -37,13 +37,13 @@ impl ApiRequestBuilder {
 
         if let Some(user) = auth_user {
             headers.insert(
-                HeaderName::from_static("X-ClickHouse-User"),
+                HeaderName::from_static("x-clickhouse-user"),
                 user.clone().parse()?,
             );
         }
         if let Some(password) = auth_password {
             headers.insert(
-                HeaderName::from_static("X-ClickHouse-Key"),
+                HeaderName::from_static("x-clickhouse-key"),
                 password.clone().parse()?,
             );
         }
@@ -65,4 +65,11 @@ impl ApiRequestBuilder {
             .build()
             .map_err(|e| format!("failed to build request: {:?}", e).into())
     }
+}
+
+fn construct_full_url(endpoint: String) -> String {
+    if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        return endpoint
+    }
+    format!("http://{}/", endpoint)
 }

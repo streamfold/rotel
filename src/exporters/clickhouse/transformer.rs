@@ -5,7 +5,7 @@ use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tower::BoxError;
 use crate::exporters::clickhouse::Compression;
-use crate::exporters::clickhouse::schema::{SpanRow, Timestamp64};
+use crate::exporters::clickhouse::schema::{SpanRow};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrKeyValue;
 
@@ -42,7 +42,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                     let status_message = status_message(&span);
 
                     let row = SpanRow{
-                        timestamp: Timestamp64(span.start_time_unix_nano),
+                        timestamp: span.start_time_unix_nano,
                         trace_id: hex::encode(span.trace_id),
                         span_id: hex::encode(span.span_id),
                         parent_span_id: hex::encode(span.parent_span_id),
@@ -57,7 +57,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         duration: (span.end_time_unix_nano - span.start_time_unix_nano) as i64,
                         status_code,
                         status_message,
-                        events_timestamp: span.events.iter().map(|e| Timestamp64(e.time_unix_nano)).collect(),
+                        events_timestamp: span.events.iter().map(|e| e.time_unix_nano).collect(),
                         events_name: span.events.iter().map(|e| e.name.clone()).collect(),
                         events_attributes: span.events.iter().map(|e| {
                             let event_attrs = cvattr::convert(&e.attributes);
