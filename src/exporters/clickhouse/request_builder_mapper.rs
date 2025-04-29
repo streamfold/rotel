@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::clickhouse::payload::ClickhousePayload;
 use futures_util::{
     Stream, StreamExt, ready,
     stream::{Fuse, FuturesOrdered},
 };
+use http::Request;
 use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use http::Request;
 use tokio::task::JoinHandle;
 use tower::BoxError;
 use tracing::error;
-use crate::exporters::clickhouse::payload::ClickhousePayload;
 
 // todo: This seems high?
 const MAX_CONCURRENT_ENCODERS: usize = 20;

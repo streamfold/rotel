@@ -8,7 +8,11 @@ pub struct ClickhouseExporterArgs {
     pub clickhouse_exporter_endpoint: Option<String>,
 
     /// Clickhouse Exporter database
-    #[arg(long, env = "ROTEL_CLICKHOUSE_EXPORTER_DATABASE", default_value = "otel")]
+    #[arg(
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_DATABASE",
+        default_value = "otel"
+    )]
     pub clickhouse_exporter_database: String,
 
     /// Clickhouse Exporter table prefix (e.g., "otel" prefix will become "otel_traces" for traces)
@@ -16,7 +20,12 @@ pub struct ClickhouseExporterArgs {
     pub clickhouse_exporter_table_prefix: String,
 
     /// Clickhouse Exporter compression (lz4 or none)
-    #[arg(value_enum, long, env = "ROTEL_CLICKHOUSE_EXPORTER_COMPRESSION", default_value = "lz4")]
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_COMPRESSION",
+        default_value = "lz4"
+    )]
     pub clickhouse_exporter_compression: Compression,
 
     /// Clickhouse Exporter user
@@ -31,7 +40,7 @@ pub struct ClickhouseExporterArgs {
 #[derive(Clone, Debug, ValueEnum)]
 pub enum Compression {
     None,
-    Lz4
+    Lz4,
 }
 
 impl From<Compression> for clickhouse::Compression {

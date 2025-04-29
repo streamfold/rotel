@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::marker::PhantomData;
-use http::Request;
-use tower::BoxError;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder_mapper::BuildRequest;
+use http::Request;
+use std::marker::PhantomData;
+use tower::BoxError;
 
 pub trait TransformPayload<T> {
     fn transform(&self, input: Vec<T>) -> Result<ClickhousePayload, BoxError>;
@@ -30,7 +30,6 @@ where
         transformer: Transform,
         api_req_builder: ApiRequestBuilder,
     ) -> Result<Self, BoxError> {
-        
         Ok(Self {
             transformer,
             api_req_builder,

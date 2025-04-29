@@ -1,9 +1,9 @@
+use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
-use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -136,7 +136,7 @@ pub enum Exporter {
     Blackhole,
 
     Datadog,
-    
+
     Clickhouse,
 }
 

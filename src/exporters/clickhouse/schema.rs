@@ -69,6 +69,6 @@ pub fn get_span_row_col_keys() -> String {
         "Links.TraceState",
         "Links.Attributes",
     ];
-    
+
     fields.join(",")
 }

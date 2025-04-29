@@ -50,9 +50,7 @@ impl ApiRequestBuilder {
 
         let base = BaseRequestBuilder::new(Some(RequestUri::Post(uri)), headers);
 
-        Ok(Self {
-            base,
-        })
+        Ok(Self { base })
     }
 
     pub fn build(
@@ -69,7 +67,7 @@ impl ApiRequestBuilder {
 
 fn construct_full_url(endpoint: String) -> String {
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
-        return endpoint
+        return endpoint;
     }
     format!("http://{}/", endpoint)
 }

@@ -4,9 +4,9 @@ pub mod args;
 pub mod misc;
 pub mod wait;
 
+mod clickhouse_exporter;
 mod datadog_exporter;
 mod otlp_exporter;
-mod clickhouse_exporter;
 
 #[cfg(feature = "pprof")]
 pub mod pprof;

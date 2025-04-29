@@ -1,10 +1,9 @@
+use crate::exporters::clickhouse::ch_error::{Error, Result};
 use bytes::BufMut;
 use serde::{
-    ser::{Impossible, SerializeSeq, SerializeStruct, SerializeTuple, Serializer},
     Serialize,
+    ser::{Impossible, SerializeSeq, SerializeStruct, SerializeTuple, Serializer},
 };
-use crate::exporters::clickhouse::ch_error::{Error, Result};
-
 
 /// Serializes `value` using the RowBinary format and writes to `buffer`.
 pub(crate) fn serialize_into(buffer: impl BufMut, value: &impl Serialize) -> Result<()> {

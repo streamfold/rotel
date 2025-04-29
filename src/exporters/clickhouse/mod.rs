@@ -140,7 +140,11 @@ impl ClickhouseExporterBuilder {
 }
 
 impl ClickhouseExporter {
-    pub fn builder(endpoint: String, database: String, table_prefix: String) -> ClickhouseExporterBuilder {
+    pub fn builder(
+        endpoint: String,
+        database: String,
+        table_prefix: String,
+    ) -> ClickhouseExporterBuilder {
         ClickhouseExporterBuilder {
             endpoint,
             database,
@@ -295,14 +299,14 @@ impl ClickhouseExporter {
 fn get_traces_sql(table_prefix: String) -> String {
     format!(
         "INSERT INTO {} ({}) FORMAT RowBinary",
-        get_table_name(table_prefix, "traces"), get_span_row_col_keys()
+        get_table_name(table_prefix, "traces"),
+        get_span_row_col_keys()
     )
 }
 
 fn get_table_name(table_prefix: String, table: &str) -> String {
     format!("{}_{}", table_prefix, table)
 }
-
 
 #[derive(Default, Clone)]
 pub struct ClickhouseRespDecoder;
