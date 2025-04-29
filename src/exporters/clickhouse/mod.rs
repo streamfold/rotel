@@ -165,6 +165,12 @@ impl ClickhouseExporter {
                         },
                         Ok(rs) => {
                             debug!(rs = ?rs, futures_size = export_futures.len(), "Clickhouse exporter sent response");
+
+                            match rs.status_code().as_u16() {
+                                200..=202 => {},
+                                404 => error!("Received 404 when exporting to Clickhouse, does the table exist?"),
+                                _ => error!("Failed to export to Clickhouse: {:?}", rs),
+                            };
                         }
                     }
                 },
