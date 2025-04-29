@@ -4,6 +4,7 @@ use crate::init::otlp_exporter::OTLPExporterArgs;
 use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
+use tower::BoxError;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -190,5 +191,13 @@ mod test {
         assert_ok!(sa);
         let sa = sa.unwrap();
         assert_eq!("0.0.0.0", sa.ip().to_string());
+    }
+}
+
+pub(crate) fn parse_bool_value(val: String) -> Result<bool, BoxError> {
+    match val.to_lowercase().as_str() {
+        "0" | "false" => Ok(false),
+        "1" | "true" => Ok(true),
+        _ => Err(format!("Unable to parse bool value: {}", val).into())
     }
 }

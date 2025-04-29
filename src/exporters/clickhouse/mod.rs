@@ -78,6 +78,7 @@ pub struct ClickhouseExporterBuilder {
     table_prefix: String,
     auth_user: Option<String>,
     auth_password: Option<String>,
+    async_insert: bool,
 }
 
 impl ClickhouseExporterBuilder {
@@ -88,6 +89,11 @@ impl ClickhouseExporterBuilder {
 
     pub fn with_compression(mut self, compression: impl Into<Compression>) -> Self {
         self.compression = compression.into();
+        self
+    }
+    
+    pub fn with_async_insert(mut self, async_insert: bool) -> Self {
+        self.async_insert = async_insert;
         self
     }
 
@@ -117,6 +123,7 @@ impl ClickhouseExporterBuilder {
             self.compression.clone(),
             self.auth_user,
             self.auth_password,
+            self.async_insert,
         )?;
 
         let req_builder = RequestBuilder::new(transformer, api_req_builder)?;

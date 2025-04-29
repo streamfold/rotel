@@ -128,18 +128,24 @@ Specifying a custom endpoint will override the region selection.
 The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter only supports traces at the
 moment.
 
-| Option                             | Default | Options   |
-|------------------------------------|---------|-----------|
-| --clickhouse-exporter-endpoint     |         |           |
-| --clickhouse-exporter-database     | otel    |           |
-| --clickhouse-exporter-table-prefix | otel    |           |
-| --clickhouse-exporter-compression  | lz4     | none, lz4 |
-| --clickhouse-exporter-user         |         |           |
-| --clickhouse-exporter-password     |         |           |
+| Option                             | Default | Options     |
+|------------------------------------|---------|-------------|
+| --clickhouse-exporter-endpoint     |         |             |
+| --clickhouse-exporter-database     | otel    |             |
+| --clickhouse-exporter-table-prefix | otel    |             |
+| --clickhouse-exporter-compression  | lz4     | none, lz4   |
+| --clickhouse-exporter-async-insert | true    | true, false |
+| --clickhouse-exporter-user         |         |             |
+| --clickhouse-exporter-password     |         |             |
 
 The Clickhouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed onto
 the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to generate
 the full table name of `otel_traces`.
+
+The Clickhouse exporter will enable [async inserts](https://clickhouse.com/docs/optimize/asynchronous-inserts) by default,
+although it can be disabled server-side. Async inserts are
+recommended for most workloads to avoid overloading Clickhouse with many small inserts. Async inserts can be disabled by specifying:
+`--clickhouse-exporter-async-insert false`.
 
 The exporter will not generate the table schema if it does not exist. The [schema-migrate.sh](/contrib/clickhouse/schema-migrate.sh)
 script which is provided in this repo will output a Clickhouse schema that is supported by the exporter. It matches the
