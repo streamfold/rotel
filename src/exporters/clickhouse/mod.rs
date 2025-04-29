@@ -240,7 +240,9 @@ impl ClickhouseExporter {
             let poll_res = timeout_at(finish_encoding, enc_stream.next()).await;
             match poll_res {
                 Err(_) => {
-                    return Err("ClickHouseExporter, timed out waiting for requests to encode".into());
+                    return Err(
+                        "ClickHouseExporter, timed out waiting for requests to encode".into(),
+                    );
                 }
                 Ok(res) => match res {
                     None => break,
@@ -263,7 +265,9 @@ impl ClickhouseExporter {
             let poll_res = timeout_at(finish_sending, export_futures.next()).await;
             match poll_res {
                 Err(_) => {
-                    return Err("ClickHouseExporter, timed out waiting for requests to finish".into());
+                    return Err(
+                        "ClickHouseExporter, timed out waiting for requests to finish".into(),
+                    );
                 }
                 Ok(res) => match res {
                     None => {
