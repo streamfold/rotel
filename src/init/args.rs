@@ -5,6 +5,7 @@ use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
 use tower::BoxError;
+use crate::init::batch::BatchArgs;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -86,7 +87,10 @@ pub struct AgentRun {
 
     #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append)]
     pub otlp_with_trace_processor: Vec<String>,
-
+    
+    #[command(flatten)]
+    pub batch: BatchArgs,
+    
     /// Exporter
     #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]
     pub exporter: Exporter,

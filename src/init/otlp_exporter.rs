@@ -5,7 +5,6 @@ use crate::exporters::otlp::config::{
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::init::args;
 use crate::init::args::OTLPExporterProtocol;
-use crate::topology::batch::BatchConfig;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct OTLPExporterArgs {
@@ -225,47 +224,6 @@ pub struct OTLPExporterArgs {
     /// OTLP Exporter logs Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP logs if specified.
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_ELAPSED_TIME")]
     pub otlp_exporter_logs_retry_max_elapsed_time: Option<humantime::Duration>,
-
-    // Batch settings
-    /// OTLP Exporter max batch size in number of spans/metrics - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_BATCH_MAX_SIZE",
-        default_value = "8192"
-    )]
-    pub otlp_exporter_batch_max_size: usize,
-
-    /// OTLP Exporter traces max batch size in number of spans - Overrides otlp_exporter_batch_max_size for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_BATCH_MAX_SIZE")]
-    pub otlp_exporter_traces_batch_max_size: Option<usize>,
-
-    /// OTLP Exporter metrics max batch size in number of metrics - Overrides otlp_exporter_batch_max_size for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_BATCH_MAX_SIZE")]
-    pub otlp_exporter_metrics_batch_max_size: Option<usize>,
-
-    /// OTLP Exporter logs max batch size in number of logs - Overrides otlp_exporter_batch_max_size for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_BATCH_MAX_SIZE")]
-    pub otlp_exporter_logs_batch_max_size: Option<usize>,
-
-    /// OTLP Exporter batch timeout - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_BATCH_TIMEOUT",
-        default_value = "200ms"
-    )]
-    pub otlp_exporter_batch_timeout: humantime::Duration,
-
-    /// OTLP Exporter traces batch timeout - Overrides otlp_exporter_batch_timeout for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_BATCH_TIMEOUT")]
-    pub otlp_exporter_traces_batch_timeout: Option<humantime::Duration>,
-
-    /// OTLP Exporter metrics batch timeout - Overrides otlp_exporter_batch_timeout for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_BATCH_TIMEOUT")]
-    pub otlp_exporter_metrics_batch_timeout: Option<humantime::Duration>,
-
-    /// OTLP Exporter logs batch timeout - Overrides otlp_exporter_batch_timeout for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_BATCH_TIMEOUT")]
-    pub otlp_exporter_logs_batch_timeout: Option<humantime::Duration>,
 }
 
 impl From<OTLPExporterProtocol> for Protocol {
@@ -395,43 +353,6 @@ pub struct LogsCaGroup {
 
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_TLS_CA_PEM", default_value = None)]
     otlp_exporter_logs_tls_ca_pem: Option<String>,
-}
-
-// todo: add these as impl functions of the exporter args?
-pub fn build_traces_batch_config(agent: OTLPExporterArgs) -> BatchConfig {
-    BatchConfig {
-        max_size: agent
-            .otlp_exporter_traces_batch_max_size
-            .unwrap_or(agent.otlp_exporter_batch_max_size),
-        timeout: agent
-            .otlp_exporter_traces_batch_timeout
-            .unwrap_or(agent.otlp_exporter_batch_timeout)
-            .into(),
-    }
-}
-
-pub fn build_metrics_batch_config(agent: OTLPExporterArgs) -> BatchConfig {
-    BatchConfig {
-        max_size: agent
-            .otlp_exporter_metrics_batch_max_size
-            .unwrap_or(agent.otlp_exporter_batch_max_size),
-        timeout: agent
-            .otlp_exporter_metrics_batch_timeout
-            .unwrap_or(agent.otlp_exporter_batch_timeout)
-            .into(),
-    }
-}
-
-pub fn build_logs_batch_config(agent: OTLPExporterArgs) -> BatchConfig {
-    BatchConfig {
-        max_size: agent
-            .otlp_exporter_logs_batch_max_size
-            .unwrap_or(agent.otlp_exporter_batch_max_size),
-        timeout: agent
-            .otlp_exporter_logs_batch_timeout
-            .unwrap_or(agent.otlp_exporter_batch_timeout)
-            .into(),
-    }
 }
 
 pub fn build_traces_config(

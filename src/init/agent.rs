@@ -8,8 +8,8 @@ use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
 use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::otlp_exporter::{
-    build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
-    build_traces_batch_config, build_traces_config,
+    build_logs_config, build_metrics_config,
+    build_traces_config,
 };
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
@@ -39,6 +39,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
+use crate::init::batch::{build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config};
 
 pub struct Agent {
     config: Box<AgentRun>,
@@ -212,7 +213,7 @@ impl Agent {
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_traces_batch_config(config.otlp_exporter.clone()),
+            build_traces_batch_config(config.batch.clone()),
             config.otlp_with_trace_processor.clone(),
         );
 
@@ -220,7 +221,7 @@ impl Agent {
             metrics_pipeline_in_rx.clone(),
             metrics_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_metrics_batch_config(config.otlp_exporter.clone()),
+            build_metrics_batch_config(config.batch.clone()),
             vec![],
         );
 
@@ -228,7 +229,7 @@ impl Agent {
             logs_pipeline_in_rx.clone(),
             logs_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_logs_batch_config(config.otlp_exporter.clone()),
+            build_logs_batch_config(config.batch.clone()),
             vec![],
         );
 
@@ -242,7 +243,7 @@ impl Agent {
             internal_metrics_pipeline_in_rx.clone(),
             internal_metrics_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_metrics_batch_config(config.otlp_exporter.clone()),
+            build_metrics_batch_config(config.batch.clone()),
             vec![],
         );
 

@@ -10,3 +10,4 @@ mod otlp_exporter;
 
 #[cfg(feature = "pprof")]
 pub mod pprof;
+mod batch;
