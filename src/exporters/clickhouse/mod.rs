@@ -233,14 +233,14 @@ impl ClickhouseExporter {
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let finish_encoding = Instant::now().add(self.encode_drain_max_time);
         let finish_sending = Instant::now().add(self.export_drain_max_time);
-        let type_name = "datadog_exporter";
+        let type_name = "clickhouse_exporter";
 
         // First we must wait on currently encoding futures
         loop {
             let poll_res = timeout_at(finish_encoding, enc_stream.next()).await;
             match poll_res {
                 Err(_) => {
-                    return Err("DatadogExporter, timed out waiting for requests to encode".into());
+                    return Err("ClickHouseExporter, timed out waiting for requests to encode".into());
                 }
                 Ok(res) => match res {
                     None => break,
@@ -263,7 +263,7 @@ impl ClickhouseExporter {
             let poll_res = timeout_at(finish_sending, export_futures.next()).await;
             match poll_res {
                 Err(_) => {
-                    return Err("DatadogExporter, timed out waiting for requests to finish".into());
+                    return Err("ClickHouseExporter, timed out waiting for requests to finish".into());
                 }
                 Ok(res) => match res {
                     None => {
@@ -274,7 +274,7 @@ impl ClickhouseExporter {
                         if let Err(e) = r {
                             error!(type_name,
                                 error = ?e,
-                                "DatadogExporter error from endpoint."
+                                "ClickHouseExporter error from endpoint."
                             );
 
                             drain_errors += 1;
