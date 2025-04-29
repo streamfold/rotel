@@ -37,7 +37,11 @@ pub struct ClickhouseExporterArgs {
     pub clickhouse_exporter_password: Option<String>,
 
     /// Clickhouse Exporter async insert
-    #[arg(long, env = "ROTEL_CLICKHOUSE_EXPORTER_ASYNC_INSERT", default_value = "true")]
+    #[arg(
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_ASYNC_INSERT",
+        default_value = "true"
+    )]
     pub clickhouse_exporter_async_insert: String,
 }
 

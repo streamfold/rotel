@@ -5,7 +5,7 @@ use crate::exporters::clickhouse::ClickhouseExporter;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{parse_bool_value, AgentRun, DebugLogParam, Exporter};
+use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
 use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::otlp_exporter::{
     build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
@@ -412,7 +412,8 @@ impl Agent {
                     return Err("must specify a Clickhouse exporter endpoint".into());
                 }
 
-                let async_insert = parse_bool_value(config.clickhouse_exporter.clickhouse_exporter_async_insert)?;
+                let async_insert =
+                    parse_bool_value(config.clickhouse_exporter.clickhouse_exporter_async_insert)?;
 
                 let mut builder = ClickhouseExporter::builder(
                     config

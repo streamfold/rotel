@@ -91,7 +91,7 @@ impl ClickhouseExporterBuilder {
         self.compression = compression.into();
         self
     }
-    
+
     pub fn with_async_insert(mut self, async_insert: bool) -> Self {
         self.async_insert = async_insert;
         self
