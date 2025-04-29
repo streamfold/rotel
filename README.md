@@ -146,6 +146,8 @@ script which is provided in this repo will output a Clickhouse schema that is su
 schema used in the OpenTelemetry
 [Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
 
+_The Clickhouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse) crate._
+
 ---
 
 **Notes**:
