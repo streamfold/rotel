@@ -51,7 +51,7 @@ impl TelemetryActivation {
                 }
             }
             Exporter::Clickhouse => TelemetryActivation {
-                logs: TelemetryState::NoListeners,
+                logs: TelemetryState::Active,
                 traces: TelemetryState::Active,
                 metrics: TelemetryState::NoListeners,
             },

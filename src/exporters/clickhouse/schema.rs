@@ -1,6 +1,10 @@
 use serde::Serialize;
 
 //
+// Trace spans
+//
+
+//
 // *** NOTE ***
 //
 // The serde configuration of the column names here currently does not do anything. The column
@@ -68,6 +72,52 @@ pub fn get_span_row_col_keys() -> String {
         "Links.SpanId",
         "Links.TraceState",
         "Links.Attributes",
+    ];
+
+    fields.join(",")
+}
+
+//
+// Log records
+//
+
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LogRecordRow {
+    pub(crate) timestamp: u64,
+    pub(crate) trace_id: String,
+    pub(crate) span_id: String,
+    pub(crate) trace_flags: u8,
+    pub(crate) severity_text: String,
+    pub(crate) severity_number: u8,
+    pub(crate) service_name: String,
+    pub(crate) body: String,
+    pub(crate) resource_schema_url: String,
+    pub(crate) resource_attributes: Vec<(String, String)>,
+    pub(crate) scope_schema_url: String,
+    pub(crate) scope_name: String,
+    pub(crate) scope_version: String,
+    pub(crate) scope_attributes: Vec<(String, String)>,
+    pub(crate) log_attributes: Vec<(String, String)>,
+}
+
+pub fn get_log_row_col_keys() -> String {
+    let fields = vec![
+        "Timestamp",
+        "TraceId",
+        "SpanId",
+        "TraceFlags",
+        "SeverityText",
+        "SeverityNumber",
+        "ServiceName",
+        "Body",
+        "ResourceSchemaUrl",
+        "ResourceAttributes",
+        "ScopeSchemaUrl",
+        "ScopeName",
+        "ScopeVersion",
+        "ScopeAttributes",
+        "LogAttributes",
     ];
 
     fields.join(",")

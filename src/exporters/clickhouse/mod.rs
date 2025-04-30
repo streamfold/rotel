@@ -16,7 +16,7 @@ use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::exporter::Exporter;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
 use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
-use crate::exporters::clickhouse::schema::get_span_row_col_keys;
+use crate::exporters::clickhouse::schema::{get_log_row_col_keys, get_span_row_col_keys};
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http;
 use crate::exporters::http::client::ResponseDecode;
@@ -26,6 +26,7 @@ use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
 use tower::{BoxError, ServiceBuilder};
@@ -46,7 +47,6 @@ pub enum Compression {
 #[derive(Default)]
 pub struct ClickhouseExporterBuilder {
     retry_config: RetryConfig,
-    flush_receiver: Option<FlushReceiver>,
     compression: Compression,
     endpoint: String,
     database: String,
@@ -55,6 +55,14 @@ pub struct ClickhouseExporterBuilder {
     auth_password: Option<String>,
     async_insert: bool,
 }
+
+type ExporterType<'a, Resource> = Exporter<
+    RequestBuilderMapper<
+        RecvStream<'a, Vec<Resource>>,
+        Resource,
+        RequestBuilder<Resource, Transformer>,
+    >,
+>;
 
 impl ClickhouseExporterBuilder {
     pub fn new(
@@ -68,11 +76,6 @@ impl ClickhouseExporterBuilder {
             table_prefix,
             ..Default::default()
         }
-    }
-
-    pub fn with_flush_receiver(mut self, flush_receiver: Option<FlushReceiver>) -> Self {
-        self.flush_receiver = flush_receiver;
-        self
     }
 
     pub fn with_compression(mut self, compression: impl Into<Compression>) -> Self {
@@ -99,16 +102,7 @@ impl ClickhouseExporterBuilder {
         &self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
-    ) -> Result<
-        Exporter<
-            RequestBuilderMapper<
-                RecvStream<'a, Vec<ResourceSpans>>,
-                ResourceSpans,
-                RequestBuilder<ResourceSpans, Transformer>,
-            >,
-        >,
-        BoxError,
-    > {
+    ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(self.compression.clone());
@@ -135,43 +129,74 @@ impl ClickhouseExporterBuilder {
 
         let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
 
-        let inner = Exporter::new(
+        let exp = Exporter::new(
             enc_stream,
             svc,
             flush_receiver,
             Duration::from_secs(1),
             Duration::from_secs(2),
         );
-        //
-        // let exp = ClickhouseExporter{
-        //     //rx,
-        //     inner,
-        // };
 
-        Ok(inner)
+        Ok(exp)
+    }
+
+    pub fn build_logs_exporter<'a>(
+        &self,
+        rx: BoundedReceiver<Vec<ResourceLogs>>,
+        flush_receiver: Option<FlushReceiver>,
+    ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
+        let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
+
+        let transformer = Transformer::new(self.compression.clone());
+
+        let logs_sql = get_logs_sql(self.table_prefix.clone());
+        let api_req_builder = ApiRequestBuilder::new(
+            self.endpoint.clone(),
+            self.database.clone(),
+            logs_sql,
+            self.compression.clone(),
+            self.auth_user.clone(),
+            self.auth_password.clone(),
+            self.async_insert,
+        )?;
+
+        let req_builder = RequestBuilder::new(transformer, api_req_builder)?;
+
+        let retry_layer = RetryPolicy::new(self.retry_config.clone(), None);
+
+        let svc = ServiceBuilder::new()
+            .retry(retry_layer)
+            .timeout(Duration::from_secs(5))
+            .service(client);
+
+        let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
+
+        let exp = Exporter::new(
+            enc_stream,
+            svc,
+            flush_receiver,
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+        );
+
+        Ok(exp)
     }
 }
-//
-// impl ClickhouseExporter {
-//     pub fn builder(
-//         endpoint: String,
-//         database: String,
-//         table_prefix: String,
-//     ) -> ClickhouseExporterBuilder {
-//         ClickhouseExporterBuilder {
-//             endpoint,
-//             database,
-//             table_prefix,
-//             ..Default::default()
-//         }
-//     }
-// }
 
 fn get_traces_sql(table_prefix: String) -> String {
+    build_insert_sql(get_table_name(table_prefix, "logs"),
+                     get_log_row_col_keys())
+}
+
+fn get_logs_sql(table_prefix: String) -> String {
+    build_insert_sql(get_table_name(table_prefix, "traces"),
+                     get_span_row_col_keys())
+}
+
+fn build_insert_sql(table: String, cols: String) -> String {
     format!(
         "INSERT INTO {} ({}) FORMAT RowBinary",
-        get_table_name(table_prefix, "traces"),
-        get_span_row_col_keys()
+        table, cols,
     )
 }
 
@@ -196,7 +221,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;

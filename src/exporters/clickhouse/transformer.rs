@@ -1,9 +1,11 @@
-use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
-use crate::exporters::clickhouse::schema::SpanRow;
+use crate::exporters::clickhouse::schema::{LogRecordRow, SpanRow};
+use crate::exporters::clickhouse::Compression;
 use crate::otlp::cvattr;
-use crate::otlp::cvattr::ConvertedAttrKeyValue;
+use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrValue};
+use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
@@ -29,10 +31,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
 
             for ss in rs.scope_spans {
-                let (scope_name, scope_version) = match ss.scope.as_ref() {
-                    None => ("".to_string(), "".to_string()),
-                    Some(scope) => (scope.name.clone(), scope.version.clone()),
-                };
+                let (scope_name, scope_version) = get_scope_properties(ss.scope.as_ref());
 
                 for span in ss.spans {
                     let span_attrs = cvattr::convert(&span.attributes);
@@ -99,6 +98,65 @@ impl TransformPayload<ResourceSpans> for Transformer {
     }
 }
 
+impl TransformPayload<ResourceLogs> for Transformer {
+    fn transform(&self, input: Vec<ResourceLogs>) -> Result<ClickhousePayload, BoxError> {
+        let mut payload_builder = ClickhousePayloadBuilder::new(self.compression.clone());
+        for rl in input {
+            let res_attrs = rl.resource.unwrap_or_default().attributes;
+            let res_attrs = cvattr::convert(&res_attrs);
+            let service_name = find_attribute(SERVICE_NAME, &res_attrs);
+            let res_schema_url = rl.schema_url;
+
+            for sl in rl.scope_logs {
+                let (scope_name, scope_version) = get_scope_properties(sl.scope.as_ref());
+
+                let scope_attrs = match sl.scope.as_ref() {
+                    None => Vec::new(),
+                    Some(scope) => cvattr::convert(&scope.attributes)
+                };
+
+                for log in sl.log_records {
+                    let log_attrs = cvattr::convert(&log.attributes);
+
+                    let body_conv : Option<ConvertedAttrValue> = match log.body {
+                        None => None,
+                        Some(av) => av.value.map(|v| v.into())
+                    };
+
+                    let row = LogRecordRow {
+                        timestamp: log.time_unix_nano,
+                        trace_id: hex::encode(log.trace_id),
+                        span_id: hex::encode(log.span_id),
+                        trace_flags: (log.flags &  0x000000FF) as u8,
+                        severity_text: log.severity_text,
+                        severity_number: (log.severity_number & 0x000000FF) as u8,
+                        service_name: service_name.clone(),
+                        body: body_conv.map(|av| av.to_string()).unwrap_or_default(),
+                        resource_schema_url: res_schema_url.clone(),
+                        resource_attributes: attrs_as_pairs(&res_attrs),
+                        scope_schema_url: sl.schema_url.clone(),
+                        scope_name: scope_name.clone(),
+                        scope_version: scope_version.clone(),
+                        scope_attributes: attrs_as_pairs(&scope_attrs),
+                        log_attributes: attrs_as_pairs(&log_attrs),
+                    };
+
+                    payload_builder.add_row(&row)?;
+                }
+            }
+        }
+
+        payload_builder.finish()
+    }
+}
+
+fn get_scope_properties(scope: Option<&InstrumentationScope>) -> (String, String) {
+    match scope {
+        None => ("".to_string(), "".to_string()),
+        Some(scope) => (scope.name.clone(), scope.version.clone()),
+    }
+}
+
 fn status_code(span: &Span) -> String {
     match &span.status {
         None => "Unset".to_string(),
@@ -117,14 +175,14 @@ fn status_message(span: &Span) -> String {
     }
 }
 
-fn attrs_as_pairs(attrs: &Vec<ConvertedAttrKeyValue>) -> Vec<(String, String)> {
+fn attrs_as_pairs(attrs: &[ConvertedAttrKeyValue]) -> Vec<(String, String)> {
     attrs
         .iter()
         .map(|kv| (kv.0.clone(), kv.1.to_string()))
         .collect()
 }
 
-fn find_attribute(attr: &str, attributes: &Vec<ConvertedAttrKeyValue>) -> String {
+fn find_attribute(attr: &str, attributes: &[ConvertedAttrKeyValue]) -> String {
     attributes
         .iter()
         .find(|kv| kv.0 == attr)

@@ -1,11 +1,11 @@
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterBuilder;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
+use crate::init::args::{parse_bool_value, AgentRun, DebugLogParam, Exporter};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
@@ -26,8 +26,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
@@ -423,7 +423,6 @@ impl Agent {
                     config.clickhouse_exporter.clickhouse_exporter_database,
                     config.clickhouse_exporter.clickhouse_exporter_table_prefix,
                 )
-                .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
                 .with_compression(config.clickhouse_exporter.clickhouse_exporter_compression)
                 .with_async_insert(async_insert);
 
@@ -435,23 +434,44 @@ impl Agent {
                     builder = builder.with_password(password);
                 }
 
-                //let exp = builder.build(trace_pipeline_out_rx)?;
+                // Trace spans
                 let exp = builder.build_traces_exporter(
                     trace_pipeline_out_rx,
                     self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 )?;
 
+                let token = exporters_cancel.clone();
                 exporters_task_set.spawn(async move {
                     let res = exp.start(token).await;
                     if let Err(e) = res {
                         error!(
                             error = e,
-                            "Clickhouse exporter returned from run loop with error."
+                            "Clickhouse traces exporter returned from run loop with error."
                         );
                     }
 
                     Ok(())
                 });
+
+                // Log records
+                let exp = builder.build_logs_exporter(
+                    logs_pipeline_out_rx,
+                    self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                )?;
+
+                let token = exporters_cancel.clone();
+                exporters_task_set.spawn(async move {
+                    let res = exp.start(token).await;
+                    if let Err(e) = res {
+                        error!(
+                            error = e,
+                            "Clickhouse logs exporter returned from run loop with error."
+                        );
+                    }
+
+                    Ok(())
+                });
+
             }
         }
 
