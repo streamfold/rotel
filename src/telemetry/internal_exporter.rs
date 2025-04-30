@@ -32,9 +32,7 @@ impl PushMetricExporter for InternalOTLPMetricsExporter {
             // So here we're using the main metrics OTLPOutput and that has a dependency on whether metrics have been disabled
             // at the receiver. So that means if metrics receiving is disabled for this rotel instance, so is the metrics pipeline.
             // However, we may want to special case that an allow a metrics pipeline to run but only for internal metrics.
-            None => Err(OTelSdkError::InternalFailure(
-                "metrics have been disabled".to_string(),
-            )),
+            None => Ok(()),
             Some(mo) => {
                 let req = ExportMetricsServiceRequest::from(&*metrics);
                 let res = mo.send(req.resource_metrics).await;
