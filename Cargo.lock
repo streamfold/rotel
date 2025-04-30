@@ -568,6 +568,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
 dependencies = [
  "memchr",
+ "regex-automata 0.4.9",
+ "serde",
 ]
 
 [[package]]
@@ -2995,6 +2997,7 @@ dependencies = [
 name = "rotel"
 version = "0.0.1-alpha3"
 dependencies = [
+ "bstr",
  "bytes",
  "chrono",
  "cityhash-rs",

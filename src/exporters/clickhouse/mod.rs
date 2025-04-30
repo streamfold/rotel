@@ -1,6 +1,7 @@
 mod api_request;
 mod ch_error;
 mod compression;
+mod exception;
 mod payload;
 mod request_builder;
 mod request_builder_mapper;
@@ -10,6 +11,7 @@ mod transformer;
 
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
+use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
 use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
@@ -323,8 +325,90 @@ fn get_table_name(table_prefix: String, table: &str) -> String {
 pub struct ClickhouseRespDecoder;
 
 impl ResponseDecode<()> for ClickhouseRespDecoder {
-    // todo: look at response
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        Ok(())
+    fn decode(&self, resp: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
+        match extract_exception(resp.as_ref()) {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate utilities;
+
+    use super::*;
+    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::exporters::crypto_init_tests::init_crypto;
+    use httpmock::prelude::*;
+    use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+    use tokio::join;
+    use tokio_test::{assert_err, assert_ok};
+    use tokio_util::sync::CancellationToken;
+    use utilities::otlp::FakeOTLP;
+
+    #[tokio::test]
+    async fn success() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).body("ohi");
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
+        let exporter = new_exporter(addr, brx);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        let traces = FakeOTLP::trace_service_request();
+        btx.send(traces.resource_spans).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_ok!(res.0);
+
+        hello_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn db_exception() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                // Must keep newline for matching
+                .body("Code: 395. DB::Exception: Value passed to 'throwIf' function is non-zero: while executing 'FUNCTION throwIf(equals(number, 2) :: 1) -> throwIf(equals(number, 2))
+");
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
+        let exporter = new_exporter(addr, brx);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
+
+        let traces = FakeOTLP::trace_service_request();
+        btx.send(traces.resource_spans).await.unwrap();
+        drop(btx);
+        let res = join!(jh).0.unwrap();
+        assert_err!(res);
+
+        hello_mock.assert();
+    }
+
+    fn new_exporter(addr: String, brx: BoundedReceiver<Vec<ResourceSpans>>) -> ClickhouseExporter {
+        ClickhouseExporter::builder(addr, "otel".to_string(), "otel".to_string())
+            .build(brx)
+            .unwrap()
     }
 }
