@@ -99,7 +99,16 @@ impl ClickhouseExporterBuilder {
         &self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
-    ) -> Result<Exporter<RequestBuilderMapper<RecvStream<'a, Vec<ResourceSpans>>, ResourceSpans, RequestBuilder<ResourceSpans, Transformer>>>, BoxError> {
+    ) -> Result<
+        Exporter<
+            RequestBuilderMapper<
+                RecvStream<'a, Vec<ResourceSpans>>,
+                ResourceSpans,
+                RequestBuilder<ResourceSpans, Transformer>,
+            >,
+        >,
+        BoxError,
+    > {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(self.compression.clone());
@@ -187,7 +196,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;

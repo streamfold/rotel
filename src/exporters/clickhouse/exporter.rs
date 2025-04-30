@@ -1,9 +1,9 @@
-use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::ClickhouseRespDecoder;
+use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::retry::RetryPolicy;
-use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use http::Request;
@@ -11,13 +11,13 @@ use std::error::Error;
 use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tokio::{pin, select};
 use tokio_util::sync::CancellationToken;
-use tower::retry::{Retry as TowerRetry, Retry};
-use tower::timeout::Timeout;
 use tower::BoxError;
 use tower::Service;
+use tower::retry::{Retry as TowerRetry, Retry};
+use tower::timeout::Timeout;
 use tracing::{debug, error, info, warn};
 
 pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 10;

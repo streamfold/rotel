@@ -76,7 +76,7 @@ pub fn bounded<T>(size: usize) -> (BoundedSender<T>, BoundedReceiver<T>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded, SendError};
+    use super::{SendError, bounded};
     use tokio_test::{assert_ok, assert_pending, assert_ready, task::spawn};
 
     #[tokio::test]
