@@ -2,7 +2,7 @@ use crate::model::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
 use crate::model::{
-    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans, RSpan,
+    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans,
 };
 use std::mem;
 use std::sync::{Arc, Mutex};
@@ -10,53 +10,57 @@ use std::sync::{Arc, Mutex};
 pub fn transform_spans(
     scope_spans: Vec<Arc<Mutex<RScopeSpans>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::ScopeSpans> {
-    let mut new_scope_spans = vec![];
+    let mut new_scope_spans = Vec::with_capacity(scope_spans.iter().len());
     for ss in scope_spans.iter() {
         let ss = ss.lock().unwrap();
         let schema = ss.schema_url.clone();
         let scope = convert_scope(ss.scope.clone());
         let ss = ss.spans.lock().unwrap();
-        let mut spans = vec![];
+        let mut spans = Vec::with_capacity(ss.len());
         for span in ss.iter() {
-            let mut guard = span.lock().unwrap();
-            let moved_data = mem::replace(
-                &mut *guard,
-                RSpan {
-                    trace_id: vec![],
-                    span_id: vec![],
-                    trace_state: "".to_string(),
-                    parent_span_id: vec![],
-                    flags: 0,
-                    name: "".to_string(),
-                    kind: 0,
-                    events: Arc::new(Mutex::new(vec![])),
-                    links: Arc::new(Mutex::new(vec![])),
-                    start_time_unix_nano: 0,
-                    end_time_unix_nano: 0,
-                    attributes: Arc::new(Default::default()),
-                    dropped_attributes_count: 0,
-                    dropped_events_count: 0,
-                    dropped_links_count: 0,
-                    status: Arc::new(Mutex::new(None)),
-                },
-            );
-            let status = mem::replace(&mut *moved_data.status.lock().unwrap(), Default::default());
+            //let mut guard = span.lock().unwrap();
+            // let moved_data = mem::take(
+            //     &mut *span.lock().unwrap(),
+            //     // RSpan {
+            //     //     trace_id: vec![],
+            //     //     span_id: vec![],
+            //     //     trace_state: "".to_string(),
+            //     //     parent_span_id: vec![],
+            //     //     flags: 0,
+            //     //     name: "".to_string(),
+            //     //     kind: 0,
+            //     //     events: Arc::new(Mutex::new(vec![])),
+            //     //     links: Arc::new(Mutex::new(vec![])),
+            //     //     start_time_unix_nano: 0,
+            //     //     end_time_unix_nano: 0,
+            //     //     attributes: Arc::new(Default::default()),
+            //     //     dropped_attributes_count: 0,
+            //     //     dropped_events_count: 0,
+            //     //     dropped_links_count: 0,
+            //     //     status: Arc::new(Mutex::new(None)),
+            //     // },
+            // );
+            let span = span.lock().unwrap();
+            let status = mem::take(&mut *span.status.lock().unwrap());
+
             spans.push(opentelemetry_proto::tonic::trace::v1::Span {
-                trace_id: moved_data.trace_id,
-                span_id: moved_data.span_id,
-                trace_state: moved_data.trace_state,
-                parent_span_id: moved_data.parent_span_id,
-                flags: moved_data.flags,
-                name: moved_data.name,
-                kind: moved_data.kind,
-                start_time_unix_nano: moved_data.start_time_unix_nano,
-                end_time_unix_nano: moved_data.end_time_unix_nano,
-                attributes: convert_attributes(moved_data.attributes),
-                dropped_attributes_count: moved_data.dropped_attributes_count,
-                events: convert_events(moved_data.events),
-                links: convert_links(moved_data.links),
-                dropped_events_count: moved_data.dropped_events_count,
-                dropped_links_count: moved_data.dropped_links_count,
+                trace_id: span.trace_id.clone(),
+                span_id: span.span_id.clone(),
+                trace_state: span.trace_state.clone(),
+                parent_span_id: span.parent_span_id.clone(),
+                flags: span.flags,
+                name: span.name.clone(),
+                kind: span.kind,
+                start_time_unix_nano: span.start_time_unix_nano,
+                end_time_unix_nano: span.end_time_unix_nano,
+                attributes: convert_attributes(span.attributes.clone()),
+                dropped_attributes_count: span.dropped_attributes_count,
+                events: convert_events(span.events.clone()),
+                //events: vec![],
+                //links: vec![],
+                links: convert_links(span.links.clone()),
+                dropped_events_count: span.dropped_events_count,
+                dropped_links_count: span.dropped_links_count,
                 status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
                     message: s.message,
                     code: s.code,
@@ -75,13 +79,15 @@ pub fn transform_spans(
 fn convert_events(
     events: Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Event> {
-    let events = Arc::into_inner(events).unwrap();
-    let mut events = events.into_inner().unwrap();
+    // let events = Arc::into_inner(events).unwrap();
+    // let mut events = events.into_inner().unwrap();
+    let mut events = mem::take(&mut *events.lock().unwrap());
     events
         .drain(..) // Creates an iterator that removes all elements
         .map(|e| {
-            let e = Arc::into_inner(e).unwrap();
-            let e = e.into_inner().unwrap();
+            // let e = Arc::into_inner(e).unwrap();
+            // let e = e.into_inner().unwrap();
+            let e = mem::take(&mut *e.lock().unwrap());
             opentelemetry_proto::tonic::trace::v1::span::Event {
                 time_unix_nano: e.time_unix_nano,
                 name: e.name.clone(),
@@ -95,13 +101,16 @@ fn convert_events(
 fn convert_links(
     links: Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Link> {
-    let links = Arc::into_inner(links).unwrap();
-    let mut links = links.into_inner().unwrap();
+    // let links = Arc::into_inner(links).unwrap();
+    // let mut links = links.into_inner().unwrap();
+    let mut links = mem::take(&mut *links.lock().unwrap());
+
     links
         .drain(..) // Creates an iterator that removes all elements
         .map(|l| {
-            let l = Arc::into_inner(l).unwrap();
-            let l = l.into_inner().unwrap();
+            //let l = Arc::into_inner(l).unwrap();
+            //let l = l.into_inner().unwrap();
+            let l = mem::take(&mut *l.lock().unwrap());
             opentelemetry_proto::tonic::trace::v1::span::Link {
                 trace_id: l.trace_id,
                 span_id: l.span_id,
@@ -137,10 +146,9 @@ fn convert_attributes(
     attrs: Arc<Mutex<Vec<RKeyValue>>>,
 ) -> Vec<opentelemetry_proto::tonic::common::v1::KeyValue> {
     let attrs = attrs.lock().unwrap();
-    let mut new_attrs = vec![];
+    let mut new_attrs = Vec::with_capacity(attrs.len());
     for attr in attrs.iter() {
-        let key = attr.key.lock().unwrap();
-        let key = key.to_string();
+        let key = mem::take(&mut *attr.key.lock().unwrap());
         let mut any_value = attr.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
@@ -163,21 +171,16 @@ pub fn transform_resource(
 ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
     // let attributes = Arc::into_inner(resource.attributes).unwrap();
     // let attributes = attributes.into_inner().unwrap();
-    let attributes = mem::replace(
-        &mut *resource.attributes.lock().unwrap(),
-        Default::default(),
-    );
+    let attributes = mem::take(&mut *resource.attributes.lock().unwrap());
     //let dropped_attributes_count = Arc::into_inner(resource.dropped_attributes_count).unwrap();
-    let dropped_attributes_count = mem::replace(
-        &mut *resource.dropped_attributes_count.lock().unwrap(),
-        Default::default(),
-    );
+    let dropped_attributes_count =
+        mem::take(&mut *resource.dropped_attributes_count.lock().unwrap());
     //let dropped_attributes_count = dropped_attributes_count.into_inner().unwrap();
-    let mut new_attrs = vec![];
+    let mut new_attrs = Vec::with_capacity(attributes.len());
     for attr in attributes.iter() {
         let kv = attr.lock().unwrap();
-        let key = kv.key.lock().unwrap();
-        let key = key.to_string();
+        let key = mem::take(&mut *kv.key.lock().unwrap());
+        //let key = key.to_string();
         let mut any_value = kv.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
@@ -201,7 +204,7 @@ pub fn transform_resource(
 pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::AnyValue {
     // let inner_value = Arc::into_inner(v.value).unwrap();
     // let inner_value = inner_value.into_inner().unwrap();
-    let inner_value = mem::replace(&mut *v.value.lock().unwrap(), Default::default());
+    let inner_value = mem::take(&mut *v.value.lock().unwrap());
     if inner_value.is_none() {
         return opentelemetry_proto::tonic::common::v1::AnyValue { value: None };
     }
@@ -219,7 +222,8 @@ pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::An
             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)),
         },
         RVArrayValue(a) => {
-            let mut values = vec![];
+            println!("in here");
+            let mut values = Vec::with_capacity(a.values.lock().unwrap().len());
             let inner_values = Arc::into_inner(a.values).unwrap();
             let inner_values = inner_values.into_inner().unwrap();
             // TODO: We might need to remove these from the vec?
@@ -242,18 +246,20 @@ pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::An
             }
         }
         KvListValue(kvl) => {
-            let mut values = vec![];
+            println!("in here");
+            //let mut values = vec![];
             // let inner_values = Arc::into_inner(kvl.values).unwrap();
             // let inner_values = inner_values.into_inner().unwrap();
-            let inner_values = mem::replace(&mut *kvl.values.lock().unwrap(), Default::default());
+            let inner_values = mem::take(&mut *kvl.values.lock().unwrap());
+            let mut values = Vec::with_capacity(inner_values.len());
             // TODO: We might need to remove these from the vec?
             for kv in inner_values {
-                let key = mem::replace(&mut *kv.key.lock().unwrap(), Default::default());
+                let key = mem::take(&mut *kv.key.lock().unwrap());
                 //let key = Arc::into_inner(kv.key).unwrap();
                 //let key = key.into_inner().unwrap();
                 // let value = Arc::into_inner(kv.value).unwrap();
                 // let value = value.into_inner().unwrap();
-                let value = mem::replace(&mut *kv.value.lock().unwrap(), Default::default());
+                let value = mem::take(&mut *kv.value.lock().unwrap());
                 let mut new_value = None;
                 if value.is_some() {
                     new_value = Some(convert_value(value.unwrap()));

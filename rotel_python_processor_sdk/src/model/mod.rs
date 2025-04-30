@@ -87,7 +87,7 @@ pub struct RInstrumentationScope {
     pub dropped_attributes_count: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RSpan {
     pub trace_id: Vec<u8>,
     pub span_id: Vec<u8>,
@@ -107,7 +107,7 @@ pub struct RSpan {
     pub status: Arc<Mutex<Option<RStatus>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct REvent {
     pub time_unix_nano: u64,
     pub name: String,
@@ -133,7 +133,7 @@ pub enum RStatusCode {
     Error = 2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RLink {
     pub trace_id: Vec<u8>,
     pub span_id: Vec<u8>,
@@ -200,7 +200,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
             resource_span.resource = py_transform::transform_resource(resource.unwrap());
         }
 
-        let scope_spans = mem::replace(&mut *inner.scope_spans.lock().unwrap(), Default::default());
+        let scope_spans = mem::take(&mut *inner.scope_spans.lock().unwrap());
         // let scope_spans = Arc::into_inner(inner.scope_spans)
         //     .unwrap()
         //     .into_inner()
