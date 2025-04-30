@@ -1,18 +1,13 @@
-use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
-use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
-use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::clickhouse::ClickhouseRespDecoder;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::retry::RetryPolicy;
 use crate::topology::flush_control::{conditional_flush, FlushReceiver};
-use flume::r#async::RecvStream;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use http::Request;
 use std::error::Error;
-use std::mem::take;
 use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;

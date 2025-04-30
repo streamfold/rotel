@@ -21,18 +21,14 @@ use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::http_client::HttpClient;
-use crate::exporters::http::response::Response;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use std::pin::Pin;
 use std::time::Duration;
 use tower::{BoxError, ServiceBuilder};
-
-type ExportFuture = Pin<Box<dyn Future<Output = Result<Response<()>, BoxError>> + Send>>;
 
 // Buffer sizes from Clickhouse driver
 pub(crate) const BUFFER_SIZE: usize = 256 * 1024;
@@ -73,7 +69,7 @@ impl ClickhouseExporterBuilder {
             ..Default::default()
         }
     }
-    
+
     pub fn with_flush_receiver(mut self, flush_receiver: Option<FlushReceiver>) -> Self {
         self.flush_receiver = flush_receiver;
         self
@@ -137,7 +133,7 @@ impl ClickhouseExporterBuilder {
             Duration::from_secs(1),
             Duration::from_secs(2),
         );
-        // 
+        //
         // let exp = ClickhouseExporter{
         //     //rx,
         //     inner,
@@ -146,7 +142,7 @@ impl ClickhouseExporterBuilder {
         Ok(inner)
     }
 }
-// 
+//
 // impl ClickhouseExporter {
 //     pub fn builder(
 //         endpoint: String,
