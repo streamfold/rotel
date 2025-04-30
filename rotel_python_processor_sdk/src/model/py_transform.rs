@@ -53,13 +53,13 @@ pub fn transform_spans(
                 kind: moved_data.kind,
                 start_time_unix_nano: moved_data.start_time_unix_nano,
                 end_time_unix_nano: moved_data.end_time_unix_nano,
-                attributes: vec![],
-                //attributes: convert_attributes(moved_data.attributes),
+                //attributes: vec![],
+                attributes: convert_attributes(moved_data.attributes),
                 dropped_attributes_count: moved_data.dropped_attributes_count,
-                //events: convert_events(moved_data.events),
-                events: vec![],
-                links: vec![],
-                //links: convert_links(moved_data.links),
+                events: convert_events(moved_data.events),
+                //events: vec![],
+                //links: vec![],
+                links: convert_links(moved_data.links),
                 dropped_events_count: moved_data.dropped_events_count,
                 dropped_links_count: moved_data.dropped_links_count,
                 status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
@@ -83,20 +83,17 @@ fn convert_events(
     // let events = Arc::into_inner(events).unwrap();
     // let mut events = events.into_inner().unwrap();
     let mut events = mem::take(&mut *events.lock().unwrap());
-    events
-        .drain(..) // Creates an iterator that removes all elements
-        .map(|e| {
-            // let e = Arc::into_inner(e).unwrap();
-            // let e = e.into_inner().unwrap();
-            let e = mem::take(&mut *e.lock().unwrap());
-            opentelemetry_proto::tonic::trace::v1::span::Event {
-                time_unix_nano: e.time_unix_nano,
-                name: e.name.clone(),
-                attributes: convert_attributes(e.attributes),
-                dropped_attributes_count: e.dropped_attributes_count,
-            }
-        })
-        .collect()
+    let mut new_events = Vec::with_capacity(events.len());
+    for e in events {
+        let e = mem::take(&mut *e.lock().unwrap());
+        new_events.push(opentelemetry_proto::tonic::trace::v1::span::Event {
+            time_unix_nano: e.time_unix_nano,
+            name: e.name.clone(),
+            attributes: convert_attributes(e.attributes),
+            dropped_attributes_count: e.dropped_attributes_count,
+        });
+    }
+    new_events
 }
 
 fn convert_links(
@@ -105,23 +102,19 @@ fn convert_links(
     // let links = Arc::into_inner(links).unwrap();
     // let mut links = links.into_inner().unwrap();
     let mut links = mem::take(&mut *links.lock().unwrap());
-
-    links
-        .drain(..) // Creates an iterator that removes all elements
-        .map(|l| {
-            //let l = Arc::into_inner(l).unwrap();
-            //let l = l.into_inner().unwrap();
-            let l = mem::take(&mut *l.lock().unwrap());
-            opentelemetry_proto::tonic::trace::v1::span::Link {
-                trace_id: l.trace_id,
-                span_id: l.span_id,
-                attributes: convert_attributes(l.attributes),
-                dropped_attributes_count: l.dropped_attributes_count,
-                trace_state: l.trace_state,
-                flags: l.flags,
-            }
-        })
-        .collect()
+    let mut new_links = Vec::with_capacity(links.len());
+    for l in links {
+        let l = mem::take(&mut *l.lock().unwrap());
+        new_links.push(opentelemetry_proto::tonic::trace::v1::span::Link {
+            trace_id: l.trace_id,
+            span_id: l.span_id,
+            attributes: convert_attributes(l.attributes),
+            dropped_attributes_count: l.dropped_attributes_count,
+            trace_state: l.trace_state,
+            flags: l.flags,
+        });
+    }
+    new_links
 }
 
 fn convert_scope(
