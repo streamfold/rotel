@@ -8,7 +8,7 @@ rust-version = "1.85.1"
 
 [dependencies]
 clap = { version = "4.5.23", features = ["derive", "env"] }
-tokio = { version = "1.43.0", features = ["full"] }
+tokio = { version = "1.43.1", features = ["full"] }
 tokio-util = "0.7.13"
 tokio-stream = "0.1.17"
 tracing = "0.1"
