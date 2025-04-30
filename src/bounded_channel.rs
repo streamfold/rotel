@@ -59,6 +59,10 @@ impl<T> BoundedReceiver<T> {
     pub fn stream(&self) -> RecvStream<'_, T> {
         self.rx.stream()
     }
+
+    pub fn into_stream<'a>(self) -> RecvStream<'a, T> {
+        self.rx.into_stream()
+    }
 }
 
 pub fn bounded<T>(size: usize) -> (BoundedSender<T>, BoundedReceiver<T>) {
@@ -72,7 +76,7 @@ pub fn bounded<T>(size: usize) -> (BoundedSender<T>, BoundedReceiver<T>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SendError, bounded};
+    use super::{bounded, SendError};
     use tokio_test::{assert_ok, assert_pending, assert_ready, task::spawn};
 
     #[tokio::test]

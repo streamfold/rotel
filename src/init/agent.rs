@@ -1,11 +1,11 @@
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
-use crate::exporters::clickhouse::ClickhouseExporter;
+use crate::exporters::clickhouse::ClickhouseExporterBuilder;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
+use crate::init::args::{parse_bool_value, AgentRun, DebugLogParam, Exporter};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
@@ -26,8 +26,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
@@ -415,7 +415,7 @@ impl Agent {
                 let async_insert =
                     parse_bool_value(config.clickhouse_exporter.clickhouse_exporter_async_insert)?;
 
-                let mut builder = ClickhouseExporter::builder(
+                let mut builder = ClickhouseExporterBuilder::new(
                     config
                         .clickhouse_exporter
                         .clickhouse_exporter_endpoint
@@ -435,7 +435,9 @@ impl Agent {
                     builder = builder.with_password(password);
                 }
 
-                let exp = builder.build(trace_pipeline_out_rx)?;
+                //let exp = builder.build(trace_pipeline_out_rx)?;
+                let exp = builder.build_traces_exporter(trace_pipeline_out_rx,
+                                                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))?;
 
                 exporters_task_set.spawn(async move {
                     let res = exp.start(token).await;
