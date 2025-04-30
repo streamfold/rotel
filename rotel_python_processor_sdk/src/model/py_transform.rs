@@ -14,53 +14,54 @@ pub fn transform_spans(
     for ss in scope_spans.iter() {
         let ss = ss.lock().unwrap();
         let schema = ss.schema_url.clone();
-        let scope = convert_scope(ss.scope.clone());
+        //let scope = convert_scope(ss.scope.clone());
         let ss = ss.spans.lock().unwrap();
         let mut spans = Vec::with_capacity(ss.len());
         for span in ss.iter() {
             //let mut guard = span.lock().unwrap();
-            // let moved_data = mem::take(
-            //     &mut *span.lock().unwrap(),
-            //     // RSpan {
-            //     //     trace_id: vec![],
-            //     //     span_id: vec![],
-            //     //     trace_state: "".to_string(),
-            //     //     parent_span_id: vec![],
-            //     //     flags: 0,
-            //     //     name: "".to_string(),
-            //     //     kind: 0,
-            //     //     events: Arc::new(Mutex::new(vec![])),
-            //     //     links: Arc::new(Mutex::new(vec![])),
-            //     //     start_time_unix_nano: 0,
-            //     //     end_time_unix_nano: 0,
-            //     //     attributes: Arc::new(Default::default()),
-            //     //     dropped_attributes_count: 0,
-            //     //     dropped_events_count: 0,
-            //     //     dropped_links_count: 0,
-            //     //     status: Arc::new(Mutex::new(None)),
-            //     // },
-            // );
-            let span = span.lock().unwrap();
-            let status = mem::take(&mut *span.status.lock().unwrap());
+            let moved_data = mem::take(
+                &mut *span.lock().unwrap(),
+                // RSpan {
+                //     trace_id: vec![],
+                //     span_id: vec![],
+                //     trace_state: "".to_string(),
+                //     parent_span_id: vec![],
+                //     flags: 0,
+                //     name: "".to_string(),
+                //     kind: 0,
+                //     events: Arc::new(Mutex::new(vec![])),
+                //     links: Arc::new(Mutex::new(vec![])),
+                //     start_time_unix_nano: 0,
+                //     end_time_unix_nano: 0,
+                //     attributes: Arc::new(Default::default()),
+                //     dropped_attributes_count: 0,
+                //     dropped_events_count: 0,
+                //     dropped_links_count: 0,
+                //     status: Arc::new(Mutex::new(None)),
+                // },
+            );
+            let status = Arc::into_inner(moved_data.status).unwrap();
+            let status = status.into_inner().unwrap();
 
             spans.push(opentelemetry_proto::tonic::trace::v1::Span {
-                trace_id: span.trace_id.clone(),
-                span_id: span.span_id.clone(),
-                trace_state: span.trace_state.clone(),
-                parent_span_id: span.parent_span_id.clone(),
-                flags: span.flags,
-                name: span.name.clone(),
-                kind: span.kind,
-                start_time_unix_nano: span.start_time_unix_nano,
-                end_time_unix_nano: span.end_time_unix_nano,
-                attributes: convert_attributes(span.attributes.clone()),
-                dropped_attributes_count: span.dropped_attributes_count,
-                events: convert_events(span.events.clone()),
-                //events: vec![],
-                //links: vec![],
-                links: convert_links(span.links.clone()),
-                dropped_events_count: span.dropped_events_count,
-                dropped_links_count: span.dropped_links_count,
+                trace_id: moved_data.trace_id,
+                span_id: moved_data.span_id,
+                trace_state: moved_data.trace_state,
+                parent_span_id: moved_data.parent_span_id,
+                flags: moved_data.flags,
+                name: moved_data.name,
+                kind: moved_data.kind,
+                start_time_unix_nano: moved_data.start_time_unix_nano,
+                end_time_unix_nano: moved_data.end_time_unix_nano,
+                attributes: vec![],
+                //attributes: convert_attributes(moved_data.attributes),
+                dropped_attributes_count: moved_data.dropped_attributes_count,
+                //events: convert_events(moved_data.events),
+                events: vec![],
+                links: vec![],
+                //links: convert_links(moved_data.links),
+                dropped_events_count: moved_data.dropped_events_count,
+                dropped_links_count: moved_data.dropped_links_count,
                 status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
                     message: s.message,
                     code: s.code,
@@ -68,7 +69,7 @@ pub fn transform_spans(
             })
         }
         new_scope_spans.push(opentelemetry_proto::tonic::trace::v1::ScopeSpans {
-            scope,
+            scope: None,
             spans,
             schema_url: schema,
         })
