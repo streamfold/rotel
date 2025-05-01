@@ -14,6 +14,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::exporter::Exporter;
+use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
 use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::clickhouse::schema::{get_log_row_col_keys, get_span_row_col_keys};
@@ -29,6 +30,8 @@ use flume::r#async::RecvStream;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
+use tower::retry::Retry as TowerRetry;
+use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
 // Buffer sizes from Clickhouse driver
@@ -56,12 +59,17 @@ pub struct ClickhouseExporterBuilder {
     async_insert: bool,
 }
 
+type SvcType =
+    TowerRetry<RetryPolicy<()>, Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>>;
+
 type ExporterType<'a, Resource> = Exporter<
     RequestBuilderMapper<
         RecvStream<'a, Vec<Resource>>,
         Resource,
         RequestBuilder<Resource, Transformer>,
     >,
+    SvcType,
+    ClickhousePayload,
 >;
 
 impl ClickhouseExporterBuilder {
@@ -223,7 +231,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;

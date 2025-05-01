@@ -1,28 +1,23 @@
-use crate::exporters::clickhouse::ClickhouseRespDecoder;
-use crate::exporters::clickhouse::payload::ClickhousePayload;
-use crate::exporters::http::http_client::HttpClient;
-use crate::exporters::http::response::Response;
-use crate::exporters::http::retry::RetryPolicy;
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use http::Request;
 use std::error::Error;
+use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{timeout_at, Instant};
 use tokio::{pin, select};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tower::Service;
-use tower::retry::{Retry as TowerRetry, Retry};
-use tower::timeout::Timeout;
 use tracing::{debug, error, info, warn};
 
 pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 10;
 
-type ExportFuture = Pin<Box<dyn Future<Output = Result<Response<()>, BoxError>> + Send>>;
+type ExportFuture<Future> = Pin<Box<Future>>;
 
 #[allow(dead_code)] // used in tracing outputs
 #[derive(Clone, Debug)]
@@ -31,27 +26,22 @@ struct Meta {
     telemetry_type: String,
 }
 
-pub struct Exporter<InStr> {
+pub struct Exporter<InStr, Svc, Payload> {
     meta: Meta,
     input: InStr,
-    svc: TowerRetry<
-        RetryPolicy<()>,
-        Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>,
-    >,
+    svc: Svc,
     flush_receiver: Option<FlushReceiver>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
+    _phantom: PhantomData<Payload>
 }
 
-impl<InStr> Exporter<InStr> {
+impl<InStr, Svc, Payload> Exporter<InStr, Svc, Payload> {
     pub fn new(
         exporter_name: &'static str,
         telemetry_type: &'static str,
         input: InStr,
-        svc: TowerRetry<
-            RetryPolicy<()>,
-            Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>,
-        >,
+        svc: Svc,
         flush_receiver: Option<FlushReceiver>,
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
@@ -66,13 +56,20 @@ impl<InStr> Exporter<InStr> {
             flush_receiver,
             encode_drain_max_time,
             export_drain_max_time,
+            _phantom: PhantomData::default(),
         }
     }
 }
 
-impl<InStr> Exporter<InStr>
+impl<InStr, Svc, Payload> Exporter<InStr, Svc, Payload>
 where
-    InStr: Stream<Item = Result<Request<ClickhousePayload>, BoxError>>,
+    InStr: Stream<Item = Result<Request<Payload>, BoxError>>,
+    Svc: Service<Request<Payload>>,
+    <Svc as Service<Request<Payload>>>::Error: Debug,
+    <Svc as Service<Request<Payload>>>::Response: Debug,
+    //<Svc as Service<Payload>>::Response: Clone,
+    //<Svc as Service<Payload>>::Future: Clone,
+    Payload: Clone,
 {
     pub async fn start(mut self, token: CancellationToken) -> Result<(), BoxError> {
         let meta = self.meta.clone();
@@ -80,7 +77,7 @@ where
         let input = self.input;
         pin!(input);
 
-        let mut export_futures: FuturesUnordered<ExportFuture> = FuturesUnordered::new();
+        let mut export_futures: FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>> = FuturesUnordered::new();
         let mut flush_receiver = self.flush_receiver.take();
         loop {
             select! {
@@ -94,11 +91,11 @@ where
                         Ok(rs) => {
                             debug!(rs = ?rs, futures_size = export_futures.len(), ?meta, "Exporter sent response");
 
-                            match rs.status_code().as_u16() {
-                                200..=202 => {},
-                                404 => error!(?meta, "Received 404 when exporting, does the table exist?"),
-                                _ => error!(?meta, "Failed to export: {:?}", rs),
-                            };
+                            // match rs.status_code().as_u16() {
+                            //     200..=202 => {},
+                            //     404 => error!(?meta, "Received 404 when exporting, does the table exist?"),
+                            //     _ => error!(?meta, "Failed to export: {:?}", rs),
+                            // };
                         }
                     }
                 },
@@ -156,19 +153,18 @@ where
     }
 }
 
-async fn drain_futures<InStr>(
+async fn drain_futures<InStr, Svc, Payload>(
     meta: &Meta,
     enc_stream: &mut Pin<&mut InStr>,
-    export_futures: &mut FuturesUnordered<ExportFuture>,
+    export_futures: &mut FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
-    svc: &mut Retry<
-        RetryPolicy<()>,
-        Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>,
-    >,
+    svc: &mut Svc,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
-    InStr: Stream<Item = Result<Request<ClickhousePayload>, BoxError>>,
+    InStr: Stream<Item = Result<Request<Payload>, BoxError>>,
+    Svc: Service<Request<Payload>>,
+    <Svc as Service<Request<Payload>>>::Error: Debug,
 {
     let finish_encoding = Instant::now().add(encode_drain_max_time);
     let finish_sending = Instant::now().add(export_drain_max_time);
