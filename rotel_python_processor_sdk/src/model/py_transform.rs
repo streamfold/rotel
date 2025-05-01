@@ -153,7 +153,7 @@ fn convert_scope(
 fn convert_attributes(
     attr_raw: Vec<KeyValue>,
     attrs_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
-) -> Vec<opentelemetry_proto::tonic::common::v1::KeyValue> {
+) -> Vec<KeyValue> {
     if attrs_arc.is_none() {
         return attr_raw;
     }
