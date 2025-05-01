@@ -13,7 +13,7 @@ mod transformer;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::exception::extract_exception;
-use crate::exporters::clickhouse::exporter::Exporter;
+use crate::exporters::clickhouse::exporter::{Exporter, ResultLogger};
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
 use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
@@ -22,6 +22,7 @@ use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::http_client::HttpClient;
+use crate::exporters::http::response::Response;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
@@ -33,6 +34,7 @@ use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
+use tracing::error;
 
 // Buffer sizes from Clickhouse driver
 pub(crate) const BUFFER_SIZE: usize = 256 * 1024;
@@ -70,6 +72,7 @@ type ExporterType<'a, Resource> = Exporter<
     >,
     SvcType,
     ClickhousePayload,
+    ClickhouseResultLogger,
 >;
 
 impl ClickhouseExporterBuilder {
@@ -142,6 +145,7 @@ impl ClickhouseExporterBuilder {
             "traces",
             enc_stream,
             svc,
+            ClickhouseResultLogger{telemetry_type: "traces".to_string()},
             flush_receiver,
             Duration::from_secs(1),
             Duration::from_secs(2),
@@ -186,6 +190,7 @@ impl ClickhouseExporterBuilder {
             "logs",
             enc_stream,
             svc,
+            ClickhouseResultLogger{telemetry_type: "logs".to_string()},
             flush_receiver,
             Duration::from_secs(1),
             Duration::from_secs(2),
@@ -223,6 +228,20 @@ impl ResponseDecode<()> for ClickhouseRespDecoder {
             None => Ok(()),
             Some(e) => Err(e),
         }
+    }
+}
+
+pub struct ClickhouseResultLogger {
+    telemetry_type: String,
+}
+
+impl ResultLogger<Response<()>> for ClickhouseResultLogger {
+    fn handle(&self, resp: Response<()>) {
+        match resp.status_code().as_u16() {
+            200..=202 => {},
+            404 => error!(self.telemetry_type, "Received a 404 when exporting to Clickhouse, does the table exist?"),
+            _ => error!(self.telemetry_type, "Failed to export to Clickhouse: {:?}", resp),
+        };
     }
 }
 

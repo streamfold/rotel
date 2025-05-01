@@ -17,6 +17,10 @@ use tracing::{debug, error, info, warn};
 
 pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 10;
 
+pub trait ResultLogger<Response> {
+    fn handle(&self, resp: Response);
+}
+
 type ExportFuture<Future> = Pin<Box<Future>>;
 
 #[allow(dead_code)] // used in tracing outputs
@@ -26,22 +30,24 @@ struct Meta {
     telemetry_type: String,
 }
 
-pub struct Exporter<InStr, Svc, Payload> {
+pub struct Exporter<InStr, Svc, Payload, Logger> {
     meta: Meta,
     input: InStr,
     svc: Svc,
+    result_logger: Logger,
     flush_receiver: Option<FlushReceiver>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     _phantom: PhantomData<Payload>
 }
 
-impl<InStr, Svc, Payload> Exporter<InStr, Svc, Payload> {
+impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
     pub fn new(
         exporter_name: &'static str,
         telemetry_type: &'static str,
         input: InStr,
         svc: Svc,
+        result_logger: Logger,
         flush_receiver: Option<FlushReceiver>,
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
@@ -53,6 +59,7 @@ impl<InStr, Svc, Payload> Exporter<InStr, Svc, Payload> {
             },
             input,
             svc,
+            result_logger,
             flush_receiver,
             encode_drain_max_time,
             export_drain_max_time,
@@ -61,14 +68,13 @@ impl<InStr, Svc, Payload> Exporter<InStr, Svc, Payload> {
     }
 }
 
-impl<InStr, Svc, Payload> Exporter<InStr, Svc, Payload>
+impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger>
 where
     InStr: Stream<Item = Result<Request<Payload>, BoxError>>,
     Svc: Service<Request<Payload>>,
     <Svc as Service<Request<Payload>>>::Error: Debug,
     <Svc as Service<Request<Payload>>>::Response: Debug,
-    //<Svc as Service<Payload>>::Response: Clone,
-    //<Svc as Service<Payload>>::Future: Clone,
+    Logger: ResultLogger<<Svc as Service<Request<Payload>>>::Response>,
     Payload: Clone,
 {
     pub async fn start(mut self, token: CancellationToken) -> Result<(), BoxError> {
@@ -91,11 +97,7 @@ where
                         Ok(rs) => {
                             debug!(rs = ?rs, futures_size = export_futures.len(), ?meta, "Exporter sent response");
 
-                            // match rs.status_code().as_u16() {
-                            //     200..=202 => {},
-                            //     404 => error!(?meta, "Received 404 when exporting, does the table exist?"),
-                            //     _ => error!(?meta, "Failed to export: {:?}", rs),
-                            // };
+                            self.result_logger.handle(rs);
                         }
                     }
                 },
