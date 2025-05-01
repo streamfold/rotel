@@ -130,6 +130,8 @@ impl ClickhouseExporterBuilder {
         let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
 
         let exp = Exporter::new(
+            "clickhouse",
+            "traces",
             enc_stream,
             svc,
             flush_receiver,
@@ -172,6 +174,8 @@ impl ClickhouseExporterBuilder {
         let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
 
         let exp = Exporter::new(
+            "clickhouse",
+            "logs",
             enc_stream,
             svc,
             flush_receiver,
@@ -184,20 +188,18 @@ impl ClickhouseExporterBuilder {
 }
 
 fn get_traces_sql(table_prefix: String) -> String {
-    build_insert_sql(get_table_name(table_prefix, "traces"),
-                     get_span_row_col_keys())
+    build_insert_sql(
+        get_table_name(table_prefix, "traces"),
+        get_span_row_col_keys(),
+    )
 }
 
 fn get_logs_sql(table_prefix: String) -> String {
-    build_insert_sql(get_table_name(table_prefix, "logs"),
-                     get_log_row_col_keys())
+    build_insert_sql(get_table_name(table_prefix, "logs"), get_log_row_col_keys())
 }
 
 fn build_insert_sql(table: String, cols: String) -> String {
-    format!(
-        "INSERT INTO {} ({}) FORMAT RowBinary",
-        table, cols,
-    )
+    format!("INSERT INTO {} ({}) FORMAT RowBinary", table, cols,)
 }
 
 fn get_table_name(table_prefix: String, table: &str) -> String {
@@ -221,7 +223,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -289,9 +291,12 @@ mod tests {
         hello_mock.assert();
     }
 
-    fn new_exporter(addr: String, brx: BoundedReceiver<Vec<ResourceSpans>>) -> ClickhouseExporter {
-        ClickhouseExporter::builder(addr, "otel".to_string(), "otel".to_string())
-            .build(brx)
+    fn new_exporter<'a>(
+        addr: String,
+        brx: BoundedReceiver<Vec<ResourceSpans>>,
+    ) -> ExporterType<'a, ResourceSpans> {
+        ClickhouseExporterBuilder::new(addr, "otel".to_string(), "otel".to_string())
+            .build_traces_exporter(brx, None)
             .unwrap()
     }
 }

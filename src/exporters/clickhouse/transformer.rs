@@ -1,7 +1,7 @@
+use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::schema::{LogRecordRow, SpanRow};
-use crate::exporters::clickhouse::Compression;
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrValue};
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
@@ -112,22 +112,22 @@ impl TransformPayload<ResourceLogs> for Transformer {
 
                 let scope_attrs = match sl.scope.as_ref() {
                     None => Vec::new(),
-                    Some(scope) => cvattr::convert(&scope.attributes)
+                    Some(scope) => cvattr::convert(&scope.attributes),
                 };
 
                 for log in sl.log_records {
                     let log_attrs = cvattr::convert(&log.attributes);
 
-                    let body_conv : Option<ConvertedAttrValue> = match log.body {
+                    let body_conv: Option<ConvertedAttrValue> = match log.body {
                         None => None,
-                        Some(av) => av.value.map(|v| v.into())
+                        Some(av) => av.value.map(|v| v.into()),
                     };
 
                     let row = LogRecordRow {
                         timestamp: log.time_unix_nano,
                         trace_id: hex::encode(log.trace_id),
                         span_id: hex::encode(log.span_id),
-                        trace_flags: (log.flags &  0x000000FF) as u8,
+                        trace_flags: (log.flags & 0x000000FF) as u8,
                         severity_text: log.severity_text,
                         severity_number: (log.severity_number & 0x000000FF) as u8,
                         service_name: service_name.clone(),
