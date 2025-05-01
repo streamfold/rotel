@@ -184,13 +184,13 @@ impl ClickhouseExporterBuilder {
 }
 
 fn get_traces_sql(table_prefix: String) -> String {
-    build_insert_sql(get_table_name(table_prefix, "logs"),
-                     get_log_row_col_keys())
+    build_insert_sql(get_table_name(table_prefix, "traces"),
+                     get_span_row_col_keys())
 }
 
 fn get_logs_sql(table_prefix: String) -> String {
-    build_insert_sql(get_table_name(table_prefix, "traces"),
-                     get_span_row_col_keys())
+    build_insert_sql(get_table_name(table_prefix, "logs"),
+                     get_log_row_col_keys())
 }
 
 fn build_insert_sql(table: String, cols: String) -> String {
