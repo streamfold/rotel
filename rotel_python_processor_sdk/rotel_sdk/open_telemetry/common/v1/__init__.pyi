@@ -92,11 +92,7 @@ class AnyValue:
     """
     AnyValue is used to represent any type of attribute value. AnyValue may contain a primitive value such as a string or integer or it may contain an arbitrary nested object containing arrays, key-value lists and primitives.
     """
-
-    def value(self) -> Optional[Any]:
-        """
-        :returns An Optional Any object.
-        """
+    value: Optional[Any]
 
 
 class InstrumentationScope:
