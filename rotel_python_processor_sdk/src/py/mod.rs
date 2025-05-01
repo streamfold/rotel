@@ -2599,7 +2599,7 @@ mod tests {
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
         };
-        let res = Python::with_gil(|py| -> PyResult<()> {
+        Python::with_gil(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -2610,7 +2610,6 @@ mod tests {
         let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
         let scope_spans = scope_spans.pop().unwrap();
         let scope = scope_spans.scope.unwrap();
-        print!("scope spans:\n{:?}", scope);
         assert_eq!("name_changed", scope.name);
         assert_eq!("0.0.2", scope.version);
         assert_eq!(100, scope.dropped_attributes_count);
