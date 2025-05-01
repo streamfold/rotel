@@ -1,3 +1,4 @@
+use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
@@ -86,6 +87,9 @@ pub struct AgentRun {
 
     #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append)]
     pub otlp_with_trace_processor: Vec<String>,
+
+    #[command(flatten)]
+    pub batch: BatchArgs,
 
     /// Exporter
     #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]

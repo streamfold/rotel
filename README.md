@@ -107,8 +107,6 @@ The OTLP exporter is the default, or can be explicitly selected with `--exporter
 | --otlp-exporter-retry-initial-backoff  | 5s                   |                          |
 | --otlp-exporter-retry-max-backoff      | 30s                  |                          |
 | --otlp-exporter-retry-max-elapsed-time | 300s                 |                          |
-| --otlp-exporter-batch-max-size         | 8192                 |                          |
-| --otlp-exporter-batch-timeout          | 200ms                |                          |
 
 ### Datadog exporter configuration
 
@@ -153,6 +151,19 @@ schema used in the OpenTelemetry
 [Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
 
 _The Clickhouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse) crate._
+
+### Batch configuration
+
+You can configure the properties of the batch processor, controlling both the size limit of the batch and how long the batch
+is kept before flushing. The batch properties behave the same regardless of which exporter you use. You can override the
+batch settings specifically for a telemetry type by prefixing any of the options below with the telemetry type (metrics, logs,
+or traces). For example, `--traces-batch-max-size` will override the batch max size for traces only.
+
+| Option           | Default | Options     |
+|------------------|---------|-------------|
+| --batch-max-size | 8192    |             |
+| --batch-timeout  | 200ms   |             |
+
 
 ---
 
