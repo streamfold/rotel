@@ -10,7 +10,7 @@ Rotel is a lightweight OpenTelemetry collector implemented in Rust.
 - Supports metrics, logs, and traces
 - OTLP receiver and exporters with gRPC and HTTP/Protobuf support
 - Built-in batching and retry mechanisms
-- Experimental Clickhouse and Datadog Trace exporters
+- Experimental Clickhouse and Datadog exporters
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage and a compact binary size, simplifying deployment without the need for a sidecar container.
 
@@ -123,8 +123,8 @@ Specifying a custom endpoint will override the region selection.
 
 ### Clickhouse exporter configuration
 
-The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter only supports traces at the
-moment.
+The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter only supports logs
+and traces at the moment.
 
 | Option                             | Default | Options     |
 |------------------------------------|---------|-------------|

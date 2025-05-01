@@ -59,6 +59,10 @@ impl<T> BoundedReceiver<T> {
     pub fn stream(&self) -> RecvStream<'_, T> {
         self.rx.stream()
     }
+
+    pub fn into_stream<'a>(self) -> RecvStream<'a, T> {
+        self.rx.into_stream()
+    }
 }
 
 pub fn bounded<T>(size: usize) -> (BoundedSender<T>, BoundedReceiver<T>) {
