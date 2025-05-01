@@ -34,7 +34,6 @@ pub fn transform_spans(
                     events_raw: vec![],
                     links_arc: None,
                     links_raw: vec![],
-                    //links: Arc::new(Mutex::new(vec![])),
                     start_time_unix_nano: 0,
                     end_time_unix_nano: 0,
                     attributes_arc: None,

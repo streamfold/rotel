@@ -868,7 +868,6 @@ impl InstrumentationScope {
         }
         let arc = binding.take().unwrap();
         let mut arc_copy = arc.clone();
-        //binding.replace(arc);
         // Now we need to see if we have an existing attributes list
         if arc_copy.attributes_arc.is_some() {
             let attr_arc = arc_copy.attributes_arc.take().unwrap();
@@ -1100,7 +1099,6 @@ impl Span {
                 dropped_attributes_count: 0,
                 events_raw: vec![],
                 events_arc: None,
-                //events: Arc::new(Mutex::new(vec![])),
                 dropped_events_count: 0,
                 links_raw: vec![],
                 links_arc: None,
@@ -1259,10 +1257,6 @@ impl Span {
         let mut inner = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        // let mut v = inner.attributes.lock().map_err(|_| {
-        //     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        // })?;
-        // v.clear();
         let mut new_attrs = Vec::with_capacity(attrs.0.lock().unwrap().len());
         for kv in attrs.0.lock().unwrap().iter() {
             new_attrs.push(kv.clone())
