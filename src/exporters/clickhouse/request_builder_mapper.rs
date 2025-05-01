@@ -13,8 +13,8 @@ use tokio::task::JoinHandle;
 use tower::BoxError;
 use tracing::error;
 
-// todo: This seems high?
-const MAX_CONCURRENT_ENCODERS: usize = 20;
+// todo: Make this configurable?
+const MAX_CONCURRENT_ENCODERS: usize = 8;
 
 pub trait BuildRequest<Resource> {
     fn build(&self, input: Vec<Resource>) -> Result<Request<ClickhousePayload>, BoxError>;

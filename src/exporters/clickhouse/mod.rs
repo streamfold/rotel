@@ -145,7 +145,9 @@ impl ClickhouseExporterBuilder {
             "traces",
             enc_stream,
             svc,
-            ClickhouseResultLogger{telemetry_type: "traces".to_string()},
+            ClickhouseResultLogger {
+                telemetry_type: "traces".to_string(),
+            },
             flush_receiver,
             Duration::from_secs(1),
             Duration::from_secs(2),
@@ -190,7 +192,9 @@ impl ClickhouseExporterBuilder {
             "logs",
             enc_stream,
             svc,
-            ClickhouseResultLogger{telemetry_type: "logs".to_string()},
+            ClickhouseResultLogger {
+                telemetry_type: "logs".to_string(),
+            },
             flush_receiver,
             Duration::from_secs(1),
             Duration::from_secs(2),
@@ -238,9 +242,15 @@ pub struct ClickhouseResultLogger {
 impl ResultLogger<Response<()>> for ClickhouseResultLogger {
     fn handle(&self, resp: Response<()>) {
         match resp.status_code().as_u16() {
-            200..=202 => {},
-            404 => error!(self.telemetry_type, "Received a 404 when exporting to Clickhouse, does the table exist?"),
-            _ => error!(self.telemetry_type, "Failed to export to Clickhouse: {:?}", resp),
+            200..=202 => {}
+            404 => error!(
+                telemetry_type = self.telemetry_type,
+                "Received a 404 when exporting to Clickhouse, does the table exist?"
+            ),
+            _ => error!(
+                telemetry_type = self.telemetry_type,
+                "Failed to export to Clickhouse: {:?}", resp
+            ),
         };
     }
 }
@@ -250,7 +260,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;

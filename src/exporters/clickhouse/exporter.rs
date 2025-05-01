@@ -1,4 +1,4 @@
-use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use http::Request;
@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use tokio::{pin, select};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
@@ -38,7 +38,7 @@ pub struct Exporter<InStr, Svc, Payload, Logger> {
     flush_receiver: Option<FlushReceiver>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
-    _phantom: PhantomData<Payload>
+    _phantom: PhantomData<Payload>,
 }
 
 impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
@@ -83,7 +83,9 @@ where
         let input = self.input;
         pin!(input);
 
-        let mut export_futures: FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>> = FuturesUnordered::new();
+        let mut export_futures: FuturesUnordered<
+            ExportFuture<<Svc as Service<Request<Payload>>>::Future>,
+        > = FuturesUnordered::new();
         let mut flush_receiver = self.flush_receiver.take();
         loop {
             select! {
