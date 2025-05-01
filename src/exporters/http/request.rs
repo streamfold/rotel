@@ -29,7 +29,7 @@ impl<ReqBody: Clone> BaseRequestBuilder<ReqBody> {
         // add base headers here
         base.header_map.insert(
             USER_AGENT,
-            HeaderValue::from_static("Rotel Rust/1.84.1 hyper/1.52.0"),
+            HeaderValue::from_static("Rotel Rust/1.85.1 hyper/1.52.0"),
         );
 
         base

@@ -1,15 +1,16 @@
 use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
+use crate::exporters::clickhouse::ClickhouseExporter;
 use crate::exporters::datadog::{DatadogTraceExporter, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter};
-use crate::init::datadog_exporter::DatadogRegion;
-use crate::init::otlp_exporter::{
-    build_logs_batch_config, build_logs_config, build_metrics_batch_config, build_metrics_config,
-    build_traces_batch_config, build_traces_config,
+use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
+use crate::init::batch::{
+    build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
+use crate::init::datadog_exporter::DatadogRegion;
+use crate::init::otlp_exporter::{build_logs_config, build_metrics_config, build_traces_config};
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
 use crate::init::wait;
@@ -18,6 +19,7 @@ use crate::receivers::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::debug::DebugLogger;
+use crate::topology::flush_control::FlushSubscriber;
 use crate::{telemetry, topology};
 use gethostname::gethostname;
 use opentelemetry::global;
@@ -37,8 +39,6 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
-
-use crate::topology::flush_control::FlushSubscriber;
 
 pub struct Agent {
     config: Box<AgentRun>,
@@ -212,7 +212,7 @@ impl Agent {
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_traces_batch_config(config.otlp_exporter.clone()),
+            build_traces_batch_config(config.batch.clone()),
             config.otlp_with_trace_processor.clone(),
         );
 
@@ -220,7 +220,7 @@ impl Agent {
             metrics_pipeline_in_rx.clone(),
             metrics_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_metrics_batch_config(config.otlp_exporter.clone()),
+            build_metrics_batch_config(config.batch.clone()),
             vec![],
         );
 
@@ -228,7 +228,7 @@ impl Agent {
             logs_pipeline_in_rx.clone(),
             logs_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_logs_batch_config(config.otlp_exporter.clone()),
+            build_logs_batch_config(config.batch.clone()),
             vec![],
         );
 
@@ -242,7 +242,7 @@ impl Agent {
             internal_metrics_pipeline_in_rx.clone(),
             internal_metrics_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_metrics_batch_config(config.otlp_exporter.clone()),
+            build_metrics_batch_config(config.batch.clone()),
             vec![],
         );
 
@@ -396,6 +396,53 @@ impl Agent {
                         error!(
                             error = e,
                             "Datadog exporter returned from run loop with error."
+                        );
+                    }
+
+                    Ok(())
+                });
+            }
+
+            Exporter::Clickhouse => {
+                if config
+                    .clickhouse_exporter
+                    .clickhouse_exporter_endpoint
+                    .is_none()
+                {
+                    return Err("must specify a Clickhouse exporter endpoint".into());
+                }
+
+                let async_insert =
+                    parse_bool_value(config.clickhouse_exporter.clickhouse_exporter_async_insert)?;
+
+                let mut builder = ClickhouseExporter::builder(
+                    config
+                        .clickhouse_exporter
+                        .clickhouse_exporter_endpoint
+                        .unwrap(),
+                    config.clickhouse_exporter.clickhouse_exporter_database,
+                    config.clickhouse_exporter.clickhouse_exporter_table_prefix,
+                )
+                .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
+                .with_compression(config.clickhouse_exporter.clickhouse_exporter_compression)
+                .with_async_insert(async_insert);
+
+                if let Some(user) = config.clickhouse_exporter.clickhouse_exporter_user {
+                    builder = builder.with_user(user);
+                }
+
+                if let Some(password) = config.clickhouse_exporter.clickhouse_exporter_password {
+                    builder = builder.with_password(password);
+                }
+
+                let exp = builder.build(trace_pipeline_out_rx)?;
+
+                exporters_task_set.spawn(async move {
+                    let res = exp.start(token).await;
+                    if let Err(e) = res {
+                        error!(
+                            error = e,
+                            "Clickhouse exporter returned from run loop with error."
                         );
                     }
 

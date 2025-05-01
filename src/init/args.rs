@@ -1,8 +1,11 @@
+use crate::init::batch::BatchArgs;
+use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
+use tower::BoxError;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -85,6 +88,9 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append)]
     pub otlp_with_trace_processor: Vec<String>,
 
+    #[command(flatten)]
+    pub batch: BatchArgs,
+
     /// Exporter
     #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]
     pub exporter: Exporter,
@@ -94,6 +100,9 @@ pub struct AgentRun {
 
     #[command(flatten)]
     pub datadog_exporter: DatadogExporterArgs,
+
+    #[command(flatten)]
+    pub clickhouse_exporter: ClickhouseExporterArgs,
 
     #[cfg(feature = "pprof")]
     #[clap(flatten)]
@@ -132,6 +141,8 @@ pub enum Exporter {
     Blackhole,
 
     Datadog,
+
+    Clickhouse,
 }
 
 /// Parse a single key-value pair
@@ -184,5 +195,13 @@ mod test {
         assert_ok!(sa);
         let sa = sa.unwrap();
         assert_eq!("0.0.0.0", sa.ip().to_string());
+    }
+}
+
+pub(crate) fn parse_bool_value(val: String) -> Result<bool, BoxError> {
+    match val.to_lowercase().as_str() {
+        "0" | "false" => Ok(false),
+        "1" | "true" => Ok(true),
+        _ => Err(format!("Unable to parse bool value: {}", val).into()),
     }
 }

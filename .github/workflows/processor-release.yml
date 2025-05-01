@@ -1,0 +1,77 @@
+name: processor-release
+
+on:
+  release:
+    types: [ created ]
+
+jobs:
+  release:
+    name: processor release - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            os: ubuntu
+            cross: false
+            python-version: 3.12
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            os: ubuntu
+            cross: false
+            python-version: 3.13
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            os: ubuntu
+            cross: false
+            python-version: 3.12
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+            cross: false
+            python-version: 3.13
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: update apt cache on linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get update
+      - name: install protoc linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get install -y protobuf-compiler
+      - name: install protoc macos
+        if: matrix.os == 'macos'
+        run: brew install protobuf
+      - name: update linux x86_64 python 3.13
+        if: matrix.os == 'ubuntu' && matrix.python-version == '3.13'
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.13
+      - name: Set build env
+        run: echo "BUILD_SHORT_SHA=$(echo -n $GITHUB_SHA | cut -c 1-7)" >> $GITHUB_ENV
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+      - name: install cross
+        if: matrix.cross == true
+        run: |
+          cargo install cross
+          echo "CARGO_BIN=cross" >> $GITHUB_ENV
+      - name: set CARGO bin
+        if: matrix.cross == false
+        run: |
+          echo "CARGO_BIN=cargo" >> $GITHUB_ENV
+      - name: build
+        run: $CARGO_BIN build --release --features pyo3 --locked --target ${{ matrix.target }}
+      - name: tar
+        run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
+      - name: upload
+        run: |
+          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
+          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
