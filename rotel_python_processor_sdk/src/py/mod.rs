@@ -2601,10 +2601,8 @@ mod tests {
         };
         let res = Python::with_gil(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
-        });
-        if res.is_err() {
-            panic!("{}", res.err().unwrap())
-        }
+        })
+        .unwrap();
 
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
