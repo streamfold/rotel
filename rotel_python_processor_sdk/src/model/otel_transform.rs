@@ -30,7 +30,8 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> RR
             scope = Some(RInstrumentationScope {
                 name: s.name,
                 version: s.version,
-                attributes: Arc::new(Mutex::new(convert_attributes(s.attributes))),
+                attributes_raw: s.attributes,
+                attributes_arc: None,
                 dropped_attributes_count: s.dropped_attributes_count,
             })
         }

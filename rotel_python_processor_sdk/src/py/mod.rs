@@ -784,7 +784,8 @@ impl InstrumentationScope {
                 // TODO: Probably provide the otel defaults here?
                 name: "".to_string(),
                 version: "".to_string(),
-                attributes: Arc::new(Mutex::new(vec![])),
+                attributes_raw: vec![],
+                attributes_arc: None,
                 dropped_attributes_count: 0,
             },
         )))))
@@ -810,7 +811,8 @@ impl InstrumentationScope {
             Some(current) => RInstrumentationScope {
                 name,
                 version: current.version,
-                attributes: current.attributes,
+                attributes_arc: current.attributes_arc,
+                attributes_raw: current.attributes_raw,
                 dropped_attributes_count: current.dropped_attributes_count,
             },
             None => RInstrumentationScope {
@@ -841,8 +843,9 @@ impl InstrumentationScope {
         let updated_scope = match binding.take() {
             Some(current) => RInstrumentationScope {
                 version,
+                attributes_arc: current.attributes_arc,
+                attributes_raw: current.attributes_raw,
                 name: current.name,
-                attributes: current.attributes,
                 dropped_attributes_count: current.dropped_attributes_count,
             },
             None => RInstrumentationScope {
@@ -855,15 +858,31 @@ impl InstrumentationScope {
     }
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let binding = self.0.lock().map_err(|_| {
+        let mut binding = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let v = binding
-            .clone()
-            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "InstrumentationScope is None",
-            ))?;
-        Ok(AttributesList(v.attributes))
+        if binding.is_none() {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "InstrumentationScope is None, should never occur here",
+            );
+        }
+        let arc = binding.take().unwrap();
+        let mut arc_copy = arc.clone();
+        //binding.replace(arc);
+        // Now we need to see if we have an existing attributes list
+        if arc_copy.attributes_arc.is_some() {
+            let attr_arc = arc_copy.attributes_arc.take().unwrap();
+            let attr_arc_copy = attr_arc.clone();
+            arc_copy.attributes_arc.replace(attr_arc);
+            binding.replace(arc_copy);
+            Ok(AttributesList(attr_arc_copy))
+        } else {
+            let attrs = convert_attributes(arc_copy.attributes_raw.clone());
+            let attrs = Arc::new(Mutex::new(attrs));
+            arc_copy.attributes_arc.replace(attrs.clone());
+            binding.replace(arc_copy);
+            Ok(AttributesList(attrs.clone()))
+        }
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
@@ -886,7 +905,8 @@ impl InstrumentationScope {
             Some(current) => RInstrumentationScope {
                 name: current.name,
                 version: current.version,
-                attributes: current.attributes,
+                attributes_arc: current.attributes_arc,
+                attributes_raw: current.attributes_raw,
                 dropped_attributes_count,
             },
             None => RInstrumentationScope {
@@ -2572,10 +2592,12 @@ mod tests {
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
         };
-        Python::with_gil(|py| -> PyResult<()> {
+        let res = Python::with_gil(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
-        })
-        .unwrap();
+        });
+        if res.is_err() {
+            panic!("{}", res.err().unwrap())
+        }
 
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
@@ -2583,6 +2605,7 @@ mod tests {
         let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
         let scope_spans = scope_spans.pop().unwrap();
         let scope = scope_spans.scope.unwrap();
+        print!("scope spans:\n{:?}", scope);
         assert_eq!("name_changed", scope.name);
         assert_eq!("0.0.2", scope.version);
         assert_eq!(100, scope.dropped_attributes_count);

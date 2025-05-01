@@ -139,7 +139,7 @@ fn convert_scope(
         return None;
     }
     let scope = guard.clone().unwrap();
-    let attrs = convert_attributes(vec![], Some(scope.attributes));
+    let attrs = convert_attributes(scope.attributes_raw, scope.attributes_arc);
     Some(
         opentelemetry_proto::tonic::common::v1::InstrumentationScope {
             name: scope.name,

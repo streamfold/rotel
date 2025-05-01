@@ -84,7 +84,8 @@ pub struct RScopeSpans {
 pub struct RInstrumentationScope {
     pub name: String,
     pub version: String,
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
+    pub attributes_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
+    pub attributes_raw: Vec<KeyValue>,
     pub dropped_attributes_count: u32,
 }
 
