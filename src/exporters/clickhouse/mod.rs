@@ -260,7 +260,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -270,7 +270,7 @@ mod tests {
     use utilities::otlp::FakeOTLP;
 
     #[tokio::test]
-    async fn success() {
+    async fn traces_success() {
         init_crypto();
         let server = MockServer::start();
         let addr = format!("http://127.0.0.1:{}", server.port());
@@ -281,7 +281,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let exporter = new_exporter(addr, brx);
+        let exporter = new_traces_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -290,6 +290,34 @@ mod tests {
 
         let traces = FakeOTLP::trace_service_request();
         btx.send(traces.resource_spans).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_ok!(res.0);
+
+        hello_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn logs_success() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).body("ohi");
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceLogs>>(100);
+        let exporter = new_logs_exporter(addr, brx);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        let logs = FakeOTLP::logs_service_request();
+        btx.send(logs.resource_logs).await.unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -312,7 +340,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let exporter = new_exporter(addr, brx);
+        let exporter = new_traces_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -328,12 +356,21 @@ mod tests {
         hello_mock.assert();
     }
 
-    fn new_exporter<'a>(
+    fn new_traces_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
     ) -> ExporterType<'a, ResourceSpans> {
         ClickhouseExporterBuilder::new(addr, "otel".to_string(), "otel".to_string())
             .build_traces_exporter(brx, None)
+            .unwrap()
+    }
+
+    fn new_logs_exporter<'a>(
+        addr: String,
+        brx: BoundedReceiver<Vec<ResourceLogs>>,
+    ) -> ExporterType<'a, ResourceLogs> {
+        ClickhouseExporterBuilder::new(addr, "otel".to_string(), "otel".to_string())
+            .build_logs_exporter(brx, None)
             .unwrap()
     }
 }
