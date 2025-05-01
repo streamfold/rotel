@@ -14,6 +14,79 @@ class KeyValue:
     The Optional value of the key-value pair.
     """
 
+    @staticmethod
+    def new_string_value(key: str, value: str) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with a string value. 
+    """
+
+    @staticmethod
+    def new_bool_value(key: str, value: bool) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with a boolean value. 
+    """
+
+    @staticmethod
+    def new_int_value(key: str, value: int) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with an integer value. 
+    """
+
+    @staticmethod
+    def new_double_value(key: str, value: float) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with a double value. 
+    """
+
+    @staticmethod
+    def new_bytes_value(key: str, value: bytes) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with a byte array value.
+    """
+
+    @staticmethod
+    def new_array_value(key: str, value: ArrayValue) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with an array value.
+    """
+
+    @staticmethod
+    def new_kv_list(key: str, value: KeyValueList) -> KeyValue: ...
+
+    """
+    Creates a new KeyValue object with a KeyValueList value.
+    """
+
+
+class ArrayValue:
+    """
+    ArrayValue represents a list of values.
+    """
+
+    def append(self, value: AnyValue) -> None: ...
+
+    """
+    Appends a value to this array.
+    """
+
+
+class KeyValueList:
+    """
+    A list of key-value pairs.
+    """
+
+    def append(self, value: KeyValue) -> None: ...
+
+    """
+    Appends a KeyValue object to this list.
+    """
+
 
 class AnyValue:
     """
