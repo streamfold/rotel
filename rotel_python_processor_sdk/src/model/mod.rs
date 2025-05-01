@@ -3,6 +3,8 @@ pub mod py_transform;
 
 use crate::py;
 use crate::py::{rotel_sdk, ResourceSpans};
+use opentelemetry_proto::tonic::common::v1::KeyValue;
+use opentelemetry_proto::tonic::trace::v1::span::Event;
 use pyo3::prelude::*;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, Once};
@@ -97,9 +99,11 @@ pub struct RSpan {
     pub kind: i32,
     pub start_time_unix_nano: u64,
     pub end_time_unix_nano: u64,
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
+    pub attributes_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
+    pub attributes_raw: Vec<KeyValue>,
     pub dropped_attributes_count: u32,
-    pub events: Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>,
+    pub events_raw: Vec<Event>,
+    pub events_arc: Option<Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>>,
     pub dropped_events_count: u32,
     pub links: Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>,
     pub dropped_links_count: u32,

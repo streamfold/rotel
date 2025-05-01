@@ -1,3 +1,4 @@
+use crate::model::otel_transform::convert_attributes;
 use crate::model::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
@@ -7,6 +8,7 @@ use crate::model::{
 };
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
+use std::vec;
 
 // Wrapper for AnyValue that can be exposed to Python
 #[pyclass]
@@ -530,14 +532,13 @@ impl Attributes {
         Ok(())
     }
 
-    fn append_attributes<'py>(&self, py: Python<'py>, items: Vec<PyObject>) -> PyResult<()> {
+    fn append_attributes(&self, items: Vec<KeyValue>) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
 
-        for i in items.iter() {
-            let x = i.extract::<KeyValue>(py)?;
-            k.push(x.inner.clone());
+        for kv in items.iter() {
+            k.push(kv.inner.clone());
         }
         Ok(())
     }
@@ -613,15 +614,10 @@ impl ResourceSpans {
         Ok(ScopeSpansList(self.scope_spans.clone()))
     }
     #[setter]
-    fn set_scope_spans<'py>(
-        &mut self,
-        py: Python<'py>,
-        scope_spans: Vec<PyObject>,
-    ) -> PyResult<()> {
+    fn set_scope_spans(&mut self, scope_spans: Vec<ScopeSpans>) -> PyResult<()> {
         let mut inner = self.scope_spans.lock().unwrap();
         inner.clear();
-        for po in scope_spans {
-            let sc = po.extract::<ScopeSpans>(py)?;
+        for sc in scope_spans {
             inner.push(Arc::new(Mutex::new(RScopeSpans {
                 scope: sc.scope.clone(),
                 spans: sc.spans.clone(),
@@ -733,12 +729,11 @@ impl ScopeSpans {
         Ok(Spans(self.spans.clone()))
     }
     #[setter]
-    fn set_spans<'py>(&mut self, py: Python<'py>, spans: Vec<PyObject>) -> PyResult<()> {
+    fn set_spans(&mut self, spans: Vec<Span>) -> PyResult<()> {
         let mut inner = self.spans.lock().unwrap();
         inner.clear();
-        for po in spans {
-            let sc = po.extract::<Span>(py)?;
-            inner.push(sc.inner);
+        for s in spans {
+            inner.push(s.inner);
         }
         Ok(())
     }
@@ -951,13 +946,12 @@ impl AttributesList {
         k.push(inner);
         Ok(())
     }
-    fn append_attributes<'py>(&self, py: Python<'py>, items: Vec<PyObject>) -> PyResult<()> {
+    fn append_attributes(&self, items: Vec<KeyValue>) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        for i in items.iter() {
-            let item = i.extract::<KeyValue>(py)?;
-            let inner = item.inner.lock().unwrap();
+        for kv in items.iter() {
+            let inner = kv.inner.lock().unwrap();
             let inner = inner.clone();
             k.push(inner.clone());
         }
@@ -1081,9 +1075,12 @@ impl Span {
                 kind: 0,
                 start_time_unix_nano: 0,
                 end_time_unix_nano: 0,
-                attributes: Arc::new(Mutex::new(vec![])),
+                attributes_raw: vec![],
+                attributes_arc: None,
                 dropped_attributes_count: 0,
-                events: Arc::new(Mutex::new(vec![])),
+                events_raw: vec![],
+                events_arc: None,
+                //events: Arc::new(Mutex::new(vec![])),
                 dropped_events_count: 0,
                 links: Arc::new(Mutex::new(vec![])),
                 dropped_links_count: 0,
@@ -1228,23 +1225,29 @@ impl Span {
     }
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let binding = self.inner.lock().map_err(|_| {
+        let mut binding = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        Ok(AttributesList(binding.attributes.clone()))
+        let attrs = convert_attributes(binding.attributes_raw.clone());
+        let attrs = Arc::new(Mutex::new(attrs));
+        binding.attributes_arc.replace(attrs.clone());
+        Ok(AttributesList(attrs))
     }
     #[setter]
     fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
-        let inner = self.inner.lock().map_err(|_| {
+        let mut inner = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let mut v = inner.attributes.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        v.clear();
+        // let mut v = inner.attributes.lock().map_err(|_| {
+        //     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        // })?;
+        // v.clear();
+        let mut new_attrs = Vec::with_capacity(attrs.0.lock().unwrap().len());
         for kv in attrs.0.lock().unwrap().iter() {
-            v.push(kv.clone())
+            new_attrs.push(kv.clone())
         }
+        let new_attrs = Arc::new(Mutex::new(new_attrs));
+        inner.attributes_arc.replace(new_attrs.clone());
         Ok(())
     }
     #[getter]
@@ -1264,20 +1267,35 @@ impl Span {
     }
     #[getter]
     fn events(&self) -> PyResult<Events> {
-        let v = self.inner.lock().unwrap();
-        Ok(Events(v.events.clone()))
+        let mut v = self.inner.lock().unwrap();
+        let new_events = v
+            .events_raw
+            .iter()
+            .map(|e| {
+                Arc::new(Mutex::new(REvent {
+                    time_unix_nano: e.time_unix_nano,
+                    name: e.name.clone(),
+                    attributes: Arc::new(Mutex::new(
+                        crate::model::otel_transform::convert_attributes(e.attributes.to_owned()),
+                    )),
+                    dropped_attributes_count: 0,
+                }))
+            })
+            .collect();
+        let new_events = Arc::new(Mutex::new(new_events));
+        v.events_arc.replace(new_events.clone());
+        Ok(Events(new_events))
     }
     #[setter]
-    fn set_events<'py>(&self, py: Python<'py>, events: Vec<PyObject>) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
+    fn set_events(&self, events: Vec<Event>) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let mut guard = v.events.lock().unwrap();
-        guard.clear();
-        for po in events {
-            let event = po.extract::<Event>(py)?;
-            guard.push(event.inner);
+        let mut new_events = Vec::with_capacity(events.len());
+        for event in events {
+            new_events.push(event.inner);
         }
+        v.events_arc.replace(Arc::new(Mutex::new(new_events)));
         Ok(())
     }
     #[getter]
