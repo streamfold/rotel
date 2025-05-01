@@ -1102,7 +1102,8 @@ impl Span {
                 events_arc: None,
                 //events: Arc::new(Mutex::new(vec![])),
                 dropped_events_count: 0,
-                links: Arc::new(Mutex::new(vec![])),
+                links_raw: vec![],
+                links_arc: None,
                 dropped_links_count: 0,
                 status: Arc::new(Mutex::new(None)),
             })),
@@ -1295,9 +1296,7 @@ impl Span {
                 Arc::new(Mutex::new(REvent {
                     time_unix_nano: e.time_unix_nano,
                     name: e.name.clone(),
-                    attributes: Arc::new(Mutex::new(
-                        crate::model::otel_transform::convert_attributes(e.attributes.to_owned()),
-                    )),
+                    attributes: Arc::new(Mutex::new(convert_attributes(e.attributes.to_owned()))),
                     dropped_attributes_count: 0,
                 }))
             })
@@ -1335,21 +1334,35 @@ impl Span {
     }
     #[getter]
     fn links(&self) -> PyResult<Links> {
-        let v = self.inner.lock().unwrap();
-        Ok(Links(v.links.clone()))
+        let mut v = self.inner.lock().unwrap();
+        let new_links = v
+            .links_raw
+            .iter()
+            .map(|l| {
+                Arc::new(Mutex::new(RLink {
+                    trace_id: l.trace_id.to_owned(),
+                    span_id: l.span_id.to_owned(),
+                    trace_state: l.trace_state.to_owned(),
+                    attributes: Arc::new(Mutex::new(convert_attributes(l.attributes.to_owned()))),
+                    dropped_attributes_count: l.dropped_attributes_count,
+                    flags: l.flags,
+                }))
+            })
+            .collect();
+        let new_links = Arc::new(Mutex::new(new_links));
+        v.links_arc.replace(new_links.clone());
+        Ok(Links(new_links))
     }
     #[setter]
-    fn set_links(&self, links: &Links) -> PyResult<()> {
-        let inner = self.inner.lock().map_err(|_| {
+    fn set_links(&self, links: Vec<Link>) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let mut v = inner.links.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        v.clear();
-        for link in links.0.lock().unwrap().iter() {
-            v.push(link.clone())
+        let mut new_links = Vec::with_capacity(links.len());
+        for link in links {
+            new_links.push(link.inner);
         }
+        v.links_arc.replace(Arc::new(Mutex::new(new_links)));
         Ok(())
     }
     #[getter]
@@ -1617,7 +1630,7 @@ impl LinksIter {
 }
 
 #[pyclass]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Link {
     inner: Arc<Mutex<RLink>>,
 }

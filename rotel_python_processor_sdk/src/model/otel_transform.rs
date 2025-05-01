@@ -1,9 +1,7 @@
 use crate::model::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, RVArrayValue, StringValue,
 };
-use crate::model::{
-    RAnyValue, RInstrumentationScope, RKeyValue, RLink, RResourceSpans, RSpan, RStatus,
-};
+use crate::model::{RAnyValue, RInstrumentationScope, RKeyValue, RResourceSpans, RSpan, RStatus};
 use std::sync::{Arc, Mutex};
 
 pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> RResourceSpans {
@@ -53,41 +51,10 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> RR
                 end_time_unix_nano: s.end_time_unix_nano,
                 events_raw: s.events,
                 events_arc: None,
-                // events: Arc::new(Mutex::new(
-                //     s.events
-                //         .iter()
-                //         .map(|e| {
-                //             Arc::new(Mutex::new(REvent {
-                //                 time_unix_nano: e.time_unix_nano,
-                //                 name: e.name.clone(),
-                //                 attributes: Arc::new(Mutex::new(convert_attributes(
-                //                     e.attributes.to_owned(),
-                //                 ))),
-                //                 dropped_attributes_count: 0,
-                //             }))
-                //         })
-                //         .collect(),
-                // )),
-                links: Arc::new(Mutex::new(
-                    s.links
-                        .iter()
-                        .map(|l| {
-                            Arc::new(Mutex::new(RLink {
-                                trace_id: l.trace_id.to_owned(),
-                                span_id: l.span_id.to_owned(),
-                                trace_state: l.trace_state.to_owned(),
-                                attributes: Arc::new(Mutex::new(convert_attributes(
-                                    l.attributes.to_owned(),
-                                ))),
-                                dropped_attributes_count: l.dropped_attributes_count,
-                                flags: l.flags,
-                            }))
-                        })
-                        .collect(),
-                )),
+                links_raw: s.links,
+                links_arc: None,
                 attributes_arc: None,
                 attributes_raw: s.attributes,
-                //Arc::new(Mutex::new(convert_attributes(s.attributes))),
                 dropped_attributes_count: s.dropped_attributes_count,
                 dropped_events_count: s.dropped_events_count,
                 dropped_links_count: s.dropped_links_count,

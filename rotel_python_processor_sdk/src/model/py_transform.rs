@@ -32,7 +32,9 @@ pub fn transform_spans(
                     kind: 0,
                     events_arc: None,
                     events_raw: vec![],
-                    links: Arc::new(Mutex::new(vec![])),
+                    links_arc: None,
+                    links_raw: vec![],
+                    //links: Arc::new(Mutex::new(vec![])),
                     start_time_unix_nano: 0,
                     end_time_unix_nano: 0,
                     attributes_arc: None,
@@ -55,16 +57,13 @@ pub fn transform_spans(
                 kind: moved_data.kind,
                 start_time_unix_nano: moved_data.start_time_unix_nano,
                 end_time_unix_nano: moved_data.end_time_unix_nano,
-                // attributes: vec![],
-                //events: vec![],
-                // links: vec![],
                 attributes: convert_attributes(
                     moved_data.attributes_raw,
                     moved_data.attributes_arc,
                 ),
                 dropped_attributes_count: moved_data.dropped_attributes_count,
                 events: convert_events(moved_data.events_raw, moved_data.events_arc),
-                links: convert_links(moved_data.links),
+                links: convert_links(moved_data.links_raw, moved_data.links_arc),
                 dropped_events_count: moved_data.dropped_events_count,
                 dropped_links_count: moved_data.dropped_links_count,
                 status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
@@ -107,12 +106,13 @@ fn convert_events(
 }
 
 fn convert_links(
-    links: Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>,
+    links_raw: Vec<opentelemetry_proto::tonic::trace::v1::span::Link>,
+    links_arc: Option<Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Link> {
-    if links.lock().unwrap().is_empty() {
-        return vec![];
+    if links_arc.is_none() {
+        return links_raw;
     }
-    let links = Arc::into_inner(links).unwrap();
+    let links = Arc::into_inner(links_arc.unwrap()).unwrap();
     let mut links = links.into_inner().unwrap();
     links
         .drain(..) // Creates an iterator that removes all elements
