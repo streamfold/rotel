@@ -4,6 +4,7 @@ use crate::model::RValue::{
 use crate::model::{
     RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans, RSpan,
 };
+use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -29,11 +30,14 @@ pub fn transform_spans(
                     flags: 0,
                     name: "".to_string(),
                     kind: 0,
-                    events: Arc::new(Mutex::new(vec![])),
-                    links: Arc::new(Mutex::new(vec![])),
+                    events_arc: None,
+                    events_raw: vec![],
+                    links_arc: None,
+                    links_raw: vec![],
                     start_time_unix_nano: 0,
                     end_time_unix_nano: 0,
-                    attributes: Arc::new(Default::default()),
+                    attributes_arc: None,
+                    attributes_raw: vec![],
                     dropped_attributes_count: 0,
                     dropped_events_count: 0,
                     dropped_links_count: 0,
@@ -52,10 +56,13 @@ pub fn transform_spans(
                 kind: moved_data.kind,
                 start_time_unix_nano: moved_data.start_time_unix_nano,
                 end_time_unix_nano: moved_data.end_time_unix_nano,
-                attributes: convert_attributes(moved_data.attributes),
+                attributes: convert_attributes(
+                    moved_data.attributes_raw,
+                    moved_data.attributes_arc,
+                ),
                 dropped_attributes_count: moved_data.dropped_attributes_count,
-                events: convert_events(moved_data.events),
-                links: convert_links(moved_data.links),
+                events: convert_events(moved_data.events_raw, moved_data.events_arc),
+                links: convert_links(moved_data.links_raw, moved_data.links_arc),
                 dropped_events_count: moved_data.dropped_events_count,
                 dropped_links_count: moved_data.dropped_links_count,
                 status: status.map(|s| opentelemetry_proto::tonic::trace::v1::Status {
@@ -74,9 +81,13 @@ pub fn transform_spans(
 }
 
 fn convert_events(
-    events: Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>,
+    events_raw: Vec<opentelemetry_proto::tonic::trace::v1::span::Event>,
+    events_arc: Option<Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Event> {
-    let events = Arc::into_inner(events).unwrap();
+    if events_arc.is_none() {
+        return events_raw;
+    }
+    let events = Arc::into_inner(events_arc.unwrap()).unwrap();
     let mut events = events.into_inner().unwrap();
     events
         .drain(..) // Creates an iterator that removes all elements
@@ -86,7 +97,7 @@ fn convert_events(
             opentelemetry_proto::tonic::trace::v1::span::Event {
                 time_unix_nano: e.time_unix_nano,
                 name: e.name.clone(),
-                attributes: convert_attributes(e.attributes),
+                attributes: convert_attributes(vec![], Some(e.attributes)),
                 dropped_attributes_count: e.dropped_attributes_count,
             }
         })
@@ -94,9 +105,13 @@ fn convert_events(
 }
 
 fn convert_links(
-    links: Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>,
+    links_raw: Vec<opentelemetry_proto::tonic::trace::v1::span::Link>,
+    links_arc: Option<Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>>,
 ) -> Vec<opentelemetry_proto::tonic::trace::v1::span::Link> {
-    let links = Arc::into_inner(links).unwrap();
+    if links_arc.is_none() {
+        return links_raw;
+    }
+    let links = Arc::into_inner(links_arc.unwrap()).unwrap();
     let mut links = links.into_inner().unwrap();
     links
         .drain(..) // Creates an iterator that removes all elements
@@ -106,7 +121,7 @@ fn convert_links(
             opentelemetry_proto::tonic::trace::v1::span::Link {
                 trace_id: l.trace_id,
                 span_id: l.span_id,
-                attributes: convert_attributes(l.attributes),
+                attributes: convert_attributes(vec![], Some(l.attributes)),
                 dropped_attributes_count: l.dropped_attributes_count,
                 trace_state: l.trace_state,
                 flags: l.flags,
@@ -123,7 +138,7 @@ fn convert_scope(
         return None;
     }
     let scope = guard.clone().unwrap();
-    let attrs = convert_attributes(scope.attributes);
+    let attrs = convert_attributes(scope.attributes_raw, scope.attributes_arc);
     Some(
         opentelemetry_proto::tonic::common::v1::InstrumentationScope {
             name: scope.name,
@@ -135,8 +150,13 @@ fn convert_scope(
 }
 
 fn convert_attributes(
-    attrs: Arc<Mutex<Vec<RKeyValue>>>,
-) -> Vec<opentelemetry_proto::tonic::common::v1::KeyValue> {
+    attr_raw: Vec<KeyValue>,
+    attrs_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
+) -> Vec<KeyValue> {
+    if attrs_arc.is_none() {
+        return attr_raw;
+    }
+    let attrs = attrs_arc.unwrap();
     let attrs = attrs.lock().unwrap();
     let mut new_attrs = vec![];
     for attr in attrs.iter() {
