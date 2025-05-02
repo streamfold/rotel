@@ -1,0 +1,20 @@
+[project]
+name = "rotel_sdk"
+version = "0.0.1"
+authors = [
+    { name = "Ray Jenkins", email = "ray@streamfold.com" },
+    { name = "Michael Heffner", email = "mike@streamfold.com" },
+]
+description = "Rotel SDK for Python Processors"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/streamfold/rotel"
+Issues = "https://github.com/streamfold/rotel/issues"
