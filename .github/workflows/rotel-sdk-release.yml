@@ -27,17 +27,17 @@ jobs:
             target: x86
           - runner: ubuntu-22.04
             target: aarch64
-          - runner: ubuntu-22.04
-            target: armv7
-          - runner: ubuntu-22.04
-            target: s390x
-          - runner: ubuntu-22.04
-            target: ppc64le
+    #          - runner: ubuntu-22.04
+    #            target: armv7
+    #          - runner: ubuntu-22.04
+    #            target: s390x
+    #          - runner: ubuntu-22.04
+    #            target: ppc64le
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: 3.x
+          python-version: 3.12
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
