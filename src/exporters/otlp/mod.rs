@@ -139,7 +139,7 @@ pub fn logs_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExport
 
 #[cfg(test)]
 mod tests {
-    use crate::bounded_channel::{bounded, BoundedSender};
+    use crate::bounded_channel::{BoundedSender, bounded};
     use crate::exporters::otlp::{Endpoint, Protocol};
     use crate::topology::batch::{BatchSizer, NestedBatch};
     extern crate utilities;
