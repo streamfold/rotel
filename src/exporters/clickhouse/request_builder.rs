@@ -38,7 +38,8 @@ where
     }
 }
 
-impl<Resource, Transform> BuildRequest<Resource, ClickhousePayload> for RequestBuilder<Resource, Transform>
+impl<Resource, Transform> BuildRequest<Resource, ClickhousePayload>
+    for RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {

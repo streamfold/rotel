@@ -159,7 +159,7 @@ impl DatadogTraceExporterBuilder {
 mod tests {
     extern crate utilities;
 
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::datadog::{DatadogTraceExporterBuilder, ExporterType, Region};
     use crate::exporters::http::retry::RetryConfig;
@@ -230,7 +230,7 @@ mod tests {
     fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
-    ) -> ExporterType<'a, ResourceSpans>  {
+    ) -> ExporterType<'a, ResourceSpans> {
         DatadogTraceExporterBuilder::new(Region::US1, Some(addr), "1234".to_string())
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),

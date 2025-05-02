@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use futures_util::{
-    ready, stream::{Fuse, FuturesOrdered}, Stream,
-    StreamExt,
+    Stream, StreamExt, ready,
+    stream::{Fuse, FuturesOrdered},
 };
 use http::Request;
 use pin_project::pin_project;
@@ -31,7 +31,8 @@ where
     encoding_futures: FuturesOrdered<JoinHandle<Result<Request<Payload>, BoxError>>>,
 }
 
-impl<InStr, Resource, Payload, ReqBuilder> RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
+impl<InStr, Resource, Payload, ReqBuilder>
+    RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
 {
@@ -44,7 +45,8 @@ where
     }
 }
 
-impl<InStr, Resource, Payload, ReqBuilder> Stream for RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
+impl<InStr, Resource, Payload, ReqBuilder> Stream
+    for RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
     Resource: Send + Clone + 'static,
