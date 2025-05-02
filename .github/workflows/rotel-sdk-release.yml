@@ -43,7 +43,7 @@ jobs:
         with:
           working-directory: ./rotel_python_processor_sdk
           target: ${{ matrix.platform.target }}
-          args: --release --out dist -i python3.12
+          args: -i python3.12 --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
