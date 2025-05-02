@@ -9,3 +9,4 @@ pub mod retry;
 pub mod tls;
 pub mod types;
 pub mod exporter;
+pub mod request_builder_mapper;

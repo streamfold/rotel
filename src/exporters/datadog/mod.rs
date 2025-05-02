@@ -2,46 +2,46 @@
 
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::datadog::request_builder::RequestBuilder;
-use crate::exporters::datadog::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::datadog::transform::Transformer;
 use crate::exporters::http;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::exporters::http::client::ResponseDecode;
+use crate::exporters::http::exporter::{Exporter, ResultLogger};
 use crate::exporters::http::http_client::HttpClient;
+use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::types::ContentEncoding;
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
-use futures::stream::FuturesUnordered;
 use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use std::error::Error;
-use std::future::Future;
-use std::ops::Add;
-use std::pin::Pin;
 use std::time::Duration;
-use tokio::select;
-use tokio::time::{Instant, timeout_at};
-use tokio_stream::StreamExt;
-use tokio_util::sync::CancellationToken;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
-use tower::{BoxError, Service, ServiceBuilder};
-use tracing::log::warn;
-use tracing::{Level, debug, error, event};
+use tower::{BoxError, ServiceBuilder};
+use tracing::error;
 
 mod api_request;
 mod request_builder;
-mod request_builder_mapper;
 mod transform;
 mod types;
 
-const MAX_CONCURRENT_REQUESTS: usize = 10;
+type SvcType =
+    TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), DatadogTraceDecoder>>>;
 
-type ExportFuture =
-    Pin<Box<dyn Future<Output = Result<Response<()>, Box<dyn Error + Send + Sync>>> + Send>>;
+type ExporterType<'a, Resource> = Exporter<
+    RequestBuilderMapper<
+        RecvStream<'a, Vec<Resource>>,
+        Resource,
+        Full<Bytes>,
+        RequestBuilder<Resource, Transformer>,
+    >,
+    SvcType,
+    Full<Bytes>,
+    DatadogResultLogger,
+>;
 
 #[derive(Copy, Clone)]
 pub enum Region {
@@ -65,15 +65,6 @@ impl Region {
     }
 }
 
-pub struct DatadogTraceExporter {
-    rx: BoundedReceiver<Vec<ResourceSpans>>,
-    encode_drain_max_time: Duration,
-    export_drain_max_time: Duration,
-    req_builder: RequestBuilder<ResourceSpans, Transformer>,
-    svc: TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), DatadogTraceDecoder>>>,
-    flush_receiver: Option<FlushReceiver>,
-}
-
 pub struct DatadogTraceExporterBuilder {
     region: Region,
     custom_endpoint: Option<String>,
@@ -81,7 +72,6 @@ pub struct DatadogTraceExporterBuilder {
     environment: String,
     hostname: String,
     retry_config: RetryConfig,
-    flush_receiver: Option<FlushReceiver>,
 }
 
 impl Default for DatadogTraceExporterBuilder {
@@ -93,12 +83,20 @@ impl Default for DatadogTraceExporterBuilder {
             environment: "dev".to_string(),
             hostname: "hostname".to_string(),
             retry_config: Default::default(),
-            flush_receiver: None,
         }
     }
 }
 
 impl DatadogTraceExporterBuilder {
+    pub fn new(region: Region, custom_endpoint: Option<String>, api_key: String) -> Self {
+        Self {
+            region,
+            custom_endpoint,
+            api_token: api_key,
+            ..Default::default()
+        }
+    }
+
     pub fn with_environment(mut self, environment: String) -> Self {
         self.environment = environment;
         self
@@ -115,18 +113,12 @@ impl DatadogTraceExporterBuilder {
         self
     }
 
-    pub fn with_flush_receiver(mut self, flush_receiver: Option<FlushReceiver>) -> Self {
-        self.flush_receiver = flush_receiver;
-        self
-    }
-
-    pub fn build(
+    pub fn build<'a>(
         self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
-    ) -> Result<DatadogTraceExporter, BoxError> {
+        flush_receiver: Option<FlushReceiver>,
+    ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
-
-        // Main processing loop
 
         let transformer = Transformer::new(self.environment.clone(), self.hostname.clone());
 
@@ -144,169 +136,22 @@ impl DatadogTraceExporterBuilder {
             .timeout(Duration::from_secs(5))
             .service(client);
 
-        Ok(DatadogTraceExporter {
-            rx,
-            req_builder,
+        let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
+
+        let exp = Exporter::new(
+            "datadog",
+            "traces",
+            enc_stream,
             svc,
-            encode_drain_max_time: Duration::from_secs(1),
-            export_drain_max_time: Duration::from_secs(2),
-            flush_receiver: self.flush_receiver,
-        })
-    }
-}
+            DatadogResultLogger {
+                telemetry_type: "traces".to_string(),
+            },
+            flush_receiver,
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+        );
 
-impl DatadogTraceExporter {
-    pub fn builder(
-        region: Region,
-        custom_endpoint: Option<String>,
-        api_key: String,
-    ) -> DatadogTraceExporterBuilder {
-        DatadogTraceExporterBuilder {
-            region,
-            custom_endpoint,
-            api_token: api_key,
-            ..Default::default()
-        }
-    }
-
-    /// Starts the main processing loop.
-    pub async fn start(
-        &mut self,
-        token: CancellationToken,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let rx = self.rx.clone();
-        let mut enc_stream = RequestBuilderMapper::new(rx.stream(), self.req_builder.clone());
-        let mut export_futures: FuturesUnordered<ExportFuture> = FuturesUnordered::new();
-        let mut flush_receiver = self.flush_receiver.take();
-        loop {
-            select! {
-                biased;
-
-                Some(resp) = export_futures.next() => {
-                  match resp {
-                        Err(e) => {
-                            error!(error = ?e, "Exporting failed, dropping data.")
-                        },
-                        Ok(rs) => {
-                            debug!(rs = ?rs, futures_size = export_futures.len(), "Datadog exporter sent response");
-                        }
-                    }
-                },
-
-                input = enc_stream.next(), if export_futures.len() < MAX_CONCURRENT_REQUESTS => {
-                    match input {
-                        None => {
-                            debug!("Datadog exporter received end of input, exiting.");
-                            break
-                        },
-                        Some(req) => match req {
-                            Ok(req) => export_futures.push(Box::pin(self.svc.call(req))),
-                            Err(e) => {
-                                error!(error = ?e, "Failed to encode Datadog request, dropping.");
-                            }
-                        }
-                    }
-                },
-
-                Some(resp) = conditional_flush(&mut flush_receiver) => {
-                    match resp {
-                        (Some(req), listener) => {
-                            debug!("received force flush in datadog exporter: {:?}", req);
-
-                            if let Err(res) = self.drain_futures(&mut enc_stream, &mut export_futures).await {
-                                warn!("unable to drain exporter: {}", res);
-                            }
-
-                            if let Err(e) = listener.ack(req).await {
-                                warn!("unable to ack flush request: {}", e);
-                            }
-                        },
-                        (None, _) => warn!("flush channel was closed")
-                    }
-                },
-
-                _ = token.cancelled() => {
-                    event!(Level::INFO, "DatadogExporter received shutdown signal, exiting main processing loop");
-                    break;
-                },
-            }
-        }
-
-        self.drain_futures(&mut enc_stream, &mut export_futures)
-            .await
-    }
-
-    async fn drain_futures(
-        &mut self,
-        enc_stream: &mut RequestBuilderMapper<
-            RecvStream<'_, Vec<ResourceSpans>>,
-            ResourceSpans,
-            RequestBuilder<ResourceSpans, Transformer>,
-        >,
-        export_futures: &mut FuturesUnordered<ExportFuture>,
-    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        let finish_encoding = Instant::now().add(self.encode_drain_max_time);
-        let finish_sending = Instant::now().add(self.export_drain_max_time);
-        let type_name = "datadog_exporter";
-
-        // First we must wait on currently encoding futures
-        loop {
-            let poll_res = timeout_at(finish_encoding, enc_stream.next()).await;
-            match poll_res {
-                Err(_) => {
-                    return Err("DatadogExporter, timed out waiting for requests to encode".into());
-                }
-                Ok(res) => match res {
-                    None => break,
-                    Some(r) => match r {
-                        Ok(req) => export_futures.push(Box::pin(self.svc.call(req))),
-                        Err(e) => {
-                            error!(error = ?e, "Failed to encode Datadog request, dropping.");
-                        }
-                    },
-                },
-            }
-        }
-
-        let mut drain_errors = 0;
-        loop {
-            if export_futures.is_empty() {
-                break;
-            }
-
-            let poll_res = timeout_at(finish_sending, export_futures.next()).await;
-            match poll_res {
-                Err(_) => {
-                    return Err("DatadogExporter, timed out waiting for requests to finish".into());
-                }
-                Ok(res) => match res {
-                    None => {
-                        error!(type_name, "None returned while polling futures");
-                        break;
-                    }
-                    Some(r) => {
-                        if let Err(e) = r {
-                            error!(type_name,
-                                error = ?e,
-                                "DatadogExporter error from endpoint."
-                            );
-
-                            drain_errors += 1;
-                        }
-                    }
-                },
-            }
-        }
-
-        if drain_errors > 0 {
-            Err(format!(
-                "Failed draining export requests, {} requests failed",
-                drain_errors
-            )
-            .into())
-        } else {
-            Ok(())
-        }
+        Ok(exp)
     }
 }
 
@@ -314,9 +159,9 @@ impl DatadogTraceExporter {
 mod tests {
     extern crate utilities;
 
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
-    use crate::exporters::datadog::{DatadogTraceExporter, Region};
+    use crate::exporters::datadog::Region;
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -404,5 +249,21 @@ impl ResponseDecode<()> for DatadogTraceDecoder {
     // todo: look at response
     fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
         Ok(())
+    }
+}
+
+pub struct DatadogResultLogger {
+    telemetry_type: String,
+}
+
+impl ResultLogger<Response<()>> for DatadogResultLogger {
+    fn handle(&self, resp: Response<()>) {
+        match resp.status_code().as_u16() {
+            200..=202 => {}
+            _ => error!(
+                telemetry_type = self.telemetry_type,
+                "Failed to export to Datadog: {:?}", resp
+            ),
+        };
     }
 }
