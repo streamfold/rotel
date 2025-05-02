@@ -161,7 +161,7 @@ mod tests {
 
     use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
-    use crate::exporters::datadog::Region;
+    use crate::exporters::datadog::{DatadogTraceExporterBuilder, ExporterType, Region};
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -185,7 +185,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let mut exporter = new_exporter(addr, brx);
+        let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -211,7 +211,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let mut exporter = new_exporter(addr, brx);
+        let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -227,17 +227,17 @@ mod tests {
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }
 
-    fn new_exporter(
+    fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
-    ) -> DatadogTraceExporter {
-        DatadogTraceExporter::builder(Region::US1, Some(addr), "1234".to_string())
+    ) -> ExporterType<'a, ResourceSpans>  {
+        DatadogTraceExporterBuilder::new(Region::US1, Some(addr), "1234".to_string())
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
                 max_backoff: Duration::from_millis(50),
                 max_elapsed_time: Duration::from_millis(50),
             })
-            .build(brx)
+            .build(brx, None)
             .unwrap()
     }
 }
