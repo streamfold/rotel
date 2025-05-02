@@ -8,3 +8,4 @@ pub mod response;
 pub mod retry;
 pub mod tls;
 pub mod types;
+pub mod exporter;

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::clickhouse::payload::ClickhousePayload;
 use futures_util::{
-    Stream, StreamExt, ready,
-    stream::{Fuse, FuturesOrdered},
+    ready, stream::{Fuse, FuturesOrdered}, Stream,
+    StreamExt,
 };
 use http::Request;
 use pin_project::pin_project;
@@ -16,27 +15,25 @@ use tracing::error;
 // todo: Make this configurable?
 const MAX_CONCURRENT_ENCODERS: usize = 8;
 
-pub trait BuildRequest<Resource> {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<ClickhousePayload>, BoxError>;
+pub trait BuildRequest<Resource, Payload> {
+    fn build(&self, input: Vec<Resource>) -> Result<Request<Payload>, BoxError>;
 }
 
 #[pin_project]
-pub struct RequestBuilderMapper<InStr, Resource, ReqBuilder>
+pub struct RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
-    ReqBuilder: BuildRequest<Resource>,
 {
     #[pin]
     input: Fuse<InStr>,
 
     req_builder: ReqBuilder,
-    encoding_futures: FuturesOrdered<JoinHandle<Result<Request<ClickhousePayload>, BoxError>>>,
+    encoding_futures: FuturesOrdered<JoinHandle<Result<Request<Payload>, BoxError>>>,
 }
 
-impl<InStr, Resource, ReqBuilder> RequestBuilderMapper<InStr, Resource, ReqBuilder>
+impl<InStr, Resource, Payload, ReqBuilder> RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
-    ReqBuilder: BuildRequest<Resource>,
 {
     pub fn new(input: InStr, req_builder: ReqBuilder) -> Self {
         Self {
@@ -47,13 +44,14 @@ where
     }
 }
 
-impl<InStr, Resource, ReqBuilder> Stream for RequestBuilderMapper<InStr, Resource, ReqBuilder>
+impl<InStr, Resource, Payload, ReqBuilder> Stream for RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
     Resource: Send + Clone + 'static,
-    ReqBuilder: BuildRequest<Resource> + Send + Sync + Clone + 'static,
+    ReqBuilder: BuildRequest<Resource, Payload> + Send + Sync + Clone + 'static,
+    Payload: Send + 'static,
 {
-    type Item = Result<Request<ClickhousePayload>, BoxError>;
+    type Item = Result<Request<Payload>, BoxError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();

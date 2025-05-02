@@ -63,7 +63,7 @@ impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
             flush_receiver,
             encode_drain_max_time,
             export_drain_max_time,
-            _phantom: PhantomData::default(),
+            _phantom: PhantomData,
         }
     }
 }
