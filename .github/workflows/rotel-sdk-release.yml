@@ -23,7 +23,8 @@ jobs:
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.3
-        working-directory: ./rotel_python_processor_sdk/rotel_sdk
+        with:
+          package-dir: 'rotel_python_processor_sdk/rotel_sdk'
         # env:
         #   CIBW_SOME_OPTION: value
         #   ...
