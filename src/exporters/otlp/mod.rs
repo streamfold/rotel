@@ -164,7 +164,6 @@ mod tests {
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use prost::Message;
-    use std::cell::RefCell;
     use std::error::Error;
     use std::net::SocketAddr;
     use std::sync::{Arc, Mutex};
@@ -172,6 +171,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::otlp;
     use crate::exporters::otlp::exporter::Exporter;
+    use crate::topology::flush_control::FlushBroadcast;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
         LogsService, LogsServiceServer,
@@ -195,9 +195,9 @@ mod tests {
 
     #[derive(Clone)]
     struct MockOTLPService {
-        trace_requests: Arc<Mutex<RefCell<Vec<Request<ExportTraceServiceRequest>>>>>,
-        metrics_requests: Arc<Mutex<RefCell<Vec<Request<ExportMetricsServiceRequest>>>>>,
-        logs_requests: Arc<Mutex<RefCell<Vec<Request<ExportLogsServiceRequest>>>>>,
+        trace_requests: Arc<Mutex<Vec<Request<ExportTraceServiceRequest>>>>,
+        metrics_requests: Arc<Mutex<Vec<Request<ExportMetricsServiceRequest>>>>,
+        logs_requests: Arc<Mutex<Vec<Request<ExportLogsServiceRequest>>>>,
         tx: Option<Sender<()>>,
         error: bool,
     }
@@ -208,8 +208,8 @@ mod tests {
             &self,
             request: Request<ExportTraceServiceRequest>,
         ) -> Result<Response<ExportTraceServiceResponse>, Status> {
-            let guard = self.trace_requests.lock().unwrap();
-            guard.borrow_mut().push(request);
+            let mut guard = self.trace_requests.lock().unwrap();
+            guard.push(request);
 
             if self.tx.is_some() {
                 // N.B. We are calling spawn here and issuing the tx.send() in a tokio tasks
@@ -244,8 +244,8 @@ mod tests {
             &self,
             request: Request<ExportMetricsServiceRequest>,
         ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
-            let guard = self.metrics_requests.lock().unwrap();
-            guard.borrow_mut().push(request);
+            let mut guard = self.metrics_requests.lock().unwrap();
+            guard.push(request);
 
             if self.tx.is_some() {
                 // N.B. We are calling spawn here and issuing the tx.send() in a tokio tasks
@@ -280,8 +280,8 @@ mod tests {
             &self,
             request: Request<ExportLogsServiceRequest>,
         ) -> Result<Response<ExportLogsServiceResponse>, Status> {
-            let guard = self.logs_requests.lock().unwrap();
-            guard.borrow_mut().push(request);
+            let mut guard = self.logs_requests.lock().unwrap();
+            guard.push(request);
 
             if self.tx.is_some() {
                 // N.B. We are calling spawn here and issuing the tx.send() in a tokio tasks
@@ -313,9 +313,9 @@ mod tests {
     impl MockOTLPService {
         async fn new(tx: Option<Sender<()>>, error: bool) -> Self {
             Self {
-                trace_requests: Arc::new(Mutex::new(RefCell::new(Vec::new()))),
-                metrics_requests: Arc::new(Mutex::new(RefCell::new(Vec::new()))),
-                logs_requests: Arc::new(Mutex::new(RefCell::new(Vec::new()))),
+                trace_requests: Arc::new(Mutex::new(Vec::new())),
+                metrics_requests: Arc::new(Mutex::new(Vec::new())),
+                logs_requests: Arc::new(Mutex::new(Vec::new())),
                 tx,
                 error,
             }
@@ -410,8 +410,7 @@ mod tests {
         let resp = result.expect("error getting response received by client");
         assert!(resp.is_ok());
         // Get mock server requests
-        let guard = requests.lock().unwrap();
-        let mut trace_requests = guard.borrow_mut();
+        let mut trace_requests = requests.lock().unwrap();
         assert_eq!(trace_requests.len(), 1);
         let req = trace_requests.pop().unwrap().into_inner();
         assert_eq!(
@@ -444,8 +443,7 @@ mod tests {
         let resp = result.expect("error getting response received by client");
         assert!(resp.is_ok());
         // Get mock server requests
-        let guard = requests.lock().unwrap();
-        let mut trace_requests = guard.borrow_mut();
+        let mut trace_requests = requests.lock().unwrap();
         assert_eq!(trace_requests.len(), 1);
         let req = trace_requests.pop().unwrap().into_inner();
         assert_eq!(
@@ -478,8 +476,7 @@ mod tests {
         let resp = result.expect("error getting response received by client");
         assert!(resp.is_ok());
         // Get mock server requests
-        let guard = requests.lock().unwrap();
-        let mut trace_requests = guard.borrow_mut();
+        let mut trace_requests = requests.lock().unwrap();
         assert_eq!(trace_requests.len(), 1);
         let req = trace_requests.pop().unwrap().into_inner();
         let f = req.resource_logs[0].scope_logs[0].log_records[0]
@@ -529,8 +526,14 @@ mod tests {
         .with_ca_file(server_root_ca_cert_file)
         .with_header("authorization", "bar");
 
-        let mut traces =
-            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let (mut flush_pipeline_tx, mut flush_pipeline_sub) = FlushBroadcast::new().into_parts();
+
+        let mut traces = otlp::exporter::build_traces_exporter(
+            traces_config,
+            trace_brx,
+            Some(flush_pipeline_sub.subscribe()),
+        )
+        .unwrap();
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
@@ -540,6 +543,8 @@ mod tests {
             .send(FakeOTLP::trace_service_request().resource_spans)
             .await;
         assert!(&res.is_ok());
+        flush_pipeline_tx.broadcast().await.unwrap();
+
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
             .is_err()
@@ -550,8 +555,7 @@ mod tests {
         let _ = join!(jh);
         cancel_token.cancel();
         // Get mock server requests
-        let guard = requests.lock().unwrap();
-        let mut trace_requests = guard.borrow_mut();
+        let mut trace_requests = requests.lock().unwrap();
         assert_eq!(trace_requests.len(), 1);
         let mut req = trace_requests.pop().unwrap();
         let v = req
@@ -596,8 +600,14 @@ mod tests {
         .with_ca_file(server_root_ca_cert_file)
         .with_header("authorization", "bar");
 
-        let mut metrics =
-            otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None).unwrap();
+        let (mut flush_pipeline_tx, mut flush_pipeline_sub) = FlushBroadcast::new().into_parts();
+
+        let mut metrics = otlp::exporter::build_metrics_exporter(
+            metrics_config,
+            metrics_brx,
+            Some(flush_pipeline_sub.subscribe()),
+        )
+        .unwrap();
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
@@ -607,6 +617,9 @@ mod tests {
             .send(FakeOTLP::metrics_service_request().resource_metrics)
             .await;
         assert!(&res.is_ok());
+
+        flush_pipeline_tx.broadcast().await.unwrap();
+
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
             .is_err()
@@ -617,8 +630,7 @@ mod tests {
         let _ = join!(jh);
         cancel_token.cancel();
         // Get mock server requests
-        let guard = requests.lock().unwrap();
-        let mut metrics_requests = guard.borrow_mut();
+        let mut metrics_requests = requests.lock().unwrap();
         assert_eq!(metrics_requests.len(), 1);
         let mut req = metrics_requests.pop().unwrap();
         let v = req
@@ -663,7 +675,14 @@ mod tests {
         .with_ca_file(server_root_ca_cert_file)
         .with_header("authorization", "bar");
 
-        let mut logs = otlp::exporter::build_logs_exporter(logs_config, logs_brx, None).unwrap();
+        let (mut flush_pipeline_tx, mut flush_pipeline_sub) = FlushBroadcast::new().into_parts();
+
+        let mut logs = otlp::exporter::build_logs_exporter(
+            logs_config,
+            logs_brx,
+            Some(flush_pipeline_sub.subscribe()),
+        )
+        .unwrap();
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
@@ -673,6 +692,9 @@ mod tests {
             .send(FakeOTLP::logs_service_request().resource_logs)
             .await;
         assert!(&res.is_ok());
+
+        flush_pipeline_tx.broadcast().await.unwrap();
+
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
             .is_err()
@@ -683,8 +705,7 @@ mod tests {
         let _ = join!(jh);
         cancel_token.cancel();
         // Get mock server requests
-        let guard = requests.lock().unwrap();
-        let mut logs_requests = guard.borrow_mut();
+        let mut logs_requests = requests.lock().unwrap();
         assert_eq!(logs_requests.len(), 1);
         let mut req = logs_requests.pop().unwrap();
         let v = req
@@ -721,8 +742,14 @@ mod tests {
         .with_initial_backoff(Duration::from_millis(5))
         .with_max_elapsed_time(Duration::from_millis(50));
 
-        let mut traces =
-            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let (mut flush_pipeline_tx, mut flush_pipeline_sub) = FlushBroadcast::new().into_parts();
+
+        let mut traces = otlp::exporter::build_traces_exporter(
+            traces_config,
+            trace_brx,
+            Some(flush_pipeline_sub.subscribe()),
+        )
+        .unwrap();
 
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
@@ -732,6 +759,10 @@ mod tests {
             .send(FakeOTLP::trace_service_request().resource_spans)
             .await;
         assert!(&res.is_ok());
+
+        // broadcast a flush to immediately drain
+        flush_pipeline_tx.broadcast().await.unwrap();
+
         // We should get at least one retry here, so wait for two responses
         for i in 0..=1 {
             if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
@@ -749,7 +780,7 @@ mod tests {
         cancel_token.cancel();
         // Get mock server requests
         let guard = requests.lock().unwrap();
-        let tries = guard.borrow_mut().len() as i32;
+        let tries = guard.len() as i32;
 
         assert!(tries >= 2);
         shut_tx.send(()).unwrap();
@@ -932,7 +963,7 @@ mod tests {
         let resp = ExportTraceServiceResponse::default();
 
         //
-        // Test when the endpoint times out
+        // Test when the retries time out
         //
         let mut resp_buf = BytesMut::with_capacity(1024);
         resp.encode(&mut resp_buf).unwrap();
@@ -949,7 +980,6 @@ mod tests {
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
         )
-        .with_request_timeout(Duration::from_millis(5))
         .with_initial_backoff(Duration::from_millis(5))
         .with_max_elapsed_time(Duration::from_millis(20))
         .with_encode_drain_max_time(Duration::from_millis(10));
