@@ -1,6 +1,6 @@
 [package]
 name = "rotel"
-version = "0.0.1-alpha4"
+version = "0.0.1-alpha5"
 edition = "2024"
 homepage = "https://github.com/streamfold/rotel"
 readme = "README.md"
