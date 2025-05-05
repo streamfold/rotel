@@ -2,10 +2,8 @@ mod api_request;
 mod ch_error;
 mod compression;
 mod exception;
-mod exporter;
 mod payload;
 mod request_builder;
-mod request_builder_mapper;
 mod rowbinary;
 mod schema;
 mod transformer;
@@ -13,15 +11,15 @@ mod transformer;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::exception::extract_exception;
-use crate::exporters::clickhouse::exporter::{Exporter, ResultLogger};
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
-use crate::exporters::clickhouse::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::clickhouse::schema::{get_log_row_col_keys, get_span_row_col_keys};
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http;
 use crate::exporters::http::client::ResponseDecode;
+use crate::exporters::http::exporter::{Exporter, ResultLogger};
 use crate::exporters::http::http_client::HttpClient;
+use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::http::types::ContentEncoding;
@@ -68,6 +66,7 @@ type ExporterType<'a, Resource> = Exporter<
     RequestBuilderMapper<
         RecvStream<'a, Vec<Resource>>,
         Resource,
+        ClickhousePayload,
         RequestBuilder<Resource, Transformer>,
     >,
     SvcType,

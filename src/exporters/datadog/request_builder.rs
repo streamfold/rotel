@@ -2,8 +2,8 @@
 
 use crate::exporters::datadog::Region;
 use crate::exporters::datadog::api_request::ApiRequestBuilder;
-use crate::exporters::datadog::request_builder_mapper::BuildRequest;
 use crate::exporters::datadog::types::pb::AgentPayload;
+use crate::exporters::http::request_builder_mapper::BuildRequest;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
@@ -50,7 +50,8 @@ where
     }
 }
 
-impl<Resource, Transform> BuildRequest<Resource> for RequestBuilder<Resource, Transform>
+impl<Resource, Transform> BuildRequest<Resource, Full<Bytes>>
+    for RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {

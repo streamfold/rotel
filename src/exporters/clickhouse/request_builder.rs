@@ -2,7 +2,7 @@
 
 use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
-use crate::exporters::clickhouse::request_builder_mapper::BuildRequest;
+use crate::exporters::http::request_builder_mapper::BuildRequest;
 use http::Request;
 use std::marker::PhantomData;
 use tower::BoxError;
@@ -38,7 +38,8 @@ where
     }
 }
 
-impl<Resource, Transform> BuildRequest<Resource> for RequestBuilder<Resource, Transform>
+impl<Resource, Transform> BuildRequest<Resource, ClickhousePayload>
+    for RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {

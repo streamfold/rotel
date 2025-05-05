@@ -2,7 +2,7 @@ use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterBuilder;
-use crate::exporters::datadog::{DatadogTraceExporter, Region};
+use crate::exporters::datadog::{DatadogTraceExporterBuilder, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
@@ -373,7 +373,7 @@ impl Agent {
 
                 let hostname = get_hostname();
 
-                let mut builder = DatadogTraceExporter::builder(
+                let mut builder = DatadogTraceExporterBuilder::new(
                     config.datadog_exporter.datadog_exporter_region.into(),
                     config
                         .datadog_exporter
@@ -381,14 +381,16 @@ impl Agent {
                         .clone(),
                     api_key,
                 )
-                .with_flush_receiver(self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()))
                 .with_environment(self.environment.clone());
 
                 if let Some(hostname) = hostname {
                     builder = builder.with_hostname(hostname);
                 }
 
-                let mut exp = builder.build(trace_pipeline_out_rx)?;
+                let exp = builder.build(
+                    trace_pipeline_out_rx,
+                    self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                )?;
 
                 exporters_task_set.spawn(async move {
                     let res = exp.start(token).await;
