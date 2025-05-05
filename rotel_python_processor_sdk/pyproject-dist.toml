@@ -1,12 +1,12 @@
 [project]
 name = "rotel_sdk"
-version = "0.0.1a2"
+version = "0.0.1a3"
 authors = [
     { name = "Ray Jenkins", email = "ray@streamfold.com" },
     { name = "Michael Heffner", email = "mike@streamfold.com" },
 ]
+dynamic = ["readme"]
 description = "Rotel SDK for Python Processors"
-readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -18,3 +18,7 @@ license-files = ["LICEN[CS]E*"]
 [project.urls]
 Homepage = "https://github.com/streamfold/rotel"
 Issues = "https://github.com/streamfold/rotel/issues"
+
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"], content-type = "text/markdown" }

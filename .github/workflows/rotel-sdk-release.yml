@@ -27,8 +27,6 @@ jobs:
           mkdir build 
           cp -R ./rotel_python_processor_sdk/rotel_sdk ./build
           cp -R ./rotel_python_processor_sdk/pyproject-dist.toml ./build/pyproject.toml
-          cp -R ./rotel_python_processor_sdk/pyproject-dist.toml ./pyproject.toml
-          cp -R ./rotel_python_processor_sdk/rotel_sdk/README.md ./README.md
       - name: Install pypa/build
         run: >-
           python3 -m
