@@ -34,10 +34,11 @@ OpenTelemetry processor API bundled as a Python extension.
 
 ## Getting Started
 
-Download the latest [Python processor enabled version of Rotel](https://github.com/streamfold/rotel/releases/). Python
-processor versions
-of Rotel are prefixed with `rotel_py_processor`. Choose the release that matches your system architecture and the
-version of Python you have installed .
+In order to use the Rotel Python processor SDK you will need to either build from source using the `--features pyo3`
+flag or download the latest [Python processor enabled version of Rotel](https://github.com/streamfold/rotel/releases/).
+Python
+processor versions of Rotel are prefixed with `rotel_py_processor`. Choose the release that matches your system
+architecture and the version of Python you have installed .
 
 For example is you are going to run Rotel and write processors on `x86_64` with `Python 3.13` download and install...
 
@@ -60,18 +61,12 @@ Your processor must implement a function called `process` in order for rotel to 
 process is called
 your processor will be handed a instance of the `ResourceSpan` class for you to manipulate as you like.
 
-Once you've written your processor you can run it in rotel with the `--otlp-with-trace-processor` flag.
-
-```commandline
-./target/release/rotel start --otlp-exporter-endpoint <https://otlp-endpoint-url> --otlp-with-trace-processor `/tmp/rotel_processors_example/append_resource_attributes`
-```
-
 ## Trace processor example
 
 The following is an example OTel trace processor called `append_resource_attributes.py` which adds the OS name, version,
 and a timestamp named
 `rotel.process.time` to the Resource Attributes of a batch of Spans. Open up your editor or Python IDE and paste the
-following into a file called `append_resource_attributes.py`
+following into a file called `append_resource_attributes.py` and run with the following command.
 
 ```python
 import platform
@@ -97,6 +92,10 @@ def process(resource_spans: ResourceSpans):
     resource.attributes.append(KeyValue.new_string_value("rotel.process.time", current_time))
 
 ```
+
+Now start rotel and the processor with the following command.
+
+`./rotel start --otlp-exporter-endpoint <otlp-endpoint-url> --otlp-with-trace-processor ./append_resource_attributes.py`
 
 ## Community and Getting Help
 
