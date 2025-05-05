@@ -40,7 +40,7 @@ jobs:
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
         with:
-          name: rotel_sdk
+          name: rotel-sdk
           path: build/dist/
   publish-to-pypi:
     name: >-
@@ -58,7 +58,7 @@ jobs:
       - name: Download all the dists
         uses: actions/download-artifact@v4
         with:
-          name: python-package-distributions
+          name: rotel-sdk
           path: dist/
       - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
