@@ -21,7 +21,7 @@ use std::fmt::{Debug, Display};
 use std::future::Future;
 use std::io::{ErrorKind, Read};
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::listener::Listener;
 use crate::receivers::get_meter;
@@ -229,11 +229,9 @@ impl<B> ValidateRequest<B> for ValidateOTLPContentType {
             return Ok(());
         }
 
-        if request
-            .headers()
-            .get(CONTENT_TYPE)
-            .is_none_or(|ct| ct != PROTOBUF_CT)
-        {
+        let ct = request.headers().get(CONTENT_TYPE);
+        if ct.is_none_or(|ct| ct != PROTOBUF_CT) {
+            debug!(content_type = ?ct, "Unsupported content-type");
             Err(response_4xx(StatusCode::BAD_REQUEST).unwrap())
         } else {
             Ok(())
