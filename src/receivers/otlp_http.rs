@@ -38,6 +38,7 @@ use opentelemetry_proto::tonic::collector::metrics::v1::{
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use serde::de::DeserializeOwned;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -56,6 +57,7 @@ const MAX_BODY_SIZE: usize = 20 * 1024 * 1024;
 const DEFAULT_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 
 const PROTOBUF_CT: &str = "application/x-protobuf";
+const JSON_CT: &str = "application/json";
 
 #[derive(Default)]
 pub struct OTLPHttpServerBuilder {
@@ -230,7 +232,7 @@ impl<B> ValidateRequest<B> for ValidateOTLPContentType {
         }
 
         let ct = request.headers().get(CONTENT_TYPE);
-        if ct.is_none_or(|ct| ct != PROTOBUF_CT) {
+        if ct.is_none_or(|ct| ct != PROTOBUF_CT && ct != JSON_CT) {
             debug!(content_type = ?ct, "Unsupported content-type");
             Err(response_4xx(StatusCode::BAD_REQUEST).unwrap())
         } else {
@@ -491,7 +493,11 @@ where
     Ok(decoded_bytes)
 }
 
-async fn handle<H: Body, ExpReq: prost::Message + Default + OTLPInto<Vec<T>>, T: prost::Message>(
+async fn handle<
+    H: Body,
+    ExpReq: prost::Message + DeserializeOwned + Default + OTLPInto<Vec<T>>,
+    T: prost::Message,
+>(
     req: Request<H>,
     output: OTLPOutput<Vec<T>>,
     ok_resp: Bytes,
@@ -503,17 +509,41 @@ where
     <H as Body>::Error: Display + Debug + Send + Sync + ToString,
     [T]: BatchSizer,
 {
+    // We've already validated this header exists
+    let ct = req.headers().get(CONTENT_TYPE).unwrap().clone();
+
     let decoded_bytes = decode_body(req).await;
     if decoded_bytes.is_err() {
         return response_4xx(decoded_bytes.err().unwrap());
     }
-    let decoded = ExpReq::decode(decoded_bytes.unwrap());
-    if let Err(e) = decoded {
-        error!(error = e.to_string(), "Failed to decode OTLP/HTTP request.");
-        return response_4xx(StatusCode::BAD_REQUEST);
-    }
 
-    let req = decoded.unwrap();
+    let req = match ct.to_str().unwrap() {
+        PROTOBUF_CT => {
+            let decoded = ExpReq::decode(decoded_bytes.unwrap());
+            if let Err(e) = decoded {
+                error!(
+                    error = e.to_string(),
+                    "Failed to decode OTLP HTTP/Protobuf request."
+                );
+                return response_4xx(StatusCode::BAD_REQUEST);
+            }
+            decoded.unwrap()
+        }
+        JSON_CT => {
+            let decoded = serde_json::from_slice::<ExpReq>(decoded_bytes.unwrap().as_ref());
+            if let Err(e) = decoded {
+                error!(
+                    error = e.to_string(),
+                    "Failed to decode OTLP HTTP/JSON request."
+                );
+                return response_4xx(StatusCode::BAD_REQUEST);
+            }
+            decoded.unwrap()
+        }
+        _ => {
+            return response_4xx(StatusCode::BAD_REQUEST);
+        }
+    };
 
     let mut rb = Response::builder();
     rb.headers_mut()
@@ -708,6 +738,28 @@ mod tests {
         assert_eq!(1, msg.len());
     }
 
+    #[tokio::test]
+    async fn valid_trace_posts_json() {
+        let (svc, mut trace_rx, _, _) = new_svc();
+
+        let trace_req = FakeOTLP::trace_service_request();
+
+        let buf = serde_json::to_vec(&trace_req).unwrap();
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/traces")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Full::new(buf))
+            .unwrap();
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn does_not_log_header_timeout() {
@@ -793,6 +845,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn valid_metrics_posts_json() {
+        let (svc, _, mut metrics_rx, _) = new_svc();
+
+        let metrics_req = FakeOTLP::metrics_service_request();
+
+        let buf = serde_json::to_vec(&metrics_req).unwrap();
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/metrics")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Full::new(buf))
+            .unwrap();
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = metrics_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+    }
+
+    #[tokio::test]
     async fn valid_logs_posts() {
         let (svc, _, _, mut logs_rx) = new_svc();
 
@@ -807,6 +881,30 @@ mod tests {
             .uri("/v1/logs")
             .method(Method::POST)
             .header(CONTENT_TYPE, "application/x-protobuf")
+            .body(Full::new(buf))
+            .unwrap();
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = logs_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+    }
+
+    #[tokio::test]
+    async fn valid_logs_posts_json() {
+        let (svc, _, _, mut logs_rx) = new_svc();
+
+        let logs_req = FakeOTLP::logs_service_request();
+
+        let buf = serde_json::to_vec(&logs_req).unwrap();
+        let buf = Bytes::from(buf);
+
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/logs")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/json")
             .body(Full::new(buf))
             .unwrap();
         let resp = svc.call(req).await.unwrap();
