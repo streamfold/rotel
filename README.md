@@ -8,7 +8,8 @@ Rotel is a lightweight OpenTelemetry collector implemented in Rust.
 
 **Features:**
 - Supports metrics, logs, and traces
-- OTLP receiver and exporters with gRPC and HTTP/Protobuf support
+- OTLP receiver supporting gRPC, HTTP/Protobuf, and HTTP/JSON
+- OTLP exporter supporting gRPC and HTTP/Protobuf
 - Built-in batching and retry mechanisms
 - Experimental Clickhouse and Datadog exporters
 
