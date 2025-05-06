@@ -27,8 +27,8 @@ use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::OTLPInto;
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -39,6 +39,7 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -281,12 +282,9 @@ struct OTLPService {
     trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
     metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
-    trace_ok_resp: Bytes,
-    metrics_ok_resp: Bytes,
     traces_path: String,
     metrics_path: String,
     logs_path: String,
-    logs_ok_resp: Bytes,
     accepted_spans_records_counter: Counter<u64>,
     accepted_metric_points_counter: Counter<u64>,
     accepted_log_records_counter: Counter<u64>,
@@ -314,9 +312,6 @@ impl OTLPService {
             traces_path,
             metrics_path,
             logs_path,
-            trace_ok_resp: compute_ok_resp::<ExportTraceServiceResponse>().unwrap(),
-            metrics_ok_resp: compute_ok_resp::<ExportMetricsServiceResponse>().unwrap(),
-            logs_ok_resp: compute_ok_resp::<ExportLogsServiceResponse>().unwrap(),
             accepted_spans_records_counter: get_meter()
                 .u64_counter("rotel_receiver_accepted_spans")
                 .with_description(
@@ -384,19 +379,16 @@ where
                             response_4xx(StatusCode::NOT_FOUND).unwrap(),
                         ));
                     }
-                    let trace_ok_resp = self.trace_ok_resp.clone();
                     let output = self.trace_output.clone().unwrap();
                     let accepted = self.accepted_spans_records_counter.clone();
                     let refused = self.refused_spans_records_counter.clone();
                     let tags = self.tags.clone();
-                    return Box::pin(handle::<H, ExportTraceServiceRequest, ResourceSpans>(
-                        req,
-                        output,
-                        trace_ok_resp,
-                        accepted,
-                        refused,
-                        tags,
-                    ));
+                    return Box::pin(handle::<
+                        H,
+                        ExportTraceServiceRequest,
+                        ExportTraceServiceResponse,
+                        ResourceSpans,
+                    >(req, output, accepted, refused, tags));
                 }
                 if path == self.metrics_path {
                     if self.metrics_output.is_none() {
@@ -404,19 +396,16 @@ where
                             response_4xx(StatusCode::NOT_FOUND).unwrap(),
                         ));
                     }
-                    let metrics_ok_resp = self.metrics_ok_resp.clone();
                     let output = self.metrics_output.clone().unwrap();
                     let accepted = self.accepted_metric_points_counter.clone();
                     let refused = self.refused_metric_points_counter.clone();
                     let tags = self.tags.clone();
-                    return Box::pin(handle::<H, ExportMetricsServiceRequest, ResourceMetrics>(
-                        req,
-                        output,
-                        metrics_ok_resp,
-                        accepted,
-                        refused,
-                        tags,
-                    ));
+                    return Box::pin(handle::<
+                        H,
+                        ExportMetricsServiceRequest,
+                        ExportMetricsServiceResponse,
+                        ResourceMetrics,
+                    >(req, output, accepted, refused, tags));
                 }
                 if path == self.logs_path {
                     if self.logs_output.is_none() {
@@ -424,19 +413,16 @@ where
                             response_4xx(StatusCode::NOT_FOUND).unwrap(),
                         ));
                     }
-                    let logs_ok_resp = self.logs_ok_resp.clone();
                     let output = self.logs_output.clone().unwrap();
                     let accepted = self.accepted_log_records_counter.clone();
                     let refused = self.refused_log_records_counter.clone();
                     let tags = self.tags.clone();
-                    return Box::pin(handle::<H, ExportLogsServiceRequest, ResourceLogs>(
-                        req,
-                        output,
-                        logs_ok_resp,
-                        accepted,
-                        refused,
-                        tags,
-                    ));
+                    return Box::pin(handle::<
+                        H,
+                        ExportLogsServiceRequest,
+                        ExportLogsServiceResponse,
+                        ResourceLogs,
+                    >(req, output, accepted, refused, tags));
                 }
                 Box::pin(futures::future::ok(
                     response_4xx(StatusCode::NOT_FOUND).unwrap(),
@@ -496,11 +482,11 @@ where
 async fn handle<
     H: Body,
     ExpReq: prost::Message + DeserializeOwned + Default + OTLPInto<Vec<T>>,
+    ExpResp: prost::Message + Serialize + Default,
     T: prost::Message,
 >(
     req: Request<H>,
     output: OTLPOutput<Vec<T>>,
-    ok_resp: Bytes,
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
     tags: [KeyValue; 1],
@@ -517,6 +503,7 @@ where
         return response_4xx(decoded_bytes.err().unwrap());
     }
 
+    let mut json_resp = false;
     let req = match ct.to_str().unwrap() {
         PROTOBUF_CT => {
             let decoded = ExpReq::decode(decoded_bytes.unwrap());
@@ -538,6 +525,7 @@ where
                 );
                 return response_4xx(StatusCode::BAD_REQUEST);
             }
+            json_resp = true;
             decoded.unwrap()
         }
         _ => {
@@ -546,9 +534,13 @@ where
     };
 
     let mut rb = Response::builder();
-    rb.headers_mut()
-        .unwrap()
-        .insert(CONTENT_TYPE, HeaderValue::from_str(PROTOBUF_CT).unwrap());
+    let resp_headers = rb.headers_mut().unwrap();
+
+    if json_resp {
+        resp_headers.insert(CONTENT_TYPE, HeaderValue::from_str(JSON_CT).unwrap());
+    } else {
+        resp_headers.insert(CONTENT_TYPE, HeaderValue::from_str(PROTOBUF_CT).unwrap());
+    }
 
     let otlp_payload = ExpReq::otlp_into(req);
     let count = BatchSizer::size_of(otlp_payload.as_slice());
@@ -556,7 +548,9 @@ where
     match output.send(otlp_payload).await {
         Ok(_) => {
             // No partial success at the moment
-            let body = Full::new(ok_resp.clone());
+            let body = compute_ok_resp::<ExpResp>(json_resp).unwrap();
+
+            let body = Full::new(body);
             accepted_counter.add(count as u64, &tags);
             Ok(rb.body(body).unwrap())
         }
@@ -592,35 +586,44 @@ fn response_4xx_with_body(
         .unwrap())
 }
 
-fn compute_ok_resp<T: prost::Message + Default>() -> Result<Bytes, EncodeError> {
+fn compute_ok_resp<T: prost::Message + Serialize + Default>(
+    as_json: bool,
+) -> Result<Bytes, EncodeError> {
     // The default response is actually empty, so this results in an empty response
     let resp = T::default();
-    let mut buf = Vec::with_capacity(resp.encoded_len());
-    resp.encode(&mut buf)?;
 
-    Ok(buf.into())
+    let ret_buf = match as_json {
+        true => serde_json::to_vec(&resp).unwrap(),
+        false => {
+            let mut buf = Vec::with_capacity(resp.encoded_len());
+            resp.encode(&mut buf)?;
+            buf
+        }
+    };
+
+    Ok(ret_buf.into())
 }
 
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use flate2::Compression as GZCompression;
     use flate2::read::GzEncoder;
+    use flate2::Compression as GZCompression;
     use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
     use http::{Method, Request, StatusCode};
     use http_body_util::Full;
     use hyper::service::Service;
-    use hyper_util::client::legacy::Client;
     use hyper_util::client::legacy::connect::HttpConnector;
+    use hyper_util::client::legacy::Client;
     use hyper_util::rt::{TokioExecutor, TokioTimer};
     use std::io::Read;
     use std::time::Duration;
 
     extern crate utilities;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::listener::Listener;
     use crate::receivers::otlp_http::{
-        MAX_BODY_SIZE, OTLPHttpServer, OTLPService, ValidateOTLPContentType, build_service,
+        build_service, OTLPHttpServer, OTLPService, ValidateOTLPContentType, MAX_BODY_SIZE,
     };
     use crate::receivers::otlp_output::OTLPOutput;
     use hyper_util::service::TowerToHyperService;
@@ -733,6 +736,10 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
+        assert_eq!(
+            "application/x-protobuf",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         let msg = trace_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
@@ -755,6 +762,10 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
+        assert_eq!(
+            "application/json",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         let msg = trace_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
@@ -804,6 +815,10 @@ mod tests {
 
         let resp = client.request(req.clone()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            "application/x-protobuf",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         // wait, ideally keeping the connection open
         sleep(Duration::from_millis(100)).await;
@@ -839,6 +854,10 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
+        assert_eq!(
+            "application/x-protobuf",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         let msg = metrics_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
@@ -861,6 +880,10 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
+        assert_eq!(
+            "application/json",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         let msg = metrics_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
@@ -885,6 +908,10 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
+        assert_eq!(
+            "application/x-protobuf",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         let msg = logs_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
@@ -909,6 +936,10 @@ mod tests {
             .unwrap();
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
+        assert_eq!(
+            "application/json",
+            resp.headers().get(CONTENT_TYPE).unwrap()
+        );
 
         let msg = logs_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
