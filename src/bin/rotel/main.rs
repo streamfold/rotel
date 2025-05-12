@@ -9,10 +9,10 @@ use std::error::Error;
 use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
-use std::process::{ExitCode, exit};
+use std::process::{exit, ExitCode};
 use std::time::Duration;
 use tokio::select;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
@@ -110,7 +110,13 @@ fn main() -> ExitCode {
                 }
             }
 
-            let _logger = setup_logging(&opt.log_format);
+            let _guard = match setup_logging(&opt.log_format) {
+                Ok(guard) => guard,
+                Err(e) => {
+                    eprintln!("ERROR: failed to setup logging: {}", e);
+                    return ExitCode::from(1);
+                }
+            };
 
             match run_agent(agent, port_map, &opt.environment) {
                 Ok(_) => {}
