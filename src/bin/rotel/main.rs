@@ -15,7 +15,9 @@ use tokio::select;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tower::BoxError;
 use tracing::log::warn;
+use tracing::metadata::LevelFilter;
 use tracing::{error, info};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -47,10 +49,6 @@ enum Commands {
 #[command(version, about, long_about = None)]
 #[command(subcommand_required = true)]
 struct Arguments {
-    #[arg(long, global = true, env = "ROTEL_LOG_LEVEL", default_value = "info")]
-    /// Log configuration
-    log_level: String,
-
     #[arg(
         value_enum,
         long,
@@ -112,7 +110,7 @@ fn main() -> ExitCode {
                 }
             }
 
-            let _logger = setup_logging(&opt.log_level, &opt.log_format);
+            let _logger = setup_logging(&opt.log_format);
 
             match run_agent(agent, port_map, &opt.environment) {
                 Ok(_) => {}
@@ -175,17 +173,23 @@ async fn run_agent(
 
 type LoggerGuard = tracing_appender::non_blocking::WorkerGuard;
 
-fn setup_logging(log_level: &str, log_format: &LogFormatArg) -> std::io::Result<LoggerGuard> {
+fn setup_logging(log_format: &LogFormatArg) -> Result<LoggerGuard, BoxError> {
     LogTracer::init().expect("Unable to setup log tracer!");
 
     let (non_blocking_writer, guard) = tracing_appender::non_blocking(std::io::stdout());
+
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env()?
+        .add_directive("opentelemetry=warn".parse()?)
+        .add_directive("opentelemetry_sdk=warn".parse()?);
 
     if *log_format == LogFormatArg::Json {
         let app_name = format!("{}-{}", env!("CARGO_PKG_NAME"), get_version());
         let bunyan_formatting_layer = BunyanFormattingLayer::new(app_name, non_blocking_writer);
 
         let subscriber = Registry::default()
-            .with(EnvFilter::new(log_level))
+            .with(filter)
             .with(JsonStorageLayer)
             .with(bunyan_formatting_layer);
         tracing::subscriber::set_global_default(subscriber).unwrap();
@@ -197,9 +201,7 @@ fn setup_logging(log_level: &str, log_format: &LogFormatArg) -> std::io::Result<
             .with_level(true)
             .compact();
 
-        let subscriber = Registry::default()
-            .with(EnvFilter::new(log_level))
-            .with(file_layer);
+        let subscriber = Registry::default().with(filter).with(file_layer);
         tracing::subscriber::set_global_default(subscriber).unwrap();
     }
     Ok(guard)

@@ -66,12 +66,11 @@ Rotel is configured on the command line with multiple flags. See the table below
 rotel start --help
 ```
 
-All CLI arguments can also be passed as environment variable by prefixing with `ROTEL_` and switching hyphens to underscores. For example, `--log-level info` can also be specified by setting the environment variable `ROTEL_LOG_LEVEL=info`.
+All CLI arguments can also be passed as environment variable by prefixing with `ROTEL_` and switching hyphens to underscores. For example, `--otlp-grpc-endpoint localhost:5317` can also be specified by setting the environment variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 
 | Option                                 | Default              | Options                              |
 |----------------------------------------|----------------------|--------------------------------------|
 | --daemon                               |                      |                                      |
-| --log-level                            | info                 | debug, info, warn, error             |
 | --log-format                           | text                 | json                                 |
 | --pid-file                             | /tmp/rotel-agent.pid |                                      |
 | --log-file                             | /tmp/rotel-agent.log |                                      |
@@ -206,6 +205,8 @@ You should see demo trace data show up in Axiom.
 ## Debugging
 
 If you set the option `--otlp-debug-log` to `["traces"]`, or the environment variable `ROTEL_DEBUG_LOG=traces`, then rotel will log a summary to the log file `/tmp/rotel-agent.log` each time it processes trace spans. You can add also specify *metrics* to debug metrics and *logs* to debug logs.   
+
+The default log level is set to INFO and can be changed with the environment variable `RUST_LOG`. For example, setting `RUST_LOG=debug` will increase the verbosity of logging. 
 
 ## Community
 
