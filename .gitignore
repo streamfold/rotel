@@ -1,5 +1,7 @@
 utilities/target/
 tmp/
 target/
+.idea/
 rotel_python_processor_sdk/.env/
 rotel_python_processor_sdk/rotel_sdk/*.so
+rotel_python_processor_sdk/.idea

@@ -184,6 +184,18 @@ impl ArrayValue {
             )),
         }
     }
+    fn __setitem__(&self, index: usize, value: &AnyValue) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index > inner.len() - 1 {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
+    }
     fn append(&self, item: &AnyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -2249,9 +2261,10 @@ mod tests {
         };
 
         let kv_arc = Arc::new(Mutex::new(kv));
+        let attrs = Arc::new(Mutex::new(vec![kv_arc.clone()]));
 
         let resource = Resource {
-            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
+            attributes: attrs.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
         };
 
@@ -2263,6 +2276,36 @@ mod tests {
             )
         })
         .unwrap();
+
+        let attrs = Arc::into_inner(attrs).unwrap();
+        let mut attrs = attrs.into_inner().unwrap();
+        let attr = Arc::into_inner(attrs.pop().unwrap()).unwrap();
+        let attr = attr.into_inner().unwrap();
+        let key = attr.key.lock().unwrap();
+        assert_eq!("my_array", *key);
+        let value = attr.value.lock().unwrap();
+        assert!(value.is_some());
+        let v = value.clone().unwrap();
+        let v = v.value.lock().unwrap();
+        assert!(v.is_some());
+        let v = v.clone().unwrap();
+        match v {
+            RVArrayValue(av) => {
+                println!("{:?}", av);
+                let mut vals = av.values.lock().unwrap();
+                let vv = vals.pop().unwrap();
+                let v = vv.lock().unwrap();
+                let v = v.clone().unwrap();
+                let v = v.value.clone().lock().unwrap().clone().unwrap();
+                match v {
+                    IntValue(v) => {
+                        assert_eq!(v, 123456789)
+                    }
+                    _ => panic!("wrong value type"),
+                }
+            }
+            _ => panic!("wrong value type"),
+        }
     }
 
     #[test]

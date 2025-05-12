@@ -33,3 +33,13 @@ def process(resource):
 
     # Check len support
     assert 1 == len(resource.attributes[0].value.value)
+
+    # Now let's set and item directly on an index of the ArrayValue with __setitem__
+    new_any_value = AnyValue()
+    new_any_value.string_value = "qux"
+    resource.attributes[0].value.value.__setitem__(0, new_any_value)
+    assert resource.attributes[0].value.value[0].value == "qux"
+    # Set it again via index
+    new_any_value.int_value = 123456789
+    resource.attributes[0].value.value[0] = new_any_value
+    assert resource.attributes[0].value.value[0].value == 123456789
