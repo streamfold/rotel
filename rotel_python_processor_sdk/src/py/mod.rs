@@ -188,7 +188,7 @@ impl ArrayValue {
         let mut inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        if index > inner.len() - 1 {
+        if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             ));
