@@ -96,6 +96,7 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 | --otlp-receiver-traces-http-path  | /v1/traces           |                                      |
 | --otlp-receiver-metrics-http-path | /v1/metrics          |                                      |
 | --otlp-receiver-logs-http-path    | /v1/logs             |                                      |
+| --otel-resource-attributes        |                      |                                      |
 
 ### OTLP exporter configuration
 
@@ -186,7 +187,8 @@ or traces). For example, `--traces-batch-max-size` will override the batch max s
 ### Setting resource attributes
 
 Rotel also supports setting or overwriting resource attributes on OpenTelemetry logs, metrics, and traces via the
-command line or environment. The `--otel-resource-attributes` flag accepts a comma-separated list of key-value pairs to upsert on the
+command line or environment. The `--otel-resource-attributes` flag accepts a comma-separated list of key-value pairs to
+upsert on the
 the resource
 attributes of ResourceLogs, ResourceMetrics, and ResourceSpans.
 
