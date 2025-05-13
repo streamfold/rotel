@@ -2,7 +2,7 @@
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -11,7 +11,7 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{PythonProcessable, register_processor};
+use rotel_sdk::model::{register_processor, PythonProcessable};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
@@ -46,10 +46,8 @@ pub trait ResourceAttributeSettable {
 impl ResourceAttributeSettable for ResourceSpans {
     fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
         let mut drop_count = 0;
-        if self.resource.is_some() {
-            for rs in self.resource.iter() {
-                drop_count = rs.dropped_attributes_count;
-            }
+        if let Some(rs) = &self.resource {
+            drop_count = rs.dropped_attributes_count;
         }
         self.resource = Some(Resource {
             attributes: build_attrs(&self.resource, attributes),
@@ -61,10 +59,8 @@ impl ResourceAttributeSettable for ResourceSpans {
 impl ResourceAttributeSettable for ResourceMetrics {
     fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
         let mut drop_count = 0;
-        if self.resource.is_some() {
-            for rs in self.resource.iter() {
-                drop_count = rs.dropped_attributes_count;
-            }
+        if let Some(rs) = &self.resource {
+            drop_count = rs.dropped_attributes_count;
         }
         self.resource = Some(Resource {
             attributes: build_attrs(&self.resource, attributes),
@@ -76,10 +72,8 @@ impl ResourceAttributeSettable for ResourceMetrics {
 impl ResourceAttributeSettable for ResourceLogs {
     fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
         let mut drop_count = 0;
-        if self.resource.is_some() {
-            for rs in self.resource.iter() {
-                drop_count = rs.dropped_attributes_count;
-            }
+        if let Some(rs) = &self.resource {
+            drop_count = rs.dropped_attributes_count;
         }
         self.resource = Some(Resource {
             attributes: build_attrs(&self.resource, attributes),
