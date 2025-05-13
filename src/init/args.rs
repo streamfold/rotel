@@ -88,6 +88,9 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append)]
     pub otlp_with_trace_processor: Vec<String>,
 
+    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse_key_val::<String, String>, value_delimiter = ',')]
+    pub otel_resource_attributes: Vec<(String, String)>,
+
     #[command(flatten)]
     pub batch: BatchArgs,
 

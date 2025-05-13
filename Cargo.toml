@@ -57,6 +57,7 @@ thiserror = "2.0.12"
 lz4_flex = "0.11.3"
 cityhash-rs = "1.0.1"
 bstr = "1.12.0"
+indexmap = "2.8.0"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

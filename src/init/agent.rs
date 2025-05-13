@@ -1,11 +1,11 @@
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterBuilder;
 use crate::exporters::datadog::{DatadogTraceExporterBuilder, Region};
 use crate::exporters::otlp;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
+use crate::init::args::{parse_bool_value, AgentRun, DebugLogParam, Exporter};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
@@ -26,8 +26,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
@@ -214,6 +214,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_traces_batch_config(config.batch.clone()),
             config.otlp_with_trace_processor.clone(),
+            config.otel_resource_attributes.clone(),
         );
 
         let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
@@ -222,6 +223,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_metrics_batch_config(config.batch.clone()),
             vec![],
+            config.otel_resource_attributes.clone(),
         );
 
         let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
@@ -230,6 +232,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_logs_batch_config(config.batch.clone()),
             vec![],
+            config.otel_resource_attributes.clone(),
         );
 
         // Internal metrics
@@ -244,6 +247,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_metrics_batch_config(config.batch.clone()),
             vec![],
+            config.otel_resource_attributes.clone(),
         );
 
         let internal_metrics_sdk_exporter =
