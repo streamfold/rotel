@@ -214,6 +214,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_traces_batch_config(config.batch.clone()),
             config.otlp_with_trace_processor.clone(),
+            config.otel_resource_attributes.clone(),
         );
 
         let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
@@ -222,6 +223,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_metrics_batch_config(config.batch.clone()),
             vec![],
+            config.otel_resource_attributes.clone(),
         );
 
         let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
@@ -230,6 +232,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_logs_batch_config(config.batch.clone()),
             vec![],
+            config.otel_resource_attributes.clone(),
         );
 
         // Internal metrics
@@ -244,6 +247,7 @@ impl Agent {
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
             build_metrics_batch_config(config.batch.clone()),
             vec![],
+            config.otel_resource_attributes.clone(),
         );
 
         let internal_metrics_sdk_exporter =

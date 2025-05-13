@@ -3,9 +3,12 @@
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
+use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
+use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
 use rotel_sdk::model::{PythonProcessable, register_processor};
@@ -29,10 +32,73 @@ pub struct Pipeline<T> {
     batch_config: BatchConfig,
     processors: Vec<String>,
     flush_listener: Option<FlushReceiver>,
+    resource_attributes: Vec<KeyValue>,
 }
 
 pub trait Inspect<T> {
     fn inspect(&self, value: &[T]);
+}
+
+pub trait ResourceAttributeSettable {
+    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>);
+}
+
+impl ResourceAttributeSettable for ResourceSpans {
+    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
+        let mut drop_count = 0;
+        if let Some(rs) = &self.resource {
+            drop_count = rs.dropped_attributes_count;
+        }
+        self.resource = Some(Resource {
+            attributes: build_attrs(&self.resource, attributes),
+            dropped_attributes_count: drop_count,
+        });
+    }
+}
+
+impl ResourceAttributeSettable for ResourceMetrics {
+    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
+        let mut drop_count = 0;
+        if let Some(rs) = &self.resource {
+            drop_count = rs.dropped_attributes_count;
+        }
+        self.resource = Some(Resource {
+            attributes: build_attrs(&self.resource, attributes),
+            dropped_attributes_count: drop_count,
+        });
+    }
+}
+
+impl ResourceAttributeSettable for ResourceLogs {
+    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
+        let mut drop_count = 0;
+        if let Some(rs) = &self.resource {
+            drop_count = rs.dropped_attributes_count;
+        }
+        self.resource = Some(Resource {
+            attributes: build_attrs(&self.resource, attributes),
+            dropped_attributes_count: drop_count,
+        });
+    }
+}
+
+pub fn build_attrs(resource: &Option<Resource>, attributes: Vec<KeyValue>) -> Vec<KeyValue> {
+    if resource.is_none() {
+        return attributes;
+    }
+    // Let's retain the order and create a map of keys to reduce the number of iterations required to find/replace an existing key
+    let mut map = indexmap::IndexMap::<String, KeyValue>::new();
+    // Yes there is only one, but we've already determined that we have one.
+    for res in resource.iter() {
+        for attr in res.attributes.iter() {
+            map.insert(attr.key.clone(), attr.clone());
+        }
+    }
+    // Now iterate the new attributes and see if we already have a key or not
+    for new_attr in attributes {
+        map.insert(new_attr.key.clone(), new_attr);
+    }
+    map.values().cloned().collect()
 }
 
 #[cfg(not(feature = "pyo3"))]
@@ -66,7 +132,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
 
 impl<T> Pipeline<T>
 where
-    T: BatchSizer + BatchSplittable + PythonProcessable,
+    T: BatchSizer + BatchSplittable + PythonProcessable + ResourceAttributeSettable,
     Vec<T>: Send,
 {
     pub fn new(
@@ -75,13 +141,25 @@ where
         flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
         processors: Vec<String>,
+        attributes: Vec<(String, String)>,
     ) -> Self {
+        let resource_attributes = attributes
+            .iter()
+            .map(|a| KeyValue {
+                key: a.0.clone(),
+                value: Some(AnyValue {
+                    value: Some(StringValue(a.1.clone())),
+                }),
+            })
+            .collect();
+
         Self {
             receiver,
             sender,
             flush_listener,
             batch_config,
             processors,
+            resource_attributes,
         }
     }
 
@@ -183,6 +261,12 @@ where
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
                     inspector.inspect(&items);
+                    // If any resource attributes were provided on start, set or append them to the resources
+                    if !self.resource_attributes.is_empty() {
+                        for item in &mut items {
+                            item.set_or_append_attributes(self.resource_attributes.clone())
+                        }
+                    }
                     for p in &processor_modules {
                        let mut new_items = Vec::new();
                        while !items.is_empty() {
@@ -441,5 +525,117 @@ impl BatchSplittable for ResourceLogs {
         rs.schema_url = self.schema_url.clone();
         rs.resource = rs.resource.clone();
         rs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use utilities::otlp::FakeOTLP;
+
+    #[test]
+    fn test_append_attributes() {
+        let new_attrs = vec![KeyValue {
+            key: "new.attr.key".to_string(),
+            value: Some(AnyValue {
+                value: Some(StringValue("new_attr_value".to_string())),
+            }),
+        }];
+
+        let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let mut spans = trace_request.resource_spans.pop().unwrap();
+        spans.set_or_append_attributes(new_attrs.clone());
+        verify_attr_appended(spans.resource.unwrap().attributes, 7, 6);
+
+        let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
+        let mut logs = logs_request.resource_logs.pop().unwrap();
+        logs.set_or_append_attributes(new_attrs.clone());
+        verify_attr_appended(logs.resource.unwrap().attributes, 7, 6);
+
+        let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
+        let mut metrics = metrics_request.resource_metrics.pop().unwrap();
+        metrics.set_or_append_attributes(new_attrs);
+        verify_attr_appended(metrics.resource.unwrap().attributes, 7, 6);
+    }
+
+    #[test]
+    fn test_append_attributes_no_resource() {
+        let new_attrs = vec![KeyValue {
+            key: "new.attr.key".to_string(),
+            value: Some(AnyValue {
+                value: Some(StringValue("new_attr_value".to_string())),
+            }),
+        }];
+
+        let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let mut spans = trace_request.resource_spans.pop().unwrap();
+        spans.resource = None;
+        spans.set_or_append_attributes(new_attrs.clone());
+        verify_attr_appended(spans.resource.unwrap().attributes, 1, 0);
+
+        let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
+        let mut logs = logs_request.resource_logs.pop().unwrap();
+        logs.resource = None;
+        logs.set_or_append_attributes(new_attrs.clone());
+        verify_attr_appended(logs.resource.unwrap().attributes, 1, 0);
+
+        let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
+        let mut metrics = metrics_request.resource_metrics.pop().unwrap();
+        metrics.resource = None;
+        metrics.set_or_append_attributes(new_attrs);
+        verify_attr_appended(metrics.resource.unwrap().attributes, 1, 0);
+    }
+
+    fn verify_attr_appended(mut attrs: Vec<KeyValue>, len: usize, idx: usize) {
+        assert_eq!(len, attrs.len());
+        let new_attr = attrs.remove(idx);
+        assert_eq!("new.attr.key", new_attr.key);
+        match new_attr.value.unwrap().value.unwrap() {
+            StringValue(v) => {
+                assert_eq!("new_attr_value", v);
+            }
+            _ => {
+                panic!("unexpected type for attribute value")
+            }
+        }
+    }
+
+    #[test]
+    fn test_update_attributes() {
+        let new_attrs = vec![KeyValue {
+            key: "service.name".to_string(),
+            value: Some(AnyValue {
+                value: Some(StringValue("overwritten_service_name".to_string())),
+            }),
+        }];
+
+        let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let mut spans = trace_request.resource_spans.pop().unwrap();
+        spans.set_or_append_attributes(new_attrs.clone());
+        verify_attr_updated(spans.resource.unwrap().attributes);
+
+        let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
+        let mut logs = logs_request.resource_logs.pop().unwrap();
+        logs.set_or_append_attributes(new_attrs.clone());
+        verify_attr_updated(logs.resource.unwrap().attributes);
+
+        let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
+        let mut metrics = metrics_request.resource_metrics.pop().unwrap();
+        metrics.set_or_append_attributes(new_attrs.clone());
+        verify_attr_updated(metrics.resource.unwrap().attributes);
+    }
+
+    fn verify_attr_updated(mut attrs: Vec<KeyValue>) {
+        assert_eq!(6, attrs.len());
+        let new_attr = attrs.remove(0);
+        assert_eq!("service.name", new_attr.key);
+        match new_attr.value.unwrap().value.unwrap() {
+            StringValue(v) => {
+                assert_eq!("overwritten_service_name", v);
+            }
+            _ => {
+                panic!("unexpected type for attribute value")
+            }
+        }
     }
 }
