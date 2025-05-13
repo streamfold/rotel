@@ -268,8 +268,10 @@ where
                     // todo: expand support for observability or transforms
                     inspector.inspect(&items);
                     // If any resource attributes were provided on start, set or append them to the resources
-                    for item in &mut items {
-                        item.set_or_append_attributes(self.resource_attributes.clone())
+                    if !self.resource_attributes.is_empty() {
+                        for item in &mut items {
+                            item.set_or_append_attributes(self.resource_attributes.clone())
+                        }
                     }
                     for p in &processor_modules {
                        let mut new_items = Vec::new();
