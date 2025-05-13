@@ -186,8 +186,8 @@ or traces). For example, `--traces-batch-max-size` will override the batch max s
 ### Setting resource attributes
 
 Rotel also supports setting or overwriting resource attributes on OpenTelemetry logs, metrics, and traces via the
-command line or environment. The `--otel-resource-attributes` flag accepts a comma-separated list of key-value pair to
-the Resource
+command line or environment. The `--otel-resource-attributes` flag accepts a comma-separated list of key-value pairs to upsert on the
+the resource
 attributes of ResourceLogs, ResourceMetrics, and ResourceSpans.
 
 For example starting rotel with the following command line argument will append or overwrite the `service.name`
