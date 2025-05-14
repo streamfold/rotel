@@ -206,6 +206,10 @@ impl Agent {
             }
         }
 
+        if !config.enable_internal_telemetry {
+            internal_metrics_output = None;
+        }
+
         let mut pipeline_flush_sub = self.pipeline_flush_sub.take();
 
         let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
@@ -326,24 +330,26 @@ impl Agent {
                         Ok(())
                     });
 
-                    let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
-                        metrics_config.clone(),
-                        internal_metrics_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = internal_metrics.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                exporter_type = "internal_otlp_metrics",
-                                error = e,
-                                "OTLPExporter returned from run loop with error."
-                            );
-                        }
+                    if config.enable_internal_telemetry {
+                        let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
+                            metrics_config.clone(),
+                            internal_metrics_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        )?;
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = internal_metrics.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    exporter_type = "internal_otlp_metrics",
+                                    error = e,
+                                    "OTLPExporter returned from run loop with error."
+                                );
+                            }
 
-                        Ok(())
-                    });
+                            Ok(())
+                        });
+                    }
                 }
                 if activation.logs == TelemetryState::Active {
                     let logs_config = build_logs_config(config.otlp_exporter.clone(), endpoint);

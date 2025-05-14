@@ -79,6 +79,8 @@ All CLI arguments can also be passed as environment variable by prefixing with `
 underscores. For example, `--otlp-grpc-endpoint localhost:5317` can also be specified by setting the environment
 variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 
+Any option above that does not contain a default is considered false or unset by default.
+
 | Option                            | Default              | Options                              |
 |-----------------------------------|----------------------|--------------------------------------|
 | --daemon                          |                      |                                      |
@@ -97,6 +99,11 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 | --otlp-receiver-metrics-http-path | /v1/metrics          |                                      |
 | --otlp-receiver-logs-http-path    | /v1/logs             |                                      |
 | --otel-resource-attributes        |                      |                                      |
+| --enable-internal-telemetry       |                      |                                      |
+
+
+The PID and LOG files are only used when run in `--daemon` mode.
+
 
 ### OTLP exporter configuration
 
@@ -119,6 +126,12 @@ The OTLP exporter is the default, or can be explicitly selected with `--exporter
 | --otlp-exporter-retry-initial-backoff  | 5s      |            |
 | --otlp-exporter-retry-max-backoff      | 30s     |            |
 | --otlp-exporter-retry-max-elapsed-time | 300s    |            |
+
+
+Any of the options that start with `--otlp-exporter*` can be set per telemetry type: metrics, traces or logs. For
+example, to set a custom endpoint to export traces to, set: `--otlp-exporter-traces-endpoint`. For other telemetry
+types their value falls back to the top-level OTLP exporter config.
+
 
 ### Datadog exporter configuration
 
@@ -199,16 +212,6 @@ Alternatively you can use the `ROTEL_OTEL_RESOURCE_ATTRIBUTES` environment varia
 
 ```ROTEL_OTEL_RESOURCE_ATTRIBUTES=service.name=my-service,environment=production rotel start --otlp-exporter-endpoint <endpoint url>```
 
----
-
-**Notes**:
-
-* The PID and LOG files are only used when run in `--daemon` mode.
-* Any of the options that start with `--otlp-exporter*` can be set per telemetry type: metrics, traces or logs. For
-  example, to set a custom endpoint to export traces to, set: `--otlp-exporter-traces-endpoint`. For other telemetry
-  types their value falls back to the top-level OTLP exporter config.
-* Any option above that does not contain a default is considered false or unset by default.
-
 ### Retries and timeouts
 
 You can override the default request timeout of 5 seconds for the OTLP Exporter with the exporter setting:
@@ -225,6 +228,15 @@ the behavior with the following exporter options:
   permanent failure
 
 All options should be represented as string time durations.
+
+### Internal telemetry
+
+Rotel records a number of internal metrics that can help observe Rotel behavior during runtime. This telemetry is
+opt-in and must be enabled with `--enable-internal-telemetry`. Telemetry is sent to the OTLP exporter metric endpoint
+that you have configured.
+
+**NOTE**: Internal telemetry is not sent to any outside sources and you are in full control of where this data is
+exported to.
 
 ### Full example
 
