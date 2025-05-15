@@ -28,3 +28,27 @@ def process(resource_spans):
 
     scope_spans_list.append(scope_spans)
     resource_spans.scope_spans = scope_spans_list
+    # Get the scope spans list
+    scope_spans_list = resource_spans.scope_spans
+    assert len(scope_spans_list) == 1
+    ss = scope_spans_list[0]
+    assert ss.scope.name == "rotel-sdk"
+    assert len(ss.spans) == 1
+    assert ss.spans[0].name == "py_processed_span"
+    new_scope_spans = ScopeSpans()
+    # Copy the span out c
+    new_scope_spans.schema_url = "https://github.com/streamfold/rotel"
+    inst_scope = InstrumentationScope()
+    inst_scope.name = "rotel-sdk-new"
+    inst_scope.version = "v1.0.1"
+    inst_scope.attributes.append(KeyValue.new_string_value("rotel-sdk", "v1.0.0"))
+    new_scope_spans.scope = inst_scope
+    new_scope_spans.spans.append(ss.spans[0])
+    resource_spans.scope_spans[0] = new_scope_spans
+
+    scope_spans_list = resource_spans.scope_spans
+    assert len(scope_spans_list) == 1
+    ss = scope_spans_list[0]
+    assert ss.scope.name == "rotel-sdk-new"
+    assert len(ss.spans) == 1
+    assert ss.spans[0].name == "py_processed_span"

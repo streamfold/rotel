@@ -33,3 +33,9 @@ def process(resource):
 
     # Check len support
     assert 1 == len(resource.attributes[0].value.value)
+
+    # Perform a set on kv list
+    new_kv = KeyValue.new_int_value("int_key", 100)
+    new_key_value_list[0] = new_kv
+    av = new_key_value_list[0]
+    assert av.value.value == 100
