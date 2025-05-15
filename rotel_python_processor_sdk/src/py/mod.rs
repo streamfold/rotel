@@ -259,6 +259,19 @@ impl KeyValueList {
             )),
         }
     }
+    fn __setitem__(&self, index: usize, value: &KeyValue) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        let v = value.inner.lock().unwrap();
+        inner[index] = v.clone();
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -535,7 +548,18 @@ impl Attributes {
             )),
         }
     }
-
+    fn __setitem__(&self, index: usize, value: &KeyValue) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
+    }
     fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -683,7 +707,22 @@ impl ScopeSpansList {
             )),
         }
     }
-
+    fn __setitem__(&self, index: usize, value: &ScopeSpans) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = Arc::new(Mutex::new(RScopeSpans {
+            scope: value.scope.clone(),
+            spans: value.spans.clone(),
+            schema_url: value.schema_url.clone(),
+        }));
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -968,6 +1007,22 @@ impl AttributesList {
             )),
         }
     }
+    fn __setitem__(&self, index: usize, value: &KeyValue) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        let v = value.inner.lock().unwrap();
+        inner[index] = RKeyValue {
+            key: v.key.clone(),
+            value: v.value.clone(),
+        };
+        Ok(())
+    }
     fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1046,6 +1101,18 @@ impl Spans {
                 "Index out of bounds",
             )),
         }
+    }
+    fn __setitem__(&self, index: usize, value: &Span) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
     }
     fn append(&self, item: &Span) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
@@ -1259,10 +1326,17 @@ impl Span {
         let mut binding = self.inner.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
         })?;
-        let attrs = convert_attributes(binding.attributes_raw.clone());
-        let attrs = Arc::new(Mutex::new(attrs));
-        binding.attributes_arc.replace(attrs.clone());
-        Ok(AttributesList(attrs))
+        if binding.attributes_arc.is_some() {
+            let attr_arc = binding.attributes_arc.take().unwrap();
+            let attr_arc_copy = attr_arc.clone();
+            binding.attributes_arc.replace(attr_arc);
+            Ok(AttributesList(attr_arc_copy))
+        } else {
+            let attrs = convert_attributes(binding.attributes_raw.clone());
+            let attrs = Arc::new(Mutex::new(attrs));
+            binding.attributes_arc.replace(attrs.clone());
+            Ok(AttributesList(attrs))
+        }
     }
     #[setter]
     fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
@@ -1295,6 +1369,12 @@ impl Span {
     #[getter]
     fn events(&self) -> PyResult<Events> {
         let mut v = self.inner.lock().unwrap();
+        if v.events_arc.is_some() {
+            let arc = v.events_arc.take().unwrap();
+            let arc_clone = arc.clone();
+            v.events_arc.replace(arc);
+            return Ok(Events(arc_clone));
+        }
         let new_events = v
             .events_raw
             .iter()
@@ -1341,6 +1421,12 @@ impl Span {
     #[getter]
     fn links(&self) -> PyResult<Links> {
         let mut v = self.inner.lock().unwrap();
+        if v.links_arc.is_some() {
+            let arc = v.links_arc.take().unwrap();
+            let arc_clone = arc.clone();
+            v.links_arc.replace(arc);
+            return Ok(Links(arc_clone));
+        }
         let new_links = v
             .links_raw
             .iter()
@@ -1443,6 +1529,18 @@ impl Events {
                 "Index out of bounds",
             )),
         }
+    }
+    fn __setitem__(&self, index: usize, value: &Event) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
@@ -1596,6 +1694,18 @@ impl Links {
                 "Index out of bounds",
             )),
         }
+    }
+    fn __setitem__(&self, index: usize, value: &Link) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
     }
     fn append<'py>(&self, item: &Link) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
@@ -2385,7 +2495,7 @@ mod tests {
                             Some(v) => {
                                 let value = v.value.lock().unwrap().clone().unwrap();
                                 match value {
-                                    StringValue(s) => assert_eq!("baz", s),
+                                    IntValue(i) => assert_eq!(100, i),
                                     _ => panic!("wrong type"),
                                 }
                             }
@@ -2531,7 +2641,7 @@ mod tests {
             let key = kv_guard.key.lock().unwrap().to_string();
             let value = kv_guard.value.lock().unwrap();
             assert_ne!(key, "key");
-            assert!(key == "os.name" || key == "os.version");
+            assert!(key == "double.value" || key == "os.version");
             assert!(value.is_some());
             let av = value.clone().unwrap();
             let value = av.value.lock().unwrap();
@@ -2757,6 +2867,89 @@ mod tests {
 
         assert_eq!(3, span.attributes.len());
         let new_attr = span.attributes.remove(2);
+        assert_eq!("span_attr_key2", new_attr.key);
+        let value = new_attr.value.clone().unwrap().value.unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("span_attr_value2", s)
+            }
+            _ => panic!("unexpected type"),
+        }
+    }
+    #[test]
+    fn set_scope_spans_span_test() {
+        initialize();
+        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let resource_spans =
+            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let py_resource_spans = ResourceSpans {
+            resource: resource_spans.resource.clone(),
+            scope_spans: resource_spans.scope_spans.clone(),
+            schema_url: resource_spans.schema_url,
+        };
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("set_scope_spans_span_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
+        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = scope_spans.pop().unwrap();
+        let mut span = scope_spans.spans.pop().unwrap();
+        assert_eq!(b"5555555555".to_vec(), span.trace_id);
+        assert_eq!(b"6666666666".to_vec(), span.span_id);
+        assert_eq!("test=1234567890", span.trace_state);
+        assert_eq!(b"7777777777".to_vec(), span.parent_span_id);
+        assert_eq!(1, span.flags);
+        assert_eq!("py_processed_span", span.name);
+        assert_eq!(4, span.kind);
+        assert_eq!(1234567890, span.start_time_unix_nano);
+        assert_eq!(1234567890, span.end_time_unix_nano);
+        assert_eq!(100, span.dropped_attributes_count);
+        assert_eq!(200, span.dropped_events_count);
+        assert_eq!(300, span.dropped_links_count);
+        assert_eq!("error message", span.status.clone().unwrap().message);
+        assert_eq!(2, span.status.unwrap().code);
+        assert_eq!(1, span.events.len());
+        assert_eq!("py_processed_event", span.events[0].name);
+        assert_eq!(1234567890, span.events[0].time_unix_nano);
+        assert_eq!(400, span.events[0].dropped_attributes_count);
+        assert_eq!(1, span.events[0].attributes.len());
+        assert_eq!("event_attr_key", &span.events[0].attributes[0].key);
+        let value = span.events[0].attributes[0]
+            .value
+            .clone()
+            .unwrap()
+            .value
+            .unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("event_attr_value", s)
+            }
+            _ => panic!("unexpected type"),
+        }
+
+        assert_eq!(1, span.links.len());
+        // get the newly added link
+        let new_link = span.links.remove(0);
+        assert_eq!(b"88888888".to_vec(), new_link.trace_id);
+        assert_eq!(b"99999999".to_vec(), new_link.span_id);
+        assert_eq!("test=1234567890", new_link.trace_state);
+        assert_eq!(300, new_link.dropped_attributes_count);
+        assert_eq!(1, new_link.flags);
+        assert_eq!(1, new_link.attributes.len());
+        let value = new_link.attributes[0].value.clone().unwrap().value.unwrap();
+        match value {
+            Value::StringValue(s) => {
+                assert_eq!("link_attr_value", s)
+            }
+            _ => panic!("unexpected type"),
+        }
+
+        assert_eq!(1, span.attributes.len());
+        let new_attr = span.attributes.remove(0);
         assert_eq!("span_attr_key", new_attr.key);
         let value = new_attr.value.clone().unwrap().value.unwrap();
         match value {
@@ -2879,8 +3072,8 @@ mod tests {
             scope_spans.schema_url
         );
         let inst_scope = scope_spans.scope.unwrap();
-        assert_eq!("rotel-sdk", inst_scope.name);
-        assert_eq!("v1.0.0", inst_scope.version);
+        assert_eq!("rotel-sdk-new", inst_scope.name);
+        assert_eq!("v1.0.1", inst_scope.version);
         let attr = &inst_scope.attributes[0];
         assert_eq!("rotel-sdk", attr.key);
         assert_eq!(

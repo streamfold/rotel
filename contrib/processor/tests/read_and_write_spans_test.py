@@ -54,8 +54,6 @@ def process(resource_spans):
 
     span.attributes.append(KeyValue.new_string_value("span_attr_key", "span_attr_value"))
     span.dropped_attributes_count = 100
-    # TODO add events
-    # span.events
     span.dropped_links_count = 300
     span.dropped_events_count = 200
     # Append a new link
@@ -78,3 +76,8 @@ def process(resource_spans):
     event.name = "py_processed_event"
     event.attributes.append(KeyValue.new_string_value("event_attr_key", "event_attr_value"))
     event.dropped_attributes_count = 400
+
+    # Set a new attribute on the spans attribute list
+    span.attributes[2] = KeyValue.new_string_value("span_attr_key2", "span_attr_value2")
+    assert span.attributes[2].key == "span_attr_key2"
+    assert span.attributes[2].value.value == "span_attr_value2"
