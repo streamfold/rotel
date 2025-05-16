@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod aws_api;
 pub mod bounded_channel;
 pub mod crypto;
 pub mod exporters;
