@@ -195,8 +195,11 @@ where
         inspector: impl Inspect<T>,
         pipeline_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        let mut batch =
-            NestedBatch::<T>::new(self.batch_config.max_size, self.batch_config.timeout);
+        let mut batch = NestedBatch::<T>::new(
+            self.batch_config.max_size,
+            self.batch_config.timeout,
+            self.batch_config.disabled,
+        );
 
         let mut batch_timeout = batch.get_timeout();
         if batch_timeout.is_zero() {
