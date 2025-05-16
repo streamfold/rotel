@@ -8,6 +8,7 @@ use tokio::time::Instant;
 pub struct BatchConfig {
     pub max_size: usize,
     pub timeout: Duration,
+    pub disabled: bool,
 }
 
 impl Default for BatchConfig {
@@ -15,6 +16,7 @@ impl Default for BatchConfig {
         Self {
             max_size: 8192,
             timeout: Duration::from_millis(200),
+            disabled: false,
         }
     }
 }
@@ -34,6 +36,7 @@ pub(crate) struct NestedBatch<T: BatchSizer + BatchSplittable> {
     max_size: usize,
     last_flush: Instant,
     batch_timeout: Duration,
+    disabled: bool,
 }
 
 impl<T: BatchSizer + BatchSplittable> NestedBatch<T>
@@ -47,13 +50,14 @@ impl<T: BatchSizer + BatchSplittable> NestedBatch<T>
     /// # Arguments
     /// - `max_size`: The maximum size that will be sent to the batch handler per flush cycle
     /// - `batch_timeout`: How long to wait before flushing if we've not reached max_size
-    pub(crate) fn new(max_size: usize, batch_timeout: Duration) -> NestedBatch<T> {
+    pub(crate) fn new(max_size: usize, batch_timeout: Duration, disabled: bool) -> NestedBatch<T> {
         Self {
             items: Vec::with_capacity(max_size),
             item_count: 0,
             max_size,
             last_flush: Instant::now(),
             batch_timeout,
+            disabled,
         }
     }
 
@@ -76,6 +80,10 @@ impl<T: BatchSizer + BatchSplittable> NestedBatch<T>
         &mut self,
         mut new_items: Vec<T>,
     ) -> Result<Option<Vec<T>>, TooManyItemsError> {
+        if self.disabled {
+            return Ok(Some(new_items));
+        }
+
         let new_items_count = new_items.iter().map(|n| n.size_of()).sum::<usize>();
         if self.item_count + new_items_count < self.max_size {
             self.items.append(&mut new_items);
@@ -118,4 +126,107 @@ pub trait BatchSplittable {
     fn split(&mut self, split_n: usize) -> Self
     where
         Self: Sized;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+    use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+    use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+    use utilities::otlp::FakeOTLP;
+
+    #[test]
+    fn test_trace_batch_splitting() {
+        let mut batch = NestedBatch::<ResourceSpans>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::trace_service_request_with_spans(1, 5);
+        let resp = batch.offer(first_request.resource_spans);
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap(), None);
+        let second_request = FakeOTLP::trace_service_request_with_spans(1, 7);
+        let resp = batch.offer(second_request.resource_spans);
+        assert!(resp.is_ok());
+        let spans = resp.unwrap().unwrap();
+        assert_eq!(10, spans.size_of());
+        // Grab what's left in the batch
+        let leftover = batch.take_batch();
+        assert_eq!(2, leftover.size_of());
+    }
+
+    #[test]
+    fn test_trace_batch_split_too_large() {
+        let mut batch = NestedBatch::<ResourceSpans>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::trace_service_request_with_spans(1, 21);
+        let resp = batch.offer(first_request.resource_spans);
+        assert!(resp.is_err());
+    }
+
+    #[test]
+    fn test_metrics_batch_splitting() {
+        let mut batch = NestedBatch::<ResourceMetrics>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 5);
+        let resp = batch.offer(first_request.resource_metrics);
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap(), None);
+        let second_request = FakeOTLP::metrics_service_request_with_metrics(1, 7);
+        let resp = batch.offer(second_request.resource_metrics);
+        assert!(resp.is_ok());
+        let spans = resp.unwrap().unwrap();
+        assert_eq!(10, spans.size_of());
+        // Grab what's left in the batch
+        let leftover = batch.take_batch();
+        assert_eq!(2, leftover.size_of());
+    }
+
+    #[test]
+    fn test_metrics_batch_split_too_large() {
+        let mut batch = NestedBatch::<ResourceMetrics>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 21);
+        let resp = batch.offer(first_request.resource_metrics);
+        assert!(resp.is_err());
+    }
+
+    #[test]
+    fn test_logs_batch_splitting() {
+        let mut batch = NestedBatch::<ResourceLogs>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::logs_service_request_with_logs(1, 5);
+        let resp = batch.offer(first_request.resource_logs);
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap(), None);
+        let second_request = FakeOTLP::logs_service_request_with_logs(1, 7);
+        let resp = batch.offer(second_request.resource_logs);
+        assert!(resp.is_ok());
+        let spans = resp.unwrap().unwrap();
+        assert_eq!(10, spans.size_of());
+        // Grab what's left in the batch
+        let leftover = batch.take_batch();
+        assert_eq!(2, leftover.size_of());
+    }
+
+    #[test]
+    fn test_logs_batch_split_too_large() {
+        let mut batch = NestedBatch::<ResourceLogs>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::logs_service_request_with_logs(1, 21);
+        let resp = batch.offer(first_request.resource_logs);
+        assert!(resp.is_err());
+    }
+
+    #[test]
+    fn test_disabled_batching() {
+        // Enabled, it should not return Some
+        let mut batch = NestedBatch::<ResourceMetrics>::new(10, Duration::from_secs(1), false);
+        let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 5);
+        let resp = batch.offer(first_request.resource_metrics);
+        assert!(resp.is_ok());
+        assert!(resp.unwrap().is_none());
+
+        // When disabled, should immediately return
+        let mut batch = NestedBatch::<ResourceMetrics>::new(10, Duration::from_secs(1), true);
+        let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 5);
+        let resp = batch.offer(first_request.resource_metrics);
+        assert!(resp.is_ok());
+        let resp = resp.unwrap();
+        assert!(resp.is_some());
+        assert_eq!(resp.unwrap().size_of(), 5);
+    }
 }

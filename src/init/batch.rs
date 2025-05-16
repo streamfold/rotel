@@ -35,6 +35,10 @@ pub struct BatchArgs {
     /// OTLP logs batch timeout - Overrides batch_timeout for OTLP logs if specified.
     #[arg(long, env = "ROTEL_LOGS_BATCH_TIMEOUT")]
     pub logs_batch_timeout: Option<humantime::Duration>,
+
+    /// Disable batching, incoming messages are immediately exported (not recommended)
+    #[arg(long, env = "ROTEL_DISABLE_BATCHING", default_value = "false")]
+    pub disable_batching: bool,
 }
 
 // todo: add these as impl functions of the exporter args?
@@ -47,6 +51,7 @@ pub fn build_traces_batch_config(config: BatchArgs) -> BatchConfig {
             .traces_batch_timeout
             .unwrap_or(config.batch_timeout)
             .into(),
+        disabled: config.disable_batching,
     }
 }
 
@@ -59,6 +64,7 @@ pub fn build_metrics_batch_config(config: BatchArgs) -> BatchConfig {
             .metrics_batch_timeout
             .unwrap_or(config.batch_timeout)
             .into(),
+        disabled: config.disable_batching,
     }
 }
 
@@ -69,5 +75,6 @@ pub fn build_logs_batch_config(config: BatchArgs) -> BatchConfig {
             .logs_batch_timeout
             .unwrap_or(config.batch_timeout)
             .into(),
+        disabled: config.disable_batching,
     }
 }

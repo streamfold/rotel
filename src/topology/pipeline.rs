@@ -59,11 +59,13 @@ impl Pipeline {
         let mut traces_batch = NestedBatch::<ResourceSpans>::new(
             self.batch_config.max_size,
             self.batch_config.timeout,
+            self.batch_config.disabled,
         );
 
         let mut metrics_batch = NestedBatch::<ResourceMetrics>::new(
             self.batch_config.max_size,
             self.batch_config.timeout,
+            self.batch_config.disabled,
         );
 
         let mut batch_timer = tokio::time::interval(self.batch_config.timeout);
