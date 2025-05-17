@@ -13,11 +13,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
             os: ubuntu
             cross: false
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
           - target: aarch64-apple-darwin
