@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "rotel"
-version = "0.0.1-alpha9"
+version = "0.0.1-alpha10"
 dependencies = [
  "bstr",
  "bytes",
