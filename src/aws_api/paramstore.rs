@@ -1,8 +1,8 @@
+use crate::aws_api::PARAM_STORE_SERVICE;
 use crate::aws_api::arn::AwsArn;
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::client::AwsClient;
 use crate::aws_api::error::Error;
-use crate::aws_api::PARAM_STORE_SERVICE;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use serde::Deserialize;
