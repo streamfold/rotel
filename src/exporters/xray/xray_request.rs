@@ -2,8 +2,8 @@
 
 use crate::exporters::http::request::{BaseRequestBuilder, RequestUri};
 use bytes::Bytes;
-use flate2::read::GzEncoder;
 use flate2::Compression;
+use flate2::read::GzEncoder;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Request};
 use http_body_util::Full;
@@ -12,8 +12,6 @@ use std::error::Error;
 use std::io::Read;
 use std::io::Write;
 use tower::BoxError;
-
-const TRACES_PATH: &str = "/api/v0.2/traces";
 
 fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
     endpoint.join(path).unwrap()
@@ -25,26 +23,22 @@ pub struct XRayRequestBuilder {
 }
 
 impl XRayRequestBuilder {
-    pub fn new(endpoint: String, api_key: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub fn new(endpoint: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let uri: url::Url = match endpoint.parse() {
             Ok(u) => u,
             Err(e) => return Err(format!("failed to parse endpoint {}: {}", endpoint, e).into()),
         };
 
-        let trace_url = build_url(&uri, TRACES_PATH);
-
         let mut base_headers = HeaderMap::new();
-        base_headers.insert("DD-API-KEY", api_key.clone().parse()?);
 
         // these might change with different routes in the future
         base_headers.insert(
             CONTENT_TYPE,
-            HeaderValue::from_static("application/x-protobuf"),
+            HeaderValue::from_static("application/json; charset=utf-8"),
         );
         base_headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
 
-        let base = BaseRequestBuilder::new(Some(RequestUri::Post(trace_url)), base_headers);
-
+        let base = BaseRequestBuilder::new(Some(RequestUri::Post(uri)), base_headers);
         let s = Self { base };
         Ok(s)
     }

@@ -1,8 +1,8 @@
-use crate::aws_api::SECRETS_MANAGER_SERVICE;
 use crate::aws_api::arn::AwsArn;
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::client::AwsClient;
 use crate::aws_api::error::Error;
+use crate::aws_api::SECRETS_MANAGER_SERVICE;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use serde::Deserialize;
@@ -152,7 +152,8 @@ impl<'a> SecretsManager<'a> {
 mod tests {
     use super::*;
     use crate::aws_api::config::AwsConfig;
-    use crate::test_util::{init_crypto, parse_test_arns};
+    use crate::aws_api::parse_test_arns;
+    use crate::exporters::crypto_init_tests::init_crypto;
 
     #[tokio::test]
     async fn test_basic_secret_retrieval() {

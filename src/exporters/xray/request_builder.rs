@@ -30,19 +30,9 @@ impl<Resource, Transform> RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
-    pub fn new(
-        transformer: Transform,
-        region: Region,
-        custom_endpoint: Option<String>,
-        api_key: String,
-    ) -> Result<Self, BoxError> {
-        let endpoint = if let Some(custom) = custom_endpoint {
-            custom
-        } else {
-            region.trace_endpoint()
-        };
-        let api_req_builder = XRayRequestBuilder::new(endpoint, api_key)?;
-
+    pub fn new(transformer: Transform, region: Region) -> Result<Self, BoxError> {
+        let api_req_builder =
+            XRayRequestBuilder::new(format!("https://xray.{}.amazonaws.com", region))?;
         Ok(Self {
             transformer,
             api_req_builder,
@@ -60,7 +50,7 @@ where
         let payload = self.transformer.transform(input);
         match payload {
             Ok(p) => self.api_req_builder.build(p),
-            Err(e) => Err("Export error: {e:?}".into()),
+            Err(e) => Err(format!("Export error: {:?}", e).into()),
         }
     }
 }

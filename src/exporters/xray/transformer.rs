@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::xray::request_builder::TransformPayload;
-use bstr::{ByteSlice, ByteVec, FromUtf8Error};
+use bstr::{ByteVec, FromUtf8Error};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_sdk::trace::TraceError;
@@ -16,16 +16,12 @@ use thiserror::Error;
 #[derive(Clone)]
 pub struct Transformer {
     transformer: TraceTransformer,
-    environment: String,
-    hostname: String,
 }
 
 impl Transformer {
-    pub fn new(environment: String, hostname: String) -> Self {
+    pub fn new(environment: String) -> Self {
         Self {
-            environment: environment.clone(),
-            hostname: hostname.clone(),
-            transformer: TraceTransformer::new(environment, hostname),
+            transformer: TraceTransformer::new(environment),
         }
     }
 }
@@ -47,9 +43,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
 
 #[derive(Clone, Debug)]
 pub struct TraceTransformer {
-    #[allow(dead_code)]
     environment: String,
-    hostname: String,
 }
 
 /// Represents errors that can occur during export.
@@ -261,11 +255,8 @@ fn validate_value(value: &str, value_type: ValueType, trace_id: &str) -> Result<
 }
 
 impl TraceTransformer {
-    pub fn new(environment: String, hostname: String) -> Self {
-        Self {
-            environment,
-            hostname,
-        }
+    pub fn new(environment: String) -> Self {
+        Self { environment }
     }
 
     pub fn apply(&self, span: Span) -> Result<Value, ExportError> {
