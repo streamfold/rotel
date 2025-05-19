@@ -43,6 +43,14 @@ pub struct ClickhouseExporterArgs {
         default_value = "true"
     )]
     pub clickhouse_exporter_async_insert: String,
+
+    /// Clickhouse Exporter use new JSON column
+    #[arg(
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_ENABLE_JSON",
+        default_value = "false"
+    )]
+    pub clickhouse_exporter_enable_json: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]

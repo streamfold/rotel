@@ -1,7 +1,7 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
-use crate::exporters::clickhouse::schema::{LogRecordRow, SpanRow};
+use crate::exporters::clickhouse::schema::{LogRecordRow, MapOrJson, SpanRow};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrValue};
 use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
@@ -9,16 +9,22 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
+use serde_json::json;
+use std::collections::HashMap;
 use tower::BoxError;
 
 #[derive(Clone)]
 pub struct Transformer {
     compression: Compression,
+    use_json: bool,
 }
 
 impl Transformer {
-    pub fn new(compression: Compression) -> Self {
-        Self { compression }
+    pub fn new(compression: Compression, use_json: bool) -> Self {
+        Self {
+            compression,
+            use_json,
+        }
     }
 }
 
@@ -47,10 +53,10 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         span_name: span.name,
                         span_kind: span_kind_to_string(span.kind),
                         service_name: service_name.clone(),
-                        resource_attributes: attrs_as_pairs(&res_attrs),
+                        resource_attributes: self.transform_attrs(&res_attrs),
                         scope_name: scope_name.clone(),
                         scope_version: scope_version.clone(),
-                        span_attributes: attrs_as_pairs(&span_attrs),
+                        span_attributes: self.transform_attrs(&span_attrs),
                         duration: (span.end_time_unix_nano - span.start_time_unix_nano) as i64,
                         status_code,
                         status_message,
@@ -61,7 +67,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                             .iter()
                             .map(|e| {
                                 let event_attrs = cvattr::convert(&e.attributes);
-                                attrs_as_pairs(&event_attrs)
+                                self.transform_attrs(&event_attrs)
                             })
                             .collect(),
                         links_trace_id: span
@@ -84,7 +90,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                             .iter()
                             .map(|l| {
                                 let link_attrs = cvattr::convert(&l.attributes);
-                                attrs_as_pairs(&link_attrs)
+                                self.transform_attrs(&link_attrs)
                             })
                             .collect(),
                     };
@@ -133,12 +139,12 @@ impl TransformPayload<ResourceLogs> for Transformer {
                         service_name: service_name.clone(),
                         body: body_conv.map(|av| av.to_string()).unwrap_or_default(),
                         resource_schema_url: res_schema_url.clone(),
-                        resource_attributes: attrs_as_pairs(&res_attrs),
+                        resource_attributes: self.transform_attrs(&res_attrs),
                         scope_schema_url: sl.schema_url.clone(),
                         scope_name: scope_name.clone(),
                         scope_version: scope_version.clone(),
-                        scope_attributes: attrs_as_pairs(&scope_attrs),
-                        log_attributes: attrs_as_pairs(&log_attrs),
+                        scope_attributes: self.transform_attrs(&scope_attrs),
+                        log_attributes: self.transform_attrs(&log_attrs),
                     };
 
                     payload_builder.add_row(&row)?;
@@ -154,6 +160,27 @@ fn get_scope_properties(scope: Option<&InstrumentationScope>) -> (String, String
     match scope {
         None => ("".to_string(), "".to_string()),
         Some(scope) => (scope.name.clone(), scope.version.clone()),
+    }
+}
+
+impl Transformer {
+    fn transform_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
+        match self.use_json {
+            true => {
+                let hm: HashMap<String, String> = attrs
+                    .iter()
+                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
+                    .collect();
+
+                MapOrJson::Json(json!(hm).to_string())
+            }
+            false => MapOrJson::Map(
+                attrs
+                    .iter()
+                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
+                    .collect(),
+            ),
+        }
     }
 }
 
@@ -173,13 +200,6 @@ fn status_message(span: &Span) -> String {
         None => "".to_string(),
         Some(s) => s.message.clone(),
     }
-}
-
-fn attrs_as_pairs(attrs: &[ConvertedAttrKeyValue]) -> Vec<(String, String)> {
-    attrs
-        .iter()
-        .map(|kv| (kv.0.clone(), kv.1.to_string()))
-        .collect()
 }
 
 fn find_attribute(attr: &str, attributes: &[ConvertedAttrKeyValue]) -> String {
