@@ -5,4 +5,3 @@ pub mod debug;
 pub mod flush_control;
 pub mod generic_pipeline;
 pub mod payload;
-pub mod pipeline;
