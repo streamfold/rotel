@@ -1,17 +1,18 @@
 mod ddl;
 
-use crate::ddl::get_traces_ddl;
+use crate::ddl::{get_logs_ddl, get_traces_ddl};
 use bytes::Bytes;
 use clap::{Args, Parser};
 use http::{HeaderName, Method};
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
-use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::{Client as HyperClient, Client};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use rotel::crypto::init_crypto_provider;
 use rustls::ClientConfig;
 use std::process::ExitCode;
+use std::str;
 use std::time::Duration;
 use tower::BoxError;
 
@@ -118,42 +119,27 @@ async fn main() -> ExitCode {
                 );
 
                 for q in sql {
-                    let mut req = hyper::Request::builder()
-                        .method(Method::POST)
-                        .uri(ddl.endpoint.clone());
-
-                    let headers = req.headers_mut().unwrap();
-                    if let Some(user) = &ddl.user {
-                        headers.insert(
-                            HeaderName::from_static("x-clickhouse-user"),
-                            user.clone().parse().unwrap(),
-                        );
-                    }
-                    if let Some(password) = &ddl.password {
-                        headers.insert(
-                            HeaderName::from_static("x-clickhouse-key"),
-                            password.clone().parse().unwrap(),
-                        );
-                    }
-
-                    let req = req.body(Full::from(Bytes::from(q)));
-                    if req.is_err() {
-                        eprintln!("Unable to build request");
+                    if let Err(e) = execute_ddl(&client, &ddl, q).await {
+                        eprintln!("Can not execute DDL: {}", e);
                         return ExitCode::FAILURE;
                     }
+                }
+            }
 
-                    let resp = client.request(req.unwrap()).await;
-                    match resp {
-                        Ok(r) => {
-                            if !r.status().is_success() {
-                                eprintln!("Create DDL statement failed: {}", r.status());
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to create DDL: {:?}", e);
-                            return ExitCode::FAILURE;
-                        }
+            if ddl.logs {
+                let sql = get_logs_ddl(
+                    &ddl.cluster,
+                    &ddl.database,
+                    &ddl.table_prefix,
+                    &ddl.engine,
+                    &ttl,
+                    ddl.enable_json,
+                );
+
+                for q in sql {
+                    if let Err(e) = execute_ddl(&client, &ddl, q).await {
+                        eprintln!("Can not execute DDL: {}", e);
+                        return ExitCode::FAILURE;
                     }
                 }
             }
@@ -169,6 +155,49 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+async fn execute_ddl(
+    client: &Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
+    ddl: &CreateDDLArgs,
+    query: String,
+) -> Result<(), BoxError> {
+    let mut req = hyper::Request::builder()
+        .method(Method::POST)
+        .uri(ddl.endpoint.clone());
+
+    let headers = req.headers_mut().unwrap();
+    if let Some(user) = &ddl.user {
+        headers.insert(
+            HeaderName::from_static("x-clickhouse-user"),
+            user.clone().parse().unwrap(),
+        );
+    }
+    if let Some(password) = &ddl.password {
+        headers.insert(
+            HeaderName::from_static("x-clickhouse-key"),
+            password.clone().parse().unwrap(),
+        );
+    }
+
+    let req = match req.body(Full::from(Bytes::from(query))) {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Failed to build request: {}", e).into()),
+    };
+
+    let resp = client.request(req).await?;
+    if !resp.status().is_success() {
+        let (parts, body) = resp.into_parts();
+        let body = body.collect().await?.to_bytes();
+        return Err(format!(
+            "Create DDL statement failed: {}: {}",
+            parts.status,
+            str::from_utf8(&body)?
+        )
+        .into());
+    }
+
+    Ok(())
 }
 
 fn build_hyper_client() -> Result<HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>, BoxError>
