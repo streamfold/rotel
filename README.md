@@ -256,6 +256,13 @@ telemetrygen traces --otlp-insecure --duration 1s
 
 You should see demo trace data show up in Axiom.
 
+## Benchmarks
+
+We have taken the OpenTelemetry Collector benchmark suite and adapted it to run against Rotel. You can find
+the testing framework at [rotel-otel-loadtests](https://github.com/streamfold/rotel-otel-loadtests) and the benchmark results
+[here](https://streamfold.github.io/rotel-otel-loadtests/benchmarks/). The benchmarks are
+run nightly comparing the latest OTEL version against the latest Rotel release.
+
 ## Debugging
 
 If you set the option `--otlp-debug-log` to `["traces"]`, or the environment variable `ROTEL_DEBUG_LOG=traces`, then
