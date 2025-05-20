@@ -7,6 +7,7 @@ use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 use std::fmt::{Display, Formatter};
 
+use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::exporter::{Exporter, ResultLogger};
 use crate::exporters::http::http_client::HttpClient;
@@ -35,7 +36,7 @@ type ExporterType<'a, Resource> = Exporter<
         RecvStream<'a, Vec<Resource>>,
         Resource,
         Full<Bytes>,
-        RequestBuilder<Resource, Transformer>,
+        RequestBuilder<'a, Resource, Transformer>,
     >,
     SvcType,
     Full<Bytes>,
@@ -160,6 +161,7 @@ impl From<String> for Region {
 
 pub struct XRayTraceExporterBuilder {
     region: Region,
+    custom_endpoint: Option<String>,
     retry_config: RetryConfig,
 }
 
@@ -167,15 +169,17 @@ impl Default for XRayTraceExporterBuilder {
     fn default() -> Self {
         Self {
             region: Region::UsEast1,
+            custom_endpoint: None,
             retry_config: Default::default(),
         }
     }
 }
 
 impl XRayTraceExporterBuilder {
-    pub fn new(region: Region) -> Self {
+    pub fn new(region: Region, custom_endpoint: Option<String>) -> Self {
         Self {
             region,
+            custom_endpoint,
             ..Default::default()
         }
     }
@@ -186,17 +190,22 @@ impl XRayTraceExporterBuilder {
         self
     }
 
-    pub fn build<'a>(
+    pub fn build(
         self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
         environment: String,
-    ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
+        config: &AwsConfig,
+    ) -> Result<ExporterType<ResourceSpans>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
-
         let transformer = Transformer::new(environment);
 
-        let req_builder = RequestBuilder::new(transformer, self.region)?;
+        let req_builder = RequestBuilder::new(
+            transformer,
+            config,
+            self.region,
+            self.custom_endpoint.clone(),
+        )?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
 
@@ -254,7 +263,8 @@ impl ResultLogger<Response<()>> for XRayResultLogger {
 mod tests {
     extern crate utilities;
 
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::aws_api::config::AwsConfig;
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::xray::{ExporterType, Region, XRayTraceExporterBuilder};
@@ -273,14 +283,16 @@ mod tests {
         let addr = format!("http://127.0.0.1:{}", server.port());
 
         let hello_mock = server.mock(|when, then| {
-            when.method(POST).path("/api/v0.2/traces");
+            when.method(POST).path("/TraceSegments");
             then.status(200)
                 .header("content-type", "application/x-protobuf")
                 .body("ohi");
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let exporter = new_exporter(addr, brx);
+        // Create a true 'static reference using Box::leak
+        let config = Box::leak(Box::new(AwsConfig::from_env()));
+        let exporter = new_exporter(addr, brx, config);
 
         let cancellation_token = CancellationToken::new();
 
@@ -299,14 +311,15 @@ mod tests {
         let addr = format!("http://127.0.0.1:{}", server.port());
 
         let hello_mock = server.mock(|when, then| {
-            when.method(POST).path("/api/v0.2/traces");
+            when.method(POST).path("/TraceSegments");
             then.status(429)
                 .header("content-type", "application/x-protobuf")
                 .body("hold up");
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let exporter = new_exporter(addr, brx);
+        let config = Box::leak(Box::new(AwsConfig::from_env()));
+        let exporter = new_exporter(addr, brx, config);
 
         let cancellation_token = CancellationToken::new();
 
@@ -322,17 +335,18 @@ mod tests {
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }
 
-    fn new_exporter<'a>(
+    fn new_exporter(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
-    ) -> ExporterType<'a, ResourceSpans> {
-        XRayTraceExporterBuilder::new(Region::UsEast1)
+        config: &AwsConfig,
+    ) -> ExporterType<ResourceSpans> {
+        XRayTraceExporterBuilder::new(Region::UsEast1, Some(addr))
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
                 max_backoff: Duration::from_millis(50),
                 max_elapsed_time: Duration::from_millis(50),
             })
-            .build(brx, None, "production".to_string())
+            .build(brx, None, "production".to_string(), config)
             .unwrap()
     }
 }

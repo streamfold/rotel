@@ -1,10 +1,7 @@
 pub mod arn;
-mod auth;
-pub mod client;
+pub(crate) mod auth;
 pub mod config;
 mod error;
-mod paramstore;
-mod secretsmanager;
 
 pub const SECRETS_MANAGER_SERVICE: &str = "secretsmanager";
 pub const PARAM_STORE_SERVICE: &str = "ssm";

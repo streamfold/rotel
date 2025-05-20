@@ -13,7 +13,7 @@ pub trait Clock {
     fn now(&self) -> DateTime<Utc>;
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -24,6 +24,7 @@ impl Clock for SystemClock {
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[derive(Clone)]
 pub struct AwsRequestSigner<'a, C> {
     service: &'a str,
     region: &'a str,

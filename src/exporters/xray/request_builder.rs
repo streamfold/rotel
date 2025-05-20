@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
-use crate::exporters::xray::Region;
 use crate::exporters::xray::transformer::ExportError;
 use crate::exporters::xray::xray_request::XRayRequestBuilder;
+use crate::exporters::xray::Region;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
@@ -17,22 +18,31 @@ pub trait TransformPayload<T> {
 
 // todo: identify the cost of recursively cloning these
 #[derive(Clone)]
-pub struct RequestBuilder<Resource, Transform>
+pub struct RequestBuilder<'a, Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
     transformer: Transform,
-    api_req_builder: XRayRequestBuilder,
+    api_req_builder: XRayRequestBuilder<'a>,
     _phantom: PhantomData<Resource>,
 }
 
-impl<Resource, Transform> RequestBuilder<Resource, Transform>
+impl<'a, Resource, Transform> RequestBuilder<'a, Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
-    pub fn new(transformer: Transform, region: Region) -> Result<Self, BoxError> {
-        let api_req_builder =
-            XRayRequestBuilder::new(format!("https://xray.{}.amazonaws.com", region))?;
+    pub fn new(
+        transformer: Transform,
+        config: &'a AwsConfig,
+        region: Region,
+        custom_endpoint: Option<String>,
+    ) -> Result<Self, BoxError> {
+        let endpoint = if let Some(custom) = custom_endpoint {
+            custom
+        } else {
+            format!("https://xray.{}.amazonaws.com", region).to_string()
+        };
+        let api_req_builder = XRayRequestBuilder::new(endpoint, region, config)?;
         Ok(Self {
             transformer,
             api_req_builder,
@@ -41,8 +51,8 @@ where
     }
 }
 
-impl<Resource, Transform> BuildRequest<Resource, Full<Bytes>>
-    for RequestBuilder<Resource, Transform>
+impl<'a, Resource, Transform> BuildRequest<Resource, Full<Bytes>>
+    for RequestBuilder<'a, Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {

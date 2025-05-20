@@ -7,5 +7,5 @@ pub mod otlp;
 pub mod xray;
 
 pub(crate) mod crypto_init_tests;
-mod http;
+pub(crate) mod http;
 mod retry;
