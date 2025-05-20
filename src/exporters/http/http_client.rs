@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::client::{ConnectError, ResponseDecode, build_hyper_client};
+use crate::exporters::http::client::{build_hyper_client, ConnectError, ResponseDecode};
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
-use http::Request;
 use http::header::CONTENT_ENCODING;
+use http::Request;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client as HyperClient;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -80,7 +80,6 @@ where
                         Ok(frame) => {
                             if frame.is_data() {
                                 let data = frame.into_data().unwrap();
-                                println!("Response body is: {:?}", data);
                                 match self.decoder.decode(data, encoding.clone()) {
                                     Ok(r) => resp = resp.with_body(r),
                                     Err(e) => return Err(e),
