@@ -169,7 +169,9 @@ impl Transformer {
             true => {
                 let hm: HashMap<String, String> = attrs
                     .iter()
-                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
+                    // periods(.) in key names will be converted into a nested format, so swap
+                    // them to underscores to avoid nesting
+                    .map(|kv| (kv.0.replace(".", "_"), kv.1.to_string()))
                     .collect();
 
                 MapOrJson::Json(json!(hm).to_string())
