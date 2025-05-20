@@ -11,7 +11,7 @@ Examples:
 cargo run --bin clickhouse-ddl create --endpoint http://localhost:8123 --logs
 
 # generate DDL for traces, use the JSON type
-cargo run --bin clickhouse-ddl create --endpoint http://localhost:8123 --logs --enable-json
+cargo run --bin clickhouse-ddl create --endpoint http://localhost:8123 --traces --enable-json
 ```
 
 Full usage:
