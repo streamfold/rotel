@@ -7,7 +7,7 @@ use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_sdk::trace::TraceError;
 use serde::de::Error;
 use serde_json::Value;
-use serde_json::{Error as JsonError, Map, json};
+use serde_json::{json, Error as JsonError, Map};
 use std::str::Utf8Error;
 use std::time::Duration;
 use std::{env, io};
@@ -72,7 +72,6 @@ pub enum ExportError {
 pub enum ValueType {
     HttpRequest,
     HttpResponse,
-    Exception,
     Annotation,
     Metadata,
 }
