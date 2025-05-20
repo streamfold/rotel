@@ -89,11 +89,13 @@ where
 
         // Add session token if provided
         if let Some(token) = self.session_token {
-            headers_mut.insert(
-                "X-Amz-Security-Token",
-                HeaderValue::from_str(token)
-                    .map_err(|_| Error::SignatureError("Invalid session token".to_string()))?,
-            );
+            if !token.is_empty() {
+                headers_mut.insert(
+                    "X-Amz-Security-Token",
+                    HeaderValue::from_str(token)
+                        .map_err(|_| Error::SignatureError("Invalid session token".to_string()))?,
+                );
+            }
         }
 
         // Add date header
@@ -206,9 +208,9 @@ where
             builder_headers.insert(k, v.clone());
         }
 
-        Ok(req_builder
+        req_builder
             .body(Full::from(Bytes::from(payload)))
-            .map_err(|e| Error::RequestBuildError(e))?)
+            .map_err(Error::RequestBuildError)
     }
 
     fn calculate_signature(&self, date_stamp: &str, string_to_sign: &str) -> Result<String, Error> {
@@ -237,7 +239,6 @@ where
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use http::header::{AUTHORIZATION, HOST};
     use http_body_util::BodyExt;
     use std::collections::HashMap;
 

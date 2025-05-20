@@ -2,9 +2,9 @@
 
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
-use crate::exporters::xray::Region;
 use crate::exporters::xray::transformer::ExportError;
 use crate::exporters::xray::xray_request::XRayRequestBuilder;
+use crate::exporters::xray::Region;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
@@ -42,7 +42,7 @@ where
         } else {
             format!("https://xray.{}.amazonaws.com", region).to_string()
         };
-        let api_req_builder = XRayRequestBuilder::new(endpoint, region, config)?;
+        let api_req_builder = XRayRequestBuilder::new(endpoint, config)?;
         Ok(Self {
             transformer,
             api_req_builder,

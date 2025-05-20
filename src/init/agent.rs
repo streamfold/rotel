@@ -214,11 +214,20 @@ impl Agent {
 
         let mut pipeline_flush_sub = self.pipeline_flush_sub.take();
 
+        // AWS-XRay only supports a batch size of 50 segments
+        let mut trace_batch_config = build_traces_batch_config(config.batch.clone());
+        if config.exporter == Exporter::AwsXray && trace_batch_config.max_size > 50 {
+            info!(
+                "AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50"
+            );
+            trace_batch_config.max_size = 50;
+        }
+
         let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_traces_batch_config(config.batch.clone()),
+            trace_batch_config,
             config.otlp_with_trace_processor.clone(),
             config.otel_resource_attributes.clone(),
         );

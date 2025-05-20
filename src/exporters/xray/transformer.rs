@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// Notice: Portions of this code are taken from https://github.com/CosmicMind/opentelemetry-xray
+/* Copyright © 2025, CosmicMind, Inc. */
 use crate::exporters::xray::request_builder::TransformPayload;
 use bstr::FromUtf8Error;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -72,6 +74,7 @@ pub enum ExportError {
 pub enum ValueType {
     HttpRequest,
     HttpResponse,
+    #[allow(dead_code)]
     Exception,
     Annotation,
     Metadata,
@@ -94,7 +97,6 @@ fn validate_time_range(start: &u64, end: &u64) -> Result<(), ExportError> {
 /// Formats an OpenTelemetry trace ID into the AWS X‑Ray format (1-XXXXXXXX-XXXXXXXXXXXXXXXX).
 fn format_xray_trace_id(trace_id: Vec<u8>) -> Result<String, FromUtf8Error> {
     let hex = hex::encode(trace_id);
-    println!("Hex is {:?}", hex);
     Ok(format!("1-{}-{}", &hex[..8], &hex[8..]))
 }
 

@@ -237,7 +237,6 @@ impl XRayTraceExporterBuilder {
 pub struct XRayTraceDecoder;
 
 impl ResponseDecode<()> for XRayTraceDecoder {
-    // todo: look at response
     fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
         Ok(())
     }
