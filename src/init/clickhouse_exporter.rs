@@ -44,7 +44,7 @@ pub struct ClickhouseExporterArgs {
     )]
     pub clickhouse_exporter_async_insert: String,
 
-    /// Clickhouse Exporter use new JSON column
+    /// Clickhouse Exporter enable JSON column type
     #[arg(
         long,
         env = "ROTEL_CLICKHOUSE_EXPORTER_ENABLE_JSON",

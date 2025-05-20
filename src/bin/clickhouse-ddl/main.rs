@@ -18,7 +18,7 @@ use tower::BoxError;
 
 #[derive(Debug, Args, Clone)]
 pub struct CreateDDLArgs {
-    /// Endpoint
+    /// Clickhouse endpoint
     #[arg(long)]
     pub endpoint: String,
 
@@ -58,7 +58,7 @@ pub struct CreateDDLArgs {
     #[arg(long, default_value = "0s")]
     pub ttl: humantime::Duration,
 
-    /// Enable JSON
+    /// Enable JSON column type
     #[arg(long, default_value = "false")]
     pub enable_json: bool,
 }
