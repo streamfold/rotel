@@ -176,6 +176,7 @@ where
             "{}/{}/{}/aws4_request",
             date_stamp, self.region, self.service
         );
+        println!("credential_scope {:?}", credential_scope);
         let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
 
         let string_to_sign = format!(

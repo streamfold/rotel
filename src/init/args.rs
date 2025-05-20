@@ -2,6 +2,7 @@ use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
+use crate::init::xray_exporter::XRayExporterArgs;
 use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -112,6 +113,9 @@ pub struct AgentRun {
     #[command(flatten)]
     pub clickhouse_exporter: ClickhouseExporterArgs,
 
+    #[command(flatten)]
+    pub aws_xray_exporter: XRayExporterArgs,
+
     #[cfg(feature = "pprof")]
     #[clap(flatten)]
     pub profile_group: ProfileGroup,
@@ -151,6 +155,8 @@ pub enum Exporter {
     Datadog,
 
     Clickhouse,
+
+    AwsXray,
 }
 
 /// Parse a single key-value pair

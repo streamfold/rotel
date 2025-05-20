@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::xray::request_builder::TransformPayload;
-use bstr::{ByteVec, FromUtf8Error};
+use bstr::FromUtf8Error;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_sdk::trace::TraceError;
 use serde::de::Error;
 use serde_json::Value;
-use serde_json::{Error as JsonError, Map, json};
+use serde_json::{json, Error as JsonError, Map};
 use std::str::Utf8Error;
 use std::time::Duration;
 use std::{env, io};
@@ -72,6 +72,7 @@ pub enum ExportError {
 pub enum ValueType {
     HttpRequest,
     HttpResponse,
+    Exception,
     Annotation,
     Metadata,
 }
@@ -92,7 +93,8 @@ fn validate_time_range(start: &u64, end: &u64) -> Result<(), ExportError> {
 
 /// Formats an OpenTelemetry trace ID into the AWS X‑Ray format (1-XXXXXXXX-XXXXXXXXXXXXXXXX).
 fn format_xray_trace_id(trace_id: Vec<u8>) -> Result<String, FromUtf8Error> {
-    let hex = trace_id.into_string()?;
+    let hex = hex::encode(trace_id);
+    println!("Hex is {:?}", hex);
     Ok(format!("1-{}-{}", &hex[..8], &hex[8..]))
 }
 
@@ -264,8 +266,8 @@ impl TraceTransformer {
             .map_err(|_| ExportError::TimestampError)?;
 
         let trace_id = format_xray_trace_id(span.trace_id)?;
-        let span_id = span.span_id.into_string()?;
-        let parent_id = span.parent_span_id.into_string()?;
+        let span_id = hex::encode(span.span_id);
+        let parent_id = hex::encode(span.parent_span_id);
 
         // Prepare maps for grouping attributes.
         let mut request: Map<String, Value> = Map::new();

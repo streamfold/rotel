@@ -43,7 +43,7 @@ type ExporterType<'a, Resource> = Exporter<
     XRayResultLogger,
 >;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Region {
     UsEast1,
     UsEast2,
@@ -264,7 +264,7 @@ mod tests {
     extern crate utilities;
 
     use crate::aws_api::config::AwsConfig;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::xray::{ExporterType, Region, XRayTraceExporterBuilder};
