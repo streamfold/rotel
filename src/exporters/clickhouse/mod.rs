@@ -58,6 +58,7 @@ pub struct ClickhouseExporterBuilder {
     auth_password: Option<String>,
     async_insert: bool,
     use_json: bool,
+    use_json_underscore: bool,
 }
 
 type SvcType =
@@ -99,6 +100,11 @@ impl ClickhouseExporterBuilder {
         self
     }
 
+    pub fn with_json_underscore(mut self, json_underscore: bool) -> Self {
+        self.use_json_underscore = json_underscore;
+        self
+    }
+
     pub fn with_async_insert(mut self, async_insert: bool) -> Self {
         self.async_insert = async_insert;
         self
@@ -121,7 +127,11 @@ impl ClickhouseExporterBuilder {
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new(self.compression.clone(), self.use_json);
+        let transformer = Transformer::new(
+            self.compression.clone(),
+            self.use_json,
+            self.use_json_underscore,
+        );
 
         let traces_sql = get_traces_sql(self.table_prefix.clone());
         let api_req_builder = ApiRequestBuilder::new(
@@ -169,7 +179,11 @@ impl ClickhouseExporterBuilder {
     ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new(self.compression.clone(), self.use_json);
+        let transformer = Transformer::new(
+            self.compression.clone(),
+            self.use_json,
+            self.use_json_underscore,
+        );
 
         let logs_sql = get_logs_sql(self.table_prefix.clone());
         let api_req_builder = ApiRequestBuilder::new(

@@ -51,6 +51,14 @@ pub struct ClickhouseExporterArgs {
         default_value = "false"
     )]
     pub clickhouse_exporter_enable_json: bool,
+
+    /// Clickhouse Exporter replace periods in JSON keys with underscores
+    #[arg(
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_JSON_UNDERSCORE",
+        default_value = "false"
+    )]
+    pub clickhouse_exporter_json_underscore: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]

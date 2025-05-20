@@ -17,13 +17,15 @@ use tower::BoxError;
 pub struct Transformer {
     compression: Compression,
     use_json: bool,
+    use_json_underscore: bool,
 }
 
 impl Transformer {
-    pub fn new(compression: Compression, use_json: bool) -> Self {
+    pub fn new(compression: Compression, use_json: bool, use_json_underscore: bool) -> Self {
         Self {
             compression,
             use_json,
+            use_json_underscore,
         }
     }
 }
@@ -171,7 +173,13 @@ impl Transformer {
                     .iter()
                     // periods(.) in key names will be converted into a nested format, so swap
                     // them to underscores to avoid nesting
-                    .map(|kv| (kv.0.replace(".", "_"), kv.1.to_string()))
+                    .map(|kv| {
+                        if self.use_json_underscore {
+                            (kv.0.replace(".", "_"), kv.1.to_string())
+                        } else {
+                            (kv.0.clone(), kv.1.to_string())
+                        }
+                    })
                     .collect();
 
                 MapOrJson::Json(json!(hm).to_string())
