@@ -6,7 +6,7 @@ use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
 use http_body_util::Full;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::error::Error;
 use tower::BoxError;
 
