@@ -11,8 +11,11 @@ pub(crate) fn get_traces_ddl(
 ) -> Vec<String> {
     let map_or_json = get_json_col_type(use_json);
     let mut map_indices = "";
+    let mut json_setting = "";
     if !use_json {
         map_indices = TRACES_TABLE_MAP_INDICES_SQL;
+    } else {
+        json_setting = ", allow_experimental_json_type = 1";
     }
 
     let table_sql = replace_placeholders(
@@ -30,6 +33,7 @@ pub(crate) fn get_traces_ddl(
                 "TTL_EXPR",
                 build_ttl_string(ttl, "toDateTime(Timestamp)").as_str(),
             ),
+            ("JSON_SETTING", json_setting),
         ]),
     );
 
@@ -81,8 +85,11 @@ pub(crate) fn get_logs_ddl(
 ) -> Vec<String> {
     let map_or_json = get_json_col_type(use_json);
     let mut map_indices = "";
+    let mut json_setting = "";
     if !use_json {
         map_indices = LOGS_TABLE_MAP_INDICES_SQL;
+    } else {
+        json_setting = ", allow_experimental_json_type = 1";
     }
 
     let table_sql = replace_placeholders(
@@ -97,6 +104,7 @@ pub(crate) fn get_logs_ddl(
             ("ENGINE", engine),
             ("MAP_INDICES", map_indices),
             ("TTL_EXPR", build_ttl_string(ttl, "TimestampTime").as_str()),
+            ("JSON_SETTING", json_setting),
         ]),
     );
 
@@ -140,7 +148,8 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 PARTITION BY toDate(Timestamp)
 ORDER BY (ServiceName, SpanName, toDateTime(Timestamp))
 %%TTL_EXPR%%
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+;
 "#;
 
 const TRACES_TABLE_MAP_INDICES_SQL: &str = r#"
@@ -160,7 +169,7 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 PARTITION BY toDate(Start)
 ORDER BY (TraceId, Start)
 %%TTL_EXPR%%
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 "#;
 
 const TRACES_TABLE_ID_TS_MV_SQL: &str = r#"
@@ -205,7 +214,8 @@ PARTITION BY toDate(TimestampTime)
 PRIMARY KEY (ServiceName, TimestampTime)
 ORDER BY (ServiceName, TimestampTime, Timestamp)
 %%TTL_EXPR%%
-SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+;
 "#;
 
 const LOGS_TABLE_MAP_INDICES_SQL: &str = r#"
