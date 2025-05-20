@@ -4,12 +4,12 @@ use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::xray::Region;
 use bytes::Bytes;
-use flate2::Compression;
 use flate2::read::GzEncoder;
+use flate2::Compression;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
 use http_body_util::Full;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::error::Error;
 use std::io::Read;
 use tower::BoxError;
@@ -23,8 +23,6 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 #[derive(Clone)]
 pub struct XRayRequestBuilder<'a> {
     signer: AwsRequestSigner<'a, SystemClock>,
-    pub region: Region,
-    pub trace_url: url::Url,
     pub base_headers: HeaderMap,
     pub uri: Uri,
 }
@@ -67,8 +65,6 @@ impl<'a> XRayRequestBuilder<'a> {
             uri,
             base_headers,
             signer,
-            region,
-            trace_url,
         };
         Ok(s)
     }
