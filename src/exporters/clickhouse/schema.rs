@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 //
 // Trace spans
@@ -12,6 +12,7 @@ use serde::Serialize;
 // struct and the names created in the DB schema. If they ever get out of alignment, things
 // will break. We'll look at ways to fix this in the future.
 // *************
+
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct SpanRow {
@@ -23,10 +24,10 @@ pub struct SpanRow {
     pub(crate) span_name: String,
     pub(crate) span_kind: String,
     pub(crate) service_name: String,
-    pub(crate) resource_attributes: Vec<(String, String)>,
+    pub(crate) resource_attributes: MapOrJson,
     pub(crate) scope_name: String,
     pub(crate) scope_version: String,
-    pub(crate) span_attributes: Vec<(String, String)>,
+    pub(crate) span_attributes: MapOrJson,
     pub(crate) duration: i64,
     pub(crate) status_code: String,
     pub(crate) status_message: String,
@@ -36,7 +37,7 @@ pub struct SpanRow {
     #[serde(rename = "Events.Name")]
     pub(crate) events_name: Vec<String>,
     #[serde(rename = "Events.Attributes")]
-    pub(crate) events_attributes: Vec<Vec<(String, String)>>,
+    pub(crate) events_attributes: Vec<MapOrJson>,
 
     #[serde(rename = "Links.TraceId")]
     pub(crate) links_trace_id: Vec<String>,
@@ -45,7 +46,7 @@ pub struct SpanRow {
     #[serde(rename = "Links.TraceState")]
     pub(crate) links_trace_state: Vec<String>,
     #[serde(rename = "Links.Attributes")]
-    pub(crate) links_attributes: Vec<Vec<(String, String)>>,
+    pub(crate) links_attributes: Vec<MapOrJson>,
 }
 
 pub fn get_span_row_col_keys() -> String {
@@ -93,12 +94,12 @@ pub struct LogRecordRow {
     pub(crate) service_name: String,
     pub(crate) body: String,
     pub(crate) resource_schema_url: String,
-    pub(crate) resource_attributes: Vec<(String, String)>,
+    pub(crate) resource_attributes: MapOrJson,
     pub(crate) scope_schema_url: String,
     pub(crate) scope_name: String,
     pub(crate) scope_version: String,
-    pub(crate) scope_attributes: Vec<(String, String)>,
-    pub(crate) log_attributes: Vec<(String, String)>,
+    pub(crate) scope_attributes: MapOrJson,
+    pub(crate) log_attributes: MapOrJson,
 }
 
 pub fn get_log_row_col_keys() -> String {
@@ -121,4 +122,22 @@ pub fn get_log_row_col_keys() -> String {
     ];
 
     fields.join(",")
+}
+
+#[derive(Debug)]
+pub enum MapOrJson {
+    Map(Vec<(String, String)>),
+    Json(String),
+}
+
+impl Serialize for MapOrJson {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            MapOrJson::Map(map) => map.serialize(serializer),
+            MapOrJson::Json(str) => str.serialize(serializer),
+        }
+    }
 }

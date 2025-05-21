@@ -43,6 +43,22 @@ pub struct ClickhouseExporterArgs {
         default_value = "true"
     )]
     pub clickhouse_exporter_async_insert: String,
+
+    /// Clickhouse Exporter enable JSON column type
+    #[arg(
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_ENABLE_JSON",
+        default_value = "false"
+    )]
+    pub clickhouse_exporter_enable_json: bool,
+
+    /// Clickhouse Exporter replace periods in JSON keys with underscores
+    #[arg(
+        long,
+        env = "ROTEL_CLICKHOUSE_EXPORTER_JSON_UNDERSCORE",
+        default_value = "false"
+    )]
+    pub clickhouse_exporter_json_underscore: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]

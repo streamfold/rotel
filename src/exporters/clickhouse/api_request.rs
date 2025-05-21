@@ -19,6 +19,7 @@ impl ApiRequestBuilder {
         auth_user: Option<String>,
         auth_password: Option<String>,
         async_insert: bool,
+        use_json: bool,
     ) -> Result<Self, BoxError> {
         let full_url = construct_full_url(endpoint);
         let mut uri = Url::parse(full_url.as_str())?;
@@ -34,6 +35,11 @@ impl ApiRequestBuilder {
             }
             if async_insert {
                 pairs.append_pair("async_insert", "1");
+            }
+            if use_json {
+                pairs.append_pair("allow_experimental_json_type", "1");
+                // This interprets Strings as JSON columns
+                pairs.append_pair("input_format_binary_read_json_as_string", "1");
             }
         }
 

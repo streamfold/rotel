@@ -4,10 +4,11 @@ use crate::exporters::http::client::{ConnectError, ResponseDecode, build_hyper_c
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
+use bytes::Bytes;
 use http::Request;
 use http::header::CONTENT_ENCODING;
 use http_body_util::BodyExt;
-use hyper::body::Body;
+use hyper::body::{Body, Incoming};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -61,11 +62,6 @@ where
             Ok(resp) => {
                 let (head, mut body) = resp.into_parts();
 
-                // todo: we may want to parse the body on failures in the future?
-                if !(200..=202).contains(&head.status.as_u16()) {
-                    return Ok(Response::from_http(head, None));
-                }
-
                 let encoding = match head.headers.get(CONTENT_ENCODING) {
                     None => ContentEncoding::None,
                     Some(v) => match TryFrom::try_from(v) {
@@ -73,6 +69,19 @@ where
                         Err(e) => return Err(e),
                     },
                 };
+
+                // todo: we may want to parse the body on failures in the future?
+                if !(200..=202).contains(&head.status.as_u16()) {
+                    let body = match self
+                        .decoder
+                        .decode(response_bytes(body).await?, encoding.clone())
+                    {
+                        Ok(r) => Some(r),
+                        Err(_e) => None, // todo: handle strings types better
+                    };
+
+                    return Ok(Response::from_http(head, body));
+                }
 
                 let mut resp = Response::from_http(head, None);
                 while let Some(next) = body.frame().await {
@@ -130,4 +139,11 @@ where
             }
         })
     }
+}
+
+pub async fn response_bytes(body: Incoming) -> Result<Bytes, BoxError> {
+    body.collect()
+        .await
+        .map(|col| col.to_bytes())
+        .map_err(|e| format!("failed to read response body: {}", e).into())
 }
