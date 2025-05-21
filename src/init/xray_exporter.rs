@@ -7,7 +7,7 @@ pub struct XRayExporterArgs {
         value_enum,
         long,
         env = "ROTEL_XRAY_EXPORTER_REGION",
-        default_value = "us1"
+        default_value = "us-east-1"
     )]
     pub xray_exporter_region: crate::exporters::xray::Region,
 
