@@ -89,7 +89,6 @@ where
                         Ok(frame) => {
                             if frame.is_data() {
                                 let data = frame.into_data().unwrap();
-
                                 match self.decoder.decode(data, encoding.clone()) {
                                     Ok(r) => resp = resp.with_body(r),
                                     Err(e) => return Err(e),

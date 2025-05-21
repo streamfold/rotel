@@ -55,6 +55,11 @@ impl TelemetryActivation {
                 traces: TelemetryState::Active,
                 metrics: TelemetryState::NoListeners,
             },
+            Exporter::AwsXray => TelemetryActivation {
+                logs: TelemetryState::NoListeners,
+                traces: TelemetryState::Active,
+                metrics: TelemetryState::NoListeners,
+            },
         };
 
         if config.otlp_receiver_traces_disabled {

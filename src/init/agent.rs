@@ -1,9 +1,11 @@
+use crate::aws_api::config::AwsConfig;
 use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterBuilder;
 use crate::exporters::datadog::{DatadogTraceExporterBuilder, Region};
 use crate::exporters::otlp;
+use crate::exporters::xray::XRayTraceExporterBuilder;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
 use crate::init::batch::{
@@ -212,11 +214,20 @@ impl Agent {
 
         let mut pipeline_flush_sub = self.pipeline_flush_sub.take();
 
+        // AWS-XRay only supports a batch size of 50 segments
+        let mut trace_batch_config = build_traces_batch_config(config.batch.clone());
+        if config.exporter == Exporter::AwsXray && trace_batch_config.max_size > 50 {
+            info!(
+                "AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50"
+            );
+            trace_batch_config.max_size = 50;
+        }
+
         let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
             trace_pipeline_in_rx.clone(),
             trace_pipeline_out_tx,
             pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_traces_batch_config(config.batch.clone()),
+            trace_batch_config,
             config.otlp_with_trace_processor.clone(),
             config.otel_resource_attributes.clone(),
         );
@@ -411,6 +422,32 @@ impl Agent {
                         );
                     }
 
+                    Ok(())
+                });
+            }
+
+            Exporter::AwsXray => {
+                let builder = XRayTraceExporterBuilder::new(
+                    config.aws_xray_exporter.xray_exporter_region,
+                    config.aws_xray_exporter.xray_exporter_custom_endpoint,
+                );
+                let config = Box::leak(Box::new(AwsConfig::from_env()));
+                let exp = builder.build(
+                    trace_pipeline_out_rx,
+                    self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                    "production".to_string(),
+                    config,
+                )?;
+
+                let token = exporters_cancel.clone();
+                exporters_task_set.spawn(async move {
+                    let res = exp.start(token).await;
+                    if let Err(e) = res {
+                        error!(
+                            error = e,
+                            "AWS X-Ray exporter returned from run loop with error."
+                        );
+                    }
                     Ok(())
                 });
             }

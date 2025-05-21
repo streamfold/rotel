@@ -7,6 +7,7 @@ pub mod wait;
 mod clickhouse_exporter;
 mod datadog_exporter;
 mod otlp_exporter;
+mod xray_exporter;
 
 mod batch;
 #[cfg(feature = "pprof")]

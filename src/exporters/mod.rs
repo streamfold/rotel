@@ -4,7 +4,8 @@ pub mod blackhole;
 pub mod clickhouse;
 pub mod datadog;
 pub mod otlp;
+pub mod xray;
 
-mod crypto_init_tests;
-mod http;
+pub(crate) mod crypto_init_tests;
+pub(crate) mod http;
 mod retry;
