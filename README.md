@@ -151,21 +151,21 @@ Specifying a custom endpoint will override the region selection.
 The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter only supports logs
 and traces at the moment.
 
-| Option                             | Default | Options     |
-|------------------------------------|---------|-------------|
-| --clickhouse-exporter-endpoint     |         |             |
-| --clickhouse-exporter-database     | otel    |             |
-| --clickhouse-exporter-table-prefix | otel    |             |
-| --clickhouse-exporter-compression  | lz4     | none, lz4   |
-| --clickhouse-exporter-async-insert | true    | true, false |
-| --clickhouse-exporter-user         |         |             |
-| --clickhouse-exporter-password     |         |             |
+| Option                                | Default | Options     |
+|---------------------------------------|---------|-------------|
+| --clickhouse-exporter-endpoint        |         |             |
+| --clickhouse-exporter-database        | otel    |             |
+| --clickhouse-exporter-table-prefix    | otel    |             |
+| --clickhouse-exporter-compression     | lz4     | none, lz4   |
+| --clickhouse-exporter-async-insert    | true    | true, false |
+| --clickhouse-exporter-enable-json     |         |             |
+| --clickhouse-exporter-json-underscore |         |             |
+| --clickhouse-exporter-user            |         |             |
+| --clickhouse-exporter-password        |         |             |
 
 The Clickhouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed
-onto
-the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to
-generate
-the full table name of `otel_traces`.
+onto the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to
+generate the full table name of `otel_traces`.
 
 The Clickhouse exporter will enable [async inserts](https://clickhouse.com/docs/optimize/asynchronous-inserts) by
 default,
@@ -174,11 +174,17 @@ recommended for most workloads to avoid overloading Clickhouse with many small i
 specifying:
 `--clickhouse-exporter-async-insert false`.
 
-The exporter will not generate the table schema if it does not exist.
-The [schema-migrate.sh](/contrib/clickhouse/schema-migrate.sh)
-script which is provided in this repo will output a Clickhouse schema that is supported by the exporter. It matches the
-schema used in the OpenTelemetry
-[Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
+The exporter will not generate the table schema if it does not exist. Use the
+[clickhouse-ddl](/src/bin/clickhouse-ddl/README.md) command for generating the necessary table DDL for Clickhouse. The
+DDL matches the schema used in the OpenTelemetry [Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
+
+Enabling JSON via the `--clickhouse-exporter-enable-json` will use the new
+[JSON data type](https://clickhouse.com/docs/sql-reference/data-types/newjson) in Clickhouse. This data
+type is only available on the most recent versions of Clickhouse. Make sure that you enable JSON with `--enable-json`
+when creating tables with `clickhouse-ddl`. By default, any JSON key inserted with a period in it will create
+a nested JSON object. You can replace periods in JSON keys with underscores by passing the option
+`--clickhouse-exporter-json-underscore` which will keep the JSON keys flat. For example, the resource attribute
+`service.name` will be inserted as `service_name`.
 
 _The Clickhouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse)
 crate._
@@ -255,6 +261,13 @@ telemetrygen traces --otlp-insecure --duration 1s
 ```
 
 You should see demo trace data show up in Axiom.
+
+## Benchmarks
+
+We have taken the OpenTelemetry Collector benchmark suite and adapted it to run against Rotel. You can find
+the testing framework at [rotel-otel-loadtests](https://github.com/streamfold/rotel-otel-loadtests) and the benchmark results
+[here](https://streamfold.github.io/rotel-otel-loadtests/benchmarks/). The benchmarks are
+run nightly comparing the latest OTEL version against the latest Rotel release.
 
 ## Debugging
 

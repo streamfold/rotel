@@ -473,7 +473,13 @@ impl Agent {
                     config.clickhouse_exporter.clickhouse_exporter_table_prefix,
                 )
                 .with_compression(config.clickhouse_exporter.clickhouse_exporter_compression)
-                .with_async_insert(async_insert);
+                .with_async_insert(async_insert)
+                .with_json(config.clickhouse_exporter.clickhouse_exporter_enable_json)
+                .with_json_underscore(
+                    config
+                        .clickhouse_exporter
+                        .clickhouse_exporter_json_underscore,
+                );
 
                 if let Some(user) = config.clickhouse_exporter.clickhouse_exporter_user {
                     builder = builder.with_user(user);

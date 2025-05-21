@@ -57,6 +57,8 @@ pub struct ClickhouseExporterBuilder {
     auth_user: Option<String>,
     auth_password: Option<String>,
     async_insert: bool,
+    use_json: bool,
+    use_json_underscore: bool,
 }
 
 type SvcType =
@@ -93,6 +95,16 @@ impl ClickhouseExporterBuilder {
         self
     }
 
+    pub fn with_json(mut self, json: bool) -> Self {
+        self.use_json = json;
+        self
+    }
+
+    pub fn with_json_underscore(mut self, json_underscore: bool) -> Self {
+        self.use_json_underscore = json_underscore;
+        self
+    }
+
     pub fn with_async_insert(mut self, async_insert: bool) -> Self {
         self.async_insert = async_insert;
         self
@@ -115,7 +127,11 @@ impl ClickhouseExporterBuilder {
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new(self.compression.clone());
+        let transformer = Transformer::new(
+            self.compression.clone(),
+            self.use_json,
+            self.use_json_underscore,
+        );
 
         let traces_sql = get_traces_sql(self.table_prefix.clone());
         let api_req_builder = ApiRequestBuilder::new(
@@ -126,6 +142,7 @@ impl ClickhouseExporterBuilder {
             self.auth_user.clone(),
             self.auth_password.clone(),
             self.async_insert,
+            self.use_json,
         )?;
 
         let req_builder = RequestBuilder::new(transformer, api_req_builder)?;
@@ -162,7 +179,11 @@ impl ClickhouseExporterBuilder {
     ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
         let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new(self.compression.clone());
+        let transformer = Transformer::new(
+            self.compression.clone(),
+            self.use_json,
+            self.use_json_underscore,
+        );
 
         let logs_sql = get_logs_sql(self.table_prefix.clone());
         let api_req_builder = ApiRequestBuilder::new(
@@ -173,6 +194,7 @@ impl ClickhouseExporterBuilder {
             self.auth_user.clone(),
             self.auth_password.clone(),
             self.async_insert,
+            self.use_json,
         )?;
 
         let req_builder = RequestBuilder::new(transformer, api_req_builder)?;

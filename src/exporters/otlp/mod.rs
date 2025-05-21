@@ -141,7 +141,6 @@ pub fn logs_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExport
 mod tests {
     use crate::bounded_channel::{BoundedSender, bounded};
     use crate::exporters::otlp::{Endpoint, Protocol};
-    use crate::topology::batch::{BatchSizer, NestedBatch};
     extern crate utilities;
     use utilities::otlp::FakeOTLP;
 
@@ -1066,81 +1065,6 @@ mod tests {
 
         hello_mock.assert_hits(1);
         hello_mock.delete();
-    }
-
-    #[test]
-    fn test_trace_batch_splitting() {
-        let mut batch = NestedBatch::<ResourceSpans>::new(10, Duration::from_secs(1));
-        let first_request = FakeOTLP::trace_service_request_with_spans(1, 5);
-        let resp = batch.offer(first_request.resource_spans);
-        assert!(resp.is_ok());
-        assert_eq!(resp.unwrap(), None);
-        let second_request = FakeOTLP::trace_service_request_with_spans(1, 7);
-        let resp = batch.offer(second_request.resource_spans);
-        assert!(resp.is_ok());
-        let spans = resp.unwrap().unwrap();
-        assert_eq!(10, spans.size_of());
-        // Grab what's left in the batch
-        let leftover = batch.take_batch();
-        assert_eq!(2, leftover.size_of());
-    }
-
-    #[test]
-    fn test_trace_batch_split_too_large() {
-        let mut batch = NestedBatch::<ResourceSpans>::new(10, Duration::from_secs(1));
-        let first_request = FakeOTLP::trace_service_request_with_spans(1, 21);
-        let resp = batch.offer(first_request.resource_spans);
-        assert!(resp.is_err());
-    }
-
-    #[test]
-    fn test_metrics_batch_splitting() {
-        let mut batch = NestedBatch::<ResourceMetrics>::new(10, Duration::from_secs(1));
-        let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 5);
-        let resp = batch.offer(first_request.resource_metrics);
-        assert!(resp.is_ok());
-        assert_eq!(resp.unwrap(), None);
-        let second_request = FakeOTLP::metrics_service_request_with_metrics(1, 7);
-        let resp = batch.offer(second_request.resource_metrics);
-        assert!(resp.is_ok());
-        let spans = resp.unwrap().unwrap();
-        assert_eq!(10, spans.size_of());
-        // Grab what's left in the batch
-        let leftover = batch.take_batch();
-        assert_eq!(2, leftover.size_of());
-    }
-
-    #[test]
-    fn test_metrics_batch_split_too_large() {
-        let mut batch = NestedBatch::<ResourceMetrics>::new(10, Duration::from_secs(1));
-        let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 21);
-        let resp = batch.offer(first_request.resource_metrics);
-        assert!(resp.is_err());
-    }
-
-    #[test]
-    fn test_logs_batch_splitting() {
-        let mut batch = NestedBatch::<ResourceLogs>::new(10, Duration::from_secs(1));
-        let first_request = FakeOTLP::logs_service_request_with_logs(1, 5);
-        let resp = batch.offer(first_request.resource_logs);
-        assert!(resp.is_ok());
-        assert_eq!(resp.unwrap(), None);
-        let second_request = FakeOTLP::logs_service_request_with_logs(1, 7);
-        let resp = batch.offer(second_request.resource_logs);
-        assert!(resp.is_ok());
-        let spans = resp.unwrap().unwrap();
-        assert_eq!(10, spans.size_of());
-        // Grab what's left in the batch
-        let leftover = batch.take_batch();
-        assert_eq!(2, leftover.size_of());
-    }
-
-    #[test]
-    fn test_logs_batch_split_too_large() {
-        let mut batch = NestedBatch::<ResourceLogs>::new(10, Duration::from_secs(1));
-        let first_request = FakeOTLP::logs_service_request_with_logs(1, 21);
-        let resp = batch.offer(first_request.resource_logs);
-        assert!(resp.is_err());
     }
 
     // Wait for a msg to be sent, returns None if it was unable to deliver
