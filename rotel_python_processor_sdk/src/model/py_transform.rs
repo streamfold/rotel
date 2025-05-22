@@ -2,7 +2,8 @@ use crate::model::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
 use crate::model::{
-    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans, RSpan,
+    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RLogRecord, RResource, RScopeLogs,
+    RScopeSpans, RSpan,
 };
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::mem;
@@ -78,6 +79,63 @@ pub fn transform_spans(
         })
     }
     new_scope_spans
+}
+
+pub fn transform_logs(
+    scope_logs: Vec<Arc<Mutex<RScopeLogs>>>,
+) -> Vec<opentelemetry_proto::tonic::logs::v1::ScopeLogs> {
+    let mut new_scope_logs = vec![];
+    for sl in scope_logs.iter() {
+        let sl = sl.lock().unwrap();
+        let schema = sl.schema_url.clone();
+        let scope = convert_scope(sl.scope.clone());
+        let sl_records = sl.log_records.lock().unwrap();
+        let mut log_records = vec![];
+        for lr in sl_records.iter() {
+            let mut guard = lr.lock().unwrap();
+            let moved_data = mem::replace(
+                &mut *guard,
+                RLogRecord {
+                    time_unix_nano: 0,
+                    observed_time_unix_nano: 0,
+                    severity_number: 0,
+                    severity_text: "".to_string(),
+                    body: RAnyValue {
+                        value: Arc::new(Mutex::new(None)),
+                    },
+                    attributes_arc: None,
+                    attributes_raw: vec![],
+                    dropped_attributes_count: 0,
+                    flags: 0,
+                    trace_id: vec![],
+                    span_id: vec![],
+                    event_name: "".to_string(),
+                },
+            );
+            log_records.push(opentelemetry_proto::tonic::logs::v1::LogRecord {
+                time_unix_nano: moved_data.time_unix_nano,
+                observed_time_unix_nano: moved_data.observed_time_unix_nano,
+                severity_number: moved_data.severity_number,
+                severity_text: moved_data.severity_text,
+                body: Some(convert_value(moved_data.body)),
+                attributes: convert_attributes(
+                    moved_data.attributes_raw,
+                    moved_data.attributes_arc,
+                ),
+                dropped_attributes_count: moved_data.dropped_attributes_count,
+                flags: moved_data.flags,
+                trace_id: moved_data.trace_id,
+                span_id: moved_data.span_id,
+                event_name: moved_data.event_name,
+            });
+        }
+        new_scope_logs.push(opentelemetry_proto::tonic::logs::v1::ScopeLogs {
+            scope,
+            log_records,
+            schema_url: schema,
+        });
+    }
+    new_scope_logs
 }
 
 fn convert_events(

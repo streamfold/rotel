@@ -1,7 +1,10 @@
 use crate::model::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, RVArrayValue, StringValue,
 };
-use crate::model::{RAnyValue, RInstrumentationScope, RKeyValue, RResourceSpans, RSpan, RStatus};
+use crate::model::{
+    RAnyValue, RInstrumentationScope, RKeyValue, RLogRecord, RResourceLogs, RResourceSpans,
+    RScopeLogs, RSpan, RStatus,
+};
 use std::sync::{Arc, Mutex};
 
 pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> RResourceSpans {
@@ -73,6 +76,77 @@ pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> RR
     }
     resource_span.scope_spans = Arc::new(Mutex::new(scope_spans));
     resource_span
+}
+
+pub fn transform_resource_logs(
+    rl: opentelemetry_proto::tonic::logs::v1::ResourceLogs,
+) -> RResourceLogs {
+    let mut resource_logs = RResourceLogs {
+        resource: Arc::new(Mutex::new(None)),
+        scope_logs: Arc::new(Mutex::new(vec![])),
+        schema_url: rl.schema_url,
+    };
+    if rl.resource.is_some() {
+        let resource = rl.resource.unwrap();
+        let dropped_attributes_count = resource.dropped_attributes_count;
+        let kvs = build_rotel_sdk_resource(resource);
+        let res = Arc::new(Mutex::new(Some(crate::model::RResource {
+            attributes: Arc::new(Mutex::new(kvs.to_owned())),
+            dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
+        })));
+        resource_logs.resource = res.clone();
+    }
+
+    let mut scope_logs_vec = vec![];
+    for sl in rl.scope_logs {
+        let mut scope = None;
+        if sl.scope.is_some() {
+            let s = sl.scope.unwrap();
+            scope = Some(RInstrumentationScope {
+                name: s.name,
+                version: s.version,
+                attributes_raw: s.attributes,
+                attributes_arc: None,
+                dropped_attributes_count: s.dropped_attributes_count,
+            });
+        }
+
+        let mut log_records_vec = vec![];
+        for lr in sl.log_records {
+            log_records_vec.push(Arc::new(Mutex::new(transform_log_record(lr))));
+        }
+
+        let scope_log = RScopeLogs {
+            scope: Arc::new(Mutex::new(scope)),
+            log_records: Arc::new(Mutex::new(log_records_vec)),
+            schema_url: sl.schema_url,
+        };
+        scope_logs_vec.push(Arc::new(Mutex::new(scope_log)));
+    }
+    resource_logs.scope_logs = Arc::new(Mutex::new(scope_logs_vec));
+    resource_logs
+}
+
+fn transform_log_record(lr: opentelemetry_proto::tonic::logs::v1::LogRecord) -> RLogRecord {
+    RLogRecord {
+        time_unix_nano: lr.time_unix_nano,
+        observed_time_unix_nano: lr.observed_time_unix_nano,
+        severity_number: lr.severity_number,
+        severity_text: lr.severity_text,
+        body: lr.body.map_or(
+            RAnyValue {
+                value: Arc::new(Mutex::new(None)),
+            },
+            convert_value,
+        ),
+        attributes_arc: None,
+        attributes_raw: lr.attributes,
+        dropped_attributes_count: lr.dropped_attributes_count,
+        flags: lr.flags,
+        trace_id: lr.trace_id,
+        span_id: lr.span_id,
+        event_name: lr.event_name,
+    }
 }
 
 pub fn convert_attributes(
