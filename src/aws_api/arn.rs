@@ -91,6 +91,23 @@ impl Display for AwsArn {
 }
 
 impl AwsArn {
+    pub fn service(&self) -> &String {
+        &self.service
+    }
+
+    pub fn region(&self) -> &String {
+        &self.region
+    }
+
+    pub fn resource_field(&self) -> &String {
+        &self.resource_field
+    }
+
+    pub fn set_resource_field(mut self, new_value: String) -> Self {
+        self.resource_field = new_value;
+        self
+    }
+
     pub fn get_endpoint(&self) -> String {
         let domain = if self.region.starts_with("cn-") {
             "amazonaws.com.cn"

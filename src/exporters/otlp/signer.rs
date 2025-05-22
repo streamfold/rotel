@@ -53,16 +53,10 @@ impl RequestSignerBuilder for AwsSigv4RequestSignerBuilder {
             Some(svc) => svc,
         };
 
-        // XXX: leak these so that we can elide the lifetime of signer
-        let svc = Box::leak(Box::new(svc));
-        let config = Box::leak(Box::new(self.config.clone()));
-
         let signer = AwsRequestSigner::new(
             &svc.service,
             &svc.region,
-            &config.aws_access_key_id,
-            &config.aws_secret_access_key,
-            config.aws_session_token.as_deref(),
+            self.config.clone(),
             SystemClock {},
         );
 
@@ -72,12 +66,12 @@ impl RequestSignerBuilder for AwsSigv4RequestSignerBuilder {
 
 #[derive(Clone)]
 pub struct AwsSigv4RequestSigner {
-    signer: AwsRequestSigner<'static, SystemClock>,
+    signer: AwsRequestSigner<SystemClock>,
     uri: Uri,
 }
 
 impl AwsSigv4RequestSigner {
-    pub fn new(signer: AwsRequestSigner<'static, SystemClock>, uri: Uri) -> Self {
+    pub fn new(signer: AwsRequestSigner<SystemClock>, uri: Uri) -> Self {
         Self { signer, uri }
     }
 }

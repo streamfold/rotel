@@ -296,7 +296,6 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        // Create a true 'static reference using Box::leak
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config);
 
