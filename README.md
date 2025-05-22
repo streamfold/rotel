@@ -199,9 +199,9 @@ AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_
 are
 automatically sourced from Rotel's environment on startup.
 
-| Option   | Default   | Options          |
-|----------|-----------|------------------|
-| --region | us-east-1 | aws region codes |
+| Option                 | Default   | Options          |
+|------------------------|-----------|------------------|
+| --xray-exporter-region | us-east-1 | aws region codes |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
 
