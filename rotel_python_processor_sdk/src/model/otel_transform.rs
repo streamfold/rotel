@@ -7,7 +7,9 @@ use crate::model::{
 };
 use std::sync::{Arc, Mutex};
 
-pub fn transform(rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans) -> RResourceSpans {
+pub fn transform_resource_spans(
+    rs: opentelemetry_proto::tonic::trace::v1::ResourceSpans,
+) -> RResourceSpans {
     let mut resource_span = RResourceSpans {
         resource: Arc::new(Mutex::new(None)),
         scope_spans: Arc::new(Mutex::new(vec![])),

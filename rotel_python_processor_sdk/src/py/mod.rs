@@ -3210,8 +3210,9 @@ mod tests {
     fn resource_spans_append_attributes() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
@@ -3228,8 +3229,9 @@ mod tests {
     fn resource_spans_iterate_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3246,8 +3248,9 @@ mod tests {
     fn read_and_write_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3302,8 +3305,9 @@ mod tests {
     fn set_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3347,8 +3351,9 @@ mod tests {
     fn read_and_write_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3437,8 +3442,9 @@ mod tests {
     fn set_scope_spans_span_test() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3520,8 +3526,9 @@ mod tests {
     fn set_resource_spans_resource() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3559,8 +3566,9 @@ mod tests {
     fn set_span_events() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3607,8 +3615,9 @@ mod tests {
     fn set_scope_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3660,8 +3669,9 @@ mod tests {
     fn set_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),

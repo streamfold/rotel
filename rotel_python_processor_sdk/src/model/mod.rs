@@ -2,7 +2,7 @@ pub mod otel_transform;
 pub mod py_transform;
 
 use crate::py;
-use crate::py::{rotel_sdk, ResourceSpans};
+use crate::py::{rotel_sdk, ResourceLogs, ResourceSpans};
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use opentelemetry_proto::tonic::trace::v1::span::{Event, Link};
 use pyo3::prelude::*;
@@ -206,7 +206,7 @@ pub trait PythonProcessable {
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
     fn process(self, processor: &str) -> Self {
-        let inner = otel_transform::transform(self);
+        let inner = otel_transform::transform_resource_spans(self);
         // Build the PyObject
         let spans = ResourceSpans {
             resource: inner.resource.clone(),
@@ -252,8 +252,41 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, _processor: &str) -> Self {
-        // Noop
-        self
+    fn process(self, processor: &str) -> Self {
+        let inner = otel_transform::transform_resource_logs(self);
+        // Build the PyObject
+        let spans = ResourceLogs {
+            resource: inner.resource.clone(),
+            scope_logs: inner.scope_logs.clone(),
+            schema_url: inner.schema_url.clone(),
+        };
+        let res = Python::with_gil(|py| -> PyResult<()> {
+            let py_mod = PyModule::import(py, processor)?;
+            let result_py_object = py_mod.getattr("process")?.call1((spans,));
+            if result_py_object.is_err() {
+                let err = result_py_object.unwrap_err();
+                return Err(err);
+            }
+            Ok(())
+        });
+        if res.is_err() {
+            error!("{}", res.err().unwrap().to_string())
+        }
+        let mut resource_logs = opentelemetry_proto::tonic::logs::v1::ResourceLogs {
+            resource: None,
+            scope_logs: vec![],
+            schema_url: inner.schema_url,
+        };
+        let mut resource = inner.resource.lock().unwrap();
+        let resource = resource.take();
+        if resource.is_some() {
+            resource_logs.resource = py_transform::transform_resource(resource.unwrap());
+        }
+        let scope_logs = Arc::into_inner(inner.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        resource_logs.scope_logs = py_transform::transform_logs(scope_logs);
+        resource_logs
     }
 }
