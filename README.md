@@ -36,28 +36,19 @@ recommended for production use at this time._
 ## Getting Started
 
 To quickly get started with Rotel you can leverage the bundled [Python](https://github.com/streamfold/pyrotel) or
-[NodeJS](https://github.com/streamfold/rotel-nodejs) packages. Or if you'd like to use
-Rotel as a standalone executable, follow these steps:
+[NodeJS](https://github.com/streamfold/rotel-nodejs) packages. Or if you'd like to use Rotel directly from Docker, follow these steps:
 
-1. **Download Binary**
-    - Download the latest binary from the rotel [releases](https://github.com/streamfold/rotel/releases) page. If you
-      don't see a build for your platform, let us know!
-
-2. **Installation**
-    - Unpack the binary
-   ```bash
-   tar -xzvf rotel_v{version}_{arch}.tar.gz
-   ```
-
-3. **Running Rotel**
+1. **Running Rotel**
+    - We use the prebuilt docker image for this example, but you can also download a binary from the 
+      [releases](https://github.com/streamfold/rotel/releases) page. 
     - Execute Rotel with the following arguments. To debug metrics or logs, add
       an additional `--debug-log metrics|logs`.
    ```bash
-   ./rotel start  --debug-log traces --exporter blackhole
+   docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
    ```
     - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
-4. **Verify**
+2. **Verify**
     - Send OTLP traces to Rotel and verify that it is receiving data:
    ```bash
    go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
@@ -277,6 +268,15 @@ specify *metrics* to debug metrics and *logs* to debug logs.
 
 The default log level is set to INFO and can be changed with the environment variable `RUST_LOG`. For example, setting
 `RUST_LOG=debug` will increase the verbosity of logging.
+
+## Docker images
+
+On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following tags:
+* `streamfold/rotel:<release name>`
+* `streamfold/rotel:latest`
+* `streamfold/rotel:sha-<sha>`
+
+When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
 
 ## Community
 
