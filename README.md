@@ -81,29 +81,27 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 
 Any option above that does not contain a default is considered false or unset by default.
 
-| Option                            | Default              | Options                              |
-|-----------------------------------|----------------------|--------------------------------------|
-| --daemon                          |                      |                                      |
-| --log-format                      | text                 | json                                 |
-| --pid-file                        | /tmp/rotel-agent.pid |                                      |
-| --log-file                        | /tmp/rotel-agent.log |                                      |
-| --debug-log                       |                      | metrics, traces, logs                |
-| --otlp-grpc-endpoint              | localhost:4317       |                                      |
-| --otlp-http-endpoint              | localhost:4318       |                                      |
-| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                      |
-| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse |
-| --otlp-receiver-traces-disabled   |                      |                                      |
-| --otlp-receiver-metrics-disabled  |                      |                                      |
-| --otlp-receiver-logs-disabled     |                      |                                      |
-| --otlp-receiver-traces-http-path  | /v1/traces           |                                      |
-| --otlp-receiver-metrics-http-path | /v1/metrics          |                                      |
-| --otlp-receiver-logs-http-path    | /v1/logs             |                                      |
-| --otel-resource-attributes        |                      |                                      |
-| --enable-internal-telemetry       |                      |                                      |
-
+| Option                            | Default              | Options                                        |
+|-----------------------------------|----------------------|------------------------------------------------|
+| --daemon                          |                      |                                                |
+| --log-format                      | text                 | json                                           |
+| --pid-file                        | /tmp/rotel-agent.pid |                                                |
+| --log-file                        | /tmp/rotel-agent.log |                                                |
+| --debug-log                       |                      | metrics, traces, logs                          |
+| --otlp-grpc-endpoint              | localhost:4317       |                                                |
+| --otlp-http-endpoint              | localhost:4318       |                                                |
+| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                |
+| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray |
+| --otlp-receiver-traces-disabled   |                      |                                                |
+| --otlp-receiver-metrics-disabled  |                      |                                                |
+| --otlp-receiver-logs-disabled     |                      |                                                |
+| --otlp-receiver-traces-http-path  | /v1/traces           |                                                |
+| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                |
+| --otlp-receiver-logs-http-path    | /v1/logs             |                                                |
+| --otel-resource-attributes        |                      |                                                |
+| --enable-internal-telemetry       |                      |                                                |
 
 The PID and LOG files are only used when run in `--daemon` mode.
-
 
 ### OTLP exporter configuration
 
@@ -127,11 +125,9 @@ The OTLP exporter is the default, or can be explicitly selected with `--exporter
 | --otlp-exporter-retry-max-backoff      | 30s     |            |
 | --otlp-exporter-retry-max-elapsed-time | 300s    |            |
 
-
 Any of the options that start with `--otlp-exporter*` can be set per telemetry type: metrics, traces or logs. For
 example, to set a custom endpoint to export traces to, set: `--otlp-exporter-traces-endpoint`. For other telemetry
 types their value falls back to the top-level OTLP exporter config.
-
 
 ### Datadog exporter configuration
 
@@ -176,7 +172,8 @@ specifying:
 
 The exporter will not generate the table schema if it does not exist. Use the
 [clickhouse-ddl](/src/bin/clickhouse-ddl/README.md) command for generating the necessary table DDL for Clickhouse. The
-DDL matches the schema used in the OpenTelemetry [Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
+DDL matches the schema used in the
+OpenTelemetry [Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
 
 Enabling JSON via the `--clickhouse-exporter-enable-json` will use the new
 [JSON data type](https://clickhouse.com/docs/sql-reference/data-types/newjson) in Clickhouse. This data
@@ -188,6 +185,25 @@ a nested JSON object. You can replace periods in JSON keys with underscores by p
 
 _The Clickhouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse)
 crate._
+
+### AWS X-Ray exporter configuration
+
+The AWS X-Ray exporter can be selected by passing `--exporter aws-xray`. The X-Ray exporter only supports traces. Note:
+X-Ray
+limits batch sizes to 50 traces segments. If you assign a `--batch-max-size` of greater than 50, Rotel will override and
+enforce the max
+batch size of 50 with the warning
+`INFO AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50`
+
+AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` for the X-Ray exporter
+are
+automatically sourced from Rotel's environment on startup.
+
+| Option   | Default   | Options          |
+|----------|-----------|------------------|
+| --region | us-east-1 | aws region codes |
+
+For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
 
 ### Batch configuration
 
@@ -265,7 +281,8 @@ You should see demo trace data show up in Axiom.
 ## Benchmarks
 
 We have taken the OpenTelemetry Collector benchmark suite and adapted it to run against Rotel. You can find
-the testing framework at [rotel-otel-loadtests](https://github.com/streamfold/rotel-otel-loadtests) and the benchmark results
+the testing framework at [rotel-otel-loadtests](https://github.com/streamfold/rotel-otel-loadtests) and the benchmark
+results
 [here](https://streamfold.github.io/rotel-otel-loadtests/benchmarks/). The benchmarks are
 run nightly comparing the latest OTEL version against the latest Rotel release.
 
