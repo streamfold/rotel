@@ -3,8 +3,8 @@ use crate::model::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
 use crate::model::{
-    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RResource, RScopeSpans, RSpan,
-    RStatus,
+    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RLogRecord, RResource, RScopeLogs,
+    RScopeSpans, RSpan, RStatus,
 };
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -1971,6 +1971,547 @@ impl StatusCode {
 }
 
 #[pyclass]
+#[derive(Clone)]
+pub struct ResourceLogs {
+    pub resource: Arc<Mutex<Option<RResource>>>,
+    pub scope_logs: Arc<Mutex<Vec<Arc<Mutex<RScopeLogs>>>>>,
+    pub schema_url: String,
+}
+
+#[pymethods]
+impl ResourceLogs {
+    #[getter]
+    fn resource(&self) -> PyResult<Option<Resource>> {
+        let v = self.resource.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if v.is_none() {
+            return Ok(None);
+        }
+        let inner = v.clone().unwrap();
+        Ok(Some(Resource {
+            attributes: inner.attributes.clone(),
+            dropped_attributes_count: inner.dropped_attributes_count.clone(),
+        }))
+    }
+    #[setter]
+    fn set_resource(&mut self, resource: Resource) -> PyResult<()> {
+        let mut inner = self.resource.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        *inner = Some(RResource {
+            attributes: resource.attributes,
+            dropped_attributes_count: resource.dropped_attributes_count,
+        });
+        Ok(())
+    }
+    #[getter]
+    fn scope_logs(&self) -> PyResult<ScopeLogsList> {
+        Ok(ScopeLogsList(self.scope_logs.clone()))
+    }
+    #[setter]
+    fn set_scope_logs(&mut self, scope_logs: Vec<ScopeLogs>) -> PyResult<()> {
+        let mut inner = self.scope_logs.lock().unwrap();
+        inner.clear();
+        for sc in scope_logs {
+            inner.push(Arc::new(Mutex::new(RScopeLogs {
+                scope: sc.scope.clone(),
+                log_records: sc.log_records.clone(),
+                schema_url: sc.schema_url.clone(),
+            })));
+        }
+        Ok(())
+    }
+    #[getter]
+    fn schema_url(&self) -> PyResult<String> {
+        Ok(self.schema_url.clone())
+    }
+    #[setter]
+    fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
+        self.schema_url = schema_url;
+        Ok(())
+    }
+}
+
+#[pyclass]
+struct ScopeLogsList(Arc<Mutex<Vec<Arc<Mutex<RScopeLogs>>>>>);
+
+#[pymethods]
+impl ScopeLogsList {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<ScopeLogsListIter>> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let iter = ScopeLogsListIter {
+            inner: inner.clone().into_iter(),
+        };
+        // Convert to a Python-managed object
+        Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<ScopeLogs> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => {
+                let item = item.lock().unwrap();
+                Ok(ScopeLogs {
+                    scope: item.scope.clone(),
+                    log_records: item.log_records.clone(),
+                    schema_url: item.schema_url.clone(),
+                })
+            }
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+    fn __setitem__(&self, index: usize, value: &ScopeLogs) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = Arc::new(Mutex::new(RScopeLogs {
+            scope: value.scope.clone(),
+            log_records: value.log_records.clone(),
+            schema_url: value.schema_url.clone(),
+        }));
+        Ok(())
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+struct ScopeLogsListIter {
+    inner: std::vec::IntoIter<Arc<Mutex<RScopeLogs>>>,
+}
+
+#[pymethods]
+impl ScopeLogsListIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<ScopeLogs>> {
+        let kv = slf.inner.next();
+        if kv.is_none() {
+            return Ok(None);
+        }
+        let inner = kv.unwrap();
+        let inner = inner.lock().unwrap();
+        let x = Ok(Some(ScopeLogs {
+            scope: inner.scope.clone(),
+            log_records: inner.log_records.clone(),
+            schema_url: inner.schema_url.clone(),
+        }));
+        x
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct ScopeLogs {
+    scope: Arc<Mutex<Option<RInstrumentationScope>>>,
+    log_records: Arc<Mutex<Vec<Arc<Mutex<RLogRecord>>>>>,
+    schema_url: String,
+}
+
+#[pymethods]
+impl ScopeLogs {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(ScopeLogs {
+            scope: Arc::new(Mutex::new(None)),
+            log_records: Arc::new(Mutex::new(vec![])),
+            schema_url: "".to_string(),
+        })
+    }
+    #[getter]
+    fn log_records(&self) -> PyResult<LogRecords> {
+        Ok(LogRecords(self.log_records.clone()))
+    }
+    #[setter]
+    fn set_log_records(&mut self, log_records: Vec<LogRecord>) -> PyResult<()> {
+        let mut inner = self.log_records.lock().unwrap();
+        inner.clear();
+        for lr in log_records {
+            inner.push(lr.inner);
+        }
+        Ok(())
+    }
+    #[getter]
+    fn scope(&self) -> PyResult<Option<InstrumentationScope>> {
+        {
+            let v = self.scope.lock().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+            })?;
+            if v.is_none() {
+                return Ok(None);
+            }
+        }
+        Ok(Some(InstrumentationScope(self.scope.clone())))
+    }
+    #[setter]
+    fn set_scope(&mut self, scope: InstrumentationScope) -> PyResult<()> {
+        let mut v = self.scope.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let inner = scope.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.replace(inner.clone().unwrap());
+        Ok(())
+    }
+    #[getter]
+    fn schema_url(&self) -> String {
+        self.schema_url.clone()
+    }
+    #[setter]
+    fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
+        self.schema_url = schema_url;
+        Ok(())
+    }
+}
+
+#[pyclass]
+struct LogRecords(Arc<Mutex<Vec<Arc<Mutex<RLogRecord>>>>>);
+
+#[pymethods]
+impl LogRecords {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<LogRecordsIter>> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let iter = LogRecordsIter {
+            inner: inner.clone().into_iter(),
+        };
+        Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<LogRecord> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        match inner.get(index) {
+            Some(item) => Ok(LogRecord {
+                inner: item.clone(),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+    fn __setitem__(&self, index: usize, value: &LogRecord) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
+    }
+
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
+
+    fn append(&self, item: &LogRecord) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        k.push(item.inner.clone());
+        Ok(())
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+struct LogRecordsIter {
+    inner: std::vec::IntoIter<Arc<Mutex<RLogRecord>>>,
+}
+
+#[pymethods]
+impl LogRecordsIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<LogRecord>> {
+        let lr = slf.inner.next();
+        if lr.is_none() {
+            return Ok(None);
+        }
+        let inner = lr.unwrap();
+        Ok(Some(LogRecord {
+            inner: inner.clone(),
+        }))
+    }
+}
+
+#[pyclass]
+#[derive(Debug, Clone)]
+struct LogRecord {
+    inner: Arc<Mutex<RLogRecord>>,
+}
+
+#[pymethods]
+impl LogRecord {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(LogRecord {
+            inner: Arc::new(Mutex::new(RLogRecord {
+                time_unix_nano: 0,
+                observed_time_unix_nano: 0,
+                severity_number: 0,
+                severity_text: "".to_string(),
+                body: RAnyValue {
+                    value: Arc::new(Mutex::new(Some(StringValue("".to_string())))),
+                },
+                attributes_raw: vec![],
+                attributes_arc: None,
+                dropped_attributes_count: 0,
+                flags: 0,
+                trace_id: vec![],
+                span_id: vec![],
+                event_name: "".to_string(),
+            })),
+        })
+    }
+
+    #[getter]
+    fn time_unix_nano(&self) -> PyResult<u64> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.time_unix_nano)
+    }
+
+    #[setter]
+    fn set_time_unix_nano(&mut self, new_value: u64) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.time_unix_nano = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn observed_time_unix_nano(&self) -> PyResult<u64> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.observed_time_unix_nano)
+    }
+
+    #[setter]
+    fn set_observed_time_unix_nano(&mut self, new_value: u64) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.observed_time_unix_nano = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn severity_number(&self) -> PyResult<i32> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.severity_number)
+    }
+
+    #[setter]
+    fn set_severity_number(&mut self, new_value: i32) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.severity_number = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn severity_text(&self) -> PyResult<String> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.severity_text.clone())
+    }
+
+    #[setter]
+    fn set_severity_text(&mut self, new_value: String) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.severity_text = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn body(&self) -> PyResult<AnyValue> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(AnyValue {
+            inner: Arc::new(Mutex::new(Some(v.body.clone()))),
+        })
+    }
+
+    #[setter]
+    fn set_body(&mut self, new_value: &AnyValue) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let inner_value = new_value.inner.lock().unwrap();
+        v.body = inner_value.clone().unwrap();
+        Ok(())
+    }
+
+    #[getter]
+    fn attributes(&self) -> PyResult<AttributesList> {
+        let mut binding = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if binding.attributes_arc.is_some() {
+            let attr_arc = binding.attributes_arc.take().unwrap();
+            let attr_arc_copy = attr_arc.clone();
+            binding.attributes_arc.replace(attr_arc);
+            Ok(AttributesList(attr_arc_copy))
+        } else {
+            let attrs = convert_attributes(binding.attributes_raw.clone());
+            let attrs = Arc::new(Mutex::new(attrs));
+            binding.attributes_arc.replace(attrs.clone());
+            Ok(AttributesList(attrs))
+        }
+    }
+
+    #[setter]
+    fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        let mut new_attrs = Vec::with_capacity(attrs.0.lock().unwrap().len());
+        for kv in attrs.0.lock().unwrap().iter() {
+            new_attrs.push(kv.clone())
+        }
+        let new_attrs = Arc::new(Mutex::new(new_attrs));
+        inner.attributes_arc.replace(new_attrs.clone());
+        Ok(())
+    }
+
+    #[getter]
+    fn dropped_attributes_count(&self) -> PyResult<u32> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.dropped_attributes_count)
+    }
+
+    #[setter]
+    fn set_dropped_attributes_count(&mut self, new_value: u32) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.dropped_attributes_count = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn flags(&self) -> PyResult<u32> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.flags)
+    }
+
+    #[setter]
+    fn set_flags(&mut self, new_value: u32) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.flags = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn trace_id(&self) -> PyResult<Vec<u8>> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.trace_id.clone())
+    }
+
+    #[setter]
+    fn set_trace_id(&mut self, new_value: Vec<u8>) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.trace_id = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn span_id(&self) -> PyResult<Vec<u8>> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.span_id.clone())
+    }
+
+    #[setter]
+    fn set_span_id(&mut self, new_value: Vec<u8>) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.span_id = new_value;
+        Ok(())
+    }
+    #[getter]
+    fn event_name(&self) -> PyResult<String> {
+        let v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        Ok(v.event_name.clone())
+    }
+
+    #[setter]
+    fn set_event_name(&mut self, new_value: String) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        v.event_name = new_value;
+        Ok(())
+    }
+}
+
+#[pyclass]
 struct LoggingStdout;
 
 #[pymethods]
@@ -1987,9 +2528,11 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let trace_module = PyModule::new(open_telemetry_module.py(), "trace")?;
     let resource_module = PyModule::new(open_telemetry_module.py(), "resource")?;
     let common_module = PyModule::new(open_telemetry_module.py(), "common")?;
+    let logs_module = PyModule::new(open_telemetry_module.py(), "logs")?; // Added logs module
     let trace_v1_module = PyModule::new(trace_module.py(), "v1")?;
     let common_v1_module = PyModule::new(common_module.py(), "v1")?;
     let resource_v1_module = PyModule::new(resource_module.py(), "v1")?;
+    let logs_v1_module = PyModule::new(logs_module.py(), "v1")?; // Added logs v1 module
 
     trace_module.add_submodule(&trace_v1_module)?;
     common_module.add_submodule(&common_v1_module)?;
@@ -2031,6 +2574,15 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .getattr("modules")?
         .set_item("rotel_sdk.open_telemetry.common.v1", &common_v1_module)?;
 
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel_sdk.open_telemetry.logs", &logs_module)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel_sdk.open_telemetry.logs.v1", &logs_v1_module)?;
+
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
     common_v1_module.add_class::<KeyValueList>()?;
@@ -2047,6 +2599,11 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     trace_v1_module.add_class::<Link>()?;
     trace_v1_module.add_class::<Status>()?;
     trace_v1_module.add_class::<StatusCode>()?;
+
+    logs_v1_module.add_class::<ResourceLogs>()?;
+    logs_v1_module.add_class::<ScopeLogs>()?;
+    logs_v1_module.add_class::<LogRecords>()?; // Added LogRecords class
+    logs_v1_module.add_class::<LogRecord>()?; // Added LogRecord class
 
     Ok(())
 }
@@ -2653,8 +3210,9 @@ mod tests {
     fn resource_spans_append_attributes() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
@@ -2671,8 +3229,9 @@ mod tests {
     fn resource_spans_iterate_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2689,8 +3248,9 @@ mod tests {
     fn read_and_write_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2745,8 +3305,9 @@ mod tests {
     fn set_instrumentation_scope() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2790,8 +3351,9 @@ mod tests {
     fn read_and_write_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2880,8 +3442,9 @@ mod tests {
     fn set_scope_spans_span_test() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -2963,8 +3526,9 @@ mod tests {
     fn set_resource_spans_resource() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3002,8 +3566,9 @@ mod tests {
     fn set_span_events() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3050,8 +3615,9 @@ mod tests {
     fn set_scope_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3103,8 +3669,9 @@ mod tests {
     fn set_spans() {
         initialize();
         let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans =
-            crate::model::otel_transform::transform(export_req.resource_spans[0].clone());
+        let resource_spans = crate::model::otel_transform::transform_resource_spans(
+            export_req.resource_spans[0].clone(),
+        );
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -3136,5 +3703,324 @@ mod tests {
             Value::StringValue("span_attr_value".to_string()),
             attr.value.clone().unwrap().value.unwrap()
         );
+    }
+
+    #[test]
+    fn read_and_write_log_record() {
+        initialize();
+
+        // Create a mock ResourceLogs protobuf object for testing
+        // In a real scenario, you might use a utility like FakeOTLP if available for logs.
+        let initial_log_record = opentelemetry_proto::tonic::logs::v1::LogRecord {
+            time_unix_nano: 1000000000,
+            observed_time_unix_nano: 1000000001,
+            severity_number: 9, // INFO
+            severity_text: "INFO".to_string(),
+            body: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("initial log message".to_string())),
+            }),
+            attributes: vec![
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "log.source".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::StringValue("my_app".to_string())),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "component".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::StringValue("backend".to_string())),
+                    }),
+                },
+            ],
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            span_id: vec![17, 18, 19, 20, 21, 22, 23, 24],
+            event_name: "".to_string(),
+        };
+
+        let initial_scope_logs = opentelemetry_proto::tonic::logs::v1::ScopeLogs {
+            scope: Some(
+                opentelemetry_proto::tonic::common::v1::InstrumentationScope {
+                    name: "test-instrumentation-scope".to_string(),
+                    version: "1.0.0".to_string(),
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                },
+            ),
+            log_records: vec![initial_log_record],
+            schema_url: "http://example.com/logs-schema".to_string(),
+        };
+
+        let export_req = opentelemetry_proto::tonic::logs::v1::ResourceLogs {
+            resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![initial_scope_logs],
+            schema_url: "http://example.com/resource-logs-schema".to_string(),
+        };
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs =
+            crate::model::otel_transform::transform_resource_logs(export_req.clone());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+        };
+
+        // Execute the Python script
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_and_write_logs_test.py", py, py_resource_logs)
+        })
+        .unwrap();
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut transformed_scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+
+        // Assert the changes made by the Python script
+        assert_eq!(transformed_scope_logs.len(), 1);
+        let mut scope_log = transformed_scope_logs.remove(0);
+        assert_eq!(scope_log.log_records.len(), 1);
+        let log_record = scope_log.log_records.remove(0);
+
+        assert_eq!(log_record.time_unix_nano, 2000000000);
+        assert_eq!(log_record.observed_time_unix_nano, 2000000001);
+        assert_eq!(log_record.severity_number, 13);
+        assert_eq!(log_record.severity_text, "ERROR");
+
+        let body_value = log_record.body.unwrap().value.unwrap();
+        match body_value {
+            Value::StringValue(s) => {
+                assert_eq!(s, "processed log message");
+            }
+            _ => panic!("Body value is not a string"),
+        }
+
+        assert_eq!(log_record.dropped_attributes_count, 5);
+        assert_eq!(log_record.flags, 1);
+        assert_eq!(log_record.trace_id, b"abcdefghijklmnop".to_vec());
+        assert_eq!(log_record.span_id, b"qrstuvwx".to_vec());
+
+        assert_eq!(log_record.attributes.len(), 3);
+        // Verify the new attribute
+        let new_attr = &log_record.attributes[2];
+        assert_eq!(new_attr.key, "new_log_attr");
+        assert_eq!(
+            new_attr.value.clone().unwrap().value.unwrap(),
+            Value::StringValue("new_log_value".to_string())
+        );
+
+        // Verify the modified attribute
+        let modified_attr = &log_record.attributes[1];
+        assert_eq!(modified_attr.key, "component");
+        assert_eq!(
+            modified_attr.value.clone().unwrap().value.unwrap(),
+            Value::StringValue("modified_component_value".to_string())
+        );
+    }
+
+    #[test]
+    fn add_new_log_record() {
+        initialize();
+
+        // Create a mock ResourceLogs protobuf object with an empty ScopeLogs initially
+        let initial_scope_logs = opentelemetry_proto::tonic::logs::v1::ScopeLogs {
+            scope: Some(
+                opentelemetry_proto::tonic::common::v1::InstrumentationScope {
+                    name: "test-instrumentation-scope".to_string(),
+                    version: "1.0.0".to_string(),
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                },
+            ),
+            log_records: vec![], // Start with no log records
+            schema_url: "http://example.com/logs-schema".to_string(),
+        };
+
+        let export_req = opentelemetry_proto::tonic::logs::v1::ResourceLogs {
+            resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![initial_scope_logs],
+            schema_url: "http://example.com/resource-logs-schema".to_string(),
+        };
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs =
+            crate::model::otel_transform::transform_resource_logs(export_req.clone());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+        };
+
+        // Execute the Python script that adds a new log record
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("add_log_record_test.py", py, py_resource_logs)
+        })
+        .unwrap();
+
+        // Transform the modified RResourceLogs back into protobuf format
+        let mut resource = r_resource_logs.resource.lock().unwrap();
+        let _resource_proto = resource
+            .take()
+            .map(|r| crate::model::py_transform::transform_resource(r).unwrap());
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut transformed_scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+
+        // Assert the changes made by the Python script
+        assert_eq!(transformed_scope_logs.len(), 1);
+        let mut scope_log = transformed_scope_logs.remove(0);
+        assert_eq!(scope_log.log_records.len(), 1); // Expecting one log record now
+        let log_record = scope_log.log_records.remove(0);
+
+        assert_eq!(log_record.time_unix_nano, 9876543210);
+        assert_eq!(log_record.observed_time_unix_nano, 9876543211);
+        assert_eq!(log_record.severity_number, 17); // FATAL
+        assert_eq!(log_record.severity_text, "FATAL");
+
+        let body_value = log_record.body.unwrap().value.unwrap();
+        match body_value {
+            Value::StringValue(s) => {
+                assert_eq!(s, "This is a newly added log message.");
+            }
+            _ => panic!("Body value is not a string"),
+        }
+
+        assert_eq!(log_record.attributes.len(), 1);
+        let new_attr = &log_record.attributes[0];
+        assert_eq!(new_attr.key, "new_log_key");
+        assert_eq!(
+            new_attr.value.clone().unwrap().value.unwrap(),
+            Value::StringValue("new_log_value".to_string())
+        );
+
+        assert_eq!(log_record.dropped_attributes_count, 2);
+        assert_eq!(log_record.flags, 4);
+        assert_eq!(log_record.trace_id, b"fedcba9876543210".to_vec());
+        assert_eq!(log_record.span_id, b"fedcba98".to_vec());
+    }
+
+    #[test]
+    fn remove_log_record_test() {
+        initialize();
+
+        // Create a mock ResourceLogs protobuf object with two initial LogRecords
+        let first_log_record = opentelemetry_proto::tonic::logs::v1::LogRecord {
+            time_unix_nano: 1000000000,
+            observed_time_unix_nano: 1000000001,
+            severity_number: 9, // INFO
+            severity_text: "INFO".to_string(),
+            body: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                        "first log message".to_string(),
+                    ),
+                ),
+            }),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![],
+            span_id: vec![],
+            event_name: "first_event".to_string(),
+        };
+
+        let second_log_record = opentelemetry_proto::tonic::logs::v1::LogRecord {
+            time_unix_nano: 2000000000,
+            observed_time_unix_nano: 2000000001,
+            severity_number: 13, // ERROR
+            severity_text: "ERROR".to_string(),
+            body: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("second log message".to_string())),
+            }),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![],
+            span_id: vec![],
+            event_name: "second_event".to_string(),
+        };
+
+        let initial_scope_logs = opentelemetry_proto::tonic::logs::v1::ScopeLogs {
+            scope: Some(
+                opentelemetry_proto::tonic::common::v1::InstrumentationScope {
+                    name: "test-instrumentation-scope".to_string(),
+                    version: "1.0.0".to_string(),
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                },
+            ),
+            log_records: vec![first_log_record, second_log_record], // Two log records
+            schema_url: "http://example.com/logs-schema".to_string(),
+        };
+
+        let export_req = opentelemetry_proto::tonic::logs::v1::ResourceLogs {
+            resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![initial_scope_logs],
+            schema_url: "http://example.com/resource-logs-schema".to_string(),
+        };
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs =
+            crate::model::otel_transform::transform_resource_logs(export_req.clone());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("remove_log_record_test.py", py, py_resource_logs)
+        })
+        .unwrap();
+
+        // Transform the modified RResourceLogs back into protobuf format
+        let mut resource = r_resource_logs.resource.lock().unwrap();
+        let _resource_proto = resource
+            .take()
+            .map(|r| crate::model::py_transform::transform_resource(r).unwrap());
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut transformed_scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+
+        // Assert the changes made by the Python script
+        assert_eq!(transformed_scope_logs.len(), 1);
+        let mut scope_log = transformed_scope_logs.remove(0);
+        assert_eq!(scope_log.log_records.len(), 1); // Expecting one log record now
+        let log_record = scope_log.log_records.remove(0);
+
+        // Verify that the correct log record remains
+        let body_value = log_record.body.unwrap().value.unwrap();
+        match body_value {
+            Value::StringValue(s) => {
+                assert_eq!(s, "first log message");
+            }
+            _ => panic!("Body value is not the expected string"),
+        }
     }
 }
