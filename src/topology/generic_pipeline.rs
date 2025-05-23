@@ -3,6 +3,8 @@
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use flume::SendError;
+use flume::r#async::SendFut;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -217,33 +219,34 @@ where
 
         let mut flush_listener = self.flush_listener.take();
 
+        let mut send_fut: Option<SendFut<Vec<T>>> = None;
+
         loop {
             select! {
                 biased;
 
+                // if there's a pending send future, wait on that first
+                Some(resp) = conditional_wait(&mut send_fut), if send_fut.is_some() => match resp {
+                    Ok(_) => send_fut = None,
+                    Err(e) => {
+                        error!(error = ?e, "Unable to send item, exiting.");
+                        return Err(format!("Pipeline was unable to send downstream: {}", e).into())
+                    }
+                },
+
                 // flush batches as they time out
-                _ = batch_timer.tick() => {
+                _ = batch_timer.tick(), if send_fut.is_none() => {
                     if batch.should_flush(Instant::now()) {
                         let to_send = batch.take_batch();
                         debug!(batch_size = to_send.len(), "Flushing a batch in timout handler");
 
-                        if let Err(e) = self.send_item(to_send, &pipeline_token).await {
-                            return match e {
-                                SendItemError::Cancelled => {
-                                    debug!("Pipeline received shutdown signal, exiting main pipeline loop.");
-                                    Ok(())
-                                }
-                                SendItemError::Error(e) => {
-                                    error!(error = ?e, "Unable to send item, exiting.");
-                                    Ok(())
-                                }
-                            }
-                        }
+                        let fut = self.sender.send_async(to_send);
+                        send_fut = Some(fut);
                     }
                 },
 
                 // read another incoming request if we don't have a pending batch to flush
-                item = self.receiver.next() => {
+                item = self.receiver.next(), if send_fut.is_none() => {
                     if item.is_none() {
                         debug!("Pipeline receiver has closed, flushing batch and exiting");
 
@@ -253,7 +256,7 @@ where
                         }
 
                         // We are exiting, so we just want to log the failure to send
-                        if let Err(SendItemError::Error(e)) = self.send_item(remain_batch, &pipeline_token).await {
+                        if let Err(e) = self.sender.send_async(remain_batch).await {
                             error!(error = ?e, "Unable to send item while exiting, will drop data.");
                         }
 
@@ -281,19 +284,15 @@ where
                        }
                        items = new_items;
                     }
-                    let maybe_popped = batch.offer(items);
-                    if let Ok(Some(popped)) = maybe_popped { // todo: handle error?
-                        if let Err(e) = self.send_item(popped, &pipeline_token).await {
-                            return match e {
-                                SendItemError::Cancelled => {
-                                    debug!("Pipeline received shutdown signal, exiting main pipeline loop");
-                                    Ok(())
-                                }
-                                SendItemError::Error(e) => {
-                                    error!(error = ?e, "Unable to send item, exiting.");
-                                    Ok(())
-                                }
-                            }
+
+                    match batch.offer(items) {
+                        Ok(Some(popped)) => {
+                            let fut = self.sender.send_async(popped);
+                            send_fut = Some(fut);
+                        }
+                        Ok(None) => {},
+                        Err(_) => {
+                            error!("Too many batch items split, dropping data. Consider increasing the batch size.")
                         }
                     }
                 },
@@ -304,19 +303,23 @@ where
                             debug!("received force flush in pipeline: {:?}", req);
                             batch_timer.reset();
 
+                            // Flush pending future if it exists
+                            if let Some(fut) = send_fut.take() {
+                                debug!("Flushing pending send on flush message");
+
+                                if let Err(e) = fut.await {
+                                    error!(error = ?e, "Unable to send item, exiting.");
+                                    return Err(format!("Pipeline was unable to send downstream: {}", e).into())
+                                }
+                            }
+
                             let to_send = batch.take_batch();
                             if !to_send.is_empty() {
                                 debug!(batch_size = to_send.len(), "Flushing a batch on flush message");
 
-                                if let Err(e) = self.send_item(to_send, &pipeline_token).await {
-                                    match e {
-                                        SendItemError::Cancelled => {
-                                            debug!("Pipeline received shutdown signal.");
-                                        }
-                                        SendItemError::Error(e) => {
-                                            error!(error = ?e, "Unable to send item, exiting.");
-                                        }
-                                    }
+                                if let Err(e) = self.sender.send_async(to_send).await {
+                                    error!(error = ?e, "Unable to send item, exiting.");
+                                    return Err(format!("Pipeline was unable to send downstream: {}", e).into())
                                 }
                             }
 
@@ -336,30 +339,15 @@ where
             }
         }
     }
-
-    // send item to the downstream channel
-    async fn send_item(
-        &self,
-        item: Vec<T>,
-        cancel: &CancellationToken,
-    ) -> Result<(), SendItemError<T>> {
-        select! {
-            res = self.sender.send_async(item) => {
-                match res {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(SendItemError::Error(e))
-                }
-            },
-            _ = cancel.cancelled() => {
-                Err(SendItemError::Cancelled)
-            }
-        }
-    }
 }
 
-enum SendItemError<T> {
-    Cancelled,
-    Error(flume::SendError<Vec<T>>),
+pub async fn conditional_wait<T>(
+    send_fut: &mut Option<SendFut<'_, Vec<T>>>,
+) -> Option<Result<(), SendError<Vec<T>>>> {
+    match send_fut {
+        None => None,
+        Some(fut) => Some(fut.await),
+    }
 }
 
 impl BatchSizer for ResourceSpans {
