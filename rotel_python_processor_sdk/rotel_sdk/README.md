@@ -21,8 +21,8 @@ OpenTelemetry processor API bundled as a Python extension.
 | Telemetry Type | Support     |
 |----------------|-------------|
 | Traces         | Alpha       |
+| Logs           | Alpha       |
 | Metrics        | Coming Soon |
-| Logs           | Coming Soon |
 
 ## Modules and Classes Provided
 
@@ -31,6 +31,7 @@ OpenTelemetry processor API bundled as a Python extension.
 | rotel_sdk.open_telemetry.common.v1   | AnyValue, ArrayValue, InstrumentationScope, KeyValue, KeyValueList, |
 | rotel_sdk.open_telemetry.resource.v1 | Resource                                                            |
 | rotel_sdk.open_telemetry.trace.v1    | ResourceSpans, ScopeSpans, Span, Event, Link, Status                |
+| rotel_sdk.open_telemetry.logs.v1     | ResourceLogs, ScopeLogs, LogRecord                                  |
 
 ## Getting Started
 
@@ -63,10 +64,11 @@ your processor will be handed a instance of the `ResourceSpan` class for you to 
 
 ## Trace processor example
 
-The following is an example OTel trace processor called `append_resource_attributes.py` which adds the OS name, version,
+The following is an example OTel trace processor called `append_resource_attributes_to_spans.py` which adds the OS
+name, version,
 and a timestamp named
 `rotel.process.time` to the Resource Attributes of a batch of Spans. Open up your editor or Python IDE and paste the
-following into a file called `append_resource_attributes.py` and run with the following command.
+following into a file called `append_resource_attributes_to_spans.py` and run with the following command.
 
 ```python
 import platform
@@ -93,9 +95,63 @@ def process(resource_spans: ResourceSpans):
 
 ```
 
-Now start rotel and the processor with the following command.
+Now start rotel and the processor with the following command and use a load generator to generate some spans and send to
+rotel. When you view the spans
+in your observability backend you should now see the newly added attributes.
 
-`./rotel start --otlp-exporter-endpoint <otlp-endpoint-url> --otlp-with-trace-processor ./append_resource_attributes.py`
+`./rotel start --otlp-exporter-endpoint <otlp-endpoint-url> --otlp-with-trace-processor ./append_resource_attributes_to_spans.py`
+
+## Logs processor example
+
+For logs let's try something a little different. The following is an example OTel log processor called
+`redact_emails_in_logs.py`. This script checks to see if LogRecords have a body that contains email addresses.
+If an email is found, we redact the email and replace it with the string `**[email redacted]**`.
+Open up your editor or Python IDE and paste the following into a file called `redact_emails_in_logs.py` and run with the
+following command.
+
+```python
+import re
+
+from rotel_sdk.open_telemetry.common.v1 import AnyValue
+from rotel_sdk.open_telemetry.logs.v1 import ResourceLogs
+
+email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+
+
+def process(resource_logs: ResourceLogs):
+    for scope_log in resource_logs.scope_logs:
+        for log_record in scope_log.log_records:
+            if log_record.body is not None and log_record.body.value is not None:
+                if re.search(email_pattern, log_record.body.value):
+                    log_record.body = redact_emails(log_record.body.value)
+
+
+def redact_emails(text: str):
+    """
+    Searches for email addresses in a string and replaces them with '*** redacted'
+    
+    Args:
+        text (str): The input string to search for email addresses
+        
+    Returns:
+        str: The string with email addresses replaced by '*** redacted'
+    """
+    new_body = AnyValue()
+    new_body.string_value = re.sub(email_pattern, '**[email redacted]**', text)
+    return new_body
+```
+
+Now start rotel and the processor with the following command and use a load generator to send some log messages to rotel
+that contain email addresses.
+When you view the logs in your observability backend you should now see the email address are redacted.
+
+`./rotel start --otlp-exporter-endpoint <otlp-endpoint-url> --otlp-with-logs-processor ./redact_emails_in_logs.py`
+
+For this example we'll use a log body with the following content.
+
+```text
+192.168.1.45 - - [23/May/2025:14:32:17 +0000] "POST /contact-form HTTP/1.1" 200 1247 "https://example.com/contact" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "email=john.doe@company.com&subject=Support Request&message=Need help with login issues"
+```
 
 ## Community and Getting Help
 
