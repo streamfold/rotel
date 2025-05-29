@@ -1,13 +1,8 @@
 name: processor-release
 
-#on:
-#  release:
-#    types: [ created ]
-
 on:
-  push:
-    branches:
-      - 'processor/*'
+  release:
+    types: [ created ]
 
 jobs:
   release:
@@ -115,9 +110,9 @@ jobs:
         run: $CARGO_BIN build --release --features pyo3 --locked --target ${{ matrix.target }}
       - name: tar
         run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
-#      - name: upload
-#        run: |
-#          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
-#          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload
+        run: |
+          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
+          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
