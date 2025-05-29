@@ -111,6 +111,7 @@ following command.
 
 ```python
 import re
+import itertools
 
 from rotel_sdk.open_telemetry.common.v1 import AnyValue
 from rotel_sdk.open_telemetry.logs.v1 import ResourceLogs
@@ -119,11 +120,12 @@ email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
 
 
 def process(resource_logs: ResourceLogs):
-    for scope_log in resource_logs.scope_logs:
-        for log_record in scope_log.log_records:
-            if log_record.body is not None and log_record.body.value is not None:
-                if re.search(email_pattern, log_record.body.value):
-                    log_record.body = redact_emails(log_record.body.value)
+    for log_record in itertools.chain.from_iterable(
+            scope_log.log_records for scope_log in resource_logs.scope_logs
+    ):
+        if hasattr(log_record, 'body') and log_record.body and hasattr(log_record.body, 'value'):
+            if log_record.body.value and re.search(email_pattern, log_record.body.value):
+                log_record.body = redact_emails(log_record.body.value)
 
 
 def redact_emails(text: str):
