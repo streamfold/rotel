@@ -19,42 +19,42 @@ jobs:
         include:
 
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             os: ubuntu
             cross: false
             python-version: 3.10
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             os: ubuntu
             cross: false
             python-version: 3.11
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             os: ubuntu
             cross: false
             python-version: 3.12
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             os: ubuntu
             cross: false
             python-version: 3.13
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
             python-version: 3.10
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
             python-version: 3.11
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
             python-version: 3.12
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
             python-version: 3.13
