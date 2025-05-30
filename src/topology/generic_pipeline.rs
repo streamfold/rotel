@@ -2,9 +2,9 @@
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use flume::SendError;
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use flume::r#async::SendFut;
+use flume::SendError;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -13,10 +13,11 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{PythonProcessable, register_processor};
+use rotel_sdk::model::{register_processor, PythonProcessable};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
+use std::path::Path;
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
@@ -180,14 +181,20 @@ where
     #[cfg(feature = "pyo3")]
     fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
         let mut processor_modules = vec![];
-        let path = env::current_dir()?;
-        let processor_idx = 0;
-        for file in &self.processors {
-            let script = format!("{}/{}", path.clone().to_str().unwrap(), file);
-            let code = std::fs::read_to_string(script)?;
+        let current_dir = env::current_dir()?;
+        for (processor_idx, file) in self.processors.iter().enumerate() {
+            let file_path = Path::new(file);
+
+            // Use absolute path if provided, otherwise make relative to current directory
+            let script_path = if file_path.is_absolute() {
+                file_path.to_path_buf()
+            } else {
+                current_dir.join(file_path)
+            };
+            let code = std::fs::read_to_string(&script_path)?;
             let module = format!("rotel_processor_{}", processor_idx);
             register_processor(code, file.clone(), module.clone())?;
-            processor_modules.push(module)
+            processor_modules.push(module);
         }
         Ok(processor_modules)
     }
