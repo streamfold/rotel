@@ -2,9 +2,9 @@
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{conditional_flush, FlushReceiver};
-use flume::r#async::SendFut;
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use flume::SendError;
+use flume::r#async::SendFut;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -13,7 +13,7 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{register_processor, PythonProcessable};
+use rotel_sdk::model::{PythonProcessable, register_processor};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
