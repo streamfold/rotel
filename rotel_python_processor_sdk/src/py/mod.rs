@@ -820,7 +820,7 @@ impl ScopeSpans {
         Ok(ScopeSpans {
             scope: Arc::new(Mutex::new(None)),
             spans: Arc::new(Mutex::new(vec![])),
-            schema_url: "".to_string(),
+            schema_url: String::new(),
         })
     }
     #[getter]
@@ -2719,10 +2719,13 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    use opentelemetry_proto::tonic::trace::v1;
     use pyo3::ffi::c_str;
     use std::ffi::CString;
     use std::sync::Once;
+    use utilities::otlp::FakeOTLP;
 
     static INIT: Once = Once::new();
 
@@ -4128,6 +4131,175 @@ mod tests {
                 assert_eq!(s, "first log message");
             }
             _ => panic!("Body value is not the expected string"),
+        }
+    }
+
+    #[test]
+    fn traces_delitem_test() {
+        initialize();
+        let av = opentelemetry_proto::tonic::common::v1::ArrayValue {
+            values: vec![
+                opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("first value".to_string())),
+                },
+                opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("second value".to_string())),
+                },
+            ],
+        };
+        let kvlist = opentelemetry_proto::tonic::common::v1::KeyValueList {
+            values: vec![
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "first_key".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::BoolValue(true)),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "second_key".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::StringValue("second_value".to_string())),
+                    }),
+                },
+            ],
+        };
+        let resource = opentelemetry_proto::tonic::resource::v1::Resource {
+            attributes: vec![
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "first_attr".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::KvlistValue(kvlist)),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "second_attr".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::ArrayValue(av)),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "third_attr".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::StringValue("to_remove_value".to_string())),
+                    }),
+                },
+            ],
+            dropped_attributes_count: 0,
+        };
+
+        let mut spans = FakeOTLP::trace_spans(2);
+        let now_ns = Utc::now().timestamp_nanos_opt().unwrap();
+
+        // Adding additional data here to test __delitem__
+        spans[0].events.push(v1::span::Event {
+            time_unix_nano: now_ns as u64,
+            name: "second test event".to_string(),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+        });
+
+        spans[0].links.push(v1::span::Link {
+            trace_id: vec![5, 5, 5, 5, 5, 5, 5, 5],
+            span_id: vec![6, 6, 6, 6, 6, 6, 6, 6],
+            trace_state: "secondtrace=00f067aa0ba902b7".to_string(),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+            flags: 0,
+        });
+
+        let first_scope_spans = v1::ScopeSpans {
+            scope: None,
+            spans,
+            schema_url: "".to_string(),
+        };
+
+        let second_scope_spans = v1::ScopeSpans {
+            scope: None,
+            spans: vec![],
+            schema_url: "".to_string(),
+        };
+
+        let resource_spans = v1::ResourceSpans {
+            resource: Some(resource),
+            scope_spans: vec![first_scope_spans, second_scope_spans],
+            schema_url: "".to_string(),
+        };
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans =
+            crate::model::otel_transform::transform_resource_spans(resource_spans);
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("traces_delitem_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let mut resource = r_resource_spans.resource.lock().unwrap();
+        let mut resource_p = resource
+            .take()
+            .map(|r| crate::model::py_transform::transform_resource(r).unwrap())
+            .unwrap();
+
+        assert_eq!(2, resource_p.attributes.len());
+        // Assert the kvlist only has one item now
+        let kvlist = resource_p
+            .attributes
+            .remove(0)
+            .value
+            .unwrap()
+            .value
+            .unwrap();
+        match kvlist {
+            Value::KvlistValue(mut kvl) => {
+                assert_eq!(1, kvl.values.len());
+                let value = kvl.values.remove(0);
+                assert_eq!(value.key, "second_key");
+                let value = value.value.clone().unwrap().value.unwrap();
+                match value {
+                    Value::StringValue(s) => {
+                        assert_eq!(s, "second_value");
+                    }
+                    _ => {
+                        panic!("expected StringValue")
+                    }
+                }
+            }
+            _ => {
+                panic!("expected kvlist")
+            }
+        }
+
+        let arvalue = resource_p
+            .attributes
+            .remove(0)
+            .value
+            .unwrap()
+            .value
+            .unwrap();
+        match arvalue {
+            Value::ArrayValue(mut av) => {
+                assert_eq!(1, av.values.len());
+                let value = av.values.remove(0).value.unwrap();
+                match value {
+                    Value::StringValue(s) => {
+                        assert_eq!(s, "first value")
+                    }
+                    _ => {
+                        panic!("expected StringValue");
+                    }
+                }
+            }
+            _ => {
+                panic!("exected ArrayValue");
+            }
         }
     }
 }

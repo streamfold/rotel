@@ -12,6 +12,7 @@ tracing = "0.1"
 tracing-log = "0.2.0"
 pyo3-stub-gen = "0.7.0"
 pyo3-stub-gen-derive = "0.7.0"
+chrono = "0.4.40"
 
 [lib]
 # The name of the native library. This is the name which will be used in Python to import the
