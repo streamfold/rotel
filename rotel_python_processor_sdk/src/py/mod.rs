@@ -4301,5 +4301,21 @@ mod tests {
                 panic!("exected ArrayValue");
             }
         }
+
+        // Verify the second scope span has been removed
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans_vec = crate::model::py_transform::transform_spans(scope_spans_vec);
+        assert_eq!(1, scope_spans_vec.len());
+        let scope_spans = scope_spans_vec.remove(0);
+        let mut spans = scope_spans.spans;
+        assert_eq!(1, spans.len());
+        let span = spans.remove(0);
+        assert_eq!(1, span.events.len());
+        assert_eq!(span.events[0].name, "second test event");
+        assert_eq!(1, span.links.len());
+        assert_eq!(span.links[0].trace_state, "secondtrace=00f067aa0ba902b7")
     }
 }

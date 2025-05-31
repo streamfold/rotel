@@ -21,3 +21,11 @@ def process(resource_spans: ResourceSpans):
             if arlist is not None:
                 arlist = cast(ArrayValue, arlist)
                 del arlist[1]
+
+    del resource_spans.scope_spans[1]
+    del resource_spans.scope_spans[0].spans[1]
+
+    span = resource_spans.scope_spans[0].spans[0]
+    del span.events[0]
+    del span.links[0]
+
