@@ -196,6 +196,18 @@ impl ArrayValue {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append(&self, item: &AnyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -270,6 +282,18 @@ impl KeyValueList {
         }
         let v = value.inner.lock().unwrap();
         inner[index] = v.clone();
+        Ok(())
+    }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -560,6 +584,18 @@ impl Attributes {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -721,6 +757,18 @@ impl ScopeSpansList {
             spans: value.spans.clone(),
             schema_url: value.schema_url.clone(),
         }));
+        Ok(())
+    }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -1023,6 +1071,18 @@ impl AttributesList {
         };
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
         let mut k = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1112,6 +1172,18 @@ impl Spans {
             ));
         }
         inner[index] = value.inner.clone();
+        Ok(())
+    }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
         Ok(())
     }
     fn append(&self, item: &Span) -> PyResult<()> {
@@ -1542,6 +1614,18 @@ impl Events {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
@@ -1705,6 +1789,18 @@ impl Links {
             ));
         }
         inner[index] = value.inner.clone();
+        Ok(())
+    }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
         Ok(())
     }
     fn append<'py>(&self, item: &Link) -> PyResult<()> {
@@ -2083,7 +2179,18 @@ impl ScopeLogsList {
         }));
         Ok(())
     }
-
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
+        })?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
