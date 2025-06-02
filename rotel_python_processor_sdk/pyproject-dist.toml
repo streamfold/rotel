@@ -1,6 +1,6 @@
 [project]
 name = "rotel_sdk"
-version = "0.0.1a6"
+version = "0.0.1a7"
 authors = [
     { name = "Ray Jenkins", email = "ray@streamfold.com" },
     { name = "Michael Heffner", email = "mike@streamfold.com" },

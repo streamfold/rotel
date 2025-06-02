@@ -75,6 +75,24 @@ class ArrayValue:
     Appends a value to this array.
     """
 
+    def __delitem__(self, index: int) -> None: ...
+
+    """
+    Removes an item from this list.
+    """
+
+    def __getitem__(self, index: int) -> AnyValue: ...
+
+    """
+    Retrieves an item from this list.
+    """
+
+    def __setitem__(self, index: int, value: AnyValue) -> None: ...
+
+    """
+    Sets an item in this list.
+    """
+
 
 class KeyValueList:
     """
@@ -85,6 +103,24 @@ class KeyValueList:
 
     """
     Appends a KeyValue object to this list.
+    """
+
+    def __delitem__(self, index: int) -> None: ...
+
+    """
+    Removes an item from this list.
+    """
+
+    def __getitem__(self, index: int) -> KeyValue: ...
+
+    """
+    Retrieves an item from this list.
+    """
+
+    def __setitem__(self, index: int, value: KeyValue) -> None: ...
+
+    """
+    Sets an item in this list.
     """
 
 
