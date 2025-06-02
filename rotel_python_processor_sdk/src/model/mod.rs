@@ -1,10 +1,11 @@
+pub mod common;
+pub mod logs;
 pub mod otel_transform;
 pub mod py_transform;
+pub mod trace;
 
-use crate::py;
+use crate::model::common::RKeyValue;
 use crate::py::{rotel_sdk, ResourceLogs, ResourceSpans};
-use opentelemetry_proto::tonic::common::v1::KeyValue;
-use opentelemetry_proto::tonic::trace::v1::span::{Event, Link};
 use pyo3::prelude::*;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, Once};
@@ -14,169 +15,9 @@ use tracing::error;
 static PROCESSOR_INIT: Once = Once::new();
 
 #[derive(Debug, Clone)]
-pub struct RAnyValue {
-    pub value: Arc<Mutex<Option<RValue>>>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(clippy::enum_variant_names)]
-pub enum RValue {
-    StringValue(String),
-    BoolValue(bool),
-    IntValue(i64),
-    DoubleValue(f64),
-    RVArrayValue(RArrayValue),
-    KvListValue(RKeyValueList),
-    BytesValue(Vec<u8>),
-}
-
-#[derive(Debug, Clone)]
-pub struct RArrayValue {
-    pub values: Arc<Mutex<Vec<Arc<Mutex<Option<RAnyValue>>>>>>,
-}
-
-#[allow(deprecated)]
-impl RArrayValue {
-    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(py::ArrayValue(self.values.clone()).into_py(py))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RKeyValueList {
-    pub values: Arc<Mutex<Vec<RKeyValue>>>,
-}
-
-#[allow(deprecated)]
-impl RKeyValueList {
-    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(py::KeyValueList(self.values.clone()).into_py(py))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RKeyValue {
-    pub key: Arc<Mutex<String>>,
-    pub value: Arc<Mutex<Option<RAnyValue>>>,
-}
-
-#[derive(Debug, Clone)]
 pub struct RResource {
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>,
     pub dropped_attributes_count: Arc<Mutex<u32>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RResourceSpans {
-    pub resource: Arc<Mutex<Option<RResource>>>,
-    pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>,
-    pub schema_url: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct RScopeSpans {
-    pub scope: Arc<Mutex<Option<RInstrumentationScope>>>,
-    pub spans: Arc<Mutex<Vec<Arc<Mutex<RSpan>>>>>,
-    pub schema_url: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct RInstrumentationScope {
-    pub name: String,
-    pub version: String,
-    pub attributes_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
-    pub attributes_raw: Vec<KeyValue>,
-    pub dropped_attributes_count: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct RSpan {
-    pub trace_id: Vec<u8>,
-    pub span_id: Vec<u8>,
-    pub trace_state: String,
-    pub parent_span_id: Vec<u8>,
-    pub flags: u32,
-    pub name: String,
-    pub kind: i32,
-    pub start_time_unix_nano: u64,
-    pub end_time_unix_nano: u64,
-    pub attributes_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
-    pub attributes_raw: Vec<KeyValue>,
-    pub dropped_attributes_count: u32,
-    pub events_raw: Vec<Event>,
-    pub events_arc: Option<Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>>,
-    pub dropped_events_count: u32,
-    pub links_arc: Option<Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>>,
-    pub links_raw: Vec<Link>,
-    pub dropped_links_count: u32,
-    pub status: Arc<Mutex<Option<RStatus>>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct REvent {
-    pub time_unix_nano: u64,
-    pub name: String,
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub dropped_attributes_count: u32,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct RStatus {
-    pub message: String,
-    pub code: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[allow(dead_code)]
-pub enum RStatusCode {
-    /// The default status.
-    Unset = 0,
-    /// The Span has been validated by an Application developer or Operator to
-    /// have completed successfully.
-    Ok = 1,
-    /// The Span contains an error.
-    Error = 2,
-}
-
-#[derive(Debug, Clone)]
-pub struct RLink {
-    pub trace_id: Vec<u8>,
-    pub span_id: Vec<u8>,
-    pub trace_state: String,
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub dropped_attributes_count: u32,
-    pub flags: u32,
-}
-
-// Structures for Logs
-#[derive(Debug, Clone)]
-pub struct RResourceLogs {
-    pub resource: Arc<Mutex<Option<RResource>>>,
-    pub scope_logs: Arc<Mutex<Vec<Arc<Mutex<RScopeLogs>>>>>,
-    pub schema_url: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct RScopeLogs {
-    pub scope: Arc<Mutex<Option<RInstrumentationScope>>>,
-    pub log_records: Arc<Mutex<Vec<Arc<Mutex<RLogRecord>>>>>,
-    pub schema_url: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct RLogRecord {
-    pub time_unix_nano: u64,
-    pub observed_time_unix_nano: u64,
-    pub severity_number: i32,
-    pub severity_text: String,
-    pub body: RAnyValue,
-    pub attributes_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
-    pub attributes_raw: Vec<KeyValue>,
-    pub dropped_attributes_count: u32,
-    pub flags: u32,
-    pub trace_id: Vec<u8>,
-    pub span_id: Vec<u8>,
-    pub event_name: String,
 }
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {

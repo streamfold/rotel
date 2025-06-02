@@ -1,11 +1,9 @@
+use crate::model::common::RValue::*;
+use crate::model::common::*;
+use crate::model::logs::*;
 use crate::model::otel_transform::convert_attributes;
-use crate::model::RValue::{
-    BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
-};
-use crate::model::{
-    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RLogRecord, RResource, RScopeLogs,
-    RScopeSpans, RSpan, RStatus,
-};
+use crate::model::trace::*;
+use crate::model::RResource;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -115,7 +113,7 @@ impl AnyValue {
             .value
             .lock()
             .unwrap()
-            .replace(RVArrayValue(crate::model::RArrayValue {
+            .replace(RVArrayValue(RArrayValue {
                 values: new_value.0.clone(),
             }));
         Ok(())
@@ -128,7 +126,7 @@ impl AnyValue {
             .value
             .lock()
             .unwrap()
-            .replace(KvListValue(crate::model::RKeyValueList {
+            .replace(KvListValue(RKeyValueList {
                 values: new_value.0.clone(),
             }));
         Ok(())
@@ -389,7 +387,7 @@ impl KeyValue {
     fn new_array_value(key: &str, value: ArrayValue) -> PyResult<KeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = RAnyValue {
-            value: Arc::new(Mutex::new(Some(RVArrayValue(crate::model::RArrayValue {
+            value: Arc::new(Mutex::new(Some(RVArrayValue(RArrayValue {
                 values: value.0.clone(),
             })))),
         };
@@ -403,7 +401,7 @@ impl KeyValue {
     fn new_kv_list(key: &str, value: KeyValueList) -> PyResult<KeyValue> {
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = RAnyValue {
-            value: Arc::new(Mutex::new(Some(KvListValue(crate::model::RKeyValueList {
+            value: Arc::new(Mutex::new(Some(KvListValue(RKeyValueList {
                 values: value.0.clone(),
             })))),
         };
@@ -2676,7 +2674,7 @@ mod tests {
         let any_value_arc = Some(RAnyValue {
             value: Arc::new(Mutex::new(arc_value)),
         });
-        let array_value = crate::model::RArrayValue {
+        let array_value = crate::model::common::RArrayValue {
             values: Arc::new(Mutex::new(vec![Arc::new(Mutex::new(
                 any_value_arc.clone(),
             ))])),
@@ -2758,7 +2756,7 @@ mod tests {
             value: any_value_arc.clone(),
         };
 
-        let kv_list = crate::model::RKeyValueList {
+        let kv_list = crate::model::common::RKeyValueList {
             values: Arc::new(Mutex::new(vec![kev_value])),
         };
 

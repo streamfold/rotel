@@ -1,10 +1,9 @@
-use crate::model::RValue::{
+use crate::model::common::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, RVArrayValue, StringValue,
 };
-use crate::model::{
-    RAnyValue, RInstrumentationScope, RKeyValue, RLogRecord, RResourceLogs, RResourceSpans,
-    RScopeLogs, RSpan, RStatus,
-};
+use crate::model::common::*;
+use crate::model::logs::*;
+use crate::model::trace::*;
 use std::sync::{Arc, Mutex};
 
 pub fn transform_resource_spans(
@@ -38,7 +37,7 @@ pub fn transform_resource_spans(
                 dropped_attributes_count: s.dropped_attributes_count,
             })
         }
-        let scope_span = crate::model::RScopeSpans {
+        let scope_span = RScopeSpans {
             scope: Arc::new(Mutex::new(scope)),
             spans: Arc::new(Mutex::new(vec![])),
             schema_url: ss.schema_url,
@@ -224,7 +223,7 @@ pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> RAn
                     values.push(Arc::new(Mutex::new(Some(conv))));
                 }
                 RAnyValue {
-                    value: Arc::new(Mutex::new(Some(RVArrayValue(crate::model::RArrayValue {
+                    value: Arc::new(Mutex::new(Some(RVArrayValue(RArrayValue {
                         values: Arc::new(Mutex::new(values)),
                     })))),
                 }
@@ -242,11 +241,9 @@ pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> RAn
                     })
                 }
                 RAnyValue {
-                    value: Arc::new(Mutex::new(Some(crate::model::RValue::KvListValue(
-                        crate::model::RKeyValueList {
-                            values: Arc::new(Mutex::new(key_values)),
-                        },
-                    )))),
+                    value: Arc::new(Mutex::new(Some(RValue::KvListValue(RKeyValueList {
+                        values: Arc::new(Mutex::new(key_values)),
+                    })))),
                 }
             }
             opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b) => RAnyValue {
