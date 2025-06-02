@@ -54,6 +54,8 @@ jobs:
       - name: run test
         run: |
           $CARGO_BIN test --target ${{ matrix.target }} --verbose
+      - name: run test processor-sdk
+        run: $CARGO_BIN test --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
 
   # Check formatting with rustfmt
   formatting:
