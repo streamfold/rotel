@@ -1,8 +1,13 @@
 name: processor-release
 
+#on:
+#  release:
+#    types: [ created ]
+
 on:
-  release:
-    types: [ created ]
+  push:
+    branches:
+      - 'processor-release/*'
 
 jobs:
   release:
@@ -17,7 +22,7 @@ jobs:
             runner: ubuntu-22.04
             os: ubuntu
             cross: false
-            python-version: 3.10
+            python-version: "3.10"
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
@@ -37,7 +42,7 @@ jobs:
             runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
-            python-version: 3.10
+            python-version: "3.10"
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
@@ -114,7 +119,4 @@ jobs:
         run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
       - name: upload
         run: |
-          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
-          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz" 
