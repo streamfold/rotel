@@ -13,6 +13,9 @@ tracing-log = "0.2.0"
 pyo3-stub-gen = "0.7.0"
 pyo3-stub-gen-derive = "0.7.0"
 
+[dev-dependencies]
+chrono = "0.4.40"
+
 [lib]
 # The name of the native library. This is the name which will be used in Python to import the
 # library (i.e. `import string_sum`). If you change this, you must also change the name of the

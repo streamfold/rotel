@@ -291,10 +291,10 @@ pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::An
         RVArrayValue(a) => {
             let mut values = vec![];
             let inner_values = Arc::into_inner(a.values).unwrap();
-            let inner_values = inner_values.into_inner().unwrap();
-            // TODO: We might need to remove these from the vec?
-            for v in inner_values.iter() {
-                let inner_v = Arc::into_inner(v.clone()).unwrap();
+            let mut inner_values = inner_values.into_inner().unwrap();
+            while !inner_values.is_empty() {
+                let inner_v = inner_values.pop().expect("inner value should not be none");
+                let inner_v = Arc::into_inner(inner_v).unwrap();
                 let inner_v = inner_v.into_inner().unwrap();
                 if inner_v.is_none() {
                     values.push(opentelemetry_proto::tonic::common::v1::AnyValue { value: None })

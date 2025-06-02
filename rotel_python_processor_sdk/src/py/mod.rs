@@ -6,9 +6,15 @@ use crate::model::{
     RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RLogRecord, RResource, RScopeLogs,
     RScopeSpans, RSpan, RStatus,
 };
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::vec;
+
+// Helper function to reduce duplication
+fn handle_poison_error<T>(_: PoisonError<T>) -> PyErr {
+    PyErr::new::<PyRuntimeError, _>("Failed to lock mutex")
+}
 
 // Wrapper for AnyValue that can be exposed to Python
 #[pyclass]
@@ -29,9 +35,7 @@ impl AnyValue {
     #[getter]
     #[allow(deprecated)]
     fn value<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.clone().unwrap().value.clone();
         let bind_lock = binding.lock();
         let x = match bind_lock.unwrap().clone() {
@@ -48,9 +52,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_string_value(&mut self, new_value: &str) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
 
         // TODO WE need none checks on these setters
         v.clone()
@@ -63,9 +65,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_bool_value(&mut self, new_value: bool) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         v.clone()
             .unwrap()
             .value
@@ -76,9 +76,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_int_value(&mut self, new_value: i64) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         v.clone()
             .unwrap()
             .value
@@ -89,9 +87,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_double_value(&mut self, new_value: f64) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         v.clone()
             .unwrap()
             .value
@@ -102,9 +98,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_bytes_value(&mut self, new_value: Vec<u8>) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         v.clone()
             .unwrap()
             .value
@@ -115,9 +109,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_array_value(&mut self, new_value: ArrayValue) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         v.clone()
             .unwrap()
             .value
@@ -130,9 +122,7 @@ impl AnyValue {
     }
     #[setter]
     fn set_key_value_list_value(&mut self, new_value: KeyValueList) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         v.clone()
             .unwrap()
             .value
@@ -156,25 +146,18 @@ impl ArrayValue {
         Ok(ArrayValue(Arc::new(Mutex::new(vec![]))))
     }
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<ArrayValueIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = ArrayValueIter {
             inner: inner.clone().into_iter(),
         };
-        // Convert to a Python-managed object
         Py::new(py, iter)
     }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
     fn __getitem__(&self, index: usize) -> PyResult<AnyValue> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(AnyValue {
                 inner: item.clone(),
@@ -185,9 +168,7 @@ impl ArrayValue {
         }
     }
     fn __setitem__(&self, index: usize, value: &AnyValue) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -196,10 +177,18 @@ impl ArrayValue {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append(&self, item: &AnyValue) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         k.push(item.inner.clone());
         Ok(())
     }
@@ -247,9 +236,7 @@ impl KeyValueList {
         Py::new(py, iter)
     }
     fn __getitem__(&self, index: usize) -> PyResult<KeyValue> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(KeyValue {
                 inner: Arc::new(Mutex::new(item.clone())),
@@ -260,9 +247,7 @@ impl KeyValueList {
         }
     }
     fn __setitem__(&self, index: usize, value: &KeyValue) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -272,16 +257,22 @@ impl KeyValueList {
         inner[index] = v.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
     fn append(&self, item: KeyValue) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         let inner = item.inner.lock().unwrap();
         let inner = inner.clone();
         k.push(inner);
@@ -424,9 +415,7 @@ impl KeyValue {
     #[getter]
     #[allow(deprecated)]
     fn key(&self, py: Python) -> PyResult<PyObject> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.key.clone();
         let bind_lock = binding.lock();
         let x = Ok(bind_lock.unwrap().clone().into_py(py));
@@ -434,9 +423,7 @@ impl KeyValue {
     }
     #[setter]
     fn set_key(&mut self, new_value: &str) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.key.clone();
         let mut bind_lock = binding.lock().unwrap();
         bind_lock.clear();
@@ -445,9 +432,7 @@ impl KeyValue {
     }
     #[getter]
     fn value(&self) -> PyResult<AnyValue> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.value.clone();
         Ok(AnyValue {
             inner: binding.clone(),
@@ -455,9 +440,7 @@ impl KeyValue {
     }
     #[setter]
     fn set_value(&mut self, new_value: &AnyValue) -> PyResult<()> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.value.clone();
         let bind_lock = binding.lock();
         let binding = new_value.inner.clone();
@@ -489,12 +472,8 @@ impl Resource {
     }
     #[setter]
     fn set_attributes(&mut self, new_value: &Attributes) -> PyResult<()> {
-        let mut attrs = self.attributes.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let v = new_value.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut attrs = self.attributes.lock().map_err(handle_poison_error)?;
+        let v = new_value.0.lock().map_err(handle_poison_error)?;
         attrs.clear();
         for kv in v.iter() {
             attrs.push(kv.clone())
@@ -525,9 +504,7 @@ impl Attributes {
     }
 
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<AttributesIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = AttributesIter {
             inner: inner.clone().into_iter(),
         };
@@ -536,9 +513,7 @@ impl Attributes {
     }
 
     fn __getitem__(&self, index: usize) -> PyResult<KeyValue> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(KeyValue {
                 inner: item.clone(),
@@ -549,9 +524,7 @@ impl Attributes {
         }
     }
     fn __setitem__(&self, index: usize, value: &KeyValue) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -560,18 +533,24 @@ impl Attributes {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         k.push(item.inner.clone());
         Ok(())
     }
 
     fn append_attributes(&self, items: Vec<KeyValue>) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
 
         for kv in items.iter() {
             k.push(kv.inner.clone());
@@ -580,9 +559,7 @@ impl Attributes {
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -622,9 +599,7 @@ pub struct ResourceSpans {
 impl ResourceSpans {
     #[getter]
     fn resource(&self) -> PyResult<Option<Resource>> {
-        let v = self.resource.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.resource.lock().map_err(handle_poison_error)?;
         if v.is_none() {
             return Ok(None);
         }
@@ -636,9 +611,7 @@ impl ResourceSpans {
     }
     #[setter]
     fn set_resource(&mut self, resource: Resource) -> PyResult<()> {
-        let mut inner = self.resource.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.resource.lock().map_err(handle_poison_error)?;
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
@@ -679,9 +652,7 @@ struct ScopeSpansList(Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>);
 #[pymethods]
 impl ScopeSpansList {
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<ScopeSpansListIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = ScopeSpansListIter {
             inner: inner.clone().into_iter(),
         };
@@ -690,9 +661,7 @@ impl ScopeSpansList {
     }
 
     fn __getitem__(&self, index: usize) -> PyResult<ScopeSpans> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => {
                 let item = item.lock().unwrap();
@@ -708,9 +677,7 @@ impl ScopeSpansList {
         }
     }
     fn __setitem__(&self, index: usize, value: &ScopeSpans) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -723,10 +690,18 @@ impl ScopeSpansList {
         }));
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -772,7 +747,7 @@ impl ScopeSpans {
         Ok(ScopeSpans {
             scope: Arc::new(Mutex::new(None)),
             spans: Arc::new(Mutex::new(vec![])),
-            schema_url: "".to_string(),
+            schema_url: String::new(),
         })
     }
     #[getter]
@@ -791,9 +766,7 @@ impl ScopeSpans {
     #[getter]
     fn scope(&self) -> PyResult<Option<InstrumentationScope>> {
         {
-            let v = self.scope.lock().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-            })?;
+            let v = self.scope.lock().map_err(handle_poison_error)?;
             if v.is_none() {
                 return Ok(None);
             }
@@ -802,12 +775,8 @@ impl ScopeSpans {
     }
     #[setter]
     fn set_scope(&mut self, scope: InstrumentationScope) -> PyResult<()> {
-        let mut v = self.scope.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let inner = scope.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.scope.lock().map_err(handle_poison_error)?;
+        let inner = scope.0.lock().map_err(handle_poison_error)?;
         v.replace(inner.clone().unwrap());
         Ok(())
     }
@@ -843,21 +812,15 @@ impl InstrumentationScope {
     }
     #[getter]
     fn name(&self) -> PyResult<String> {
-        let binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let v = binding
-            .clone()
-            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "InstrumentationScope is None",
-            ))?;
+        let binding = self.0.lock().map_err(handle_poison_error)?;
+        let v = binding.clone().ok_or(PyErr::new::<PyRuntimeError, _>(
+            "InstrumentationScope is None",
+        ))?;
         Ok(v.name)
     }
     #[setter]
     fn set_name(&self, name: String) -> PyResult<()> {
-        let mut binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.0.lock().map_err(handle_poison_error)?;
         let updated_scope = match binding.take() {
             Some(current) => RInstrumentationScope {
                 name,
@@ -876,21 +839,15 @@ impl InstrumentationScope {
     }
     #[getter]
     fn version(&self) -> PyResult<String> {
-        let binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let v = binding
-            .clone()
-            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "InstrumentationScope is None",
-            ))?;
+        let binding = self.0.lock().map_err(handle_poison_error)?;
+        let v = binding.clone().ok_or(PyErr::new::<PyRuntimeError, _>(
+            "InstrumentationScope is None",
+        ))?;
         Ok(v.version)
     }
     #[setter]
     fn set_version(&self, version: String) -> PyResult<()> {
-        let mut binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.0.lock().map_err(handle_poison_error)?;
         let updated_scope = match binding.take() {
             Some(current) => RInstrumentationScope {
                 version,
@@ -909,11 +866,9 @@ impl InstrumentationScope {
     }
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let mut binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.0.lock().map_err(handle_poison_error)?;
         if binding.is_none() {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            PyErr::new::<PyRuntimeError, _>(
                 "InstrumentationScope is None, should never occur here",
             );
         }
@@ -936,21 +891,15 @@ impl InstrumentationScope {
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
-        let binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let v = binding
-            .clone()
-            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "InstrumentationScope is None",
-            ))?;
+        let binding = self.0.lock().map_err(handle_poison_error)?;
+        let v = binding.clone().ok_or(PyErr::new::<PyRuntimeError, _>(
+            "InstrumentationScope is None",
+        ))?;
         Ok(v.dropped_attributes_count)
     }
     #[setter]
     fn set_dropped_attributes_count(&self, dropped_attributes_count: u32) -> PyResult<()> {
-        let mut binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.0.lock().map_err(handle_poison_error)?;
         let updated_scope = match binding.take() {
             Some(current) => RInstrumentationScope {
                 name: current.name,
@@ -984,9 +933,7 @@ impl AttributesList {
         Ok(AttributesList(Arc::new(Mutex::new(vec![]))))
     }
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<AttributesListIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = AttributesListIter {
             inner: inner.clone().into_iter(),
         };
@@ -995,9 +942,7 @@ impl AttributesList {
     }
 
     fn __getitem__(&self, index: usize) -> PyResult<KeyValue> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(KeyValue {
                 inner: Arc::new(Mutex::new(item.clone())),
@@ -1008,9 +953,7 @@ impl AttributesList {
         }
     }
     fn __setitem__(&self, index: usize, value: &KeyValue) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -1023,19 +966,25 @@ impl AttributesList {
         };
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append<'py>(&self, item: &KeyValue) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         let inner = item.inner.lock().unwrap();
         let inner = inner.clone();
         k.push(inner);
         Ok(())
     }
     fn append_attributes(&self, items: Vec<KeyValue>) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         for kv in items.iter() {
             let inner = kv.inner.lock().unwrap();
             let inner = inner.clone();
@@ -1044,9 +993,7 @@ impl AttributesList {
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -1080,9 +1027,7 @@ struct Spans(Arc<Mutex<Vec<Arc<Mutex<RSpan>>>>>);
 #[pymethods]
 impl Spans {
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<SpansIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = SpansIter {
             inner: inner.clone().into_iter(),
         };
@@ -1090,9 +1035,7 @@ impl Spans {
         Py::new(py, iter)
     }
     fn __getitem__(&self, index: usize) -> PyResult<Span> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(Span {
                 inner: item.clone(),
@@ -1103,9 +1046,7 @@ impl Spans {
         }
     }
     fn __setitem__(&self, index: usize, value: &Span) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -1114,17 +1055,23 @@ impl Spans {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append(&self, item: &Span) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -1188,144 +1135,106 @@ impl Span {
     }
     #[getter]
     fn trace_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.trace_id.clone())
     }
     #[setter]
     fn set_trace_id(&mut self, new_value: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.trace_id = new_value;
         Ok(())
     }
     #[getter]
     fn span_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.span_id.clone())
     }
     #[setter]
     fn set_span_id(&self, new_value: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.span_id = new_value;
         Ok(())
     }
     #[getter]
     fn trace_state(&self) -> PyResult<String> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.trace_state.clone())
     }
     #[setter]
     fn set_trace_state(&self, new_value: String) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.trace_state = new_value;
         Ok(())
     }
     #[getter]
     fn parent_span_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.parent_span_id.clone())
     }
     #[setter]
     fn set_parent_span_id(&self, new_value: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.parent_span_id = new_value;
         Ok(())
     }
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.flags)
     }
     #[setter]
     fn set_flags(&self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.flags = new_value;
         Ok(())
     }
     #[getter]
     fn name(&self) -> PyResult<String> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.name.clone())
     }
     #[setter]
     fn set_name(&self, new_value: String) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.name = new_value;
         Ok(())
     }
     #[getter]
     fn kind(&self) -> PyResult<i32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.kind)
     }
     #[setter]
     fn set_kind(&self, new_value: i32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.kind = new_value;
         Ok(())
     }
     #[getter]
     fn start_time_unix_nano(&self) -> PyResult<u64> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.start_time_unix_nano)
     }
     #[setter]
     fn set_start_time_unix_nano(&self, new_value: u64) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.start_time_unix_nano = new_value;
         Ok(())
     }
     #[getter]
     fn end_time_unix_nano(&self) -> PyResult<u64> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.end_time_unix_nano)
     }
     #[setter]
     fn set_end_time_unix_nano(&self, new_value: u64) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.end_time_unix_nano = new_value;
         Ok(())
     }
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let mut binding = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.inner.lock().map_err(handle_poison_error)?;
         if binding.attributes_arc.is_some() {
             let attr_arc = binding.attributes_arc.take().unwrap();
             let attr_arc_copy = attr_arc.clone();
@@ -1340,9 +1249,7 @@ impl Span {
     }
     #[setter]
     fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
-        let mut inner = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
         let mut new_attrs = Vec::with_capacity(attrs.0.lock().unwrap().len());
         for kv in attrs.0.lock().unwrap().iter() {
             new_attrs.push(kv.clone())
@@ -1353,16 +1260,12 @@ impl Span {
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.dropped_attributes_count)
     }
     #[setter]
     fn set_dropped_attributes_count(&self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.dropped_attributes_count = new_value;
         Ok(())
     }
@@ -1393,9 +1296,7 @@ impl Span {
     }
     #[setter]
     fn set_events(&self, events: Vec<Event>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         let mut new_events = Vec::with_capacity(events.len());
         for event in events {
             new_events.push(event.inner);
@@ -1405,16 +1306,12 @@ impl Span {
     }
     #[getter]
     fn dropped_events_count(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.dropped_events_count)
     }
     #[setter]
     fn set_dropped_events_count(&self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.dropped_events_count = new_value;
         Ok(())
     }
@@ -1447,9 +1344,7 @@ impl Span {
     }
     #[setter]
     fn set_links(&self, links: Vec<Link>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         let mut new_links = Vec::with_capacity(links.len());
         for link in links {
             new_links.push(link.inner);
@@ -1459,28 +1354,20 @@ impl Span {
     }
     #[getter]
     fn dropped_links_count(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.dropped_links_count)
     }
     #[setter]
     fn set_dropped_links_count(&self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.dropped_links_count = new_value;
         Ok(())
     }
     #[getter]
     fn status(&self) -> PyResult<Option<Status>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         {
-            let status = v.status.lock().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-            })?;
+            let status = v.status.lock().map_err(handle_poison_error)?;
             if status.is_none() {
                 return Ok(None);
             }
@@ -1489,9 +1376,7 @@ impl Span {
     }
     #[setter]
     fn set_status(&self, status: Status) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         let new_status = status.0.lock().unwrap();
         if new_status.is_none() {
             v.status = Arc::new(Mutex::new(None));
@@ -1508,9 +1393,7 @@ struct Events(Arc<Mutex<Vec<Arc<Mutex<REvent>>>>>);
 #[pymethods]
 impl Events {
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<EventsIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = EventsIter {
             inner: inner.clone().into_iter(),
         };
@@ -1518,9 +1401,7 @@ impl Events {
         Py::new(py, iter)
     }
     fn __getitem__(&self, index: usize) -> PyResult<Event> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(Event {
                 inner: item.clone(),
@@ -1531,9 +1412,7 @@ impl Events {
         }
     }
     fn __setitem__(&self, index: usize, value: &Event) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -1542,16 +1421,22 @@ impl Events {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
     fn append(&self, item: &Event) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         k.push(item.inner.clone());
         Ok(())
     }
@@ -1601,49 +1486,35 @@ impl Event {
     }
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.time_unix_nano)
     }
     #[setter]
     fn set_time_unix_nano(&mut self, unix_nano: u64) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.time_unix_nano = unix_nano;
         Ok(())
     }
     #[getter]
     fn name(&self) -> PyResult<String> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.name.clone())
     }
     #[setter]
     fn set_name(&mut self, name: String) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.name = name;
         Ok(())
     }
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let binding = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let binding = self.inner.lock().map_err(handle_poison_error)?;
         Ok(AttributesList(binding.attributes.clone()))
     }
     #[setter]
     fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
-        let inner = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let mut v = inner.attributes.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.attributes.lock().map_err(handle_poison_error)?;
         v.clear();
         for kv in attrs.0.lock().unwrap().iter() {
             v.push(kv.clone())
@@ -1652,16 +1523,12 @@ impl Event {
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.dropped_attributes_count)
     }
     #[setter]
     fn set_dropped_attributes_count(&mut self, count: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.dropped_attributes_count = count;
         Ok(())
     }
@@ -1673,9 +1540,7 @@ struct Links(Arc<Mutex<Vec<Arc<Mutex<RLink>>>>>);
 #[pymethods]
 impl Links {
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<LinksIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = LinksIter {
             inner: inner.clone().into_iter(),
         };
@@ -1683,9 +1548,7 @@ impl Links {
         Py::new(py, iter)
     }
     fn __getitem__(&self, index: usize) -> PyResult<Link> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(Link {
                 inner: item.clone(),
@@ -1696,9 +1559,7 @@ impl Links {
         }
     }
     fn __setitem__(&self, index: usize, value: &Link) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -1707,17 +1568,23 @@ impl Links {
         inner[index] = value.inner.clone();
         Ok(())
     }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn append<'py>(&self, item: &Link) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -1768,64 +1635,46 @@ impl Link {
     }
     #[getter]
     fn trace_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.trace_id.clone())
     }
     #[setter]
     fn set_trace_id(&mut self, trace_id: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.trace_id = trace_id;
         Ok(())
     }
     #[getter]
     fn span_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.span_id.clone())
     }
     #[setter]
     fn set_span_id(&mut self, span_id: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.span_id = span_id;
         Ok(())
     }
     #[getter]
     fn trace_state(&self) -> PyResult<String> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.trace_state.clone())
     }
     #[setter]
     fn set_trace_state(&mut self, trace_state: String) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.trace_state = trace_state;
         Ok(())
     }
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let binding = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let binding = self.inner.lock().map_err(handle_poison_error)?;
         Ok(AttributesList(binding.attributes.clone()))
     }
     #[setter]
     fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
-        let inner = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let mut v = inner.attributes.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.attributes.lock().map_err(handle_poison_error)?;
         v.clear();
         for kv in attrs.0.lock().unwrap().iter() {
             v.push(kv.clone())
@@ -1834,31 +1683,23 @@ impl Link {
     }
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.dropped_attributes_count)
     }
     #[setter]
     fn set_dropped_attributes_count(&self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.dropped_attributes_count = new_value;
         Ok(())
     }
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.flags)
     }
     #[setter]
     fn set_flags(&self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.flags = new_value;
         Ok(())
     }
@@ -1879,21 +1720,15 @@ impl Status {
     }
     #[getter]
     fn message(&self) -> PyResult<String> {
-        let binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let binding = self.0.lock().map_err(handle_poison_error)?;
         let v = binding
             .clone()
-            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "Status is None",
-            ))?;
+            .ok_or(PyErr::new::<PyRuntimeError, _>("Status is None"))?;
         Ok(v.message)
     }
     #[setter]
     fn set_message(&mut self, message: String) -> PyResult<()> {
-        let mut binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.0.lock().map_err(handle_poison_error)?;
         let updated_status = match binding.take() {
             Some(current) => RStatus {
                 message,
@@ -1909,21 +1744,15 @@ impl Status {
     }
     #[getter]
     fn code(&self) -> PyResult<i32> {
-        let binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let binding = self.0.lock().map_err(handle_poison_error)?;
         let v = binding
             .clone()
-            .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "Status is None",
-            ))?;
+            .ok_or(PyErr::new::<PyRuntimeError, _>("Status is None"))?;
         Ok(v.code)
     }
     #[setter]
     fn set_code(&mut self, code: StatusCode) -> PyResult<()> {
-        let mut binding = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.0.lock().map_err(handle_poison_error)?;
         let updated_status = match binding.take() {
             Some(current) => RStatus {
                 message: current.message,
@@ -1982,9 +1811,7 @@ pub struct ResourceLogs {
 impl ResourceLogs {
     #[getter]
     fn resource(&self) -> PyResult<Option<Resource>> {
-        let v = self.resource.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.resource.lock().map_err(handle_poison_error)?;
         if v.is_none() {
             return Ok(None);
         }
@@ -1996,9 +1823,7 @@ impl ResourceLogs {
     }
     #[setter]
     fn set_resource(&mut self, resource: Resource) -> PyResult<()> {
-        let mut inner = self.resource.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.resource.lock().map_err(handle_poison_error)?;
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
@@ -2039,9 +1864,7 @@ struct ScopeLogsList(Arc<Mutex<Vec<Arc<Mutex<RScopeLogs>>>>>);
 #[pymethods]
 impl ScopeLogsList {
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<ScopeLogsListIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = ScopeLogsListIter {
             inner: inner.clone().into_iter(),
         };
@@ -2050,9 +1873,7 @@ impl ScopeLogsList {
     }
 
     fn __getitem__(&self, index: usize) -> PyResult<ScopeLogs> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => {
                 let item = item.lock().unwrap();
@@ -2068,9 +1889,7 @@ impl ScopeLogsList {
         }
     }
     fn __setitem__(&self, index: usize, value: &ScopeLogs) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -2083,11 +1902,18 @@ impl ScopeLogsList {
         }));
         Ok(())
     }
-
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -2152,9 +1978,7 @@ impl ScopeLogs {
     #[getter]
     fn scope(&self) -> PyResult<Option<InstrumentationScope>> {
         {
-            let v = self.scope.lock().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-            })?;
+            let v = self.scope.lock().map_err(handle_poison_error)?;
             if v.is_none() {
                 return Ok(None);
             }
@@ -2163,12 +1987,8 @@ impl ScopeLogs {
     }
     #[setter]
     fn set_scope(&mut self, scope: InstrumentationScope) -> PyResult<()> {
-        let mut v = self.scope.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
-        let inner = scope.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.scope.lock().map_err(handle_poison_error)?;
+        let inner = scope.0.lock().map_err(handle_poison_error)?;
         v.replace(inner.clone().unwrap());
         Ok(())
     }
@@ -2189,9 +2009,7 @@ struct LogRecords(Arc<Mutex<Vec<Arc<Mutex<RLogRecord>>>>>);
 #[pymethods]
 impl LogRecords {
     fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<LogRecordsIter>> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         let iter = LogRecordsIter {
             inner: inner.clone().into_iter(),
         };
@@ -2199,9 +2017,7 @@ impl LogRecords {
     }
 
     fn __getitem__(&self, index: usize) -> PyResult<LogRecord> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
             Some(item) => Ok(LogRecord {
                 inner: item.clone(),
@@ -2212,9 +2028,7 @@ impl LogRecords {
         }
     }
     fn __setitem__(&self, index: usize, value: &LogRecord) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -2225,9 +2039,7 @@ impl LogRecords {
     }
 
     fn __delitem__(&self, index: usize) -> PyResult<()> {
-        let mut inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
         if index >= inner.len() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
@@ -2238,17 +2050,13 @@ impl LogRecords {
     }
 
     fn append(&self, item: &LogRecord) -> PyResult<()> {
-        let mut k = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
         k.push(item.inner.clone());
         Ok(())
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        let inner = self.0.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
     }
 }
@@ -2308,77 +2116,59 @@ impl LogRecord {
 
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.time_unix_nano)
     }
 
     #[setter]
     fn set_time_unix_nano(&mut self, new_value: u64) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.time_unix_nano = new_value;
         Ok(())
     }
 
     #[getter]
     fn observed_time_unix_nano(&self) -> PyResult<u64> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.observed_time_unix_nano)
     }
 
     #[setter]
     fn set_observed_time_unix_nano(&mut self, new_value: u64) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.observed_time_unix_nano = new_value;
         Ok(())
     }
 
     #[getter]
     fn severity_number(&self) -> PyResult<i32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.severity_number)
     }
 
     #[setter]
     fn set_severity_number(&mut self, new_value: i32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.severity_number = new_value;
         Ok(())
     }
 
     #[getter]
     fn severity_text(&self) -> PyResult<String> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.severity_text.clone())
     }
 
     #[setter]
     fn set_severity_text(&mut self, new_value: String) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.severity_text = new_value;
         Ok(())
     }
 
     #[getter]
     fn body(&self) -> PyResult<AnyValue> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(AnyValue {
             inner: Arc::new(Mutex::new(Some(v.body.clone()))),
         })
@@ -2386,9 +2176,7 @@ impl LogRecord {
 
     #[setter]
     fn set_body(&mut self, new_value: &AnyValue) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         let inner_value = new_value.inner.lock().unwrap();
         v.body = inner_value.clone().unwrap();
         Ok(())
@@ -2396,9 +2184,7 @@ impl LogRecord {
 
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        let mut binding = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut binding = self.inner.lock().map_err(handle_poison_error)?;
         if binding.attributes_arc.is_some() {
             let attr_arc = binding.attributes_arc.take().unwrap();
             let attr_arc_copy = attr_arc.clone();
@@ -2414,9 +2200,7 @@ impl LogRecord {
 
     #[setter]
     fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
-        let mut inner = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
         let mut new_attrs = Vec::with_capacity(attrs.0.lock().unwrap().len());
         for kv in attrs.0.lock().unwrap().iter() {
             new_attrs.push(kv.clone())
@@ -2428,84 +2212,64 @@ impl LogRecord {
 
     #[getter]
     fn dropped_attributes_count(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.dropped_attributes_count)
     }
 
     #[setter]
     fn set_dropped_attributes_count(&mut self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.dropped_attributes_count = new_value;
         Ok(())
     }
 
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.flags)
     }
 
     #[setter]
     fn set_flags(&mut self, new_value: u32) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.flags = new_value;
         Ok(())
     }
 
     #[getter]
     fn trace_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.trace_id.clone())
     }
 
     #[setter]
     fn set_trace_id(&mut self, new_value: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.trace_id = new_value;
         Ok(())
     }
 
     #[getter]
     fn span_id(&self) -> PyResult<Vec<u8>> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.span_id.clone())
     }
 
     #[setter]
     fn set_span_id(&mut self, new_value: Vec<u8>) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.span_id = new_value;
         Ok(())
     }
     #[getter]
     fn event_name(&self) -> PyResult<String> {
-        let v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(v.event_name.clone())
     }
 
     #[setter]
     fn set_event_name(&mut self, new_value: String) -> PyResult<()> {
-        let mut v = self.inner.lock().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to lock mutex")
-        })?;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
         v.event_name = new_value;
         Ok(())
     }
@@ -2612,10 +2376,13 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    use opentelemetry_proto::tonic::trace::v1;
     use pyo3::ffi::c_str;
     use std::ffi::CString;
     use std::sync::Once;
+    use utilities::otlp::FakeOTLP;
 
     static INIT: Once = Once::new();
 
@@ -3304,7 +3071,7 @@ mod tests {
     #[test]
     fn set_instrumentation_scope() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -3333,7 +3100,7 @@ mod tests {
             let value = value.value.unwrap();
             match attr.key.as_str() {
                 "severity" => match value {
-                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
+                    Value::StringValue(s) => {
                         assert_eq!(s, "WARN");
                     }
                     _ => {
@@ -3350,7 +3117,7 @@ mod tests {
     #[test]
     fn read_and_write_spans() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -3441,7 +3208,7 @@ mod tests {
     #[test]
     fn set_scope_spans_span_test() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -3525,7 +3292,7 @@ mod tests {
     #[test]
     fn set_resource_spans_resource() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -3565,7 +3332,7 @@ mod tests {
     #[test]
     fn set_span_events() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -3614,7 +3381,7 @@ mod tests {
     #[test]
     fn set_scope_spans() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -3668,7 +3435,7 @@ mod tests {
     #[test]
     fn set_spans() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
+        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
         let resource_spans = crate::model::otel_transform::transform_resource_spans(
             export_req.resource_spans[0].clone(),
         );
@@ -4022,5 +3789,190 @@ mod tests {
             }
             _ => panic!("Body value is not the expected string"),
         }
+    }
+
+    #[test]
+    fn traces_delitem_test() {
+        initialize();
+        let av = opentelemetry_proto::tonic::common::v1::ArrayValue {
+            values: vec![
+                opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("first value".to_string())),
+                },
+                opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("second value".to_string())),
+                },
+            ],
+        };
+        let kvlist = opentelemetry_proto::tonic::common::v1::KeyValueList {
+            values: vec![
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "first_key".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::BoolValue(true)),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "second_key".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::StringValue("second_value".to_string())),
+                    }),
+                },
+            ],
+        };
+        let resource = opentelemetry_proto::tonic::resource::v1::Resource {
+            attributes: vec![
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "first_attr".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::KvlistValue(kvlist)),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "second_attr".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::ArrayValue(av)),
+                    }),
+                },
+                opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: "third_attr".to_string(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: Some(Value::StringValue("to_remove_value".to_string())),
+                    }),
+                },
+            ],
+            dropped_attributes_count: 0,
+        };
+
+        let mut spans = FakeOTLP::trace_spans(2);
+        let now_ns = Utc::now().timestamp_nanos_opt().unwrap();
+
+        // Adding additional data here to test __delitem__
+        spans[0].events.push(v1::span::Event {
+            time_unix_nano: now_ns as u64,
+            name: "second test event".to_string(),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+        });
+
+        spans[0].links.push(v1::span::Link {
+            trace_id: vec![5, 5, 5, 5, 5, 5, 5, 5],
+            span_id: vec![6, 6, 6, 6, 6, 6, 6, 6],
+            trace_state: "secondtrace=00f067aa0ba902b7".to_string(),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+            flags: 0,
+        });
+
+        let first_scope_spans = v1::ScopeSpans {
+            scope: None,
+            spans,
+            schema_url: "".to_string(),
+        };
+
+        let second_scope_spans = v1::ScopeSpans {
+            scope: None,
+            spans: vec![],
+            schema_url: "".to_string(),
+        };
+
+        let resource_spans = v1::ResourceSpans {
+            resource: Some(resource),
+            scope_spans: vec![first_scope_spans, second_scope_spans],
+            schema_url: "".to_string(),
+        };
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans =
+            crate::model::otel_transform::transform_resource_spans(resource_spans);
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("traces_delitem_test.py", py, py_resource_spans)
+        })
+        .unwrap();
+
+        let mut resource = r_resource_spans.resource.lock().unwrap();
+        let mut resource_p = resource
+            .take()
+            .map(|r| crate::model::py_transform::transform_resource(r).unwrap())
+            .unwrap();
+
+        assert_eq!(2, resource_p.attributes.len());
+        // Assert the kvlist only has one item now
+        let kvlist = resource_p
+            .attributes
+            .remove(0)
+            .value
+            .unwrap()
+            .value
+            .unwrap();
+        match kvlist {
+            Value::KvlistValue(mut kvl) => {
+                assert_eq!(1, kvl.values.len());
+                let value = kvl.values.remove(0);
+                assert_eq!(value.key, "second_key");
+                let value = value.value.clone().unwrap().value.unwrap();
+                match value {
+                    Value::StringValue(s) => {
+                        assert_eq!(s, "second_value");
+                    }
+                    _ => {
+                        panic!("expected StringValue")
+                    }
+                }
+            }
+            _ => {
+                panic!("expected kvlist")
+            }
+        }
+
+        let arvalue = resource_p
+            .attributes
+            .remove(0)
+            .value
+            .unwrap()
+            .value
+            .unwrap();
+        match arvalue {
+            Value::ArrayValue(mut av) => {
+                assert_eq!(1, av.values.len());
+                let value = av.values.remove(0).value.unwrap();
+                match value {
+                    Value::StringValue(s) => {
+                        assert_eq!(s, "first value")
+                    }
+                    _ => {
+                        panic!("expected StringValue");
+                    }
+                }
+            }
+            _ => {
+                panic!("exected ArrayValue");
+            }
+        }
+
+        // Verify the second scope span has been removed
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans_vec = crate::model::py_transform::transform_spans(scope_spans_vec);
+        assert_eq!(1, scope_spans_vec.len());
+        let scope_spans = scope_spans_vec.remove(0);
+        let mut spans = scope_spans.spans;
+        assert_eq!(1, spans.len());
+        let span = spans.remove(0);
+        assert_eq!(1, span.events.len());
+        assert_eq!(span.events[0].name, "second test event");
+        assert_eq!(1, span.links.len());
+        assert_eq!(span.links[0].trace_state, "secondtrace=00f067aa0ba902b7")
     }
 }
