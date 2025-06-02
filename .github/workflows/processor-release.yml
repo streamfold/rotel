@@ -106,6 +106,8 @@ jobs:
         if: matrix.cross == false
         run: |
           echo "CARGO_BIN=cargo" >> $GITHUB_ENV
+      - name: run test processor-sdk
+        run: $CARGO_BIN test --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
       - name: build
         run: $CARGO_BIN build --release --features pyo3 --locked --target ${{ matrix.target }}
       - name: tar
