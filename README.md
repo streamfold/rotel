@@ -36,11 +36,12 @@ recommended for production use at this time._
 ## Getting Started
 
 To quickly get started with Rotel you can leverage the bundled [Python](https://github.com/streamfold/pyrotel) or
-[NodeJS](https://github.com/streamfold/rotel-nodejs) packages. Or if you'd like to use Rotel directly from Docker, follow these steps:
+[NodeJS](https://github.com/streamfold/rotel-nodejs) packages. Or if you'd like to use Rotel directly from Docker,
+follow these steps:
 
 1. **Running Rotel**
-    - We use the prebuilt docker image for this example, but you can also download a binary from the 
-      [releases](https://github.com/streamfold/rotel/releases) page. 
+    - We use the prebuilt docker image for this example, but you can also download a binary from the
+      [releases](https://github.com/streamfold/rotel/releases) page.
     - Execute Rotel with the following arguments. To debug metrics or logs, add
       an additional `--debug-log metrics|logs`.
    ```bash
@@ -269,6 +270,52 @@ telemetrygen traces --otlp-insecure --duration 1s
 
 You should see demo trace data show up in Axiom.
 
+## Processors
+
+### Python Processor SDK
+
+Rotel includes a Python processor SDK that allows you to write custom processors in Python to modify OpenTelemetry data
+in-flight. The SDK provides interfaces for processing both traces and logs data (metrics coming soon!) through a simple
+Python API.
+
+The processor SDK enables you to:
+
+- Access and modify trace spans, including span data, attributes, events, links and status
+- Process log records, including severity, body content, and associated attributes
+- Modify resource attributes across traces and logs
+- Transform data using custom Python logic before it is exported
+
+Example of a simple trace processor:
+
+```python
+def process(resource_spans):
+    for scope_spans in resource_spans.scope_spans:
+        for span in scope_spans.spans:
+            # Add custom attribute to all spans
+            span.attributes["processed.by"] = "my_processor"
+```
+
+#### Technical Implementation
+
+The SDK is built using [PyO3](https://pyo3.rs), a robust Rust binding for Python that enables seamless interoperability
+between Rust and
+Python code. This architecture provides several benefits:
+
+- **High Performance**: The core data structures remain in Rust memory while exposing a Python-friendly interface,
+  minimizing overhead from data copying and conversions
+- **Memory Safety**: Rust's ownership model and thread safety guarantees are preserved while allowing safe Python access
+  to the data
+- **Type Safety**: PyO3's type system ensures reliable conversions between Rust and Python types
+- **GIL Management**: Automatic handling of Python's Global Interpreter Lock (GIL) for optimal performance in threaded
+  environments
+
+The SDK handles all the necessary conversions between Rust and Python types, making it easy to integrate Python
+processing logic into your Rotel collector pipeline.
+This allows for flexible data transformation and enrichment without modifying the core collector code.
+
+For detailed documentation, examples, and a complete guide to writing processors, see
+the [Python Processor SDK Documentation](rotel_python_processor_sdk/rotel_sdk/README.md).
+
 ## Benchmarks
 
 We have taken the OpenTelemetry Collector benchmark suite and adapted it to run against Rotel. You can find
@@ -288,7 +335,9 @@ The default log level is set to INFO and can be changed with the environment var
 
 ## Docker images
 
-On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following tags:
+On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following
+tags:
+
 * `streamfold/rotel:<release name>`
 * `streamfold/rotel:latest`
 * `streamfold/rotel:sha-<sha>`

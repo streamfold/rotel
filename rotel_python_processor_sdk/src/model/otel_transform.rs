@@ -1,10 +1,9 @@
-use crate::model::RValue::{
+use crate::model::common::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, RVArrayValue, StringValue,
 };
-use crate::model::{
-    RAnyValue, RInstrumentationScope, RKeyValue, RLogRecord, RResourceLogs, RResourceSpans,
-    RScopeLogs, RSpan, RStatus,
-};
+use crate::model::common::*;
+use crate::model::logs::*;
+use crate::model::trace::*;
 use std::sync::{Arc, Mutex};
 
 pub fn transform_resource_spans(
@@ -19,7 +18,7 @@ pub fn transform_resource_spans(
         let resource = rs.resource.unwrap();
         let dropped_attributes_count = resource.dropped_attributes_count;
         let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::RResource {
+        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
             attributes: Arc::new(Mutex::new(kvs.to_owned())),
             dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
         })));
@@ -38,7 +37,7 @@ pub fn transform_resource_spans(
                 dropped_attributes_count: s.dropped_attributes_count,
             })
         }
-        let scope_span = crate::model::RScopeSpans {
+        let scope_span = RScopeSpans {
             scope: Arc::new(Mutex::new(scope)),
             spans: Arc::new(Mutex::new(vec![])),
             schema_url: ss.schema_url,
@@ -92,7 +91,7 @@ pub fn transform_resource_logs(
         let resource = rl.resource.unwrap();
         let dropped_attributes_count = resource.dropped_attributes_count;
         let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::RResource {
+        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
             attributes: Arc::new(Mutex::new(kvs.to_owned())),
             dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
         })));
@@ -224,7 +223,7 @@ pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> RAn
                     values.push(Arc::new(Mutex::new(Some(conv))));
                 }
                 RAnyValue {
-                    value: Arc::new(Mutex::new(Some(RVArrayValue(crate::model::RArrayValue {
+                    value: Arc::new(Mutex::new(Some(RVArrayValue(RArrayValue {
                         values: Arc::new(Mutex::new(values)),
                     })))),
                 }
@@ -242,11 +241,9 @@ pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> RAn
                     })
                 }
                 RAnyValue {
-                    value: Arc::new(Mutex::new(Some(crate::model::RValue::KvListValue(
-                        crate::model::RKeyValueList {
-                            values: Arc::new(Mutex::new(key_values)),
-                        },
-                    )))),
+                    value: Arc::new(Mutex::new(Some(RValue::KvListValue(RKeyValueList {
+                        values: Arc::new(Mutex::new(key_values)),
+                    })))),
                 }
             }
             opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b) => RAnyValue {

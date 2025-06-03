@@ -1,10 +1,9 @@
-use crate::model::RValue::{
-    BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
-};
-use crate::model::{
-    RAnyValue, REvent, RInstrumentationScope, RKeyValue, RLink, RLogRecord, RResource, RScopeLogs,
-    RScopeSpans, RSpan,
-};
+use crate::model::common::RValue::*;
+use crate::model::common::*;
+use crate::model::logs::*;
+use crate::model::trace::*;
+
+use crate::model::resource::RResource;
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::mem;
 use std::sync::{Arc, Mutex};
@@ -223,11 +222,10 @@ fn convert_attributes(
         let mut any_value = attr.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
-            None => new_attrs
-                .push(opentelemetry_proto::tonic::common::v1::KeyValue { key, value: None }),
+            None => new_attrs.push(KeyValue { key, value: None }),
             Some(v) => {
                 let converted = convert_value(v);
-                new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                new_attrs.push(KeyValue {
                     key,
                     value: Some(converted),
                 })
@@ -252,11 +250,10 @@ pub fn transform_resource(
         let mut any_value = kv.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
-            None => new_attrs
-                .push(opentelemetry_proto::tonic::common::v1::KeyValue { key, value: None }),
+            None => new_attrs.push(KeyValue { key, value: None }),
             Some(v) => {
                 let converted = convert_value(v);
-                new_attrs.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                new_attrs.push(KeyValue {
                     key,
                     value: Some(converted),
                 })
@@ -325,7 +322,7 @@ pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::An
                 if value.is_some() {
                     new_value = Some(convert_value(value.unwrap()));
                 }
-                values.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                values.push(KeyValue {
                     key,
                     value: new_value,
                 });
