@@ -11,7 +11,7 @@ pub struct XRayExporterArgs {
     )]
     pub xray_exporter_region: crate::exporters::xray::Region,
 
-    /// Datadog Exporter custom endpoint override
+    /// X-Ray Exporter custom endpoint override
     #[arg(long, env = "ROTEL_XRAY_EXPORTER_CUSTOM_ENDPOINT")]
     pub xray_exporter_custom_endpoint: Option<String>,
 }
