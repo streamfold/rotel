@@ -3,7 +3,7 @@ use crate::model::common::*;
 use crate::model::logs::*;
 use crate::model::trace::*;
 
-use crate::model::RResource;
+use crate::model::resource::RResource;
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::mem;
 use std::sync::{Arc, Mutex};

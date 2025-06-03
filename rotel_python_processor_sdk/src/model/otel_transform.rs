@@ -18,7 +18,7 @@ pub fn transform_resource_spans(
         let resource = rs.resource.unwrap();
         let dropped_attributes_count = resource.dropped_attributes_count;
         let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::RResource {
+        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
             attributes: Arc::new(Mutex::new(kvs.to_owned())),
             dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
         })));
@@ -91,7 +91,7 @@ pub fn transform_resource_logs(
         let resource = rl.resource.unwrap();
         let dropped_attributes_count = resource.dropped_attributes_count;
         let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::RResource {
+        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
             attributes: Arc::new(Mutex::new(kvs.to_owned())),
             dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
         })));

@@ -1,4 +1,4 @@
-use crate::py;
+use crate::py::common::*;
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 #[allow(deprecated)]
 use pyo3::{IntoPy, PyObject, PyResult, Python};
@@ -29,7 +29,7 @@ pub struct RArrayValue {
 #[allow(deprecated)]
 impl RArrayValue {
     pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(py::ArrayValue(self.values.clone()).into_py(py))
+        Ok(ArrayValue(self.values.clone()).into_py(py))
     }
 }
 
@@ -41,7 +41,7 @@ pub struct RKeyValueList {
 #[allow(deprecated)]
 impl RKeyValueList {
     pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
-        Ok(py::KeyValueList(self.values.clone()).into_py(py))
+        Ok(KeyValueList(self.values.clone()).into_py(py))
     }
 }
 

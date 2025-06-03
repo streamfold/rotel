@@ -2,23 +2,19 @@ pub mod common;
 pub mod logs;
 pub mod otel_transform;
 pub mod py_transform;
+pub mod resource;
 pub mod trace;
 
-use crate::model::common::RKeyValue;
-use crate::py::{rotel_sdk, ResourceLogs, ResourceSpans};
+use crate::py::logs::*;
+use crate::py::rotel_sdk;
+use crate::py::trace::*;
 use pyo3::prelude::*;
 use std::ffi::CString;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Once};
 use tower::BoxError;
 use tracing::error;
 
 static PROCESSOR_INIT: Once = Once::new();
-
-#[derive(Debug, Clone)]
-pub struct RResource {
-    pub attributes: Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>,
-    pub dropped_attributes_count: Arc<Mutex<u32>>,
-}
 
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
     PROCESSOR_INIT.call_once(|| {

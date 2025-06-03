@@ -1,5 +1,5 @@
 use crate::model::common::*;
-use crate::model::RResource;
+use crate::model::resource::RResource;
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use opentelemetry_proto::tonic::trace::v1::span::{Event, Link};
 use std::sync::{Arc, Mutex};
