@@ -288,7 +288,7 @@ impl TraceTransformer {
                         validate_value(s, ValueType::HttpRequest, &trace_id)?;
                         request.insert(
                             key.strip_prefix("http.request.").unwrap().to_string(),
-                            json!(value),
+                            json!(s),
                         );
                     }
                 }
