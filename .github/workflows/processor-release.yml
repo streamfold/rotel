@@ -57,6 +57,21 @@ jobs:
             runner: macos-14
             os: macos
             cross: false
+            python-version: "3.10"
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+            cross: false
+            python-version: 3.11
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+            cross: false
+            python-version: 3.12
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+            cross: false
             python-version: 3.13
     env:
       TARGET: ${{ matrix.target }}
@@ -71,23 +86,23 @@ jobs:
       - name: install protoc macos
         if: matrix.os == 'macos'
         run: brew install protobuf
-      - name: update linux x86_64 python 3.10
-        if: matrix.os == 'ubuntu' && matrix.python-version == '3.10'
+      - name: update python 3.10
+        if: matrix.python-version == '3.10'
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-      - name: update linux x86_64 python 3.11
-        if: matrix.os == 'ubuntu' && matrix.python-version == '3.11'
+      - name: update python 3.11
+        if: matrix.python-version == '3.11'
         uses: actions/setup-python@v5
         with:
           python-version: 3.11
-      - name: update linux x86_64 python 3.12
-        if: matrix.os == 'ubuntu' && matrix.python-version == '3.12'
+      - name: update python 3.12
+        if: matrix.python-version == '3.12'
         uses: actions/setup-python@v5
         with:
           python-version: 3.12
-      - name: update linux x86_64 python 3.13
-        if: matrix.os == 'ubuntu' && matrix.python-version == '3.13'
+      - name: update python 3.13
+        if: matrix.python-version == '3.13'
         uses: actions/setup-python@v5
         with:
           python-version: 3.13
