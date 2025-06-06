@@ -116,20 +116,6 @@ impl AnyValue {
         v.replace(vv.clone().unwrap());
         Ok(())
     }
-    #[getter]
-    #[allow(deprecated)]
-    fn string_value<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
-        let v = self.inner.lock().map_err(handle_poison_error)?;
-        let binding = v.clone().unwrap().value.clone();
-        let bind_lock = binding.lock();
-        let x = match bind_lock.unwrap().clone() {
-            Some(StringValue(s)) => Ok(s.into_py(py)),
-            None => Ok(py.None()),
-            _ => Ok(py.None()),
-        };
-        x // to avoid dropping
-    }
-
     #[setter]
     fn set_string_value(&mut self, new_value: &str) -> PyResult<()> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
