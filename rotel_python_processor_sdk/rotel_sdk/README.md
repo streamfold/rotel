@@ -79,7 +79,7 @@ from rotel_sdk.open_telemetry.common.v1 import KeyValue
 from rotel_sdk.open_telemetry.trace.v1 import ResourceSpans
 
 
-def process(resource_spans: ResourceSpans):
+def process_spans(resource_spans: ResourceSpans):
     resource = resource_spans.resource
     # If resource is None, we'll create a new one to store our attributes, otherwise we'll append to the existing Resource
     if resource is None:
@@ -119,7 +119,7 @@ from rotel_sdk.open_telemetry.logs.v1 import ResourceLogs
 email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
 
 
-def process(resource_logs: ResourceLogs):
+def process_logs(resource_logs: ResourceLogs):
     for log_record in itertools.chain.from_iterable(
             scope_log.log_records for scope_log in resource_logs.scope_logs
     ):
@@ -138,9 +138,7 @@ def redact_emails(text: str):
     Returns:
         str: The string with email addresses replaced by '*** redacted'
     """
-    new_body = AnyValue()
-    new_body.string_value = re.sub(email_pattern, '**[email redacted]**', text)
-    return new_body
+    return AnyValue(re.sub(email_pattern, '**[email redacted]**', text))
 ```
 
 Now start rotel and the processor with the following command and use a load generator to send some log messages to rotel

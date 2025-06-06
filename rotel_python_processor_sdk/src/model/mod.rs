@@ -52,7 +52,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
         };
         let res = Python::with_gil(|py| -> PyResult<()> {
             let py_mod = PyModule::import(py, processor)?;
-            let result_py_object = py_mod.getattr("process")?.call1((spans,));
+            let result_py_object = py_mod.getattr("process_spans")?.call1((spans,));
             if result_py_object.is_err() {
                 let err = result_py_object.unwrap_err();
                 return Err(err);
@@ -99,7 +99,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
         };
         let res = Python::with_gil(|py| -> PyResult<()> {
             let py_mod = PyModule::import(py, processor)?;
-            let result_py_object = py_mod.getattr("process")?.call1((spans,));
+            let result_py_object = py_mod.getattr("process_logs")?.call1((spans,));
             if result_py_object.is_err() {
                 let err = result_py_object.unwrap_err();
                 return Err(err);

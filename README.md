@@ -289,11 +289,11 @@ The processor SDK enables you to:
 Example of a simple trace processor:
 
 ```python
-def process(resource_spans):
+def process_spans(resource_spans):
     for scope_spans in resource_spans.scope_spans:
         for span in scope_spans.spans:
             # Add custom attribute to all spans
-            span.attributes["processed.by"] = "my_processor"
+            span.attributes.append(KeyValue("processed.by", AnyValue("my_processor")))
 ```
 
 #### Technical Implementation

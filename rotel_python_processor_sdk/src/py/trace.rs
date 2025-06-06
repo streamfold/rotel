@@ -2,6 +2,7 @@ use crate::model::common::RInstrumentationScope;
 use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::model::trace::{REvent, RLink, RScopeSpans, RSpan, RStatus};
+use crate::py::common::KeyValue;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
@@ -439,14 +440,16 @@ impl Span {
         }
     }
     #[setter]
-    fn set_attributes(&mut self, attrs: &AttributesList) -> PyResult<()> {
+    fn set_attributes(&mut self, attrs: Vec<KeyValue>) -> PyResult<()> {
         let mut inner = self.inner.lock().map_err(handle_poison_error)?;
-        let mut new_attrs = Vec::with_capacity(attrs.0.lock().unwrap().len());
-        for kv in attrs.0.lock().unwrap().iter() {
-            new_attrs.push(kv.clone())
+        let mut new_attrs = Vec::with_capacity(attrs.len());
+        for kv in attrs {
+            let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
+            new_attrs.push(kv_lock.clone());
         }
-        let new_attrs = Arc::new(Mutex::new(new_attrs));
-        inner.attributes_arc.replace(new_attrs.clone());
+        inner
+            .attributes_arc
+            .replace(Arc::new(Mutex::new(new_attrs)));
         Ok(())
     }
     #[getter]

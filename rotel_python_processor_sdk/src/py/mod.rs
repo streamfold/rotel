@@ -140,6 +140,15 @@ mod tests {
     }
 
     fn run_script<'py, T: IntoPyObject<'py>>(script: &str, py: Python<'py>, pv: T) -> PyResult<()> {
+        _run_script(script, py, pv, None)
+    }
+
+    fn _run_script<'py, T: IntoPyObject<'py>>(
+        script: &str,
+        py: Python<'py>,
+        pv: T,
+        process_fn: Option<String>,
+    ) -> PyResult<()> {
         let sys = py.import("sys")?;
         sys.setattr("stdout", LoggingStdout.into_py(py))?;
         let code = std::fs::read_to_string(format!("./python_tests/{}", script))?;
@@ -150,7 +159,9 @@ mod tests {
             c_str!("example"),
         )?;
 
-        let result_py_object = py_mod.getattr("process")?.call1((pv,));
+        let result_py_object = py_mod
+            .getattr(process_fn.unwrap_or("process".to_string()))?
+            .call1((pv,));
         if result_py_object.is_err() {
             let err = result_py_object.unwrap_err();
             return Err(err);
@@ -1801,7 +1812,7 @@ mod tests {
                 }),
             },
         ];
-        log_request.resource_logs[0].scope_logs[0].log_records[0].attributes = attrs;
+        log_request.resource_logs[0].scope_logs[0].log_records[0].attributes = attrs.clone();
 
         // Transform the protobuf ResourceLogs into our internal RResourceLogs
         let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
@@ -1817,7 +1828,12 @@ mod tests {
 
         // Execute the Python script that removes a log record
         Python::with_gil(|py| -> PyResult<()> {
-            run_script("attributes_processor_test.py", py, py_resource_logs)
+            _run_script(
+                "attributes_processor_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
         })
         .unwrap();
 
@@ -1828,92 +1844,145 @@ mod tests {
         let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
 
         let log_record = scope_logs.pop().unwrap().log_records.pop().unwrap();
-        let mut attrs: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
-            log_record
-                .attributes
-                .into_iter()
-                .map(|kv| (kv.key, kv.value))
-                .collect();
+        let attrs_to_verify: HashMap<
+            String,
+            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
+        > = log_record
+            .attributes
+            .into_iter()
+            .map(|kv| (kv.key, kv.value))
+            .collect();
 
-        let host_name = attrs.remove("host.name").unwrap();
-        match host_name.unwrap().value.unwrap() {
-            Value::StringValue(h) => {
-                assert_eq!(h, "my-server-1");
+        let verify_attrs = |mut attrs: HashMap<
+            String,
+            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
+        >| {
+            let host_name = attrs.remove("host.name").unwrap();
+            match host_name.unwrap().value.unwrap() {
+                Value::StringValue(h) => {
+                    assert_eq!(h, "my-server-1");
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let http_status_code = attrs.remove("http.status_code").unwrap();
-        match http_status_code.unwrap().value.unwrap() {
-            Value::StringValue(c) => {
-                assert_eq!(c, "OK");
+            let http_status_code = attrs.remove("http.status_code").unwrap();
+            match http_status_code.unwrap().value.unwrap() {
+                Value::StringValue(c) => {
+                    assert_eq!(c, "OK");
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let env = attrs.remove("env").unwrap();
-        match env.unwrap().value.unwrap() {
-            Value::StringValue(e) => {
-                assert_eq!(e, "production");
+            let env = attrs.remove("env").unwrap();
+            match env.unwrap().value.unwrap() {
+                Value::StringValue(e) => {
+                    assert_eq!(e, "production");
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let email = attrs.remove("email").unwrap();
-        match email.unwrap().value.unwrap() {
-            Value::StringValue(h) => {
-                assert_eq!(h, "test@example.com");
+            let email = attrs.remove("email").unwrap();
+            match email.unwrap().value.unwrap() {
+                Value::StringValue(h) => {
+                    assert_eq!(h, "test@example.com");
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let user_id = attrs.remove("user.id").unwrap();
-        match user_id.unwrap().value.unwrap() {
-            Value::StringValue(s) => {
-                assert_eq!(
-                    s,
-                    "5942d94f524882e0f29bf0a1e5a6dcc952eea1c0c21dd3588a3fc7db9716db0c"
-                );
+            let user_id = attrs.remove("user.id").unwrap();
+            match user_id.unwrap().value.unwrap() {
+                Value::StringValue(s) => {
+                    assert_eq!(
+                        s,
+                        "5942d94f524882e0f29bf0a1e5a6dcc952eea1c0c21dd3588a3fc7db9716db0c"
+                    );
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let trace_id = attrs.remove("trace.id").unwrap();
-        match trace_id.unwrap().value.unwrap() {
-            Value::StringValue(s) => {
-                assert_eq!(
-                    s,
-                    "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f"
-                );
+            let trace_id = attrs.remove("trace.id").unwrap();
+            match trace_id.unwrap().value.unwrap() {
+                Value::StringValue(s) => {
+                    assert_eq!(
+                        s,
+                        "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f"
+                    );
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let id = attrs.remove("extracted_id").unwrap();
-        match id.unwrap().value.unwrap() {
-            Value::StringValue(s) => {
-                assert_eq!(s, "123");
+            let id = attrs.remove("extracted_id").unwrap();
+            match id.unwrap().value.unwrap() {
+                Value::StringValue(s) => {
+                    assert_eq!(s, "123");
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let temp_str_int = attrs.remove("temp_str_int").unwrap();
-        match temp_str_int.unwrap().value.unwrap() {
-            Value::IntValue(i) => {
-                assert_eq!(i, 123);
+            let temp_str_int = attrs.remove("temp_str_int").unwrap();
+            match temp_str_int.unwrap().value.unwrap() {
+                Value::IntValue(i) => {
+                    assert_eq!(i, 123);
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let temp_str_bool = attrs.remove("temp_str_bool").unwrap();
-        match temp_str_bool.unwrap().value.unwrap() {
-            Value::BoolValue(b) => {
-                assert_eq!(b, true);
+            let temp_str_bool = attrs.remove("temp_str_bool").unwrap();
+            match temp_str_bool.unwrap().value.unwrap() {
+                Value::BoolValue(b) => {
+                    assert_eq!(b, true);
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let temp_str_float = attrs.remove("temp_str_float").unwrap();
-        match temp_str_float.unwrap().value.unwrap() {
-            Value::DoubleValue(d) => {
-                assert_eq!(d, 10.0);
+            let temp_str_float = attrs.remove("temp_str_float").unwrap();
+            match temp_str_float.unwrap().value.unwrap() {
+                Value::DoubleValue(d) => {
+                    assert_eq!(d, 10.0);
+                }
+                _ => panic!("Unexpected value type"),
             }
-            _ => panic!("Unexpected value type"),
-        }
-        let path = attrs.remove("path");
-        assert_eq!(path, None);
-        let super_secret = attrs.remove("super.secret");
-        assert_eq!(super_secret, None);
+            let path = attrs.remove("path");
+            assert_eq!(path, None);
+            let super_secret = attrs.remove("super.secret");
+            assert_eq!(super_secret, None);
+        };
+
+        verify_attrs(attrs_to_verify);
+
+        let mut trace_request = FakeOTLP::trace_service_request();
+        trace_request.resource_spans[0].scope_spans[0].spans[0].attributes = attrs.clone();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans = crate::model::otel_transform::transform_resource_spans(
+            trace_request.resource_spans[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "attributes_processor_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+        let attrs_to_verify: HashMap<
+            String,
+            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
+        > = span
+            .attributes
+            .into_iter()
+            .map(|kv| (kv.key, kv.value))
+            .collect();
+
+        verify_attrs(attrs_to_verify);
     }
 }
