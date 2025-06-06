@@ -1,3 +1,34 @@
+"""
+The AttributesProcessor provides OpenTelemetry-compatible attribute processing capabilities for modifying
+attributes on logs and spans. It supports inserting, updating, upserting, deleting, hashing, extracting,
+and converting attribute values.
+
+See attributes_processor_test.py for complete usage examples. Basic usage:
+
+    # Create a config with desired attribute actions
+    processor_config = Config(
+        actions=[
+            # Insert new attribute if it doesn't exist
+            ActionKeyValue(key="host.name", action=Action.INSERT, value="my-server-1"),
+            # Update existing attribute
+            ActionKeyValue(key="http.status_code", action=Action.UPDATE, value="OK"),
+            # Hash sensitive data
+            ActionKeyValue(key="user.id", action=Action.HASH),
+            # Delete attributes matching pattern
+            ActionKeyValue(key="", action=Action.DELETE, regex_pattern=r".*\.secret$"),
+            # Extract values using regex
+            ActionKeyValue(key="raw_data", action=Action.EXTRACT,
+                         regex_pattern=r"id:(?P<extracted_id>\d+)"),
+            # Convert attribute types
+            ActionKeyValue(key="temp_str_int", action=Action.CONVERT, converted_type="int"),
+        ]
+    )
+
+    # Create and use processor
+    processor = AttributeProcessor(processor_config)
+    modified_attrs = processor.process_attributes(original_attrs)
+"""
+
 import hashlib
 import re
 from enum import Enum
