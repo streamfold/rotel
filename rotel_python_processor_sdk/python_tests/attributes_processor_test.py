@@ -192,10 +192,10 @@ class AttributeProcessor:
         #    return mock_context.get(action_kv.from_context)
         return None
 
-    def _hash_attribute(self, value: Any) -> AnyValue:
+    def _hash_attribute(self, value: Any) -> AnyValue | None:
         """
         Calculates the SHA-256 hash of a value.
-        Mimics `sha2Hasher` from the Go implementation.
+        Mimics `sha2Hasher` from the Go implementation
         Handles various types by converting them to string representation first.
         """
         if value is None:
@@ -205,7 +205,7 @@ class AttributeProcessor:
         s = str(value).encode('utf-8')
         return AnyValue(hashlib.sha256(s).hexdigest())
 
-    def _convert_value(self, value: Any, target_type: str) -> AnyValue:
+    def _convert_value(self, value: Any, target_type: str) -> AnyValue | None:
         """
         Converts a value to the specified target type.
         Mimics `convertValue` from the Go implementation.

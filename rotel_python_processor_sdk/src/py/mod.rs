@@ -95,7 +95,6 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     common_v1_module.add_class::<KeyValueList>()?;
     common_v1_module.add_class::<KeyValue>()?;
     common_v1_module.add_class::<Attributes>()?;
-    common_v1_module.add_class::<AttributesList>()?;
     common_v1_module.add_class::<InstrumentationScope>()?;
 
     resource_v1_module.add_class::<Resource>()?;
