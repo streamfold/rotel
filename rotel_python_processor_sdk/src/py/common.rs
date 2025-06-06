@@ -7,6 +7,7 @@ use crate::model::common::{
 use crate::model::otel_transform::convert_attributes;
 use crate::py::{handle_poison_error, AttributesList};
 use pyo3::exceptions::PyRuntimeError;
+use pyo3::types::{PyAnyMethods, PyBool, PyBytes, PyFloat, PyInt, PyString};
 #[allow(deprecated)]
 use pyo3::{pyclass, pymethods, IntoPy, Py, PyErr, PyObject, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
@@ -20,12 +21,75 @@ pub struct AnyValue {
 #[pymethods]
 impl AnyValue {
     #[new]
-    fn new() -> PyResult<Self> {
-        Ok(AnyValue {
-            inner: Arc::new(Mutex::new(Some(RAnyValue {
-                value: Arc::new(Mutex::new(Some(StringValue("".to_string())))),
-            }))),
-        })
+    #[pyo3(signature = (optional_value=None))]
+    fn new(py: Python, optional_value: Option<PyObject>) -> PyResult<Self> {
+        if let Some(v) = optional_value {
+            let bound_obj = v.bind(py);
+            if let Ok(s) = bound_obj.downcast::<PyString>() {
+                let value: String = s.extract()?; // Extract the i64 value
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(StringValue(value)))),
+                    }))),
+                })
+                // VERY IMPORTANT! The ordering of checking downcast, with PyBool first and PyInt
+                // second is critical. This ensures we don't downcast a python value of True to an i64
+            } else if let Ok(b) = bound_obj.downcast_exact::<PyBool>() {
+                let value: bool = b.extract()?;
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(BoolValue(value)))),
+                    }))),
+                })
+            } else if let Ok(i) = bound_obj.downcast::<PyInt>() {
+                let value: i64 = i.extract()?;
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(IntValue(value)))),
+                    }))),
+                })
+            } else if let Ok(f) = bound_obj.downcast::<PyFloat>() {
+                let value: f64 = f.extract()?; // Extract the i64 value
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(DoubleValue(value)))),
+                    }))),
+                })
+            } else if let Ok(b) = bound_obj.downcast::<PyBytes>() {
+                let value: Vec<u8> = b.extract()?;
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(BytesValue(value)))),
+                    }))),
+                })
+            } else if let Ok(v) = bound_obj.downcast::<KeyValueList>() {
+                let value: KeyValueList = v.extract()?;
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(KvListValue(RKeyValueList {
+                            values: value.0.clone(),
+                        })))),
+                    }))),
+                })
+            } else if let Ok(v) = bound_obj.downcast::<ArrayValue>() {
+                let value: ArrayValue = v.extract()?;
+                Ok(AnyValue {
+                    inner: Arc::new(Mutex::new(Some(RAnyValue {
+                        value: Arc::new(Mutex::new(Some(RVArrayValue(RArrayValue {
+                            values: value.0.clone(),
+                        })))),
+                    }))),
+                })
+            } else {
+                return Err(PyErr::new::<PyRuntimeError, _>("Unsupported AnyValue type"));
+            }
+        } else {
+            Ok(AnyValue {
+                inner: Arc::new(Mutex::new(Some(RAnyValue {
+                    value: Arc::new(Mutex::new(Some(StringValue("".to_string())))),
+                }))),
+            })
+        }
     }
     #[getter]
     #[allow(deprecated)]
@@ -44,6 +108,13 @@ impl AnyValue {
             None => Ok(py.None()),
         };
         x // to avoid dropping
+    }
+    #[setter]
+    fn set_value(&mut self, value: &AnyValue) -> PyResult<()> {
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
+        let vv = value.inner.lock().map_err(handle_poison_error)?;
+        v.replace(vv.clone().unwrap());
+        Ok(())
     }
     #[setter]
     fn set_string_value(&mut self, new_value: &str) -> PyResult<()> {
@@ -315,6 +386,16 @@ pub struct KeyValue {
 
 #[pymethods]
 impl KeyValue {
+    #[new]
+    fn new(key: String, value: &AnyValue) -> PyResult<Self> {
+        let key = Arc::new(Mutex::new(key.to_string()));
+        Ok(KeyValue {
+            inner: Arc::new(Mutex::new(RKeyValue {
+                key,
+                value: value.inner.clone(),
+            })),
+        })
+    }
     // Helper methods creating new inner value types
     #[staticmethod]
     fn new_string_value(key: &str, value: &str) -> PyResult<KeyValue> {

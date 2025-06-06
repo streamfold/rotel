@@ -5,6 +5,12 @@ class KeyValue:
     """
     KeyValue is a key-value pair that is used to store Span attributes, Link attributes, etc.
     """
+
+    def __init__(self, key: str, value: AnyValue): ...
+
+    """
+    Constructs a new KeyValue object.
+    """
     key: str
     """
     The key of the key-value pair.
@@ -127,6 +133,12 @@ class KeyValueList:
 class AnyValue:
     """
     AnyValue is used to represent any type of attribute value. AnyValue may contain a primitive value such as a string or integer or it may contain an arbitrary nested object containing arrays, key-value lists and primitives.
+    """
+
+    def __init__(self, value: str | int | float | bytes | bool | KeyValueList | ArrayValue | None = None): ...
+
+    """
+    Constructs a new AnyValue object.
     """
     value: Optional[Any]
 
