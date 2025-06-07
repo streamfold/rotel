@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::aws_api::config::AwsConfig;
 /// Provides functionality for exporting telemetry data via OTLP protocol
 ///
 /// This module contains the core OTLP exporter implementation that handles:
@@ -14,7 +15,8 @@ use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
 use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
-use crate::exporters::otlp::{errors, get_meter, request};
+use crate::exporters::otlp::signer::{AwsSigv4RequestSigner, RequestSigner};
+use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
 use crate::exporters::retry::RetryPolicy;
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
@@ -69,7 +71,12 @@ pub fn build_traces_exporter(
     trace_rx: BoundedReceiver<Vec<ResourceSpans>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
-    Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
+    Exporter<
+        ResourceSpans,
+        ExportTraceServiceRequest,
+        AwsSigv4RequestSigner,
+        ExportTraceServiceResponse,
+    >,
     Box<dyn Error + Send + Sync>,
 > {
     let sent = get_meter()
@@ -96,7 +103,8 @@ pub fn build_traces_exporter(
         errors::is_retryable_error,
     );
 
-    let req_builder = request::build_traces(&traces_config, send_failed)?;
+    let signer = get_signer(&traces_config);
+    let req_builder = request::build_traces(&traces_config, send_failed, signer)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -113,6 +121,16 @@ pub fn build_traces_exporter(
     ))
 }
 
+fn get_signer(cfg: &OTLPExporterTracesConfig) -> Option<AwsSigv4RequestSigner> {
+    match cfg.authenticator {
+        Some(Authenticator::Sigv4auth) => {
+            let cfg = AwsConfig::from_env();
+            Some(AwsSigv4RequestSigner::new(cfg))
+        }
+        _ => None,
+    }
+}
+
 /// Creates a configured OTLP metrics exporter
 ///
 /// # Arguments
@@ -126,7 +144,12 @@ pub fn build_metrics_exporter(
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
-    Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
+    Exporter<
+        ResourceMetrics,
+        ExportMetricsServiceRequest,
+        AwsSigv4RequestSigner,
+        ExportMetricsServiceResponse,
+    >,
     Box<dyn Error + Send + Sync>,
 > {
     let sent = get_meter()
@@ -163,7 +186,12 @@ pub fn build_logs_exporter(
     logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
-    Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
+    Exporter<
+        ResourceLogs,
+        ExportLogsServiceRequest,
+        AwsSigv4RequestSigner,
+        ExportLogsServiceResponse,
+    >,
     Box<dyn Error + Send + Sync>,
 > {
     let sent = get_meter()
@@ -188,7 +216,8 @@ pub fn build_logs_exporter(
     let retry_policy =
         RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
 
-    let req_builder = request::build_logs(&logs_config, send_failed)?;
+    let signer = get_signer(&logs_config);
+    let req_builder = request::build_logs(&logs_config, send_failed, signer)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -218,7 +247,12 @@ pub fn build_internal_metrics_exporter(
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
-    Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
+    Exporter<
+        ResourceMetrics,
+        ExportMetricsServiceRequest,
+        AwsSigv4RequestSigner,
+        ExportMetricsServiceResponse,
+    >,
     Box<dyn Error + Send + Sync>,
 > {
     let sent = RotelCounter::NoOpCounter;
@@ -239,7 +273,12 @@ fn _build_metrics_exporter(
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
-    Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
+    Exporter<
+        ResourceMetrics,
+        ExportMetricsServiceRequest,
+        AwsSigv4RequestSigner,
+        ExportMetricsServiceResponse,
+    >,
     Box<dyn Error + Send + Sync>,
 > {
     let tls_config = metrics_config.tls_cfg_builder.clone().build()?;
@@ -254,7 +293,8 @@ fn _build_metrics_exporter(
         errors::is_retryable_error,
     );
 
-    let req_builder = request::build_metrics(&metrics_config, send_failed)?;
+    let signer = get_signer(&metrics_config);
+    let req_builder = request::build_metrics(&metrics_config, send_failed, signer)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -277,15 +317,16 @@ fn _build_metrics_exporter(
 /// * `Resource` - The telemetry resource type (spans or metrics)
 /// * `Request` - The OTLP request type
 /// * `Response` - The OTLP response type
-pub struct Exporter<Resource, Request, Response>
+pub struct Exporter<Resource, Request, Signer, Response>
 where
     Response: prost::Message + std::fmt::Debug + Default + Send + 'static,
     Resource: prost::Message + std::fmt::Debug + Send + 'static,
     Request: prost::Message + OTLPFrom<Vec<Resource>> + 'static,
+    Signer: Clone,
 {
     type_name: String,
     rx: BoundedReceiver<Vec<Resource>>,
-    req_builder: RequestBuilder<Request>,
+    req_builder: RequestBuilder<Request, Signer>,
     encoding_futures: FuturesUnordered<EncodingFuture>,
     export_futures: FuturesUnordered<ExportFuture<Response>>,
     svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
@@ -294,12 +335,13 @@ where
     flush_receiver: Option<FlushReceiver>,
 }
 
-impl<Resource, Request, Response> Exporter<Resource, Request, Response>
+impl<Resource, Request, Signer, Response> Exporter<Resource, Request, Signer, Response>
 where
     Response: prost::Message + std::fmt::Debug + Clone + Default + Send + 'static,
     Resource: prost::Message + std::fmt::Debug + Clone + Send + 'static,
     Request: prost::Message + OTLPFrom<Vec<Resource>> + Clone + 'static,
     [Resource]: BatchSizer,
+    Signer: RequestSigner + Clone + Send + 'static,
 {
     /// Creates a new Exporter instance
     ///
@@ -311,7 +353,7 @@ where
     pub fn new(
         type_name: String,
         svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
-        req_builder: RequestBuilder<Request>,
+        req_builder: RequestBuilder<Request, Signer>,
         rx: BoundedReceiver<Vec<Resource>>,
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,

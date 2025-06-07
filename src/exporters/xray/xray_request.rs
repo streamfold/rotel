@@ -71,13 +71,15 @@ impl<'a> XRayRequestBuilder<'a> {
 
         let data = json!({
         "TraceSegmentDocuments": segment_strings
-        });
+        })
+        .to_string();
+        let data = Bytes::from(data.into_bytes());
 
         let signed_request = self.signer.sign(
             self.uri.clone(),
             Method::POST,
             self.base_headers.clone(),
-            data.to_string().into_bytes(),
+            data,
         );
         match signed_request {
             Ok(r) => Ok(r),
