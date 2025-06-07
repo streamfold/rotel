@@ -10,14 +10,10 @@ pub fn parse_aws_hostname(hostname: &str) -> Option<AwsService> {
     // Pattern to match: service.region.amazonaws.com
     let re = Regex::new(r"^([a-zA-Z0-9-]+)\.([a-zA-Z0-9-]+)\.amazonaws\.com$").unwrap();
 
-    if let Some(caps) = re.captures(hostname) {
-        Some(AwsService {
-            service: caps[1].to_string(),
-            region: caps[2].to_string(),
-        })
-    } else {
-        None
-    }
+    re.captures(hostname).map(|caps| AwsService {
+        service: caps[1].to_string(),
+        region: caps[2].to_string(),
+    })
 }
 
 #[cfg(test)]
