@@ -50,7 +50,7 @@ const LOGS_RELATIVE_HTTP_PATH: &str = "v1/logs";
 #[derive(Clone)]
 pub struct RequestBuilder<T, Signer>
 where
-    Signer: std::clone::Clone,
+    Signer: Clone,
 {
     config: RequestBuilderConfig,
     _phantom: PhantomData<T>,
