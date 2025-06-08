@@ -6,10 +6,15 @@ use http::{HeaderMap, Method, Request, Uri};
 use http_body_util::Full;
 use tower::BoxError;
 
+pub trait RequestSignerBuilder {
+    type Signer;
+
+    fn build(&self, uri: &str) -> Result<Self::Signer, BoxError>;
+}
+
 pub trait RequestSigner {
     fn sign(
         &self,
-        uri: &str,
         method: Method,
         headers: HeaderMap,
         body: Bytes,
@@ -17,24 +22,20 @@ pub trait RequestSigner {
 }
 
 #[derive(Clone)]
-pub struct AwsSigv4RequestSigner {
+pub struct AwsSigv4RequestSignerBuilder {
     config: AwsConfig,
 }
 
-impl AwsSigv4RequestSigner {
+impl AwsSigv4RequestSignerBuilder {
     pub fn new(config: AwsConfig) -> Self {
         Self { config }
     }
 }
 
-impl RequestSigner for AwsSigv4RequestSigner {
-    fn sign(
-        &self,
-        uri: &str,
-        method: Method,
-        headers: HeaderMap,
-        body: Bytes,
-    ) -> Result<Request<Full<Bytes>>, BoxError> {
+impl RequestSignerBuilder for AwsSigv4RequestSignerBuilder {
+    type Signer = AwsSigv4RequestSigner;
+
+    fn build(&self, uri: &str) -> Result<Self::Signer, BoxError> {
         let uri_parse = match uri.parse::<Uri>() {
             Ok(u) => u,
             Err(_) => {
@@ -52,16 +53,43 @@ impl RequestSigner for AwsSigv4RequestSigner {
             Some(svc) => svc,
         };
 
+        // XXX: leak these so that we can elide the lifetime of signer
+        let svc = Box::leak(Box::new(svc));
+        let config = Box::leak(Box::new(self.config.clone()));
+
         let signer = AwsRequestSigner::new(
             &svc.service,
             &svc.region,
-            &self.config.aws_access_key_id,
-            &self.config.aws_secret_access_key,
-            self.config.aws_session_token.as_deref(),
+            &config.aws_access_key_id,
+            &config.aws_secret_access_key,
+            config.aws_session_token.as_deref(),
             SystemClock {},
         );
 
-        match signer.sign(uri_parse, method, headers, body) {
+        Ok(AwsSigv4RequestSigner::new(signer, uri_parse))
+    }
+}
+
+#[derive(Clone)]
+pub struct AwsSigv4RequestSigner {
+    signer: AwsRequestSigner<'static, SystemClock>,
+    uri: Uri,
+}
+
+impl AwsSigv4RequestSigner {
+    pub fn new(signer: AwsRequestSigner<'static, SystemClock>, uri: Uri) -> Self {
+        Self { signer, uri }
+    }
+}
+
+impl RequestSigner for AwsSigv4RequestSigner {
+    fn sign(
+        &self,
+        method: Method,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Result<Request<Full<Bytes>>, BoxError> {
+        match self.signer.sign(self.uri.clone(), method, headers, body) {
             Ok(req) => Ok(req),
             Err(e) => Err(format!("unable to sign request: {}", e).into()),
         }

@@ -1077,7 +1077,12 @@ mod tests {
 
     // Wait for a msg to be sent, returns None if it was unable to deliver
     async fn send_test_msg(
-        mut traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
+        mut traces: Exporter<
+            ResourceSpans,
+            ExportTraceServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportTraceServiceResponse,
+        >,
         btx: BoundedSender<Vec<ResourceSpans>>,
         server_rx: &mut tokio::sync::mpsc::Receiver<()>,
     ) -> Option<()> {
@@ -1109,7 +1114,12 @@ mod tests {
     }
 
     async fn send_test_traces_msgs_and_stop(
-        traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
+        traces: Exporter<
+            ResourceSpans,
+            ExportTraceServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportTraceServiceResponse,
+        >,
         btx: BoundedSender<Vec<ResourceSpans>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {

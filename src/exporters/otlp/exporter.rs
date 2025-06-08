@@ -15,7 +15,9 @@ use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
 use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
-use crate::exporters::otlp::signer::{AwsSigv4RequestSigner, RequestSigner};
+use crate::exporters::otlp::signer::{
+    AwsSigv4RequestSigner, AwsSigv4RequestSignerBuilder, RequestSigner,
+};
 use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
 use crate::exporters::retry::RetryPolicy;
 use crate::telemetry::RotelCounter;
@@ -103,7 +105,7 @@ pub fn build_traces_exporter(
         errors::is_retryable_error,
     );
 
-    let signer = get_signer(&traces_config);
+    let signer = get_signer_builder(&traces_config);
     let req_builder = request::build_traces(&traces_config, send_failed, signer)?;
 
     let svc = ServiceBuilder::new()
@@ -121,11 +123,11 @@ pub fn build_traces_exporter(
     ))
 }
 
-fn get_signer(cfg: &OTLPExporterTracesConfig) -> Option<AwsSigv4RequestSigner> {
+fn get_signer_builder(cfg: &OTLPExporterTracesConfig) -> Option<AwsSigv4RequestSignerBuilder> {
     match cfg.authenticator {
         Some(Authenticator::Sigv4auth) => {
             let cfg = AwsConfig::from_env();
-            Some(AwsSigv4RequestSigner::new(cfg))
+            Some(AwsSigv4RequestSignerBuilder::new(cfg))
         }
         _ => None,
     }
@@ -216,8 +218,8 @@ pub fn build_logs_exporter(
     let retry_policy =
         RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
 
-    let signer = get_signer(&logs_config);
-    let req_builder = request::build_logs(&logs_config, send_failed, signer)?;
+    let signer_builder = get_signer_builder(&logs_config);
+    let req_builder = request::build_logs(&logs_config, send_failed, signer_builder)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
@@ -293,8 +295,8 @@ fn _build_metrics_exporter(
         errors::is_retryable_error,
     );
 
-    let signer = get_signer(&metrics_config);
-    let req_builder = request::build_metrics(&metrics_config, send_failed, signer)?;
+    let signer_builder = get_signer_builder(&metrics_config);
+    let req_builder = request::build_metrics(&metrics_config, send_failed, signer_builder)?;
 
     let svc = ServiceBuilder::new()
         .layer(RetryLayer::new(retry_policy))
