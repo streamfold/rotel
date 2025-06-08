@@ -128,7 +128,7 @@ The Rotel OTLP exporter can export to the
 [Cloudwatch OTLP endpoints](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OTLPEndpoint.html)
 for traces and logs. You'll need to select the HTTP protocol and enable the sigv4auth authenticator.
 
-The sigv4auth authenticator require the AWS environment variables for authentication are set.
+The sigv4auth authenticator requires the AWS authentication environment variables to be set.
 
 **Traces**
 
@@ -154,7 +154,7 @@ log group/stream as needed.
 ROTEL_EXPORTER=otlp
 ROTEL_OTLP_EXPORTER_PROTOCOL=http
 ROTEL_OTLP_EXPORTER_TRACES_ENDPOINT=https://logs.<region code>.amazonaws.com/v1/logs
-ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS=x-aws-log-group=<log group>,x-aws-log-stream=<log stream>
+ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS="x-aws-log-group=<log group>,x-aws-log-stream=<log stream>"
 ROTEL_OTLP_EXPORTER_AUTHENTICATOR=sigv4auth
 ```
 
