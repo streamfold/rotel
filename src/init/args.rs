@@ -1,3 +1,4 @@
+use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
@@ -136,6 +137,19 @@ pub enum DebugLogParam {
 pub enum OTLPExporterProtocol {
     Grpc,
     Http,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+pub enum OTLPExporterAuthenticator {
+    Sigv4auth,
+}
+
+impl From<OTLPExporterAuthenticator> for Authenticator {
+    fn from(value: OTLPExporterAuthenticator) -> Self {
+        match value {
+            OTLPExporterAuthenticator::Sigv4auth => Authenticator::Sigv4auth,
+        }
+    }
 }
 
 #[derive(Debug, clap::Args)]

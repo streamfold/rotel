@@ -61,7 +61,7 @@ where
         uri: Uri,
         method: Method,
         headers: HeaderMap,
-        payload: Vec<u8>,
+        payload: Bytes,
     ) -> Result<Request<Full<Bytes>>, Error> {
         let now = self.clock.now();
 
@@ -279,10 +279,9 @@ mod tests {
             .unwrap();
         let method = Method::GET;
         let headers = HeaderMap::new();
-        let payload = Vec::new(); // Empty payload for GET request
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer.sign(uri, method, headers, Bytes::new()).unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -312,10 +311,9 @@ mod tests {
             .unwrap();
         let method = Method::GET;
         let headers = HeaderMap::new();
-        let payload = Vec::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer.sign(uri, method, headers, Bytes::new()).unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -341,10 +339,9 @@ mod tests {
             .unwrap();
         let method = Method::GET;
         let headers = HeaderMap::new();
-        let payload = Vec::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer.sign(uri, method, headers, Bytes::new()).unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -377,7 +374,9 @@ mod tests {
         let payload = b"Hello, world!".to_vec();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer
+            .sign(uri, method, headers, Bytes::from(payload))
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -409,10 +408,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(HOST, "custom-host.com".parse().unwrap());
 
-        let payload = Vec::new();
-
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer.sign(uri, method, headers, Bytes::new()).unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -446,7 +443,9 @@ mod tests {
         let payload = b"test-payload".to_vec();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer
+            .sign(uri, method, headers, Bytes::from(payload))
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -479,10 +478,9 @@ mod tests {
             .unwrap();
         let method = Method::GET;
         let headers = HeaderMap::new();
-        let payload = Vec::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, payload).unwrap();
+        let signed_request = signer.sign(uri, method, headers, Bytes::new()).unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::http::tls::{Config, ConfigBuilder};
-use crate::exporters::otlp::{CompressionEncoding, DEFAULT_REQUEST_TIMEOUT, Endpoint, Protocol};
+use crate::exporters::otlp::{
+    Authenticator, CompressionEncoding, DEFAULT_REQUEST_TIMEOUT, Endpoint, Protocol,
+};
 use crate::exporters::retry::RetryConfig;
 use std::time::Duration;
 
@@ -15,6 +17,7 @@ pub struct OTLPExporterConfig {
     pub(crate) type_name: String,
     pub(crate) endpoint: Endpoint,
     pub(crate) protocol: Protocol,
+    pub(crate) authenticator: Option<Authenticator>,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) compression: Option<CompressionEncoding>,
     pub(crate) retry_config: RetryConfig,
@@ -30,6 +33,7 @@ impl Default for OTLPExporterConfig {
             type_name: "".to_string(),
             endpoint: Endpoint::Base("".to_string()),
             protocol: Protocol::Grpc,
+            authenticator: None,
             headers: vec![],
             tls_cfg_builder: Config::builder(),
             compression: Some(CompressionEncoding::Gzip),
@@ -42,6 +46,11 @@ impl Default for OTLPExporterConfig {
 }
 
 impl OTLPExporterConfig {
+    pub fn with_authenticator(mut self, authenticator: Option<Authenticator>) -> Self {
+        self.authenticator = authenticator;
+        self
+    }
+
     pub fn with_cert_file(mut self, cert_file: &str) -> Self {
         self.tls_cfg_builder = self.tls_cfg_builder.with_cert_file(cert_file.to_string());
         self
