@@ -123,6 +123,7 @@ mod tests {
     use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use pyo3::ffi::c_str;
+    use std::collections::HashMap;
     use std::ffi::CString;
     use std::sync::{Arc, Once};
     use utilities::otlp::FakeOTLP;
@@ -1983,7 +1984,7 @@ mod tests {
     //         verify_attrs(attrs_to_verify);
     //     }
     #[test]
-    fn redaction_processor_test() {
+    fn redaction_processor_restrictive_test() {
         initialize();
         let resource_attrs = vec![
             opentelemetry_proto::tonic::common::v1::KeyValue {
@@ -2109,13 +2110,72 @@ mod tests {
         // Execute the Python script that removes a log record
         Python::with_gil(|py| -> PyResult<()> {
             _run_script(
-                "redaction_processor_test.py",
+                "redaction_processor_restrictive_test.py",
                 py,
                 py_resource_spans,
                 Some("process_spans".to_string()),
             )
         })
         .unwrap();
+
+        let resource = Arc::into_inner(r_resource_spans.resource)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        let resource = crate::model::py_transform::transform_resource(resource).unwrap();
+        assert_eq!(9, resource.attributes.len());
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            resource
+                .attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        let expected_attributes = HashMap::from([
+            ("host.arch", "amd64"),
+            ("os.type", "linux"),
+            ("region", "us-east-1"),
+            ("service.name", "my-service"),
+            ("deployment.environment", "prod"),
+            (
+                "redaction.resource.redacted_keys.names",
+                "unallowed_resource_key",
+            ),
+            (
+                "redaction.resource.allowed_keys.names",
+                "deployment.environment,host.arch,os.type,region,service.name",
+            ),
+            ("redaction.resource.redacted_keys.count", "1"),
+            ("redaction.resource.allowed_keys.count", "5"),
+        ]);
+
+        let validate =
+            |kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
+             expected_attributes: HashMap<&str, &str>| {
+                for (key, value) in kv_map {
+                    let ev = expected_attributes.get(key.as_str());
+                    match ev {
+                        None => {
+                            panic!("key {:?} not found in expected attributes", key)
+                        }
+                        Some(v) => match value.unwrap().value.unwrap() {
+                            Value::StringValue(sv) => {
+                                assert_eq!(v.to_string(), sv.to_string());
+                            }
+                            Value::IntValue(i) => {
+                                let v: i64 = v.parse().expect("can't convert to int");
+                                assert_eq!(v, i);
+                            }
+                            _ => {
+                                panic!("expected string value")
+                            }
+                        },
+                    }
+                }
+            };
+
+        validate(kv_map, expected_attributes);
 
         let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
             .unwrap()
@@ -2124,23 +2184,41 @@ mod tests {
         let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
 
         let span = scope_spans.pop().unwrap().spans.pop().unwrap();
-        println!("span is : {:?}", span);
-    }
+        assert_eq!(7, span.attributes.len());
 
-    //     MockSpan(
-    //     name="another-span",
-    //     attributes={
-    // "another.token.value": "a_secret", # Blocked key pattern
-    // "customer_card_number": "4111222233334444", # Blocked value
-    // "allowed_key_present": "data", # Allowed key
-    // "os.type": "macos", # Allowed key
-    // "ignored_key_for_this_span": "irrelevant" # Ignored key (hypothetical)
-    // }
-    //     )
-    //     ]
-    //     )
-    //     ]
-    //     )
-    //     ]
-    //     )
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            span.attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        let expected_attributes = HashMap::from([
+            ("operation", "get_data"),
+            ("safe_attribute", "this should remain"),
+            ("redaction.span.redacted_keys.count", "7"),
+            ("redaction.span.allowed_keys.names", "operation"),
+            ("redaction.span.allowed_keys.count", "1"),
+            ("redaction.span.redacted_keys.names", "api_key_header,db.statement,http.url,my_company_email,some_token,unallowed_span_key,user.email"),
+            ("redaction.span.ignored_keys.count", "1"),
+        ]);
+
+        validate(kv_map, expected_attributes)
+
+        //     MockSpan(
+        //     name="another-span",
+        //     attributes={
+        // "another.token.value": "a_secret", # Blocked key pattern
+        // "customer_card_number": "4111222233334444", # Blocked value
+        // "allowed_key_present": "data", # Allowed key
+        // "os.type": "macos", # Allowed key
+        // "ignored_key_for_this_span": "irrelevant" # Ignored key (hypothetical)
+        // }
+        //     )
+        //     ]
+        //     )
+        //     ]
+        //     )
+        //     ]
+        //     )
+    }
 }

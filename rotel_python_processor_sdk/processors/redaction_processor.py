@@ -1,6 +1,6 @@
 import hashlib
 import re
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict
 
 from rotel_sdk.open_telemetry.common.v1 import *
 from rotel_sdk.open_telemetry.logs.v1 import *
@@ -65,7 +65,7 @@ class RedactionProcessor:
     def _add_meta_attrs(self,
                         tracked_keys: Set[str],
                         # The set of keys for this meta-attribute category (e.g., deleted, masked)
-                        attributes: List[KeyValue],  # The attributes map to add meta-attributes to
+                        attributes: Dict[str, KeyValue],  # The attributes map to add meta-attributes to
                         values_attr_name: str,
                         # The name for the string list attribute (e.g., "redaction.span.redacted_keys.names")
                         count_attr_name: str):  # The name for the count attribute (e.g., "redaction.span.redacted_keys.count")
@@ -73,34 +73,33 @@ class RedactionProcessor:
         Adds diagnostic information about redacted/masked/allowed/ignored attribute keys.
         This function strictly mimics the addMetaAttrs logic from the Go processor.
         """
+
         redacted_count = len(tracked_keys)
         if redacted_count == 0:
             return  # No keys to report for this category
 
         # Record summary as attributes
-        # if self.config.summary == "debug" and values_attr_name:
-        #     # Aggregate existing values if present
-        #     existing_val = attributes.get(values_attr_name)
-        #     combined_keys = set(tracked_keys)  # Start with current keys
-        #
-        #     if existing_val.type() == MockPcommonValueType.STR and existing_val.str():
-        #         # Add existing keys from the attribute to the combined set
-        #         existing_keys_from_attr = set(existing_val.str().split(self.ATTR_VALUES_SEPARATOR))
-        #         combined_keys.update(existing_keys_from_attr)
-        #
-        #     # Sort and put the combined list of keys
-        #     attributes.insert(values_attr_name, self.ATTR_VALUES_SEPARATOR.join(sorted(list(combined_keys))))
-        #
-        # if self.config.summary == "info" or self.config.summary == "debug":
-        #     # Aggregate existing count if present
-        #     existing_count_val = attributes.get(count_attr_name)
-        #     current_total_count = redacted_count
-        #     if existing_count_val.type() == MockPcommonValueType.INT:  # Check for INT type for count
-        #         current_total_count += existing_count_val.int()  # Add to existing count
-        #     elif existing_count_val.type() == MockPcommonValueType.DOUBLE:  # Handle if mock gives double
-        #         current_total_count += int(existing_count_val.double())
-        #
-        #     attributes.insert(count_attr_name, current_total_count)
+        if self.config.summary == "debug" and values_attr_name:
+            existing_val = attributes.get(values_attr_name, None)
+            combined_keys = set(tracked_keys)  # Start with current keys
+
+            if existing_val is not None and isinstance(existing_val.value, str):
+                # Add existing keys from the attribute to the combined set
+                existing_keys_from_attr = set(existing_val.value.split(self.ATTR_VALUES_SEPARATOR))
+                combined_keys.update(existing_keys_from_attr)
+
+            kv = KeyValue(values_attr_name, AnyValue(self.ATTR_VALUES_SEPARATOR.join(sorted(list(combined_keys)))))
+            attributes[values_attr_name] = kv
+
+        existing_count_val = attributes.get(count_attr_name, None)
+        current_total_count = redacted_count
+        if existing_count_val is not None:
+            if isinstance(existing_count_val.value, int):  # Check for INT type for count
+                current_total_count += existing_count_val.value
+            elif isinstance(existing_count_val.value, float):
+                current_total_count += int(existing_count_val.value)
+
+        attributes[count_attr_name] = KeyValue(count_attr_name, AnyValue(current_total_count))
 
     def _redact_attributes(self, attributes: List[KeyValue], context_type: str) -> List[KeyValue]:
         """
@@ -123,19 +122,19 @@ class RedactionProcessor:
             for key in original_keys:
                 if key not in self.config.allowed_keys:
                     # Candidate for deletion, unless it's in ignored_keys
+                    print(f"key {key} not in allowed_keys")
                     if key not in self.config.ignored_keys:
                         keys_to_delete.add(key)
-                        # deleted_keys.add(key)
-                        # TODO: Add to deleted keys after deleting
+                        deleted_keys.add(key)
                     else:
                         ignored_keys_for_meta.add(key)
                 else:
                     # Key is in allowed_keys
                     allowed_keys_for_meta.add(key)
-                    if key in self.config.ignored_keys:
-                        # If a key is both allowed and ignored, it's counted as ignored for meta
-                        ignored_keys_for_meta.add(key)
-                        allowed_keys_for_meta.remove(key)  # Remove from allowed for cleaner meta
+                if key in self.config.ignored_keys:
+                    # If a key is both allowed and ignored, it's counted as ignored for meta
+                    ignored_keys_for_meta.add(key)
+                    allowed_keys_for_meta.discard(key)  # Remove from allowed for cleaner meta
 
         else:  # self.config.allow_all_keys is True
             # All keys are initially considered allowed, but subject to ignored_keys
@@ -143,7 +142,8 @@ class RedactionProcessor:
                 if key in self.config.ignored_keys:
                     ignored_keys_for_meta.add(key)
                 else:
-                    allowed_keys_for_meta.add(key)  # These are allowed by default, not explicitly by allowed_keys list
+                    allowed_keys_for_meta.add(
+                        key)  # These are allowed by default, not explicitly by allowed_keys list
 
         print(f"Initial filtering complete we're going to delete these keys: {keys_to_delete}")
         filtered_attributes = []
@@ -152,6 +152,7 @@ class RedactionProcessor:
                 filtered_attributes.append(kv)
 
         attributes = filtered_attributes
+
         # --- Phase 2: `blocked_key_patterns` ---
         # Apply to keys that remain after initial filtering
         current_keys = [kv.key for kv in attributes]
@@ -182,35 +183,32 @@ class RedactionProcessor:
                 for pattern in self.config.blocked_values:
                     if pattern.search(original_str):
                         should_block = True
+                    break
+
+            if should_block:
+                should_allow = False
+                for pattern in self.config.allowed_values:
+                    if pattern.search(original_str):
+                        should_allow = True
                         break
 
-                if should_block:
-                    should_allow = False
-                    for pattern in self.config.allowed_values:
-                        if pattern.search(original_str):
-                            should_allow = True
-                            break
+                if not should_allow:  # If blocked and not allowed, then mask
+                    print(f"We found a blocked value: {original_str}")
+                    redacted_value = self._get_redacted_value(original_str)
+                    print(f"its redacted value is: {redacted_value}")
+                    value_obj.value = AnyValue(redacted_value)
+                    masked_keys.add(key)  # Track as masked
 
-                    if not should_allow:  # If blocked and not allowed, then mask
-                        print(f"We found a blocked value: {original_str}")
-                        redacted_value = self._get_redacted_value(original_str)
-                        print(f"its redacted value is: {redacted_value}")
-                        value_obj.value = AnyValue(redacted_value)
-                        masked_keys.add(key)  # Track as masked
-
-        print("About to call addMetaAttrs()")
-        # --- Phase 4: Add summary attributes (if enabled) ---
-        # These function calls directly mirror the Go code's addMetaAttrs calls
-        self._add_meta_attrs(deleted_keys, attributes, f"redaction.{context_type}.redacted_keys.names",
+        self._add_meta_attrs(deleted_keys, kv_map, f"redaction.{context_type}.redacted_keys.names",
                              f"redaction.{context_type}.redacted_keys.count")
-        self._add_meta_attrs(masked_keys, attributes, f"redaction.{context_type}.masked_keys.names",
+        self._add_meta_attrs(masked_keys, kv_map, f"redaction.{context_type}.masked_keys.names",
                              f"redaction.{context_type}.masked_keys.count")
         # Go processor sometimes has allowedKeys and ignoredKeys for body as well.
         # For attributes, the allowedKeys are explicitly collected based on whether they were initially kept by the list.
         # For ignoredKeys, it's those explicitly in the ignored_keys list.
-        self._add_meta_attrs(allowed_keys_for_meta, attributes, f"redaction.{context_type}.allowed_keys.names",
+        self._add_meta_attrs(allowed_keys_for_meta, kv_map, f"redaction.{context_type}.allowed_keys.names",
                              f"redaction.{context_type}.allowed_keys.count")
-        self._add_meta_attrs(ignored_keys_for_meta, attributes, "",
+        self._add_meta_attrs(ignored_keys_for_meta, kv_map, "",
                              f"redaction.{context_type}.ignored_keys.count")  # names are not added for ignored_keys in Go
 
         print(f"kv_map final is {kv_map}")
@@ -221,7 +219,8 @@ class RedactionProcessor:
         return final_attributes
 
     def process_spans(self, resource_spans: ResourceSpans):
-        self._redact_attributes(resource_spans.resource.attributes, "resource")
+        resource_spans.resource.attributes = self._redact_attributes(resource_spans.resource.attributes,
+                                                                     "resource")
         print("about to process spans")
         for ss in resource_spans.scope_spans:
             for span in ss.spans:
@@ -254,12 +253,15 @@ class RedactionProcessor:
                 # It also adds meta-attributes for log body redaction.
                 self._redact_log_body(log_record.body, log_record.attributes)
 
-    def _redact_log_body(self, log_body_value: AnyValue | None, log_attributes: List[KeyValue]) -> List[KeyValue]:
+    def _redact_log_body(self, log_body_value: AnyValue | None, log_attributes: List[KeyValue]) -> List[
+        KeyValue]:
+
         """
         Applies regex-based blocking to the log body value (and recursively to nested structures).
         This uses the global blocked_values and allowed_values from the config.
         Also adds specific meta-attributes for log body redaction.
         """
+
         redacted_this_body_keys = set()  # To track keys for log body meta-data
         redacted_this_body_count = 0
 
@@ -282,10 +284,10 @@ class RedactionProcessor:
                             if allowed_pattern.search(temp_str):
                                 should_allow = True
                                 break
-                        if not should_allow:
-                            # Perform substitution with the redacted value (only the matched part is hashed/replaced)
-                            temp_str = pattern.sub(self._get_redacted_value(match.group(0)), temp_str)
-                            body_value_masked = True
+                            if not should_allow:
+                                # Perform substitution with the redacted value (only the matched part is hashed/replaced)
+                                temp_str = pattern.sub(self._get_redacted_value(match.group(0)), temp_str)
+                                body_value_masked = True
 
                 if body_value_masked:
                     value.value = temp_str
@@ -294,6 +296,7 @@ class RedactionProcessor:
             elif isinstance(value.value, KeyValueList):
                 for kv in value.value:
                     _process_value_recursive(kv.value)
+
             elif isinstance(value.value, ArrayValue):
                 for v_item in value.value:
                     _process_value_recursive(v_item)
@@ -329,40 +332,3 @@ class RedactionProcessor:
                     return final_log_attributes
         else:
             return log_attributes
-
-
-config = RedactionProcessorConfig(
-    allow_all_keys=False,  # Deny by default, only allowed_keys pass
-    allowed_keys=["description", "group", "id", "name", "user_id", "event_type", "source",
-                  "ip_address", "status", "path", "endpoint", "region", "operation", "service.name",
-                  "host.arch", "os.type", "env", "deployment.environment"],
-    # Explicitly allowed for resources, spans, metrics, logs
-    ignored_keys=["safe_attribute", "my_company_safe_password_key"],
-    # These keys will always be kept, even if in blocked lists or not in allowed_keys
-    blocked_key_patterns=[".*token.*", ".*api_key.*", ".*password.*"],
-    blocked_values=[
-        "4[0-9]{12}(?:[0-9]{3})?",  # Visa credit card number
-        "(5[1-5][0-9]{14})",  # MasterCard number
-        "test@example.com",  # specific email to block
-        "https://example.com/sensitive/path",  # specific URL
-        "SELECT.*FROM.*",  # SQL statement
-        "123-45-6789",  # SSN for logs (value itself)
-        "192\\.168\\.\\d+\\.\\d+",  # IP address pattern
-        "10\\.0\\.\\d+\\.\\d+",  # Another IP pattern
-        "password=abcde",  # Log body password
-        "another@example.com"  # Email in log body
-    ],
-    allowed_values=[".+@mycompany.com"],  # This overrides blocked_values if matched
-    hash_function="md5",  # Example: "sha256" or None
-    summary="debug"  # "info", "silent"
-)
-
-processor = RedactionProcessor(config)
-
-
-def process_logs(resource_logs: ResourceLogs):
-    processor.process_logs(resource_logs)
-
-
-def process_spans(resource_spans: ResourceSpans):
-    processor.process_spans(resource_spans)
