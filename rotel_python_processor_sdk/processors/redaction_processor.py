@@ -1,3 +1,57 @@
+"""
+The RedactionProcessor provides OpenTelemetry-compatible redaction capabilities for modifying
+attributes and log bodies on logs and spans. It supports redacting (deleting) keys,
+masking (hashing or replacing) values based on key patterns or value patterns,
+and explicitly allowing or ignoring keys/values to override redaction rules.
+
+See redaction_processor_blocking_test.py for complete usage examples. Basic usage:
+
+    # Create a config with desired redaction rules
+    processor_config = RedactionProcessorConfig(
+        # If true, all keys are initially allowed unless explicitly ignored.
+        # If false, only keys in 'allowed_keys' are initially kept.
+        allow_all_keys=False,
+
+        # List of exact key names that are always allowed (not redacted/deleted),
+        # overriding 'allow_all_keys=False' for these specific keys.
+        allowed_keys=["safe_key", "http.method"],
+
+        # List of exact key names that are always ignored (not redacted/deleted/masked),
+        # overriding any blocking rules.
+        ignored_keys=["telemetry.sdk.name", "telemetry.sdk.language"],
+
+        # List of regex patterns. If an attribute key matches any pattern, its value will be masked.
+        blocked_key_patterns=[".*password.*", ".*credit_card_number"],
+
+        # List of regex patterns. If an attribute value (string) matches any pattern,
+        # its value will be masked, unless it also matches an 'allowed_values' pattern.
+        blocked_values=[".*SSN.*", ".*email@domain.com"],
+
+        # List of regex patterns. If an attribute value (string) matches any of these patterns,
+        # it will *not* be masked, even if it matches a 'blocked_values' pattern.
+        allowed_values=[".*@mycompany.com"],
+
+        # The hash function to use for masking values (e.g., "sha256", "md5").
+        # If None, values are replaced with "[REDACTED]".
+        # Available hash functions depend on the Python 'hashlib' module.
+        hash_function="sha256",
+
+        # The level of detail for summary attributes added to spans/logs/resources.
+        # - "silent": No summary attributes are added.
+        # - "info": Adds counts of redacted/masked/allowed/ignored keys.
+        # - "debug": Adds counts and names of redacted/masked/allowed/ignored keys.
+        summary="info" # Options: "debug", "info", "silent"
+    )
+
+    # Create and use processor
+    processor = RedactionProcessor(processor_config)
+
+    # Example for spans:
+    # processor.process_spans(resource_spans)
+
+    # Example for logs:
+    # processor.process_logs(resource_logs)
+"""
 import hashlib
 import re
 from typing import List, Optional, Set, Dict
