@@ -182,13 +182,7 @@ where
     if non_blocking {
         match poll!(enc_stream.next()) {
             Poll::Ready(None) => {
-                return drain_exports::<Svc, Payload>(
-                    finish_sending,
-                    export_futures,
-                    meta,
-                    non_blocking,
-                )
-                .await;
+                return drain_exports::<Svc, Payload>(finish_sending, export_futures, meta).await;
             }
             Poll::Ready(Some(res)) => match res {
                 Ok(req) => export_futures.push(Box::pin(svc.call(req))),
@@ -229,14 +223,13 @@ where
         }
     }
 
-    drain_exports::<Svc, Payload>(finish_sending, export_futures, meta, non_blocking).await
+    drain_exports::<Svc, Payload>(finish_sending, export_futures, meta).await
 }
 
 async fn drain_exports<Svc, Payload>(
     finish_sending: Instant,
     export_futures: &mut FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>>,
     meta: &Meta,
-    non_blocking: bool,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
     <Svc as Service<Request<Payload>>>::Error: Debug,
