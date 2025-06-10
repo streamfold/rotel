@@ -240,11 +240,9 @@ class RedactionProcessor:
             for log_record in sl.log_records:
                 log_record.attributes = self._redact_attributes(log_record.attributes, "log")
                 # Log body redaction: apply blocked_values/allowed_values
-                # The Go processor's 'redactLogs' function also handles log body using value matchers.
-                # It also adds meta-attributes for log body redaction.
-                self._redact_log_body(log_record.body, log_record.attributes)
+                self._redact_log_body(log_record)
 
-    def _redact_log_body(self, log_body_value: AnyValue | None, log_attributes: List[KeyValue]):
+    def _redact_log_body(self, log_record: LogRecord):
 
         """
         Applies regex-based blocking to the log body value (and recursively to nested structures).
@@ -252,15 +250,12 @@ class RedactionProcessor:
         Also adds specific meta-attributes for log body redaction.
         """
 
-        redacted_this_body_count = 0
-
         # Helper recursive function for processing value and tracking changes
-        def _process_value_recursive(av: AnyValue, ignored_keys: set[str], redacted_keys: set[str],
+        def _process_value_recursive(av: AnyValue, key: Optional[str], allowed_keys: set[str], ignored_keys: set[str],
+                                     redacted_keys: set[str],
                                      masked_keys: set[str]) -> AnyValue:
-            nonlocal redacted_this_body_count  # Use nonlocal to modify outer scope variables
 
             if isinstance(av.value, str):
-                print(f"Processing log body and we have a string")
                 original_str = av.value
                 temp_str = original_str
 
@@ -273,6 +268,8 @@ class RedactionProcessor:
                         should_allow = False
                         for allowed_pattern in self.config.allowed_values:
                             if allowed_pattern.search(temp_str):
+                                if key is not None:
+                                    allowed_keys.add(key)
                                 should_allow = True
                                 break
                         if not should_allow:
@@ -281,8 +278,9 @@ class RedactionProcessor:
                             body_value_masked = True
 
                 if body_value_masked:
-                    redacted_this_body_count += 1  # Count each instance of value masking in body
                     av.value = AnyValue(temp_str)
+                    if key is not None:
+                        masked_keys.add(key)
 
             elif isinstance(av.value, KeyValueList):
                 for kv in av.value:
@@ -292,46 +290,36 @@ class RedactionProcessor:
                     if not self.config.allow_all_keys and kv.key not in self.config.allowed_keys:
                         redacted_keys.add(kv.key)
                         continue
-                    return _process_value_recursive(kv.value, ignored_keys, redacted_keys, masked_keys)
+                    _process_value_recursive(kv.value, kv.key, allowed_keys, ignored_keys, redacted_keys, masked_keys)
 
             elif isinstance(av.value, ArrayValue):
                 for v_item in av.value:
-                    _process_value_recursive(v_item, ignored_keys, redacted_keys, masked_keys)
+                    _process_value_recursive(v_item, None, allowed_keys, ignored_keys, redacted_keys, masked_keys)
 
         ignored_keys = set()  # Initialize ignored keys
         redacted_keys = set()  # Initialize redacted keys
         masked_keys = set()  # Initialize masked keys
+        allowed_keys = set()  # Initialize allowed keys
         # End helper recursive function
-        _process_value_recursive(log_body_value, ignored_keys, redacted_keys,
+        if log_record.body is None:
+            return
+
+        _process_value_recursive(log_record.body, None, allowed_keys, ignored_keys, redacted_keys,
                                  masked_keys)  # Start recursive processing
 
-        # Add meta-attributes for log body redaction, similar to Go's addMetaAttrs for body
-        # The Go code for log body meta-attrs often uses counts (e.g., redaction.log.body.masked.count)
-        # It doesn't typically list keys by name for body redaction as it's content-based.
-        # We will follow the Go approach of just using a count here, as there isn't a "key" concept for the matched value.
-        # if redacted_this_body_count > 0:
-        #     if self.config.summary == "info" or self.config.summary == "debug":
-        #         # Ensure the name is aligned with what Go would generate for log body.
-        #         # The Go `redactLogs` calls `addMetaAttrs` with "redaction.log.body.masked.names" and "redaction.log.body.masked.count".
-        #         # It passes `nil` for names if it's just a count, which means the names attribute is skipped.
-        #         # We'll use a specific fixed name for consistency.
-        #
-        #         # We'll just update the count for log body directly, as the Go code implies
-        #         # `redactionBodyMaskedCount` is passed, but `redactionBodyMaskedKeys` (names) is not.
-        #         log_attributes_kv_map = {kv.key: kv for kv in log_attributes}
-        #         existing_count_val = log_attributes_kv_map.get("redaction.log.body.masked.count")
-        #         current_total_count = redacted_this_body_count
-        #         if existing_count_val is not None:
-        #             if isinstance(existing_count_val.value, int):
-        #                 current_total_count += existing_count_val.value
-        #             elif isinstance(existing_count_val.value, float):
-        #                 current_total_count += int(existing_count_val.value)
-        #
-        #         log_attributes_kv_map["redaction.log.body.masked.count"] = KeyValue("redaction.log.body.masked.count",
-        #                                                                             AnyValue(current_total_count))
-        #         final_log_attributes = []
-        #         for key, value in log_attributes_kv_map.items():
-        #             final_log_attributes.append(value)
-        #             return final_log_attributes
-        # else:
-        #     return log_attributes
+        if self.config.summary == "info" or self.config.summary == "debug":
+            kv_map = {kv.key: kv for kv in log_record.attributes}
+            self._add_meta_attrs(redacted_keys, kv_map, f"redaction.body.redacted.keys",
+                                 f"redaction.body.redacted.count")
+            self._add_meta_attrs(masked_keys, kv_map, f"redaction.body.masked.keys",
+                                 f"redaction.body.masked.count")
+            self._add_meta_attrs(allowed_keys, kv_map, f"redaction.body.allowed.keys",
+                                 f"redaction.body.allowed.count")
+            self._add_meta_attrs(ignored_keys, kv_map, "redaction.body.ignored.keys",
+                                 f"redaction.body.ignored.count")  # names are not added for ignored_keys in Go
+
+            final_attributes = []
+            for key, value in kv_map.items():
+                final_attributes.append(value)
+
+            log_record.attributes = final_attributes

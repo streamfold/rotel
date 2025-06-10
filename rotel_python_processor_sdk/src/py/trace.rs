@@ -441,7 +441,6 @@ impl Span {
     }
     #[setter]
     fn set_attributes(&mut self, attrs: Vec<KeyValue>) -> PyResult<()> {
-        println!("Setting span attributes {:?}", attrs.len());
         let mut inner = self.inner.lock().map_err(handle_poison_error)?;
         let mut new_attrs = Vec::with_capacity(attrs.len());
         for kv in attrs {
