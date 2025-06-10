@@ -1,12 +1,13 @@
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use futures_util::stream::FuturesUnordered;
-use futures_util::{Stream, StreamExt};
+use futures_util::{Stream, StreamExt, poll};
 use http::Request;
 use std::error::Error;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Add;
 use std::pin::Pin;
+use std::task::Poll;
 use std::time::Duration;
 use tokio::time::{Instant, timeout_at};
 use tokio::{pin, select};
@@ -125,7 +126,7 @@ where
                             debug!(?meta, request = ?req, "Received force flush in exporter");
 
                             if let Err(res) = drain_futures(&meta, &mut input, &mut export_futures, self.encode_drain_max_time
-                                , self.export_drain_max_time, &mut self.svc).await {
+                                , self.export_drain_max_time, &mut self.svc, true).await {
 
                                 warn!(?meta, result = res, "Unable to drain exporter");
                             }
@@ -152,6 +153,7 @@ where
             self.encode_drain_max_time,
             self.export_drain_max_time,
             &mut self.svc,
+            false,
         )
         .await
     }
@@ -164,6 +166,7 @@ async fn drain_futures<InStr, Svc, Payload>(
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     svc: &mut Svc,
+    non_blocking: bool,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
     InStr: Stream<Item = Result<Request<Payload>, BoxError>>,
@@ -173,8 +176,36 @@ where
     let finish_encoding = Instant::now().add(encode_drain_max_time);
     let finish_sending = Instant::now().add(export_drain_max_time);
 
+    // If non-blocking, we must poll at least once to force any messages into the encoding futures
+    // list. This allows us to do the size check later, knowing that if there was a pending msg
+    // it would have been added to the encoding futures.
+    if non_blocking {
+        match poll!(enc_stream.next()) {
+            Poll::Ready(None) => {
+                return drain_exports::<Svc, Payload>(finish_sending, export_futures, meta).await;
+            }
+            Poll::Ready(Some(res)) => match res {
+                Ok(req) => export_futures.push(Box::pin(svc.call(req))),
+                Err(e) => {
+                    error!(error = ?e, ?meta, "Failed to encode request, dropping.");
+                }
+            },
+            _ => {}
+        }
+    }
+
     // First we must wait on currently encoding futures
     loop {
+        // If we are non-blocking, then we only block up to the timeout if there are
+        // encoding futures pending. Use the size hint on the stream to check remaining
+        // encoding futures and skip waiting if it is empty.
+        if non_blocking {
+            let (min_sz, _) = enc_stream.size_hint();
+            if min_sz == 0 {
+                break;
+            }
+        }
+
         let poll_res = timeout_at(finish_encoding, enc_stream.next()).await;
         match poll_res {
             Err(_) => {
@@ -192,6 +223,18 @@ where
         }
     }
 
+    drain_exports::<Svc, Payload>(finish_sending, export_futures, meta).await
+}
+
+async fn drain_exports<Svc, Payload>(
+    finish_sending: Instant,
+    export_futures: &mut FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>>,
+    meta: &Meta,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+where
+    <Svc as Service<Request<Payload>>>::Error: Debug,
+    Svc: Service<Request<Payload>>,
+{
     let mut drain_errors = 0;
     loop {
         if export_futures.is_empty() {

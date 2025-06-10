@@ -2975,6 +2975,7 @@ dependencies = [
  "pyo3",
  "rand 0.8.5",
  "read-restrict",
+ "regex",
  "rotel_python_processor_sdk",
  "rustls",
  "rustls-pki-types",

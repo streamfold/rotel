@@ -4,7 +4,7 @@ use crate::exporters::otlp::config::{
 };
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::init::args;
-use crate::init::args::OTLPExporterProtocol;
+use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct OTLPExporterArgs {
@@ -44,6 +44,10 @@ pub struct OTLPExporterArgs {
     /// OTLP Exporter Logs Protocol - Overrides otlp_exporter_protocol if specified
     #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_LOGS_PROTOCOL")]
     pub otlp_exporter_logs_protocol: Option<OTLPExporterProtocol>,
+
+    /// OTLP Exporter authenticator
+    #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_AUTHENTICATOR")]
+    pub otlp_exporter_authenticator: Option<OTLPExporterAuthenticator>,
 
     /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
@@ -369,6 +373,7 @@ pub fn build_traces_config(
             .unwrap_or(agent.otlp_exporter_protocol)
             .into(),
     )
+    .with_authenticator(agent.otlp_exporter_authenticator.map(|a| a.into()))
     .with_tls_skip_verify(
         agent
             .otlp_exporter_traces_tls_skip_verify
@@ -480,6 +485,7 @@ pub fn build_metrics_config(
             .unwrap_or(agent.otlp_exporter_protocol)
             .into(),
     )
+    .with_authenticator(agent.otlp_exporter_authenticator.map(|a| a.into()))
     .with_tls_skip_verify(
         agent
             .otlp_exporter_metrics_tls_skip_verify
@@ -591,6 +597,7 @@ pub fn build_logs_config(
             .unwrap_or(agent.otlp_exporter_protocol)
             .into(),
     )
+    .with_authenticator(agent.otlp_exporter_authenticator.map(|a| a.into()))
     .with_tls_skip_verify(
         agent
             .otlp_exporter_logs_tls_skip_verify

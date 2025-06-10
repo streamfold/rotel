@@ -45,6 +45,7 @@ pub(crate) mod errors;
 mod client;
 mod grpc_codec;
 mod http_codec;
+mod signer;
 
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use clap::ValueEnum;
@@ -62,11 +63,17 @@ pub enum CompressionEncoding {
     None,
 }
 
-/// Transport protocols supported for OTLP export
+/// Transport protocols supported for OTLP exporter
 #[derive(Clone, Debug, PartialEq)]
 pub enum Protocol {
     Grpc,
     Http,
+}
+
+/// Authenticator for OTLP exporter
+#[derive(Clone, Debug, PartialEq)]
+pub enum Authenticator {
+    Sigv4auth,
 }
 
 /// OTLP endpoint configuration
@@ -170,6 +177,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::otlp;
     use crate::exporters::otlp::exporter::Exporter;
+    use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
     use crate::topology::flush_control::FlushBroadcast;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
@@ -1069,7 +1077,12 @@ mod tests {
 
     // Wait for a msg to be sent, returns None if it was unable to deliver
     async fn send_test_msg(
-        mut traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
+        mut traces: Exporter<
+            ResourceSpans,
+            ExportTraceServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportTraceServiceResponse,
+        >,
         btx: BoundedSender<Vec<ResourceSpans>>,
         server_rx: &mut tokio::sync::mpsc::Receiver<()>,
     ) -> Option<()> {
@@ -1101,7 +1114,12 @@ mod tests {
     }
 
     async fn send_test_traces_msgs_and_stop(
-        traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
+        traces: Exporter<
+            ResourceSpans,
+            ExportTraceServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportTraceServiceResponse,
+        >,
         btx: BoundedSender<Vec<ResourceSpans>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1117,6 +1135,7 @@ mod tests {
         metrics: Exporter<
             ResourceMetrics,
             ExportMetricsServiceRequest,
+            AwsSigv4RequestSigner,
             ExportMetricsServiceResponse,
         >,
         btx: BoundedSender<Vec<ResourceMetrics>>,
@@ -1131,7 +1150,12 @@ mod tests {
     }
 
     async fn send_test_logs_msg_and_stop(
-        logs: Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
+        logs: Exporter<
+            ResourceLogs,
+            ExportLogsServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportLogsServiceResponse,
+        >,
         btx: BoundedSender<Vec<ResourceLogs>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1144,7 +1168,12 @@ mod tests {
     }
 
     async fn send_test_trace_and_stop(
-        mut traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
+        mut traces: Exporter<
+            ResourceSpans,
+            ExportTraceServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportTraceServiceResponse,
+        >,
         payloads: Vec<Vec<ResourceSpans>>,
         btx: BoundedSender<Vec<ResourceSpans>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1171,6 +1200,7 @@ mod tests {
         mut metrics: Exporter<
             ResourceMetrics,
             ExportMetricsServiceRequest,
+            AwsSigv4RequestSigner,
             ExportMetricsServiceResponse,
         >,
         payloads: Vec<Vec<ResourceMetrics>>,
@@ -1196,7 +1226,12 @@ mod tests {
     }
 
     async fn send_test_logs_and_stop(
-        mut logs: Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
+        mut logs: Exporter<
+            ResourceLogs,
+            ExportLogsServiceRequest,
+            AwsSigv4RequestSigner,
+            ExportLogsServiceResponse,
+        >,
         payloads: Vec<Vec<ResourceLogs>>,
         btx: BoundedSender<Vec<ResourceLogs>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
