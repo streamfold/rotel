@@ -49,7 +49,7 @@ impl ApiRequestBuilder {
         Ok(s)
     }
 
-    pub fn build(&self, payload: AgentPayload) -> Result<Request<Full<Bytes>>, BoxError> {
+    pub fn build(&self, payload: AgentPayload) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
         let mut buf = Vec::new();
         if let Err(e) = payload.encode(&mut buf) {
             // todo: We pass these on as errors which the final service immediately returns,
@@ -68,6 +68,7 @@ impl ApiRequestBuilder {
             .builder()
             .body(body)?
             .build()
+            .map(|r| vec![r])
             .map_err(|e| format!("failed to build request: {:?}", e).into())
     }
 }

@@ -15,17 +15,19 @@ use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
 use crate::exporters::clickhouse::schema::{get_log_row_col_keys, get_span_row_col_keys};
 use crate::exporters::clickhouse::transformer::Transformer;
-use crate::exporters::http;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::exporter::{Exporter, ResultLogger};
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
+use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
+use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
+use http::Request;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
@@ -65,11 +67,15 @@ type SvcType =
     TowerRetry<RetryPolicy<()>, Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
-    RequestBuilderMapper<
-        RecvStream<'a, Vec<Resource>>,
-        Resource,
+    RequestIterator<
+        RequestBuilderMapper<
+            RecvStream<'a, Vec<Resource>>,
+            Resource,
+            ClickhousePayload,
+            RequestBuilder<Resource, Transformer>,
+        >,
+        Vec<Request<ClickhousePayload>>,
         ClickhousePayload,
-        RequestBuilder<Resource, Transformer>,
     >,
     SvcType,
     ClickhousePayload,
@@ -125,7 +131,7 @@ impl ClickhouseExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
+        let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(
             self.compression.clone(),
@@ -155,6 +161,7 @@ impl ClickhouseExporterBuilder {
             .service(client);
 
         let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
+        let enc_stream = RequestIterator::new(enc_stream);
 
         let exp = Exporter::new(
             "clickhouse",
@@ -177,7 +184,7 @@ impl ClickhouseExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceLogs>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
-        let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
+        let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(
             self.compression.clone(),
@@ -207,6 +214,7 @@ impl ClickhouseExporterBuilder {
             .service(client);
 
         let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
+        let enc_stream = RequestIterator::new(enc_stream);
 
         let exp = Exporter::new(
             "clickhouse",

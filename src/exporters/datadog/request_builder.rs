@@ -55,7 +55,9 @@ impl<Resource, Transform> BuildRequest<Resource, Full<Bytes>>
 where
     Transform: TransformPayload<Resource>,
 {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError> {
+    type Output = Vec<Request<Full<Bytes>>>;
+
+    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
         let payload = self.transformer.transform(input);
 
         self.api_req_builder.build(payload)

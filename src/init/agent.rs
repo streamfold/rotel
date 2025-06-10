@@ -396,7 +396,7 @@ impl Agent {
                     config.aws_xray_exporter.xray_exporter_region,
                     config.aws_xray_exporter.xray_exporter_custom_endpoint,
                 );
-                let config = Box::leak(Box::new(AwsConfig::from_env()));
+                let config = AwsConfig::from_env();
                 let exp = builder.build(
                     trace_pipeline_out_rx,
                     self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),

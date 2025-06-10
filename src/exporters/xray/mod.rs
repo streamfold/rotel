@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::http;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
@@ -12,11 +11,14 @@ use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::exporter::{Exporter, ResultLogger};
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
+use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::response::Response;
+use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
+use http::Request;
 use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
@@ -32,11 +34,15 @@ mod xray_request;
 type SvcType = TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), XRayTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
-    RequestBuilderMapper<
-        RecvStream<'a, Vec<Resource>>,
-        Resource,
+    RequestIterator<
+        RequestBuilderMapper<
+            RecvStream<'a, Vec<Resource>>,
+            Resource,
+            Full<Bytes>,
+            RequestBuilder<Resource, Transformer>,
+        >,
+        Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
-        RequestBuilder<'a, Resource, Transformer>,
     >,
     SvcType,
     Full<Bytes>,
@@ -190,14 +196,14 @@ impl XRayTraceExporterBuilder {
         self
     }
 
-    pub fn build(
+    pub fn build<'a>(
         self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
         environment: String,
-        config: &AwsConfig,
-    ) -> Result<ExporterType<ResourceSpans>, BoxError> {
-        let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
+        config: AwsConfig,
+    ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
+        let client = HttpClient::build(tls::Config::default(), Default::default())?;
         let transformer = Transformer::new(environment);
 
         let req_builder = RequestBuilder::new(
@@ -215,6 +221,7 @@ impl XRayTraceExporterBuilder {
             .service(client);
 
         let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
+        let enc_stream = RequestIterator::new(enc_stream);
 
         let exp = Exporter::new(
             "x-ray",
@@ -290,7 +297,7 @@ mod tests {
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
         // Create a true 'static reference using Box::leak
-        let config = Box::leak(Box::new(AwsConfig::from_env()));
+        let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config);
 
         let cancellation_token = CancellationToken::new();
@@ -317,7 +324,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let config = Box::leak(Box::new(AwsConfig::from_env()));
+        let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config);
 
         let cancellation_token = CancellationToken::new();
@@ -334,11 +341,11 @@ mod tests {
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }
 
-    fn new_exporter(
+    fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
-        config: &AwsConfig,
-    ) -> ExporterType<ResourceSpans> {
+        config: AwsConfig,
+    ) -> ExporterType<'a, ResourceSpans> {
         XRayTraceExporterBuilder::new(Region::UsEast1, Some(addr))
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),

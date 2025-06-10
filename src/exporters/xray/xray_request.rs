@@ -17,17 +17,14 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 }
 
 #[derive(Clone)]
-pub struct XRayRequestBuilder<'a> {
-    signer: AwsRequestSigner<'a, SystemClock>,
+pub struct XRayRequestBuilder {
+    signer: AwsRequestSigner<'static, SystemClock>,
     pub base_headers: HeaderMap,
     pub uri: Uri,
 }
 
-impl<'a> XRayRequestBuilder<'a> {
-    pub fn new(
-        endpoint: String,
-        config: &'a AwsConfig,
-    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+impl XRayRequestBuilder {
+    pub fn new(endpoint: String, config: AwsConfig) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let uri: url::Url = match endpoint.parse() {
             Ok(u) => u,
             Err(e) => return Err(format!("failed to parse endpoint {}: {}", endpoint, e).into()),
@@ -45,6 +42,10 @@ impl<'a> XRayRequestBuilder<'a> {
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
+
+        // leak for now to ease lifetimes
+        let config = Box::leak(Box::new(config));
+
         let signer = AwsRequestSigner::new(
             "xray",
             config.region.as_str(),
@@ -62,7 +63,7 @@ impl<'a> XRayRequestBuilder<'a> {
         Ok(s)
     }
 
-    pub fn build(&self, payload: Vec<Value>) -> Result<Request<Full<Bytes>>, BoxError> {
+    pub fn build(&self, payload: Vec<Value>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
         // Convert each segment Value to a string
         let segment_strings: Vec<String> = payload
             .into_iter()
@@ -82,7 +83,7 @@ impl<'a> XRayRequestBuilder<'a> {
             data,
         );
         match signed_request {
-            Ok(r) => Ok(r),
+            Ok(r) => Ok(vec![r]),
             Err(e) => Err(Box::new(e)),
         }
     }
