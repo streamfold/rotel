@@ -209,6 +209,7 @@ class RedactionProcessor:
         # Apply to keys that remain after initial filtering
         current_keys = [kv.key for kv in attributes]
         kv_map = {kv.key: kv for kv in attributes}
+        remaining_keys = set()
         # Get current keys after potential deletions
         for key in current_keys:
             for pattern in self.config.blocked_key_patterns:
@@ -221,10 +222,12 @@ class RedactionProcessor:
                         value_obj.value = AnyValue(redacted_value)
                         masked_keys.add(key)  # Track as masked
                     break  # Matched a pattern, no need to check others for this key
+                else:
+                    remaining_keys.add(key)
 
         # --- Phase 3: `blocked_values` / `allowed_values` ---
         # Apply to values of attributes that *remain* and *were not already masked by key patterns*
-        for key in current_keys:
+        for key in remaining_keys:
             value_obj = kv_map[key].value
             if isinstance(value_obj.value, str):  # Only apply to string values
                 original_str = value_obj.value
