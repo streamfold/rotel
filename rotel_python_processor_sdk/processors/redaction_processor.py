@@ -75,7 +75,7 @@ class RedactionProcessor:
         """
 
         redacted_count = len(tracked_keys)
-        if redacted_count == 0:
+        if redacted_count == 0 or self.config.summary == "silent":
             return  # No keys to report for this category
 
         # Record summary as attributes
@@ -122,7 +122,6 @@ class RedactionProcessor:
             for key in original_keys:
                 if key not in self.config.allowed_keys:
                     # Candidate for deletion, unless it's in ignored_keys
-                    print(f"key {key} not in allowed_keys")
                     if key not in self.config.ignored_keys:
                         keys_to_delete.add(key)
                         deleted_keys.add(key)
@@ -145,7 +144,6 @@ class RedactionProcessor:
                     allowed_keys_for_meta.add(
                         key)  # These are allowed by default, not explicitly by allowed_keys list
 
-        print(f"Initial filtering complete we're going to delete these keys: {keys_to_delete}")
         filtered_attributes = []
         for kv in attributes:
             if kv.key not in keys_to_delete:
@@ -157,7 +155,6 @@ class RedactionProcessor:
         # Apply to keys that remain after initial filtering
         current_keys = [kv.key for kv in attributes]
         kv_map = {kv.key: kv for kv in attributes}
-        print(f"kv_map is {kv_map}")
         # Get current keys after potential deletions
         for key in current_keys:
             for pattern in self.config.blocked_key_patterns:
@@ -174,30 +171,27 @@ class RedactionProcessor:
         # --- Phase 3: `blocked_values` / `allowed_values` ---
         # Apply to values of attributes that *remain* and *were not already masked by key patterns*
         for key in current_keys:
-            print(f"Checking for blocked values for key '{key}'")
             value_obj = kv_map[key].value
             if isinstance(value_obj.value, str):  # Only apply to string values
                 original_str = value_obj.value
-                print(f"original_str is: {original_str}")
                 should_block = False
                 for pattern in self.config.blocked_values:
-                    if pattern.search(original_str):
+                    res = pattern.search(original_str)
+                    if res:
                         should_block = True
-                    break
-
-            if should_block:
-                should_allow = False
-                for pattern in self.config.allowed_values:
-                    if pattern.search(original_str):
-                        should_allow = True
                         break
 
-                if not should_allow:  # If blocked and not allowed, then mask
-                    print(f"We found a blocked value: {original_str}")
-                    redacted_value = self._get_redacted_value(original_str)
-                    print(f"its redacted value is: {redacted_value}")
-                    value_obj.value = AnyValue(redacted_value)
-                    masked_keys.add(key)  # Track as masked
+                if should_block:
+                    should_allow = False
+                    for pattern in self.config.allowed_values:
+                        if pattern.search(original_str):
+                            should_allow = True
+                            break
+
+                    if not should_allow:  # If blocked and not allowed, then mask
+                        redacted_value = self._get_redacted_value(original_str)
+                        value_obj.value = AnyValue(redacted_value)
+                        masked_keys.add(key)  # Track as masked
 
         self._add_meta_attrs(deleted_keys, kv_map, f"redaction.{context_type}.redacted_keys.names",
                              f"redaction.{context_type}.redacted_keys.count")
@@ -211,22 +205,18 @@ class RedactionProcessor:
         self._add_meta_attrs(ignored_keys_for_meta, kv_map, "",
                              f"redaction.{context_type}.ignored_keys.count")  # names are not added for ignored_keys in Go
 
-        print(f"kv_map final is {kv_map}")
         final_attributes = []
         for key, value in kv_map.items():
-            print(f"Adding a final attribute: {value.key} : {value.value.value}")
             final_attributes.append(value)
         return final_attributes
 
     def process_spans(self, resource_spans: ResourceSpans):
-        resource_spans.resource.attributes = self._redact_attributes(resource_spans.resource.attributes,
-                                                                     "resource")
-        print("about to process spans")
+        if resource_spans.resource is not None:
+            resource_spans.resource.attributes = self._redact_attributes(resource_spans.resource.attributes,
+                                                                         "resource")
         for ss in resource_spans.scope_spans:
             for span in ss.spans:
-                print(f"Calling redact_attributes on span {span.name}")
                 attrs = self._redact_attributes(span.attributes, "span")
-                print(f"Redacted attributes are {attrs}")
                 span.attributes = attrs
 
     # TODO: Add support for metrics
@@ -244,14 +234,15 @@ class RedactionProcessor:
     #     return metrics
 
     def process_logs(self, resource_logs: ResourceLogs):
-        self._redact_attributes(resource_logs.resource.attributes, "resource")
+        if resource_logs.resource is not None:
+            resource_logs.resource.attributes = self._redact_attributes(resource_logs.resource.attributes, "resource")
         for sl in resource_logs.scope_logs:
             for log_record in sl.log_records:
-                self._redact_attributes(log_record.attributes, "log")
+                log_record.attributes = self._redact_attributes(log_record.attributes, "log")
                 # Log body redaction: apply blocked_values/allowed_values
                 # The Go processor's 'redactLogs' function also handles log body using value matchers.
                 # It also adds meta-attributes for log body redaction.
-                self._redact_log_body(log_record.body, log_record.attributes)
+                log_record.attributes = self._redact_log_body(log_record.body, log_record.attributes)
 
     def _redact_log_body(self, log_body_value: AnyValue | None, log_attributes: List[KeyValue]) -> List[
         KeyValue]:
@@ -262,15 +253,14 @@ class RedactionProcessor:
         Also adds specific meta-attributes for log body redaction.
         """
 
-        redacted_this_body_keys = set()  # To track keys for log body meta-data
         redacted_this_body_count = 0
 
         # Helper recursive function for processing value and tracking changes
-        def _process_value_recursive(value: AnyValue):
+        def _process_value_recursive(av: AnyValue, ignored_keys: set[str], redacted_keys: set[str]):
             nonlocal redacted_this_body_count  # Use nonlocal to modify outer scope variables
 
-            if isinstance(value.value, str):
-                original_str = value.value
+            if isinstance(av.value, str):
+                original_str = av.value
                 temp_str = original_str
 
                 body_value_masked = False
@@ -284,10 +274,10 @@ class RedactionProcessor:
                             if allowed_pattern.search(temp_str):
                                 should_allow = True
                                 break
-                            if not should_allow:
-                                # Perform substitution with the redacted value (only the matched part is hashed/replaced)
-                                temp_str = pattern.sub(self._get_redacted_value(match.group(0)), temp_str)
-                                body_value_masked = True
+                        if not should_allow:
+                            # Perform substitution with the redacted value (only the matched part is hashed/replaced)
+                            temp_str = pattern.sub(self._get_redacted_value(match.group(0)), temp_str)
+                            body_value_masked = True
 
                 if body_value_masked:
                     value.value = temp_str
@@ -295,13 +285,22 @@ class RedactionProcessor:
 
             elif isinstance(value.value, KeyValueList):
                 for kv in value.value:
-                    _process_value_recursive(kv.value)
+                    if kv.key in self.config.ignored_keys:
+                        ignored_keys.add(kv.key)
+                        continue
+                    if not self.config.allow_all_keys and kv.key not in self.config.allowed_keys:
+                        redacted_keys.add(kv.key)
+                        continue
+                    _process_value_recursive(kv.value, ignored_keys, redacted_keys)
 
             elif isinstance(value.value, ArrayValue):
                 for v_item in value.value:
                     _process_value_recursive(v_item)
 
-        _process_value_recursive(log_body_value)  # Start recursive processing
+        ignored_keys = set()
+        redacted_keys = set()
+        # End helper recursive function
+        _process_value_recursive(log_body_value, ignored_keys, redacted_keys)  # Start recursive processing
 
         # Add meta-attributes for log body redaction, similar to Go's addMetaAttrs for body
         # The Go code for log body meta-attrs often uses counts (e.g., redaction.log.body.masked.count)
