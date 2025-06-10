@@ -223,47 +223,12 @@ impl Agent {
             trace_batch_config.max_size = 50;
         }
 
-        let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
-            trace_pipeline_in_rx.clone(),
-            trace_pipeline_out_tx,
-            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            trace_batch_config,
-            config.otlp_with_trace_processor.clone(),
-            config.otel_resource_attributes.clone(),
-        );
-
-        let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
-            metrics_pipeline_in_rx.clone(),
-            metrics_pipeline_out_tx,
-            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_metrics_batch_config(config.batch.clone()),
-            vec![],
-            config.otel_resource_attributes.clone(),
-        );
-
-        let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
-            logs_pipeline_in_rx.clone(),
-            logs_pipeline_out_tx,
-            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_logs_batch_config(config.batch.clone()),
-            config.otlp_with_logs_processor.clone(),
-            config.otel_resource_attributes.clone(),
-        );
-
         // Internal metrics
         // N.B Internal metrics initialization MUST be done before starting other parts of the agent such as
         // receiver and exporters, so that the global meter provider is set before those components attempt to
         // create instruments such as counters, etc. Be careful when refactoring this code to avoid breaking
         // this dependency.
-
-        let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
-            internal_metrics_pipeline_in_rx.clone(),
-            internal_metrics_pipeline_out_tx,
-            pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-            build_metrics_batch_config(config.batch.clone()),
-            vec![],
-            config.otel_resource_attributes.clone(),
-        );
+        //
 
         let internal_metrics_sdk_exporter =
             telemetry::internal_exporter::InternalOTLPMetricsExporter::new(
@@ -530,6 +495,15 @@ impl Agent {
         }
 
         if traces_output.is_some() {
+            let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
+                trace_pipeline_in_rx.clone(),
+                trace_pipeline_out_tx,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                trace_batch_config,
+                config.otlp_with_trace_processor.clone(),
+                config.otel_resource_attributes.clone(),
+            );
+
             let log_traces = config.debug_log.contains(&DebugLogParam::Traces);
             let dbg_log = DebugLogger::new(log_traces);
 
@@ -537,7 +511,17 @@ impl Agent {
             pipeline_task_set
                 .spawn(async move { trace_pipeline.start(dbg_log, pipeline_cancel).await });
         }
+
         if metrics_output.is_some() {
+            let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                metrics_pipeline_in_rx.clone(),
+                metrics_pipeline_out_tx,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                build_metrics_batch_config(config.batch.clone()),
+                vec![],
+                config.otel_resource_attributes.clone(),
+            );
+
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
             let dbg_log = DebugLogger::new(log_metrics);
 
@@ -545,7 +529,17 @@ impl Agent {
             pipeline_task_set
                 .spawn(async move { metrics_pipeline.start(dbg_log, pipeline_cancel).await });
         }
+
         if logs_output.is_some() {
+            let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
+                logs_pipeline_in_rx.clone(),
+                logs_pipeline_out_tx,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                build_logs_batch_config(config.batch.clone()),
+                config.otlp_with_logs_processor.clone(),
+                config.otel_resource_attributes.clone(),
+            );
+
             let log_logs = config.debug_log.contains(&DebugLogParam::Logs);
             let dbg_log = DebugLogger::new(log_logs);
 
@@ -553,7 +547,17 @@ impl Agent {
             pipeline_task_set
                 .spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
         }
+
         if internal_metrics_output.is_some() {
+            let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                internal_metrics_pipeline_in_rx.clone(),
+                internal_metrics_pipeline_out_tx,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                build_metrics_batch_config(config.batch.clone()),
+                vec![],
+                config.otel_resource_attributes.clone(),
+            );
+
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
             let dbg_log = DebugLogger::new(log_metrics);
 

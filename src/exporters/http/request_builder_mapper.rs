@@ -92,4 +92,8 @@ where
             },
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.encoding_futures.len(), None)
+    }
 }
