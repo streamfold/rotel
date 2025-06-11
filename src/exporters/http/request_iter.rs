@@ -48,7 +48,8 @@ where
             Some(item) => {
                 let next = item.next();
                 if next.is_none() {
-                    // Once we hit the first none, clear the iterator
+                    // Once we hit the first none, clear the iterator. It might be undefined
+                    // to continue calling next.
                     self.curr_iter = None;
                 }
 
