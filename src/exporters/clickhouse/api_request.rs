@@ -66,11 +66,12 @@ impl ApiRequestBuilder {
     pub fn build(
         &self,
         payload: ClickhousePayload,
-    ) -> Result<Request<ClickhousePayload>, BoxError> {
+    ) -> Result<Vec<Request<ClickhousePayload>>, BoxError> {
         self.base
             .builder()
             .body(payload)?
             .build()
+            .map(|r| vec![r])
             .map_err(|e| format!("failed to build request: {:?}", e).into())
     }
 }

@@ -16,25 +16,31 @@ use tracing::error;
 const MAX_CONCURRENT_ENCODERS: usize = 8;
 
 pub trait BuildRequest<Resource, Payload> {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<Payload>, BoxError>;
+    type Output: IntoIterator<Item = Request<Payload>>;
+
+    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError>;
 }
 
 #[pin_project]
 pub struct RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
+    ReqBuilder: BuildRequest<Resource, Payload>,
+    <ReqBuilder as BuildRequest<Resource, Payload>>::Output: IntoIterator<Item = Request<Payload>>,
 {
     #[pin]
     input: Fuse<InStr>,
 
     req_builder: ReqBuilder,
-    encoding_futures: FuturesOrdered<JoinHandle<Result<Request<Payload>, BoxError>>>,
+    encoding_futures: FuturesOrdered<JoinHandle<Result<ReqBuilder::Output, BoxError>>>,
 }
 
 impl<InStr, Resource, Payload, ReqBuilder>
     RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
     InStr: Stream<Item = Vec<Resource>>,
+    ReqBuilder: BuildRequest<Resource, Payload>,
+    <ReqBuilder as BuildRequest<Resource, Payload>>::Output: IntoIterator<Item = Request<Payload>>,
 {
     pub fn new(input: InStr, req_builder: ReqBuilder) -> Self {
         Self {
@@ -51,9 +57,11 @@ where
     InStr: Stream<Item = Vec<Resource>>,
     Resource: Send + Clone + 'static,
     ReqBuilder: BuildRequest<Resource, Payload> + Send + Sync + Clone + 'static,
+    <ReqBuilder as BuildRequest<Resource, Payload>>::Output:
+        IntoIterator<Item = Request<Payload>> + Send + Sync + Clone,
     Payload: Send + 'static,
 {
-    type Item = Result<Request<Payload>, BoxError>;
+    type Item = Result<<ReqBuilder as BuildRequest<Resource, Payload>>::Output, BoxError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();

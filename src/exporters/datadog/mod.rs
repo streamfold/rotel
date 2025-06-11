@@ -3,18 +3,20 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::datadog::request_builder::RequestBuilder;
 use crate::exporters::datadog::transform::Transformer;
-use crate::exporters::http;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::exporter::{Exporter, ResultLogger};
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
+use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::response::Response;
+use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
+use http::Request;
 use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
@@ -32,11 +34,15 @@ type SvcType =
     TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), DatadogTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
-    RequestBuilderMapper<
-        RecvStream<'a, Vec<Resource>>,
-        Resource,
+    RequestIterator<
+        RequestBuilderMapper<
+            RecvStream<'a, Vec<Resource>>,
+            Resource,
+            Full<Bytes>,
+            RequestBuilder<Resource, Transformer>,
+        >,
+        Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
-        RequestBuilder<Resource, Transformer>,
     >,
     SvcType,
     Full<Bytes>,
@@ -118,7 +124,7 @@ impl DatadogTraceExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        let client = HttpClient::build(http::tls::Config::default(), Default::default())?;
+        let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(self.environment.clone(), self.hostname.clone());
 
@@ -136,7 +142,8 @@ impl DatadogTraceExporterBuilder {
             .timeout(Duration::from_secs(5))
             .service(client);
 
-        let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
+        let enc_stream =
+            RequestIterator::new(RequestBuilderMapper::new(rx.into_stream(), req_builder));
 
         let exp = Exporter::new(
             "datadog",

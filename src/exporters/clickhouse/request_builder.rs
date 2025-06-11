@@ -43,7 +43,9 @@ impl<Resource, Transform> BuildRequest<Resource, ClickhousePayload>
 where
     Transform: TransformPayload<Resource>,
 {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<ClickhousePayload>, BoxError> {
+    type Output = Vec<Request<ClickhousePayload>>;
+
+    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
         let payload = self.transformer.transform(input)?;
 
         self.api_req_builder.build(payload)

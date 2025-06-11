@@ -18,22 +18,22 @@ pub trait TransformPayload<T> {
 
 // todo: identify the cost of recursively cloning these
 #[derive(Clone)]
-pub struct RequestBuilder<'a, Resource, Transform>
+pub struct RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
     transformer: Transform,
-    api_req_builder: XRayRequestBuilder<'a>,
+    api_req_builder: XRayRequestBuilder,
     _phantom: PhantomData<Resource>,
 }
 
-impl<'a, Resource, Transform> RequestBuilder<'a, Resource, Transform>
+impl<Resource, Transform> RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
     pub fn new(
         transformer: Transform,
-        config: &'a AwsConfig,
+        config: AwsConfig,
         region: Region,
         custom_endpoint: Option<String>,
     ) -> Result<Self, BoxError> {
@@ -51,12 +51,14 @@ where
     }
 }
 
-impl<'a, Resource, Transform> BuildRequest<Resource, Full<Bytes>>
-    for RequestBuilder<'a, Resource, Transform>
+impl<Resource, Transform> BuildRequest<Resource, Full<Bytes>>
+    for RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
-    fn build(&self, input: Vec<Resource>) -> Result<Request<Full<Bytes>>, BoxError> {
+    type Output = Vec<Request<Full<Bytes>>>;
+
+    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
         let payload = self.transformer.transform(input);
         match payload {
             Ok(p) => self.api_req_builder.build(p),
