@@ -160,8 +160,8 @@ impl ClickhouseExporterBuilder {
             .timeout(Duration::from_secs(5))
             .service(client);
 
-        let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
-        let enc_stream = RequestIterator::new(enc_stream);
+        let enc_stream =
+            RequestIterator::new(RequestBuilderMapper::new(rx.into_stream(), req_builder));
 
         let exp = Exporter::new(
             "clickhouse",
@@ -213,8 +213,8 @@ impl ClickhouseExporterBuilder {
             .timeout(Duration::from_secs(5))
             .service(client);
 
-        let enc_stream = RequestBuilderMapper::new(rx.into_stream(), req_builder);
-        let enc_stream = RequestIterator::new(enc_stream);
+        let enc_stream =
+            RequestIterator::new(RequestBuilderMapper::new(rx.into_stream(), req_builder));
 
         let exp = Exporter::new(
             "clickhouse",
