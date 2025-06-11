@@ -5,22 +5,23 @@ use http::{HeaderMap, HeaderName, Request};
 use tower::BoxError;
 use url::Url;
 
+pub struct ConnectionConfig {
+    pub(crate) endpoint: String,
+    pub(crate) database: String,
+    pub(crate) compression: Compression,
+    pub(crate) auth_user: Option<String>,
+    pub(crate) auth_password: Option<String>,
+    pub(crate) async_insert: bool,
+    pub(crate) use_json: bool,
+}
+
 #[derive(Clone)]
 pub struct ApiRequestBuilder {
     base: BaseRequestBuilder<ClickhousePayload>,
 }
 
 impl ApiRequestBuilder {
-    pub fn new(
-        endpoint: String,
-        database: String,
-        query: String,
-        compression: Compression,
-        auth_user: Option<String>,
-        auth_password: Option<String>,
-        async_insert: bool,
-        use_json: bool,
-    ) -> Result<Self, BoxError> {
+    pub fn new(config: &ConnectionConfig, query: String) -> Result<Self, BoxError> {
         let full_url = construct_full_url(endpoint);
         let mut uri = Url::parse(full_url.as_str())?;
 
@@ -66,12 +67,11 @@ impl ApiRequestBuilder {
     pub fn build(
         &self,
         payload: ClickhousePayload,
-    ) -> Result<Vec<Request<ClickhousePayload>>, BoxError> {
+    ) -> Result<Request<ClickhousePayload>, BoxError> {
         self.base
             .builder()
             .body(payload)?
             .build()
-            .map(|r| vec![r])
             .map_err(|e| format!("failed to build request: {:?}", e).into())
     }
 }

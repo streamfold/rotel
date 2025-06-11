@@ -4,6 +4,7 @@ mod compression;
 mod exception;
 mod payload;
 mod request_builder;
+mod request_mapper;
 mod rowbinary;
 mod schema;
 mod transformer;
@@ -231,25 +232,6 @@ impl ClickhouseExporterBuilder {
 
         Ok(exp)
     }
-}
-
-fn get_traces_sql(table_prefix: String) -> String {
-    build_insert_sql(
-        get_table_name(table_prefix, "traces"),
-        get_span_row_col_keys(),
-    )
-}
-
-fn get_logs_sql(table_prefix: String) -> String {
-    build_insert_sql(get_table_name(table_prefix, "logs"), get_log_row_col_keys())
-}
-
-fn build_insert_sql(table: String, cols: String) -> String {
-    format!("INSERT INTO {} ({}) FORMAT RowBinary", table, cols,)
-}
-
-fn get_table_name(table_prefix: String, table: &str) -> String {
-    format!("{}_{}", table_prefix, table)
 }
 
 #[derive(Default, Clone)]
