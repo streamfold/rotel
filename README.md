@@ -132,10 +132,12 @@ The sigv4auth authenticator requires the AWS authentication environment variable
 
 **Traces**
 
-_Tracing requires that you enable [Transaction Search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Transaction-Search.html)
+_Tracing requires that you
+enable [Transaction Search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Transaction-Search.html)
 in the AWS console before you can send OTLP traces._
 
-Here is the full environment variable configuration to send traces to Cloudwatch, swap the region code as needed. 
+Here is the full environment variable configuration to send traces to Cloudwatch, swap the region code as needed.
+
 ```shell
 ROTEL_EXPORTER=otlp
 ROTEL_OTLP_EXPORTER_PROTOCOL=http
@@ -150,6 +152,7 @@ ahead of time and they are not created by default._
 
 Here is the full environment variable configuration to send logs to Cloudwatch, swap the region code and
 log group/stream as needed.
+
 ```shell
 ROTEL_EXPORTER=otlp
 ROTEL_OTLP_EXPORTER_PROTOCOL=http
@@ -323,15 +326,38 @@ The processor SDK enables you to:
 - Modify resource attributes across traces and logs
 - Transform data using custom Python logic before it is exported
 
+The processor SDK also includes LSP support for code completion, syntax highlighting and marking of warnings for use in
+your preferred editor such as VSCode, Nvim, and Pycharm. The LSP integration is hosted on pypi and can be found
+at [https://pypi.org/project/rotel-sdk/](https://pypi.org/project/rotel-sdk/).
+
+To install the sdk simply type `pip install rotel-sdk`
+
 Example of a simple trace processor:
 
 ```python
+from rotel_sdk.open_telemetry.common.v1 import KeyValue, AnyValue
+from rotel_sdk.open_telemetry.trace.v1 import ResourceSpans
+
+
 def process_spans(resource_spans):
     for scope_spans in resource_spans.scope_spans:
         for span in scope_spans.spans:
             # Add custom attribute to all spans
             span.attributes.append(KeyValue("processed.by", AnyValue("my_processor")))
 ```
+
+### Prebuilt Processors
+
+Rotel also ships with prebuilt processors written in Python that you can use right out of the box or modify.
+Prebuilt processors are found in the [processors](/rotel_python_processor_sdk/processors) folder under the
+rotel_python_processor_sdk directory.
+
+Current prebuilt processors include...
+
+| Name                 | Supported telemetry types |
+|----------------------|---------------------------|
+| Attributes Processor | logs, traces              |
+| Redaction Processor  | logs, traces              |
 
 #### Technical Implementation
 
