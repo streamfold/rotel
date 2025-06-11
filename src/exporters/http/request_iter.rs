@@ -110,3 +110,61 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bounded_channel::bounded;
+    use bytes::Bytes;
+    use http::Method;
+    use http_body_util::Full;
+    use tokio_stream::StreamExt;
+
+    #[tokio::test]
+    async fn iterator_size_hint() {
+        let (tx, rx) = bounded::<Result<Vec<Request<Full<Bytes>>>, BoxError>>(5);
+        let mut stream = RequestIterator::new(rx.into_stream());
+
+        let (min, max) = stream.size_hint();
+        assert_eq!(0, min);
+        assert_eq!(None, max);
+
+        let hosts = vec!["127.0.0.1", "127.0.0.2", "127.0.0.3"];
+        let reqs: Vec<Request<Full<Bytes>>> = hosts
+            .iter()
+            .map(|h| new_request(format!("http://{}", h).as_str()))
+            .collect();
+
+        tx.send(Ok(reqs)).await.unwrap();
+
+        // Still zero because we haven't called next/poll_next on the iterator
+        let (min, max) = stream.size_hint();
+        assert_eq!(0, min);
+        assert_eq!(None, max);
+
+        for (idx, e) in hosts.iter().enumerate() {
+            println!("iter: {}", idx);
+            let r = stream.next().await;
+            assert!(r.is_some());
+
+            let req = r.unwrap().unwrap();
+            assert_eq!(*e, req.uri().host().unwrap());
+
+            let (min, max) = stream.size_hint();
+            assert_eq!(hosts.len() - idx - 1, min);
+            assert_eq!(Some(hosts.len() - idx - 1), max);
+        }
+
+        let (min, max) = stream.size_hint();
+        assert_eq!(0, min);
+        assert_eq!(Some(0), max);
+    }
+
+    fn new_request(host: &str) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method(Method::GET)
+            .uri(host.to_string())
+            .body(Full::from(Bytes::new()))
+            .unwrap()
+    }
+}
