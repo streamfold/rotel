@@ -24,7 +24,7 @@ pub struct RLogRecord {
     pub observed_time_unix_nano: u64,
     pub severity_number: i32,
     pub severity_text: String,
-    pub body: RAnyValue,
+    pub body: Arc<Mutex<Option<RAnyValue>>>,
     pub attributes_arc: Option<Arc<Mutex<Vec<RKeyValue>>>>,
     pub attributes_raw: Vec<KeyValue>,
     pub dropped_attributes_count: u32,

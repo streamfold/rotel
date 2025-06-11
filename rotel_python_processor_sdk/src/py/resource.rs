@@ -26,12 +26,11 @@ impl Resource {
         Ok(Attributes(self.attributes.clone()))
     }
     #[setter]
-    fn set_attributes(&mut self, new_value: &Attributes) -> PyResult<()> {
+    fn set_attributes(&mut self, new_value: Vec<KeyValue>) -> PyResult<()> {
         let mut attrs = self.attributes.lock().map_err(handle_poison_error)?;
-        let v = new_value.0.lock().map_err(handle_poison_error)?;
         attrs.clear();
-        for kv in v.iter() {
-            attrs.push(kv.clone())
+        for kv in new_value.iter() {
+            attrs.push(kv.inner.clone());
         }
         Ok(())
     }

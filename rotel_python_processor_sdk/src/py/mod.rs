@@ -1985,4 +1985,570 @@ mod tests {
 
         verify_attrs(attrs_to_verify);
     }
+    #[test]
+    fn redaction_processor_restrictive_test() {
+        initialize();
+        let resource_attrs = vec![
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "host.arch".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("amd64".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "os.type".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("linux".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "region".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("us-east-1".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "service.name".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("my-service".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "unallowed_resource_key".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("some_value".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "deployment.environment".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("prod".to_string())),
+                }),
+            },
+        ];
+
+        let span_attrs = vec![
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "user.email".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("test@example.com".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "http.url".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue(
+                        "https://example.com/sensitive/path".to_string(),
+                    )),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "db.statement".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue(
+                        "SELECT * FROM users WHERE id = 1".to_string(),
+                    )),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "operation".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("get_data".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "some_token".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("abcdef123".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "api_key_header".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("xyz789".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "safe_attribute".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("this should remain".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "unallowed_span_key".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("should_be_deleted".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "my_company_email".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("user@mycompany.com".to_string())),
+                }),
+            },
+        ];
+
+        let mut trace_request = FakeOTLP::trace_service_request();
+        trace_request.resource_spans[0].resource =
+            Some(opentelemetry_proto::tonic::resource::v1::Resource {
+                attributes: resource_attrs.clone(),
+                dropped_attributes_count: 0,
+            });
+        trace_request.resource_spans[0].scope_spans[0].spans[0].attributes = span_attrs.clone();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans = crate::model::otel_transform::transform_resource_spans(
+            trace_request.resource_spans[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "redaction_processor_restrictive_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let resource = Arc::into_inner(r_resource_spans.resource)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        let resource = crate::model::py_transform::transform_resource(resource).unwrap();
+        assert_eq!(9, resource.attributes.len());
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            resource
+                .attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        let expected_attributes = HashMap::from([
+            ("host.arch", "amd64"),
+            ("os.type", "linux"),
+            ("region", "us-east-1"),
+            ("service.name", "my-service"),
+            ("deployment.environment", "prod"),
+            (
+                "redaction.resource.redacted_keys.names",
+                "unallowed_resource_key",
+            ),
+            (
+                "redaction.resource.allowed_keys.names",
+                "deployment.environment,host.arch,os.type,region,service.name",
+            ),
+            ("redaction.resource.redacted_keys.count", "1"),
+            ("redaction.resource.allowed_keys.count", "5"),
+        ]);
+
+        let validate =
+            |kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
+             expected_attributes: HashMap<&str, &str>| {
+                for (key, value) in kv_map {
+                    let ev = expected_attributes.get(key.as_str());
+                    match ev {
+                        None => {
+                            panic!("key {:?} not found in expected attributes", key)
+                        }
+                        Some(v) => match value.unwrap().value.unwrap() {
+                            Value::StringValue(sv) => {
+                                assert_eq!(v.to_string(), sv.to_string());
+                            }
+                            Value::IntValue(i) => {
+                                let v: i64 = v.parse().expect("can't convert to int");
+                                assert_eq!(v, i);
+                            }
+                            _ => {
+                                panic!("expected string value")
+                            }
+                        },
+                    }
+                }
+            };
+
+        validate(kv_map, expected_attributes);
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+        println!("span is {:?}", span);
+        assert_eq!(7, span.attributes.len());
+
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            span.attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        let expected_attributes = HashMap::from([
+            ("operation", "get_data"),
+            ("safe_attribute", "this should remain"),
+            ("redaction.span.redacted_keys.count", "7"),
+            ("redaction.span.allowed_keys.names", "operation"),
+            ("redaction.span.allowed_keys.count", "1"),
+            ("redaction.span.redacted_keys.names", "api_key_header,db.statement,http.url,my_company_email,some_token,unallowed_span_key,user.email"),
+            ("redaction.span.ignored_keys.count", "1"),
+        ]);
+
+        validate(kv_map, expected_attributes)
+    }
+
+    #[test]
+    fn redaction_processor_blocking_test() {
+        initialize();
+        let span_attrs = vec![
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "session_token".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("foo".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "api_key".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("bar".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "password_hash".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("xyz123".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "visa".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("4123456789012".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "mastercard".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("5234567890123456".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "bl_email".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("foo@bar.com".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "allowed_email".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("test@mycompany.com".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "ip".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("10.0.1.100".to_string())),
+                }),
+            },
+            opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "query".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue("SELECT * FROM USERS".to_string())),
+                }),
+            },
+        ];
+
+        let mut trace_request = FakeOTLP::trace_service_request();
+        trace_request.resource_spans[0].scope_spans[0].spans[0].attributes = span_attrs.clone();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans = crate::model::otel_transform::transform_resource_spans(
+            trace_request.resource_spans[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "redaction_processor_blocking_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+        assert_eq!(13, span.attributes.len());
+
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            span.attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        let expected_attributes = HashMap::from([
+            ("visa", "8d9e470bdd9f6e6e18023938497857dc"),
+            ("mastercard", "aad9ce9b62a1f697745fcd81314b877f"),
+            ("ip", "f5c45dc3c8fb04f638ad27a711910390"),
+            ("query", "06c445f7ade97a964f7c466575f8b508"),
+            ("bl_email", "f3ada405ce890b6f8204094deb12d8a8"),
+            ("session_token", "acbd18db4cc2f85cedef654fccc4a4d8"),
+            ("allowed_email", "test@mycompany.com"),
+            ("api_key", "37b51d194a7513e45b56f6524f2d51f2"),
+            ("password_hash", "613d3b9c91e9445abaeca02f2342e5a6"),
+            ("redaction.span.allowed_keys.names", "allowed_email,api_key,bl_email,ip,mastercard,password_hash,query,session_token,visa"),
+            ("redaction.span.allowed_keys.count", "9"),
+            ("redaction.span.masked_keys.names", "api_key,bl_email,ip,mastercard,password_hash,query,session_token,visa"),
+            ("redaction.span.masked_keys.count", "8"),
+        ]);
+
+        for (key, value) in kv_map {
+            let ev = expected_attributes.get(key.as_str());
+            match ev {
+                None => {
+                    panic!("key {:?} not found in expected attributes", key)
+                }
+                Some(v) => match value.unwrap().value.unwrap() {
+                    Value::StringValue(sv) => {
+                        assert_eq!(v.to_string(), sv.to_string());
+                    }
+                    Value::IntValue(i) => {
+                        let v: i64 = v.parse().expect("can't convert to int");
+                        assert_eq!(v, i);
+                    }
+                    _ => {
+                        panic!("expected string value")
+                    }
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn redaction_processor_log_body_test() {
+        initialize();
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::StringValue(
+                "Login successful: password=1234567890".to_string(),
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "redaction_processor_log_body_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let body = log.body.unwrap().value.unwrap();
+        match body {
+            Value::StringValue(b) => {
+                assert_eq!(b, "6a3840901d0f07c768b96a0fad2cabe2");
+            }
+            _ => panic!("Unexpected log record value type"),
+        }
+
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::KvlistValue(
+                opentelemetry_proto::tonic::common::v1::KeyValueList {
+                    values: vec![opentelemetry_proto::tonic::common::v1::KeyValue {
+                        key: "another_body".to_string(),
+                        value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                            value: Some(Value::StringValue(
+                                "Login successful: password=1234567890".to_string(),
+                            )),
+                        }),
+                    }],
+                },
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "redaction_processor_log_body_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let body = log.body.unwrap().value.unwrap();
+        match body {
+            Value::KvlistValue(mut kvl) => {
+                let v = kvl.values.pop().unwrap();
+                match v.value.unwrap().value.unwrap() {
+                    Value::StringValue(b) => {
+                        assert_eq!(b, "6a3840901d0f07c768b96a0fad2cabe2");
+                    }
+                    _ => {
+                        panic!("Unexpected log record value type");
+                    }
+                }
+            }
+            _ => panic!("Unexpected log record value type"),
+        }
+
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::ArrayValue(
+                opentelemetry_proto::tonic::common::v1::ArrayValue {
+                    values: vec![
+                        opentelemetry_proto::tonic::common::v1::AnyValue {
+                            value: Some(Value::StringValue(
+                                "Login failed: password=1234567890".to_string(),
+                            )),
+                        },
+                        opentelemetry_proto::tonic::common::v1::AnyValue {
+                            value: Some(Value::KvlistValue(
+                                opentelemetry_proto::tonic::common::v1::KeyValueList {
+                                    values: vec![
+                                        opentelemetry_proto::tonic::common::v1::KeyValue {
+                                            key: "another_body".to_string(),
+                                            value: Some(
+                                                opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                    value: Some(Value::StringValue(
+                                                        "Login successful: password=1234567890"
+                                                            .to_string(),
+                                                    )),
+                                                },
+                                            ),
+                                        },
+                                    ],
+                                },
+                            )),
+                        },
+                    ],
+                },
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "redaction_processor_log_body_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let body = log.body.unwrap().value.unwrap();
+        match body {
+            Value::ArrayValue(mut av) => {
+                assert_eq!(av.values.len(), 2);
+                while !av.values.is_empty() {
+                    let v = av.values.pop().unwrap();
+                    match v.value.unwrap() {
+                        Value::StringValue(b) => {
+                            assert_eq!(b, "34c37eb5ba287d52490cc8c2e3ebc231");
+                        }
+                        Value::KvlistValue(mut kvl) => {
+                            let v = kvl.values.pop().unwrap();
+                            match v.value.unwrap().value.unwrap() {
+                                Value::StringValue(b) => {
+                                    assert_eq!(b, "6a3840901d0f07c768b96a0fad2cabe2");
+                                }
+                                _ => {
+                                    panic!("Unexpected log record value type");
+                                }
+                            }
+                        }
+                        _ => {
+                            panic!("Unexpected log record value type");
+                        }
+                    }
+                }
+            }
+            _ => {
+                panic!("Unexpected log record value type");
+            }
+        }
+    }
 }

@@ -135,10 +135,12 @@ fn transform_log_record(lr: opentelemetry_proto::tonic::logs::v1::LogRecord) -> 
         severity_number: lr.severity_number,
         severity_text: lr.severity_text,
         body: lr.body.map_or(
-            RAnyValue {
+            Arc::new(Mutex::new(Some(RAnyValue {
                 value: Arc::new(Mutex::new(None)),
+            }))),
+            |any_value_from_lr_body| {
+                Arc::new(Mutex::new(Some(convert_value(any_value_from_lr_body))))
             },
-            convert_value,
         ),
         attributes_arc: None,
         attributes_raw: lr.attributes,

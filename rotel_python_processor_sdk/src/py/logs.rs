@@ -309,9 +309,9 @@ impl LogRecord {
                 observed_time_unix_nano: 0,
                 severity_number: 0,
                 severity_text: "".to_string(),
-                body: RAnyValue {
+                body: Arc::new(Mutex::new(Some(RAnyValue {
                     value: Arc::new(Mutex::new(Some(StringValue("".to_string())))),
-                },
+                }))),
                 attributes_raw: vec![],
                 attributes_arc: None,
                 dropped_attributes_count: 0,
@@ -379,15 +379,14 @@ impl LogRecord {
     fn body(&self) -> PyResult<AnyValue> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
         Ok(AnyValue {
-            inner: Arc::new(Mutex::new(Some(v.body.clone()))),
+            inner: v.body.clone(),
         })
     }
 
     #[setter]
     fn set_body(&mut self, new_value: &AnyValue) -> PyResult<()> {
         let mut v = self.inner.lock().map_err(handle_poison_error)?;
-        let inner_value = new_value.inner.lock().unwrap();
-        v.body = inner_value.clone().unwrap();
+        v.body = new_value.inner.clone();
         Ok(())
     }
 

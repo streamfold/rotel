@@ -4,7 +4,7 @@ use crate::model::logs::*;
 use crate::model::trace::*;
 
 use crate::model::resource::RResource;
-use opentelemetry_proto::tonic::common::v1::KeyValue;
+use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -99,9 +99,9 @@ pub fn transform_logs(
                     observed_time_unix_nano: 0,
                     severity_number: 0,
                     severity_text: "".to_string(),
-                    body: RAnyValue {
+                    body: Arc::new(Mutex::new(Some(RAnyValue {
                         value: Arc::new(Mutex::new(None)),
-                    },
+                    }))),
                     attributes_arc: None,
                     attributes_raw: vec![],
                     dropped_attributes_count: 0,
@@ -111,12 +111,17 @@ pub fn transform_logs(
                     event_name: "".to_string(),
                 },
             );
+            let body = Arc::into_inner(moved_data.body)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+            let body: Option<AnyValue> = body.map_or(None, |b| Some(convert_value(b)));
             log_records.push(opentelemetry_proto::tonic::logs::v1::LogRecord {
+                body,
                 time_unix_nano: moved_data.time_unix_nano,
                 observed_time_unix_nano: moved_data.observed_time_unix_nano,
                 severity_number: moved_data.severity_number,
                 severity_text: moved_data.severity_text,
-                body: Some(convert_value(moved_data.body)),
                 attributes: convert_attributes(
                     moved_data.attributes_raw,
                     moved_data.attributes_arc,
