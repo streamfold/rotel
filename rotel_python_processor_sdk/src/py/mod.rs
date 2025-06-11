@@ -1,5 +1,6 @@
 pub mod common;
 pub mod logs;
+mod metrics;
 pub mod resource;
 pub mod trace;
 
