@@ -2,7 +2,8 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::{
-    MapOrJson, MetricsExemplars, MetricsMeta, MetricsSumRow,
+    MapOrJson, MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow,
+    MetricsMeta, MetricsSumRow, MetricsSummaryRow,
 };
 use crate::exporters::clickhouse::transformer::{
     Transformer, find_attribute, get_scope_properties,
@@ -35,7 +36,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                     Some(scope) => cvattr::convert(&scope.attributes),
                 };
 
-                let droppped_attr_count = sm.scope.map(|s| s.dropped_attributes_count).unwrap_or(0);
+                let dropped_attr_count = sm.scope.map(|s| s.dropped_attributes_count).unwrap_or(0);
 
                 for metric in sm.metrics {
                     if let Some(data) = metric.data {
@@ -45,7 +46,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                             scope_name: scope_name.clone(),
                             scope_version: scope_version.clone(),
                             scope_attributes: self.transform_attrs(&scope_attrs),
-                            scope_dropped_attr_count: droppped_attr_count,
+                            scope_dropped_attr_count: dropped_attr_count,
                             scope_schema_url: sm.schema_url.clone(),
                             service_name: service_name.clone(),
                             metric_name: metric.name,
@@ -83,10 +84,137 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                     e.add_row(&row)?;
                                 }
                             }
-                            Data::Gauge(_) => {}
-                            Data::Histogram(_) => {}
-                            Data::ExponentialHistogram(_) => {}
-                            Data::Summary(_) => {}
+                            Data::Gauge(g) => {
+                                for dp in g.data_points {
+                                    let attrs = cvattr::convert(&dp.attributes);
+
+                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.start_time_unix = dp.start_time_unix_nano;
+                                    meta.time_unix = dp.time_unix_nano;
+
+                                    let row = MetricsGaugeRow {
+                                        meta: &meta,
+
+                                        value: get_metric_value(dp.value),
+                                        flags: dp.flags,
+                                        exemplars: self.parse_exemplars(&dp.exemplars),
+                                    };
+
+                                    let e = payloads.entry(RequestType::MetricsGauge).or_insert(
+                                        ClickhousePayloadBuilder::new(self.compression.clone()),
+                                    );
+
+                                    e.add_row(&row)?;
+                                }
+                            }
+                            Data::Histogram(h) => {
+                                for dp in h.data_points {
+                                    let attrs = cvattr::convert(&dp.attributes);
+
+                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.start_time_unix = dp.start_time_unix_nano;
+                                    meta.time_unix = dp.time_unix_nano;
+
+                                    let row = MetricsHistogramRow {
+                                        meta: &meta,
+
+                                        count: dp.count,
+                                        sum: dp.sum.unwrap_or(0.0),
+                                        bucket_counts: dp.bucket_counts,
+                                        explicit_bounds: dp.explicit_bounds,
+                                        flags: dp.flags,
+                                        min: dp.min.unwrap_or(0.0),
+                                        max: dp.max.unwrap_or(0.0),
+                                        aggregation_temporality: h.aggregation_temporality,
+                                        exemplars: self.parse_exemplars(&dp.exemplars),
+                                    };
+
+                                    let e =
+                                        payloads.entry(RequestType::MetricsHistogram).or_insert(
+                                            ClickhousePayloadBuilder::new(self.compression.clone()),
+                                        );
+
+                                    e.add_row(&row)?;
+                                }
+                            }
+                            Data::ExponentialHistogram(e) => {
+                                for dp in e.data_points {
+                                    let attrs = cvattr::convert(&dp.attributes);
+
+                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.start_time_unix = dp.start_time_unix_nano;
+                                    meta.time_unix = dp.time_unix_nano;
+
+                                    let mut row = MetricsExpHistogramRow {
+                                        meta: &meta,
+
+                                        count: dp.count,
+                                        sum: dp.sum.unwrap_or(0.0),
+                                        scale: dp.scale,
+                                        zero_count: dp.zero_count,
+                                        positive_offset: 0,
+                                        positive_bucket_counts: vec![],
+                                        negative_offset: 0,
+                                        negative_bucket_counts: vec![],
+                                        flags: dp.flags,
+                                        min: dp.min.unwrap_or(0.0),
+                                        max: dp.max.unwrap_or(0.0),
+                                        aggregation_temporality: e.aggregation_temporality,
+                                        exemplars: self.parse_exemplars(&dp.exemplars),
+                                    };
+
+                                    if let Some(pos) = dp.positive {
+                                        row.positive_offset = pos.offset;
+                                        row.positive_bucket_counts = pos.bucket_counts;
+                                    }
+
+                                    if let Some(neg) = dp.negative {
+                                        row.negative_offset = neg.offset;
+                                        row.negative_bucket_counts = neg.bucket_counts;
+                                    }
+
+                                    let e = payloads
+                                        .entry(RequestType::MetricsExponentialHistogram)
+                                        .or_insert(ClickhousePayloadBuilder::new(
+                                            self.compression.clone(),
+                                        ));
+
+                                    e.add_row(&row)?;
+                                }
+                            }
+                            Data::Summary(s) => {
+                                for dp in s.data_points {
+                                    let attrs = cvattr::convert(&dp.attributes);
+
+                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.start_time_unix = dp.start_time_unix_nano;
+                                    meta.time_unix = dp.time_unix_nano;
+
+                                    let row = MetricsSummaryRow {
+                                        meta: &meta,
+
+                                        count: dp.count,
+                                        sum: dp.sum,
+                                        value_at_quantiles_quantile: dp
+                                            .quantile_values
+                                            .iter()
+                                            .map(|q| q.quantile)
+                                            .collect(),
+                                        value_at_quantiles_value: dp
+                                            .quantile_values
+                                            .iter()
+                                            .map(|q| q.value)
+                                            .collect(),
+                                        flags: dp.flags,
+                                    };
+
+                                    let e = payloads.entry(RequestType::MetricsSummary).or_insert(
+                                        ClickhousePayloadBuilder::new(self.compression.clone()),
+                                    );
+
+                                    e.add_row(&row)?;
+                                }
+                            }
                         }
                     }
                 }

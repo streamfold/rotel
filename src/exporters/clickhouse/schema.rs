@@ -216,37 +216,22 @@ pub fn get_metrics_sum_row_col_keys() -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct MetricsGaugeRow {
+pub struct MetricsGaugeRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta,
 
     pub(crate) value: f64,
     pub(crate) flags: u32,
 
-    #[serde(rename = "Exemplars.FilteredAttributes")]
-    pub(crate) exemplars_filtered_attributes: MapOrJson,
-    #[serde(rename = "Exemplars.TimeUnix")]
-    pub(crate) exemplars_time_unix: u64,
-    #[serde(rename = "Exemplars.Value")]
-    pub(crate) exemplars_value: f64,
-    #[serde(rename = "Exemplars.SpanId")]
-    pub(crate) exemplars_span_id: String,
-    #[serde(rename = "Exemplars.TraceId")]
-    pub(crate) exemplars_trace_id: String,
+    #[serde(flatten)]
+    pub(crate) exemplars: MetricsExemplars,
 }
 
 pub fn get_metrics_gauge_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
-        vec![
-            "Value",
-            "Flags",
-            "Exemplars.FilteredAttributes",
-            "Exemplars.TimeUnix",
-            "Exemplars.Value",
-            "Exemplars.SpanId",
-            "Exemplars.TraceId",
-        ],
+        vec!["Value", "Flags"],
+        get_metrics_exemplars_col_keys(),
     ]
     .concat();
 
@@ -255,30 +240,22 @@ pub fn get_metrics_gauge_row_col_keys() -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct MetricsHistogramRow {
+pub struct MetricsHistogramRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta,
 
     pub(crate) count: u64,
     pub(crate) sum: f64,
     pub(crate) bucket_counts: Vec<u64>,
     pub(crate) explicit_bounds: Vec<f64>,
 
-    #[serde(rename = "Exemplars.FilteredAttributes")]
-    pub(crate) exemplars_filtered_attributes: MapOrJson,
-    #[serde(rename = "Exemplars.TimeUnix")]
-    pub(crate) exemplars_time_unix: u64,
-    #[serde(rename = "Exemplars.Value")]
-    pub(crate) exemplars_value: f64,
-    #[serde(rename = "Exemplars.SpanId")]
-    pub(crate) exemplars_span_id: String,
-    #[serde(rename = "Exemplars.TraceId")]
-    pub(crate) exemplars_trace_id: String,
-
     pub(crate) flags: u32,
     pub(crate) min: f64,
     pub(crate) max: f64,
     pub(crate) aggregation_temporality: i32,
+
+    #[serde(flatten)]
+    pub(crate) exemplars: MetricsExemplars,
 }
 
 pub fn get_metrics_histogram_row_col_keys() -> String {
@@ -289,16 +266,12 @@ pub fn get_metrics_histogram_row_col_keys() -> String {
             "Sum",
             "BucketCounts",
             "ExplicitBounds",
-            "Exemplars.FilteredAttributes",
-            "Exemplars.TimeUnix",
-            "Exemplars.Value",
-            "Exemplars.SpanId",
-            "Exemplars.TraceId",
             "Flags",
             "Min",
             "Max",
             "AggregationTemporality",
         ],
+        get_metrics_exemplars_col_keys(),
     ]
     .concat();
 
@@ -307,9 +280,9 @@ pub fn get_metrics_histogram_row_col_keys() -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct MetricsExpHistogramRow {
+pub struct MetricsExpHistogramRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta,
 
     pub(crate) count: u64,
     pub(crate) sum: f64,
@@ -321,21 +294,13 @@ pub struct MetricsExpHistogramRow {
     pub(crate) negative_offset: i32,
     pub(crate) negative_bucket_counts: Vec<u64>,
 
-    #[serde(rename = "Exemplars.FilteredAttributes")]
-    pub(crate) exemplars_filtered_attributes: MapOrJson,
-    #[serde(rename = "Exemplars.TimeUnix")]
-    pub(crate) exemplars_time_unix: u64,
-    #[serde(rename = "Exemplars.Value")]
-    pub(crate) exemplars_value: f64,
-    #[serde(rename = "Exemplars.SpanId")]
-    pub(crate) exemplars_span_id: String,
-    #[serde(rename = "Exemplars.TraceId")]
-    pub(crate) exemplars_trace_id: String,
-
     pub(crate) flags: u32,
     pub(crate) min: f64,
     pub(crate) max: f64,
     pub(crate) aggregation_temporality: i32,
+
+    #[serde(flatten)]
+    pub(crate) exemplars: MetricsExemplars,
 }
 
 pub fn get_metrics_exp_histogram_row_col_keys() -> String {
@@ -350,16 +315,12 @@ pub fn get_metrics_exp_histogram_row_col_keys() -> String {
             "PositiveBucketCounts",
             "NegativeOffset",
             "NegativeBucketCounts",
-            "Exemplars.FilteredAttributes",
-            "Exemplars.TimeUnix",
-            "Exemplars.Value",
-            "Exemplars.SpanId",
-            "Exemplars.TraceId",
             "Flags",
             "Min",
             "Max",
             "AggregationTemporality",
         ],
+        get_metrics_exemplars_col_keys(),
     ]
     .concat();
 
@@ -368,28 +329,18 @@ pub fn get_metrics_exp_histogram_row_col_keys() -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct MetricsSummaryRow {
+pub struct MetricsSummaryRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta,
 
     pub(crate) count: u64,
     pub(crate) sum: f64,
 
     #[serde(rename = "ValueAtQuantiles.Quantile")]
-    pub(crate) value_at_quantiles_quantile: f64,
+    pub(crate) value_at_quantiles_quantile: Vec<f64>,
     #[serde(rename = "ValueAtQuantiles.Value")]
-    pub(crate) value_at_quantiles_value: f64,
-    //
-    // #[serde(rename = "Exemplars.FilteredAttributes")]
-    // pub(crate) exemplars_filtered_attributes: MapOrJson,
-    // #[serde(rename = "Exemplars.TimeUnix")]
-    // pub(crate) exemplars_time_unix: u64,
-    // #[serde(rename = "Exemplars.Value")]
-    // pub(crate) exemplars_value: f64,
-    // #[serde(rename = "Exemplars.SpanId")]
-    // pub(crate) exemplars_span_id: String,
-    // #[serde(rename = "Exemplars.TraceId")]
-    // pub(crate) exemplars_trace_id: String,
+    pub(crate) value_at_quantiles_value: Vec<f64>,
+
     pub(crate) flags: u32,
 }
 
@@ -401,11 +352,6 @@ pub fn get_metrics_summary_row_col_keys() -> String {
             "Sum",
             "ValueAtQuantiles.Quantile",
             "ValueAtQauntiles.Value",
-            // "Exemplars.FilteredAttributes",
-            // "Exemplars.TimeUnix",
-            // "Exemplars.Value",
-            // "Exemplars.SpanId",
-            // "Exemplars.TraceId",
             "Flags",
         ],
     ]
