@@ -124,7 +124,7 @@ pub fn get_log_row_col_keys() -> String {
     fields.join(",")
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsMeta {
     pub(crate) resource_attributes: MapOrJson,
@@ -162,7 +162,7 @@ pub fn get_metrics_meta_col_keys<'a>() -> Vec<&'a str> {
     ]
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsExemplars {
     #[serde(rename = "Exemplars.FilteredAttributes")]
@@ -187,7 +187,7 @@ pub fn get_metrics_exemplars_col_keys<'a>() -> Vec<&'a str> {
     ]
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsSumRow<'a> {
     #[serde(flatten)]
