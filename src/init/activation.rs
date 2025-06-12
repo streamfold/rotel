@@ -53,7 +53,7 @@ impl TelemetryActivation {
             Exporter::Clickhouse => TelemetryActivation {
                 logs: TelemetryState::Active,
                 traces: TelemetryState::Active,
-                metrics: TelemetryState::NoListeners,
+                metrics: TelemetryState::Active,
             },
             Exporter::AwsXray => TelemetryActivation {
                 logs: TelemetryState::NoListeners,

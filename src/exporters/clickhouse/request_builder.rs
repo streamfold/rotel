@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
+use crate::exporters::clickhouse::request_mapper::{RequestMapper, RequestType};
 use crate::exporters::http::request_builder_mapper::BuildRequest;
 use http::Request;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use tower::BoxError;
 
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<T>) -> Result<ClickhousePayload, BoxError>;
+    fn transform(&self, input: Vec<T>) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError>;
 }
 
 // todo: identify the cost of recursively cloning these
@@ -18,7 +19,7 @@ where
     Transform: TransformPayload<Resource>,
 {
     transformer: Transform,
-    api_req_builder: ApiRequestBuilder,
+    request_mapper: Arc<RequestMapper>,
     _phantom: PhantomData<Resource>,
 }
 
@@ -28,11 +29,11 @@ where
 {
     pub fn new(
         transformer: Transform,
-        api_req_builder: ApiRequestBuilder,
+        request_mapper: Arc<RequestMapper>,
     ) -> Result<Self, BoxError> {
         Ok(Self {
             transformer,
-            api_req_builder,
+            request_mapper,
             _phantom: PhantomData,
         })
     }
@@ -46,8 +47,13 @@ where
     type Output = Vec<Request<ClickhousePayload>>;
 
     fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
-        let payload = self.transformer.transform(input)?;
+        let payloads = self.transformer.transform(input)?;
 
-        self.api_req_builder.build(payload)
+        let requests: Result<Self::Output, BoxError> = payloads
+            .into_iter()
+            .map(|(req_type, payload)| self.request_mapper.build(req_type, payload))
+            .collect();
+
+        requests
     }
 }

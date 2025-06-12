@@ -1,5 +1,6 @@
 use crate::exporters::clickhouse::ch_error::{Error, Result};
 use bytes::BufMut;
+use serde::ser::SerializeMap;
 use serde::{
     Serialize,
     ser::{Impossible, SerializeSeq, SerializeStruct, SerializeTuple, Serializer},
@@ -32,7 +33,7 @@ macro_rules! impl_num {
 impl<B: BufMut> Serializer for &'_ mut RowBinarySerializer<B> {
     type Error = Error;
     type Ok = ();
-    type SerializeMap = Impossible<(), Error>;
+    type SerializeMap = Self;
     type SerializeSeq = Self;
     type SerializeStruct = Self;
     type SerializeStructVariant = Impossible<(), Error>;
@@ -189,7 +190,8 @@ impl<B: BufMut> Serializer for &'_ mut RowBinarySerializer<B> {
 
     #[inline]
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-        panic!("maps are unsupported, use `Vec<(A, B)>` instead");
+        //panic!("maps are unsupported, use `Vec<(A, B)>` instead");
+        Ok(self)
     }
 
     #[inline]
@@ -225,6 +227,32 @@ impl<B: BufMut> SerializeStruct for &mut RowBinarySerializer<B> {
 
     #[inline]
     fn end(self) -> Result<()> {
+        Ok(())
+    }
+}
+
+// We don't fully support serializing maps, but we must implement this to support
+// flattened serde structs. We skip any serializing of the size or keys, we just rely
+// on the value serializers.
+impl<B: BufMut> SerializeMap for &mut RowBinarySerializer<B> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_key<T>(&mut self, _key: &T) -> std::result::Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Ok(())
+    }
+
+    fn serialize_value<T>(&mut self, value: &T) -> std::result::Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        value.serialize(&mut **self)
+    }
+
+    fn end(self) -> std::result::Result<Self::Ok, Self::Error> {
         Ok(())
     }
 }

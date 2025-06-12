@@ -41,6 +41,10 @@ impl ClickhousePayloadBuilder {
         Ok(written)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.curr_chunk.is_empty() && self.closed.is_empty()
+    }
+
     pub(crate) fn finish(mut self) -> Result<ClickhousePayload, BoxError> {
         if !self.curr_chunk.is_empty() {
             let new_chunk = self.take_and_close_current()?;
