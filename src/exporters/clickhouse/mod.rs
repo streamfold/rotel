@@ -7,14 +7,16 @@ mod request_builder;
 mod request_mapper;
 mod rowbinary;
 mod schema;
+mod transform_logs;
+mod transform_traces;
 mod transformer;
 
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::clickhouse::api_request::ApiRequestBuilder;
+use crate::exporters::clickhouse::api_request::ConnectionConfig;
 use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::RequestBuilder;
-use crate::exporters::clickhouse::schema::{get_log_row_col_keys, get_span_row_col_keys};
+use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::exporter::{Exporter, ResultLogger};
@@ -31,6 +33,7 @@ use flume::r#async::RecvStream;
 use http::Request;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::sync::Arc;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
@@ -51,7 +54,7 @@ pub enum Compression {
 }
 
 #[derive(Default)]
-pub struct ClickhouseExporterBuilder {
+pub struct ClickhouseExporterConfigBuilder {
     retry_config: RetryConfig,
     compression: Compression,
     endpoint: String,
@@ -83,13 +86,13 @@ type ExporterType<'a, Resource> = Exporter<
     ClickhouseResultLogger,
 >;
 
-impl ClickhouseExporterBuilder {
+impl ClickhouseExporterConfigBuilder {
     pub fn new(
         endpoint: String,
         database: String,
         table_prefix: String,
-    ) -> ClickhouseExporterBuilder {
-        ClickhouseExporterBuilder {
+    ) -> ClickhouseExporterConfigBuilder {
+        ClickhouseExporterConfigBuilder {
             endpoint,
             database,
             table_prefix,
@@ -127,6 +130,35 @@ impl ClickhouseExporterBuilder {
         self
     }
 
+    pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
+        let config = ConnectionConfig {
+            endpoint: self.endpoint,
+            database: self.database,
+            compression: self.compression,
+            auth_user: self.auth_user,
+            auth_password: self.auth_password,
+            async_insert: self.async_insert,
+            use_json: self.use_json,
+            use_json_underscore: self.use_json_underscore,
+        };
+
+        let mapper = Arc::new(RequestMapper::new(&config, self.table_prefix)?);
+
+        Ok(ClickhouseExporterBuilder {
+            config,
+            request_mapper: mapper,
+            retry_config: self.retry_config,
+        })
+    }
+}
+
+pub struct ClickhouseExporterBuilder {
+    config: ConnectionConfig,
+    retry_config: RetryConfig,
+    request_mapper: Arc<RequestMapper>,
+}
+
+impl ClickhouseExporterBuilder {
     pub fn build_traces_exporter<'a>(
         &self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
@@ -135,24 +167,12 @@ impl ClickhouseExporterBuilder {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(
-            self.compression.clone(),
-            self.use_json,
-            self.use_json_underscore,
+            self.config.compression.clone(),
+            self.config.use_json,
+            self.config.use_json_underscore,
         );
 
-        let traces_sql = get_traces_sql(self.table_prefix.clone());
-        let api_req_builder = ApiRequestBuilder::new(
-            self.endpoint.clone(),
-            self.database.clone(),
-            traces_sql,
-            self.compression.clone(),
-            self.auth_user.clone(),
-            self.auth_password.clone(),
-            self.async_insert,
-            self.use_json,
-        )?;
-
-        let req_builder = RequestBuilder::new(transformer, api_req_builder)?;
+        let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 
         let retry_layer = RetryPolicy::new(self.retry_config.clone(), None);
 
@@ -188,24 +208,12 @@ impl ClickhouseExporterBuilder {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(
-            self.compression.clone(),
-            self.use_json,
-            self.use_json_underscore,
+            self.config.compression.clone(),
+            self.config.use_json,
+            self.config.use_json_underscore,
         );
 
-        let logs_sql = get_logs_sql(self.table_prefix.clone());
-        let api_req_builder = ApiRequestBuilder::new(
-            self.endpoint.clone(),
-            self.database.clone(),
-            logs_sql,
-            self.compression.clone(),
-            self.auth_user.clone(),
-            self.auth_password.clone(),
-            self.async_insert,
-            self.use_json,
-        )?;
-
-        let req_builder = RequestBuilder::new(transformer, api_req_builder)?;
+        let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 
         let retry_layer = RetryPolicy::new(self.retry_config.clone(), None);
 
@@ -371,17 +379,23 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
     ) -> ExporterType<'a, ResourceSpans> {
-        ClickhouseExporterBuilder::new(addr, "otel".to_string(), "otel".to_string())
-            .build_traces_exporter(brx, None)
-            .unwrap()
+        let builder =
+            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
+                .build()
+                .unwrap();
+
+        builder.build_traces_exporter(brx, None).unwrap()
     }
 
     fn new_logs_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceLogs>>,
     ) -> ExporterType<'a, ResourceLogs> {
-        ClickhouseExporterBuilder::new(addr, "otel".to_string(), "otel".to_string())
-            .build_logs_exporter(brx, None)
-            .unwrap()
+        let builder =
+            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
+                .build()
+                .unwrap();
+
+        builder.build_logs_exporter(brx, None).unwrap()
     }
 }

@@ -2,7 +2,7 @@ use crate::aws_api::config::AwsConfig;
 use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
-use crate::exporters::clickhouse::ClickhouseExporterBuilder;
+use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::{DatadogTraceExporterBuilder, Region};
 use crate::exporters::otlp;
 use crate::exporters::xray::XRayTraceExporterBuilder;
@@ -429,7 +429,7 @@ impl Agent {
                 let async_insert =
                     parse_bool_value(config.clickhouse_exporter.clickhouse_exporter_async_insert)?;
 
-                let mut builder = ClickhouseExporterBuilder::new(
+                let mut cfg_builder = ClickhouseExporterConfigBuilder::new(
                     config
                         .clickhouse_exporter
                         .clickhouse_exporter_endpoint
@@ -447,12 +447,14 @@ impl Agent {
                 );
 
                 if let Some(user) = config.clickhouse_exporter.clickhouse_exporter_user {
-                    builder = builder.with_user(user);
+                    cfg_builder = cfg_builder.with_user(user);
                 }
 
                 if let Some(password) = config.clickhouse_exporter.clickhouse_exporter_password {
-                    builder = builder.with_password(password);
+                    cfg_builder = cfg_builder.with_password(password);
                 }
+
+                let builder = cfg_builder.build()?;
 
                 // Trace spans
                 let exp = builder.build_traces_exporter(

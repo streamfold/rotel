@@ -13,6 +13,7 @@ pub struct ConnectionConfig {
     pub(crate) auth_password: Option<String>,
     pub(crate) async_insert: bool,
     pub(crate) use_json: bool,
+    pub(crate) use_json_underscore: bool,
 }
 
 #[derive(Clone)]
@@ -22,22 +23,22 @@ pub struct ApiRequestBuilder {
 
 impl ApiRequestBuilder {
     pub fn new(config: &ConnectionConfig, query: String) -> Result<Self, BoxError> {
-        let full_url = construct_full_url(endpoint);
+        let full_url = construct_full_url(&config.endpoint);
         let mut uri = Url::parse(full_url.as_str())?;
 
         {
             let mut pairs = uri.query_pairs_mut();
             pairs.clear();
 
-            pairs.append_pair("database", database.as_str());
+            pairs.append_pair("database", config.database.as_str());
             pairs.append_pair("query", query.as_str());
-            if compression == Compression::Lz4 {
+            if config.compression == Compression::Lz4 {
                 pairs.append_pair("decompress", "1");
             }
-            if async_insert {
+            if config.async_insert {
                 pairs.append_pair("async_insert", "1");
             }
-            if use_json {
+            if config.use_json {
                 pairs.append_pair("allow_experimental_json_type", "1");
                 // This interprets Strings as JSON columns
                 pairs.append_pair("input_format_binary_read_json_as_string", "1");
@@ -46,13 +47,13 @@ impl ApiRequestBuilder {
 
         let mut headers = HeaderMap::new();
 
-        if let Some(user) = auth_user {
+        if let Some(user) = &config.auth_user {
             headers.insert(
                 HeaderName::from_static("x-clickhouse-user"),
                 user.clone().parse()?,
             );
         }
-        if let Some(password) = auth_password {
+        if let Some(password) = &config.auth_password {
             headers.insert(
                 HeaderName::from_static("x-clickhouse-key"),
                 password.clone().parse()?,
@@ -76,9 +77,9 @@ impl ApiRequestBuilder {
     }
 }
 
-fn construct_full_url(endpoint: String) -> String {
+fn construct_full_url(endpoint: &String) -> String {
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
-        return endpoint;
+        return endpoint.clone();
     }
     format!("http://{}/", endpoint)
 }

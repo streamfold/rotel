@@ -9,7 +9,7 @@ use http::Request;
 use std::collections::HashMap;
 use tower::BoxError;
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Clone)]
 pub enum RequestType {
     Traces,
     Logs,
@@ -20,12 +20,13 @@ pub enum RequestType {
     MetricsSummary,
 }
 
+#[derive(Clone)]
 pub struct RequestMapper {
     mapper: HashMap<RequestType, ApiRequestBuilder>,
 }
 
 impl RequestMapper {
-    fn new(config: &ConnectionConfig, table_prefix: String) -> Result<Self, BoxError> {
+    pub(crate) fn new(config: &ConnectionConfig, table_prefix: String) -> Result<Self, BoxError> {
         let mut mapper = HashMap::new();
 
         mapper.insert(
@@ -85,7 +86,7 @@ impl RequestMapper {
         Ok(Self { mapper })
     }
 
-    fn build(
+    pub(crate) fn build(
         &self,
         req_type: RequestType,
         payload: ClickhousePayload,
