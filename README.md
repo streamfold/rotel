@@ -176,8 +176,8 @@ Specifying a custom endpoint will override the region selection.
 
 ### Clickhouse exporter configuration
 
-The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter only supports logs
-and traces at the moment.
+The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter supports metrics, logs,
+and traces.
 
 | Option                                | Default | Options     |
 |---------------------------------------|---------|-------------|
