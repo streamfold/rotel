@@ -59,13 +59,9 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         links_trace_id: span
                             .links
                             .iter()
-                            .map(|l| hex::encode(l.trace_id.clone()))
+                            .map(|l| hex::encode(&l.trace_id))
                             .collect(),
-                        links_span_id: span
-                            .links
-                            .iter()
-                            .map(|l| hex::encode(l.span_id.clone()))
-                            .collect(),
+                        links_span_id: span.links.iter().map(|l| hex::encode(&l.span_id)).collect(),
                         links_trace_state: span
                             .links
                             .iter()

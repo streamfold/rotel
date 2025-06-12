@@ -164,42 +164,50 @@ pub fn get_metrics_meta_col_keys<'a>() -> Vec<&'a str> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct MetricsSumRow {
+pub struct MetricsExemplars {
+    #[serde(rename = "Exemplars.FilteredAttributes")]
+    pub(crate) exemplars_filtered_attributes: Vec<MapOrJson>,
+    #[serde(rename = "Exemplars.TimeUnix")]
+    pub(crate) exemplars_time_unix: Vec<u64>,
+    #[serde(rename = "Exemplars.Value")]
+    pub(crate) exemplars_value: Vec<f64>,
+    #[serde(rename = "Exemplars.SpanId")]
+    pub(crate) exemplars_span_id: Vec<String>,
+    #[serde(rename = "Exemplars.TraceId")]
+    pub(crate) exemplars_trace_id: Vec<String>,
+}
+
+pub fn get_metrics_exemplars_col_keys<'a>() -> Vec<&'a str> {
+    vec![
+        "Exemplars.FilteredAttributes",
+        "Exemplars.TimeUnix",
+        "Exemplars.Value",
+        "Exemplars.SpanId",
+        "Exemplars.TraceId",
+    ]
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MetricsSumRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta,
 
     pub(crate) value: f64,
     pub(crate) flags: u32,
 
-    #[serde(rename = "Exemplars.FilteredAttributes")]
-    pub(crate) exemplars_filtered_attributes: MapOrJson,
-    #[serde(rename = "Exemplars.TimeUnix")]
-    pub(crate) exemplars_time_unix: u64,
-    #[serde(rename = "Exemplars.Value")]
-    pub(crate) exemplars_value: f64,
-    #[serde(rename = "Exemplars.SpanId")]
-    pub(crate) exemplars_span_id: String,
-    #[serde(rename = "Exemplars.TraceId")]
-    pub(crate) exemplars_trace_id: String,
-
     pub(crate) aggregation_temporality: i32,
     pub(crate) is_monotonic: bool,
+
+    #[serde(flatten)]
+    pub(crate) exemplars: MetricsExemplars,
 }
 
 pub fn get_metrics_sum_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
-        vec![
-            "Value",
-            "Flags",
-            "Exemplars.FilteredAttributes",
-            "Exemplars.TimeUnix",
-            "Exemplars.Value",
-            "Exemplars.SpanId",
-            "Exemplars.TraceId",
-            "AggregationTemporality",
-            "IsMonotonic",
-        ],
+        vec!["Value", "Flags", "AggregationTemporality", "IsMonotonic"],
+        get_metrics_exemplars_col_keys(),
     ]
     .concat();
 

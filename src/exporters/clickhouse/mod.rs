@@ -8,6 +8,7 @@ mod request_mapper;
 mod rowbinary;
 mod schema;
 mod transform_logs;
+mod transform_metrics;
 mod transform_traces;
 mod transformer;
 
@@ -15,7 +16,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ConnectionConfig;
 use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
-use crate::exporters::clickhouse::request_builder::RequestBuilder;
+use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http::client::ResponseDecode;
@@ -32,6 +33,7 @@ use bytes::Bytes;
 use flume::r#async::RecvStream;
 use http::Request;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::sync::Arc;
 use std::time::Duration;
@@ -164,40 +166,7 @@ impl ClickhouseExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        let client = HttpClient::build(tls::Config::default(), Default::default())?;
-
-        let transformer = Transformer::new(
-            self.config.compression.clone(),
-            self.config.use_json,
-            self.config.use_json_underscore,
-        );
-
-        let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
-
-        let retry_layer = RetryPolicy::new(self.retry_config.clone(), None);
-
-        let svc = ServiceBuilder::new()
-            .retry(retry_layer)
-            .timeout(Duration::from_secs(5))
-            .service(client);
-
-        let enc_stream =
-            RequestIterator::new(RequestBuilderMapper::new(rx.into_stream(), req_builder));
-
-        let exp = Exporter::new(
-            "clickhouse",
-            "traces",
-            enc_stream,
-            svc,
-            ClickhouseResultLogger {
-                telemetry_type: "traces".to_string(),
-            },
-            flush_receiver,
-            Duration::from_secs(1),
-            Duration::from_secs(2),
-        );
-
-        Ok(exp)
+        self.build_exporter("traces", rx, flush_receiver)
     }
 
     pub fn build_logs_exporter<'a>(
@@ -205,6 +174,27 @@ impl ClickhouseExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceLogs>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
+        self.build_exporter("logs", rx, flush_receiver)
+    }
+
+    pub fn build_metrics_exporter<'a>(
+        &self,
+        rx: BoundedReceiver<Vec<ResourceMetrics>>,
+        flush_receiver: Option<FlushReceiver>,
+    ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
+        self.build_exporter("metrics", rx, flush_receiver)
+    }
+
+    fn build_exporter<'a, Resource>(
+        &self,
+        telemetry_type: &'static str,
+        rx: BoundedReceiver<Vec<Resource>>,
+        flush_receiver: Option<FlushReceiver>,
+    ) -> Result<ExporterType<'a, Resource>, BoxError>
+    where
+        Resource: Clone + Send + Sync + 'static,
+        Transformer: TransformPayload<Resource>,
+    {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
         let transformer = Transformer::new(
@@ -227,11 +217,11 @@ impl ClickhouseExporterBuilder {
 
         let exp = Exporter::new(
             "clickhouse",
-            "logs",
+            telemetry_type,
             enc_stream,
             svc,
             ClickhouseResultLogger {
-                telemetry_type: "logs".to_string(),
+                telemetry_type: telemetry_type.to_string(),
             },
             flush_receiver,
             Duration::from_secs(1),

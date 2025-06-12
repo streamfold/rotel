@@ -493,6 +493,25 @@ impl Agent {
 
                     Ok(())
                 });
+
+                // Metrics
+                let exp = builder.build_metrics_exporter(
+                    metrics_pipeline_out_rx,
+                    self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                )?;
+
+                let token = exporters_cancel.clone();
+                exporters_task_set.spawn(async move {
+                    let res = exp.start(token).await;
+                    if let Err(e) = res {
+                        error!(
+                            error = e,
+                            "Clickhouse metrics exporter returned from run loop with error."
+                        );
+                    }
+
+                    Ok(())
+                });
             }
         }
 
