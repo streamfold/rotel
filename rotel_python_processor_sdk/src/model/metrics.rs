@@ -17,7 +17,7 @@ pub struct RResourceMetrics {
 pub struct RScopeMetrics {
     pub scope: Arc<Mutex<Option<RInstrumentationScope>>>,
     pub metrics: Arc<Mutex<Vec<Arc<Mutex<RMetric>>>>>,
-    pub schema_url: String,
+    pub schema_url: Arc<Mutex<String>>,
 }
 
 /// Defines a RMetric which has one or more timeseries.
@@ -27,7 +27,7 @@ pub struct RMetric {
     pub description: String,
     pub unit: String,
     pub metadata: Arc<Mutex<Vec<RKeyValue>>>,
-    pub data: Option<RMetricData>,
+    pub data: Arc<Mutex<Option<RMetricData>>>,
 }
 
 /// RMetricData determines the aggregation type (if any) of the metric.

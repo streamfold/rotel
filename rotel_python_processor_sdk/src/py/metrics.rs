@@ -180,7 +180,7 @@ impl ScopeMetricsListIter {
 pub struct ScopeMetrics {
     pub scope: Arc<Mutex<Option<RInstrumentationScope>>>,
     pub metrics: Arc<Mutex<Vec<Arc<Mutex<RMetric>>>>>,
-    pub schema_url: String,
+    pub schema_url: Arc<Mutex<String>>,
 }
 
 #[pymethods]
@@ -190,7 +190,7 @@ impl ScopeMetrics {
         Ok(ScopeMetrics {
             scope: Arc::new(Mutex::new(None)),
             metrics: Arc::new(Mutex::new(vec![])),
-            schema_url: String::new(),
+            schema_url: Arc::new(Mutex::new(String::new())),
         })
     }
 
@@ -203,6 +203,7 @@ impl ScopeMetrics {
         Ok(Some(InstrumentationScope(self.scope.clone())))
     }
 
+    // TODO - Fix look at trace.rs
     #[setter]
     fn set_scope(&mut self, scope: Option<InstrumentationScope>) -> PyResult<()> {
         let mut v = self.scope.lock().map_err(handle_poison_error)?;
@@ -225,33 +226,21 @@ impl ScopeMetrics {
         let mut inner = self.metrics.lock().map_err(handle_poison_error)?;
         inner.clear();
         for m in metrics {
-            inner.push(Arc::new(Mutex::new(RMetric {
-                name: m.name.clone(),
-                description: m.description.clone(),
-                unit: m.unit.clone(),
-                metadata: m.metadata.clone(),
-                data: m.data.clone().map(|data| match data {
-                    MetricData::Gauge(g) => RMetricData::Gauge(g.into()),
-                    MetricData::Sum(s) => RMetricData::Sum(s.into()),
-                    MetricData::Histogram(h) => RMetricData::Histogram(h.into()),
-                    MetricData::ExponentialHistogram(eh) => {
-                        RMetricData::ExponentialHistogram(eh.into())
-                    }
-                    MetricData::Summary(s) => RMetricData::Summary(s.into()),
-                }),
-            })));
+            inner.push(m.inner.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn schema_url(&self) -> PyResult<String> {
-        Ok(self.schema_url.clone())
+        let guard = self.schema_url.lock().map_err(handle_poison_error)?;
+        Ok(guard.clone())
     }
 
     #[setter]
     fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
-        self.schema_url = schema_url;
+        let mut guard = self.schema_url.lock().map_err(handle_poison_error)?;
+        *guard = schema_url;
         Ok(())
     }
 }
@@ -273,38 +262,9 @@ impl MetricsList {
     fn __getitem__(&self, index: usize) -> PyResult<Metric> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
-            Some(item) => {
-                let item_lock = item.lock().unwrap();
-                Ok(Metric {
-                    name: item_lock.name.clone(),
-                    description: item_lock.description.clone(),
-                    unit: item_lock.unit.clone(),
-                    metadata: item_lock.metadata.clone(),
-                    data: item_lock.data.clone().map(|data| match data {
-                        RMetricData::Gauge(g) => MetricData::Gauge(Gauge {
-                            data_points: g.data_points.clone(),
-                        }),
-                        RMetricData::Sum(s) => MetricData::Sum(Sum {
-                            data_points: s.data_points.clone(),
-                            aggregation_temporality: s.aggregation_temporality.into(),
-                            is_monotonic: s.is_monotonic,
-                        }),
-                        RMetricData::Histogram(h) => MetricData::Histogram(Histogram {
-                            data_points: h.data_points.clone(),
-                            aggregation_temporality: h.aggregation_temporality.into(),
-                        }),
-                        RMetricData::ExponentialHistogram(eh) => {
-                            MetricData::ExponentialHistogram(ExponentialHistogram {
-                                data_points: eh.data_points.clone(),
-                                aggregation_temporality: eh.aggregation_temporality.into(),
-                            })
-                        }
-                        RMetricData::Summary(s) => MetricData::Summary(Summary {
-                            data_points: s.data_points.clone(),
-                        }),
-                    }),
-                })
-            }
+            Some(item) => Ok(Metric {
+                inner: item.clone(),
+            }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             )),
@@ -317,21 +277,7 @@ impl MetricsList {
                 "Index out of bounds",
             ));
         }
-        inner[index] = Arc::new(Mutex::new(RMetric {
-            name: value.name.clone(),
-            description: value.description.clone(),
-            unit: value.unit.clone(),
-            metadata: value.metadata.clone(),
-            data: value.data.clone().map(|data| match data {
-                MetricData::Gauge(g) => RMetricData::Gauge(g.into()),
-                MetricData::Sum(s) => RMetricData::Sum(s.into()),
-                MetricData::Histogram(h) => RMetricData::Histogram(h.into()),
-                MetricData::ExponentialHistogram(eh) => {
-                    RMetricData::ExponentialHistogram(eh.into())
-                }
-                MetricData::Summary(s) => RMetricData::Summary(s.into()),
-            }),
-        }));
+        inner[index] = value.inner.clone();
         Ok(())
     }
     fn __delitem__(&self, index: usize) -> PyResult<()> {
@@ -346,21 +292,7 @@ impl MetricsList {
     }
     fn append(&self, item: &Metric) -> PyResult<()> {
         let mut k = self.0.lock().map_err(handle_poison_error)?;
-        k.push(Arc::new(Mutex::new(RMetric {
-            name: item.name.clone(),
-            description: item.description.clone(),
-            unit: item.unit.clone(),
-            metadata: item.metadata.clone(),
-            data: item.data.clone().map(|data| match data {
-                MetricData::Gauge(g) => RMetricData::Gauge(g.into()),
-                MetricData::Sum(s) => RMetricData::Sum(s.into()),
-                MetricData::Histogram(h) => RMetricData::Histogram(h.into()),
-                MetricData::ExponentialHistogram(eh) => {
-                    RMetricData::ExponentialHistogram(eh.into())
-                }
-                MetricData::Summary(s) => RMetricData::Summary(s.into()),
-            }),
-        })));
+        k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -385,35 +317,8 @@ impl MetricsListIter {
             return Ok(None);
         }
         let inner = item.unwrap();
-        let inner = inner.lock().unwrap();
         Ok(Some(Metric {
-            name: inner.name.clone(),
-            description: inner.description.clone(),
-            unit: inner.unit.clone(),
-            metadata: inner.metadata.clone(),
-            data: inner.data.clone().map(|data| match data {
-                RMetricData::Gauge(g) => MetricData::Gauge(Gauge {
-                    data_points: g.data_points.clone(),
-                }),
-                RMetricData::Sum(s) => MetricData::Sum(Sum {
-                    data_points: s.data_points.clone(),
-                    aggregation_temporality: s.aggregation_temporality.into(),
-                    is_monotonic: s.is_monotonic,
-                }),
-                RMetricData::Histogram(h) => MetricData::Histogram(Histogram {
-                    data_points: h.data_points.clone(),
-                    aggregation_temporality: h.aggregation_temporality.into(),
-                }),
-                RMetricData::ExponentialHistogram(eh) => {
-                    MetricData::ExponentialHistogram(ExponentialHistogram {
-                        data_points: eh.data_points.clone(),
-                        aggregation_temporality: eh.aggregation_temporality.into(),
-                    })
-                }
-                RMetricData::Summary(s) => MetricData::Summary(Summary {
-                    data_points: s.data_points.clone(),
-                }),
-            }),
+            inner: inner.clone(),
         }))
     }
 }
@@ -422,11 +327,7 @@ impl MetricsListIter {
 #[pyclass]
 #[derive(Clone)]
 pub struct Metric {
-    pub name: String,
-    pub description: String,
-    pub unit: String,
-    pub metadata: Arc<Mutex<Vec<RKeyValue>>>,
-    pub data: Option<MetricData>,
+    inner: Arc<Mutex<RMetric>>,
 }
 
 #[pymethods]
@@ -434,55 +335,65 @@ impl Metric {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Metric {
-            name: String::new(),
-            description: String::new(),
-            unit: String::new(),
-            metadata: Arc::new(Mutex::new(vec![])),
-            data: None,
+            inner: Arc::new(Mutex::new(RMetric {
+                name: String::new(),
+                description: String::new(),
+                unit: String::new(),
+                metadata: Arc::new(Mutex::new(vec![])),
+                data: Arc::new(Mutex::new(None)),
+            })),
         })
     }
 
     #[getter]
     fn name(&self) -> PyResult<String> {
-        Ok(self.name.clone())
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(v.name.clone())
     }
 
     #[setter]
     fn set_name(&mut self, name: String) -> PyResult<()> {
-        self.name = name;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
+        v.name = name;
         Ok(())
     }
 
     #[getter]
     fn description(&self) -> PyResult<String> {
-        Ok(self.description.clone())
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(v.description.clone())
     }
 
     #[setter]
     fn set_description(&mut self, description: String) -> PyResult<()> {
-        self.description = description;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
+        v.description = description;
         Ok(())
     }
 
     #[getter]
     fn unit(&self) -> PyResult<String> {
-        Ok(self.unit.clone())
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(v.unit.clone())
     }
 
     #[setter]
     fn set_unit(&mut self, unit: String) -> PyResult<()> {
-        self.unit = unit;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
+        v.unit = unit;
         Ok(())
     }
 
     #[getter]
     fn metadata(&self) -> PyResult<AttributesList> {
-        Ok(AttributesList(self.metadata.clone()))
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AttributesList(v.metadata.clone()))
     }
 
     #[setter]
     fn set_metadata(&mut self, metadata: Vec<KeyValue>) -> PyResult<()> {
-        let mut inner = self.metadata.lock().map_err(handle_poison_error)?;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        let mut inner = v.metadata.lock().map_err(handle_poison_error)?;
         inner.clear();
         for kv in metadata {
             let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
@@ -493,17 +404,75 @@ impl Metric {
 
     #[getter]
     fn data(&self) -> PyResult<Option<MetricData>> {
-        Ok(self.data.clone())
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        let mut data = v.data.lock().map_err(handle_poison_error)?;
+        if data.is_none() {
+            return Ok(None);
+        }
+        let d = data.take().unwrap();
+        let x = d.clone();
+        data.replace(x);
+        match d {
+            RMetricData::Gauge(g) => Ok(Some(MetricData::Gauge(Gauge {
+                inner: Arc::new(Mutex::new(g)),
+            }))),
+            RMetricData::Sum(s) => Ok(Some(MetricData::Sum(Sum {
+                inner: Arc::new(Mutex::new(s)),
+            }))),
+            RMetricData::Histogram(h) => Ok(Some(MetricData::Histogram(Histogram {
+                inner: Arc::new(Mutex::new(h)),
+            }))),
+            RMetricData::ExponentialHistogram(e) => Ok(Some(MetricData::ExponentialHistogram(
+                ExponentialHistogram {
+                    inner: Arc::new(Mutex::new(e)),
+                },
+            ))),
+            RMetricData::Summary(s) => Ok(Some(MetricData::Summary(Summary {
+                inner: Arc::new(Mutex::new(s)),
+            }))),
+        }
     }
 
     #[setter]
     fn set_data(&mut self, data: Option<MetricData>) -> PyResult<()> {
-        self.data = data;
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        let mut data_lock = v.data.lock().map_err(handle_poison_error)?;
+        if data.is_none() {
+            *data_lock = None
+        } else {
+            let new_data = data.unwrap();
+            match new_data {
+                MetricData::Gauge(g) => {
+                    let v = g.inner.lock().map_err(handle_poison_error)?;
+                    data_lock.replace(RMetricData::Gauge(v.clone()));
+                }
+                MetricData::Sum(s) => {
+                    let v = s.inner.lock().map_err(handle_poison_error)?;
+                    data_lock.replace(RMetricData::Sum(v.clone()));
+                }
+                MetricData::Histogram(h) => {
+                    let v = h.inner.lock().map_err(handle_poison_error)?;
+                    data_lock.replace(RMetricData::Histogram(v.clone()));
+                }
+                MetricData::ExponentialHistogram(e) => {
+                    let v = e.inner.lock().map_err(handle_poison_error)?;
+                    data_lock.replace(RMetricData::ExponentialHistogram(v.clone()));
+                }
+                MetricData::Summary(s) => {
+                    let v = s.inner.lock().map_err(handle_poison_error)?;
+                    data_lock.replace(RMetricData::Summary(v.clone()));
+                }
+            }
+        }
         Ok(())
     }
 }
 
 // --- PyO3 Bindings for RMetricData (Enum) ---
+// TODO: CHANGE THIS TO HAVE AN INNER
+//
+/////
+
 #[pyclass]
 #[derive(Clone)]
 pub enum MetricData {
@@ -514,55 +483,55 @@ pub enum MetricData {
     Summary(Summary),
 }
 
-impl From<Gauge> for RGauge {
-    fn from(g: Gauge) -> Self {
-        RGauge {
-            data_points: g.data_points,
-        }
-    }
-}
-
-impl From<Sum> for RSum {
-    fn from(s: Sum) -> Self {
-        RSum {
-            data_points: s.data_points,
-            aggregation_temporality: s.aggregation_temporality as i32,
-            is_monotonic: s.is_monotonic,
-        }
-    }
-}
-
-impl From<Histogram> for RHistogram {
-    fn from(h: Histogram) -> Self {
-        RHistogram {
-            data_points: h.data_points,
-            aggregation_temporality: h.aggregation_temporality as i32,
-        }
-    }
-}
-
-impl From<ExponentialHistogram> for RExponentialHistogram {
-    fn from(eh: ExponentialHistogram) -> Self {
-        RExponentialHistogram {
-            data_points: eh.data_points,
-            aggregation_temporality: eh.aggregation_temporality as i32,
-        }
-    }
-}
-
-impl From<Summary> for RSummary {
-    fn from(s: Summary) -> Self {
-        RSummary {
-            data_points: s.data_points,
-        }
-    }
-}
-
+// impl From<Gauge> for RGauge {
+//     fn from(g: Gauge) -> Self {
+//         let v = g.inner.lock().map_err(handle_poison_error)?;
+//         v.clone()
+//     }
+// }
+//
+// impl From<Sum> for RSum {
+//     fn from(s: Sum) -> Self {
+//         s.inner
+//         RSum {
+//             data_points: s.data_points,
+//             aggregation_temporality: s.aggregation_temporality as i32,
+//             is_monotonic: s.is_monotonic,
+//         }
+//     }
+// }
+//
+// impl From<Histogram> for RHistogram {
+//     fn from(h: Histogram) -> Self {
+//         RHistogram {
+//             data_points: h.data_points,
+//             aggregation_temporality: h.aggregation_temporality as i32,
+//         }
+//     }
+// }
+//
+// impl From<ExponentialHistogram> for RExponentialHistogram {
+//     fn from(eh: ExponentialHistogram) -> Self {
+//         RExponentialHistogram {
+//             data_points: eh.data_points,
+//             aggregation_temporality: eh.aggregation_temporality as i32,
+//         }
+//     }
+// }
+//
+// impl From<Summary> for RSummary {
+//     fn from(s: Summary) -> Self {
+//         RSummary {
+//             data_points: s.data_points,
+//         }
+//     }
+// }
+//
 // --- PyO3 Bindings for RGauge ---
 #[pyclass]
 #[derive(Clone)]
 pub struct Gauge {
-    pub data_points: Arc<Mutex<Vec<Arc<Mutex<RNumberDataPoint>>>>>,
+    pub inner: Arc<Mutex<RGauge>>,
 }
 
 #[pymethods]
@@ -570,21 +539,25 @@ impl Gauge {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Gauge {
-            data_points: Arc::new(Mutex::new(vec![])),
+            inner: Arc::new(Mutex::new(RGauge {
+                data_points: Arc::new(Default::default()),
+            })),
         })
     }
 
     #[getter]
     fn data_points(&self) -> PyResult<NumberDataPointList> {
-        Ok(NumberDataPointList(self.data_points.clone()))
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(NumberDataPointList(v.data_points.clone()))
     }
 
     #[setter]
     fn set_data_points(&mut self, data_points: Vec<NumberDataPoint>) -> PyResult<()> {
-        let mut inner = self.data_points.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
+        v.clear();
         for dp in data_points {
-            inner.push(Arc::new(Mutex::new(RNumberDataPoint {
+            v.push(Arc::new(Mutex::new(RNumberDataPoint {
                 attributes: dp.attributes.clone(),
                 start_time_unix_nano: dp.start_time_unix_nano,
                 time_unix_nano: dp.time_unix_nano,
@@ -604,9 +577,7 @@ impl Gauge {
 #[pyclass]
 #[derive(Clone)]
 pub struct Sum {
-    pub data_points: Arc<Mutex<Vec<Arc<Mutex<RNumberDataPoint>>>>>,
-    pub aggregation_temporality: AggregationTemporality,
-    pub is_monotonic: bool,
+    inner: Arc<Mutex<RSum>>,
 }
 
 #[pymethods]
@@ -614,46 +585,54 @@ impl Sum {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Sum {
-            data_points: Arc::new(Mutex::new(vec![])),
-            aggregation_temporality: AggregationTemporality::Unspecified,
-            is_monotonic: false,
+            inner: Arc::new(Mutex::new(RSum {
+                data_points: Arc::new(Mutex::new(vec![])),
+                aggregation_temporality: AggregationTemporality::Unspecified as i32,
+                is_monotonic: false,
+            })),
         })
     }
 
     #[getter]
     fn data_points(&self) -> PyResult<NumberDataPointList> {
-        Ok(NumberDataPointList(self.data_points.clone()))
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(NumberDataPointList(v.data_points.clone()))
     }
 
     #[setter]
     fn set_data_points(&mut self, data_points: Vec<NumberDataPoint>) -> PyResult<()> {
-        let mut inner = self.data_points.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
+        v.clear();
         for dp in data_points {
-            inner.push(Arc::new(Mutex::new(dp.into())));
+            v.push(Arc::new(Mutex::new(dp.into())));
         }
         Ok(())
     }
 
     #[getter]
     fn aggregation_temporality(&self) -> PyResult<AggregationTemporality> {
-        Ok(self.aggregation_temporality)
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AggregationTemporality::from(v.aggregation_temporality))
     }
 
     #[setter]
     fn set_aggregation_temporality(&mut self, temporality: AggregationTemporality) -> PyResult<()> {
-        self.aggregation_temporality = temporality;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
+        v.aggregation_temporality = i32::from(temporality);
         Ok(())
     }
 
     #[getter]
     fn is_monotonic(&self) -> PyResult<bool> {
-        Ok(self.is_monotonic)
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(v.is_monotonic)
     }
 
     #[setter]
     fn set_is_monotonic(&mut self, is_monotonic: bool) -> PyResult<()> {
-        self.is_monotonic = is_monotonic;
+        let mut v = self.inner.lock().map_err(handle_poison_error)?;
+        v.is_monotonic = is_monotonic;
         Ok(())
     }
 }
@@ -662,8 +641,7 @@ impl Sum {
 #[pyclass]
 #[derive(Clone)]
 pub struct Histogram {
-    pub data_points: Arc<Mutex<Vec<Arc<Mutex<RHistogramDataPoint>>>>>,
-    pub aggregation_temporality: AggregationTemporality,
+    inner: Arc<Mutex<RHistogram>>,
 }
 
 #[pymethods]
@@ -671,34 +649,40 @@ impl Histogram {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Histogram {
-            data_points: Arc::new(Mutex::new(vec![])),
-            aggregation_temporality: AggregationTemporality::Unspecified,
+            inner: Arc::new(Mutex::new(RHistogram {
+                data_points: Arc::new(Mutex::new(vec![])),
+                aggregation_temporality: 0,
+            })),
         })
     }
 
     #[getter]
     fn data_points(&self) -> PyResult<HistogramDataPointList> {
-        Ok(HistogramDataPointList(self.data_points.clone()))
+        let v = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(HistogramDataPointList(v.data_points.clone()))
     }
 
     #[setter]
     fn set_data_points(&mut self, data_points: Vec<HistogramDataPoint>) -> PyResult<()> {
-        let mut inner = self.data_points.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
+        v.clear();
         for dp in data_points {
-            inner.push(Arc::new(Mutex::new(dp.into())));
+            v.push(Arc::new(Mutex::new(dp.into())));
         }
         Ok(())
     }
 
     #[getter]
     fn aggregation_temporality(&self) -> PyResult<AggregationTemporality> {
-        Ok(self.aggregation_temporality)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AggregationTemporality::from(inner.aggregation_temporality))
     }
 
     #[setter]
     fn set_aggregation_temporality(&mut self, temporality: AggregationTemporality) -> PyResult<()> {
-        self.aggregation_temporality = temporality;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.aggregation_temporality = i32::from(temporality);
         Ok(())
     }
 }
@@ -707,8 +691,7 @@ impl Histogram {
 #[pyclass]
 #[derive(Clone)]
 pub struct ExponentialHistogram {
-    pub data_points: Arc<Mutex<Vec<Arc<Mutex<RExponentialHistogramDataPoint>>>>>,
-    pub aggregation_temporality: AggregationTemporality,
+    inner: Arc<Mutex<RExponentialHistogram>>,
 }
 
 #[pymethods]
@@ -716,34 +699,40 @@ impl ExponentialHistogram {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(ExponentialHistogram {
-            data_points: Arc::new(Mutex::new(vec![])),
-            aggregation_temporality: AggregationTemporality::Unspecified,
+            inner: Arc::new(Mutex::new(RExponentialHistogram {
+                data_points: Arc::new(Mutex::new(vec![])),
+                aggregation_temporality: i32::from(AggregationTemporality::Unspecified),
+            })),
         })
     }
 
     #[getter]
     fn data_points(&self) -> PyResult<ExponentialHistogramDataPointList> {
-        Ok(ExponentialHistogramDataPointList(self.data_points.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(ExponentialHistogramDataPointList(inner.data_points.clone()))
     }
 
     #[setter]
     fn set_data_points(&mut self, data_points: Vec<ExponentialHistogramDataPoint>) -> PyResult<()> {
-        let mut inner = self.data_points.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
+        v.clear();
         for dp in data_points {
-            inner.push(Arc::new(Mutex::new(dp.into())));
+            v.push(Arc::new(Mutex::new(dp.into())));
         }
         Ok(())
     }
 
     #[getter]
     fn aggregation_temporality(&self) -> PyResult<AggregationTemporality> {
-        Ok(self.aggregation_temporality)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AggregationTemporality::from(inner.aggregation_temporality))
     }
 
     #[setter]
     fn set_aggregation_temporality(&mut self, temporality: AggregationTemporality) -> PyResult<()> {
-        self.aggregation_temporality = temporality;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.aggregation_temporality = i32::from(temporality);
         Ok(())
     }
 }
@@ -752,7 +741,7 @@ impl ExponentialHistogram {
 #[pyclass]
 #[derive(Clone)]
 pub struct Summary {
-    pub data_points: Arc<Mutex<Vec<Arc<Mutex<RSummaryDataPoint>>>>>,
+    pub inner: Arc<Mutex<RSummary>>,
 }
 
 #[pymethods]
@@ -760,21 +749,25 @@ impl Summary {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Summary {
-            data_points: Arc::new(Mutex::new(vec![])),
+            inner: Arc::new(Mutex::new(RSummary {
+                data_points: Arc::new(Mutex::new(vec![])),
+            })),
         })
     }
 
     #[getter]
     fn data_points(&self) -> PyResult<SummaryDataPointList> {
-        Ok(SummaryDataPointList(self.data_points.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(SummaryDataPointList(inner.data_points.clone()))
     }
 
     #[setter]
     fn set_data_points(&mut self, data_points: Vec<SummaryDataPoint>) -> PyResult<()> {
-        let mut inner = self.data_points.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
+        v.clear();
         for dp in data_points {
-            inner.push(Arc::new(Mutex::new(dp.into())));
+            v.push(Arc::new(Mutex::new(dp.into())));
         }
         Ok(())
     }
@@ -2275,6 +2268,14 @@ impl DataPointFlags {
         match self {
             Self::DoNotUse => "DATA_POINT_FLAGS_DO_NOT_USE",
             Self::NoRecordedValueMask => "DATA_POINT_FLAGS_NO_RECORDED_VALUE_MASK",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> PyResult<u32> {
+        match self {
+            DataPointFlags::DoNotUse => Ok(0),
+            DataPointFlags::NoRecordedValueMask => Ok(1),
         }
     }
 }

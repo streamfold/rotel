@@ -153,7 +153,7 @@ fn transform_log_record(lr: opentelemetry_proto::tonic::logs::v1::LogRecord) -> 
     }
 }
 
-pub fn transform_metrics_data(
+pub fn transform_resource_metrics(
     rm: opentelemetry_proto::tonic::metrics::v1::ResourceMetrics,
 ) -> RResourceMetrics {
     let mut resource_metrics = RResourceMetrics {
@@ -191,7 +191,7 @@ pub fn transform_metrics_data(
         let scope_metrics = RScopeMetrics {
             scope: Arc::new(Mutex::new(scope)),
             metrics: Arc::new(Mutex::new(metrics_vec)),
-            schema_url: sm.schema_url,
+            schema_url: Arc::new(Mutex::new(sm.schema_url)),
         };
         scope_metrics_vec.push(Arc::new(Mutex::new(scope_metrics)));
     }
@@ -226,7 +226,7 @@ fn transform_metric(m: opentelemetry_proto::tonic::metrics::v1::Metric) -> RMetr
         description: m.description,
         unit: m.unit,
         metadata: Arc::new(Mutex::new(convert_attributes(m.metadata))),
-        data,
+        data: Arc::new(Mutex::new(data)),
     }
 }
 
