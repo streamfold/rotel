@@ -3,6 +3,7 @@ pub mod agent;
 pub mod args;
 pub mod misc;
 pub mod wait;
+pub mod parquet_exporter;
 
 mod clickhouse_exporter;
 mod datadog_exporter;

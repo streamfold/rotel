@@ -31,6 +31,7 @@ flate2 = { version = "1.0", features = ["zlib-ng"], default-features = false }
 futures = "0.3.31"
 daemonize = { git = "https://github.com/mheffner/daemonize", branch = "passy-pr54" }
 humantime = "2.1.0"
+humantime-serde = "1.1.1"
 rand = "0.8.5"
 bytes = "1.9.0"
 read-restrict = "0.3.0"
@@ -61,6 +62,8 @@ indexmap = "2.9.0"
 hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
+parquet = "55.1.0"
+arrow = "55.1.0"
 
 [dev-dependencies]
 tokio-test = "0.4.4"
