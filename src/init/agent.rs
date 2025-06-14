@@ -331,7 +331,7 @@ impl Agent {
                     let logs_config = build_logs_config(config.otlp_exporter.clone(), endpoint);
                     let mut logs = otlp::exporter::build_logs_exporter(
                         logs_config,
-                        logs_pipeline_out_rx.clone(),
+                        logs_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
                     let token = exporters_cancel.clone();
@@ -490,6 +490,35 @@ impl Agent {
                     }
 
                     Ok(())
+                });
+            }
+
+            Exporter::File => {
+                let config = crate::exporters::file::config::FileExporterConfig::new(
+                    config.file_exporter.format.clone(),
+                    config.file_exporter.path.clone(),
+                    config.file_exporter.flush_interval,
+                );
+                config.validate()?;
+                let traces_rx = trace_pipeline_out_rx;
+                let metrics_rx = metrics_pipeline_out_rx;
+                let logs_rx = logs_pipeline_out_rx;
+                let _flush = self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe());
+                let token = exporters_cancel.clone();
+                exporters_task_set.spawn(async move {
+                    match crate::exporters::file::task::run_file_exporter(
+                        config,
+                        traces_rx,
+                        metrics_rx,
+                        logs_rx,
+                        token,
+                    ).await {
+                        Ok(_) => Ok(()),
+                        Err(e) => {
+                            error!(error = ?e, "File exporter returned from run loop with error.");
+                            Err(e.into())
+                        }
+                    }
                 });
             }
         }
