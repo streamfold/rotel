@@ -18,6 +18,7 @@ pub struct MetricRow {
     pub description: String,
     pub unit: String,
     pub type_: String,
+    pub service_name: String,
     pub value: MapOrJson,
     pub resource_attributes: MapOrJson,
     pub scope_name: String,
@@ -32,6 +33,7 @@ impl ToRecordBatch for MetricRow {
         let description = build_string_array!(rows, description);
         let unit = build_string_array!(rows, unit);
         let type_ = build_string_array!(rows, type_);
+        let service_name = build_string_array!(rows, service_name);
         let value = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.value)).collect::<Vec<_>>());
         let resource_attributes = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.resource_attributes)).collect::<Vec<_>>());
         let scope_name = build_string_array!(rows, scope_name);
@@ -44,6 +46,7 @@ impl ToRecordBatch for MetricRow {
             Field::new("description", DataType::Utf8, false),
             Field::new("unit", DataType::Utf8, false),
             Field::new("type_", DataType::Utf8, false),
+            Field::new("service_name", DataType::Utf8, false),
             Field::new("value", DataType::Utf8, false),
             Field::new("resource_attributes", DataType::Utf8, false),
             Field::new("scope_name", DataType::Utf8, false),
@@ -57,6 +60,7 @@ impl ToRecordBatch for MetricRow {
             Arc::new(description),
             Arc::new(unit),
             Arc::new(type_),
+            Arc::new(service_name),
             Arc::new(value),
             Arc::new(resource_attributes),
             Arc::new(scope_name),
@@ -96,6 +100,13 @@ impl MetricRow {
             .as_ref()
             .map(|r| attrs_to_map(&r.attributes))
             .unwrap_or(MapOrJson::Map(Default::default()));
+
+        // Extract service.name from resource attributes
+        let service_name = if let MapOrJson::Map(map) = &resource_attrs {
+            map.get("service.name").cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
 
         let mut rows = Vec::new();
 
@@ -157,6 +168,7 @@ impl MetricRow {
                     description: metric.description.clone(),
                     unit: metric.unit.clone(),
                     type_: type_.to_string(),
+                    service_name: service_name.clone(),
                     value: MapOrJson::Json(value_json),
                     resource_attributes: resource_attrs.clone(),
                     scope_name: scope_name.clone(),
