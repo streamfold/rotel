@@ -59,6 +59,11 @@ def process_metrics(resource_metrics):
     assert num_dp.flags == 0
     assert len(num_dp.exemplars) == 0
 
+    # let's change the start_time_unix_nano
+    num_dp.start_time_unix_nano = 2000
+    num_dp = gauge.data_points[0]
+    assert num_dp.start_time_unix_nano == 2000
+
     # --- Mutate the metrics data ---
 
     # Mutate ResourceMetrics

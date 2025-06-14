@@ -106,6 +106,7 @@ pub struct RHistogramDataPoint {
     pub time_unix_nano: u64,
     pub count: u64,
     pub sum: Option<f64>,
+    // TODO these should be an ARC?
     pub bucket_counts: Vec<u64>,
     pub explicit_bounds: Vec<f64>,
     pub exemplars: Arc<Mutex<Vec<Arc<Mutex<RExemplar>>>>>,
@@ -125,8 +126,8 @@ pub struct RExponentialHistogramDataPoint {
     pub sum: Option<f64>,
     pub scale: i32,
     pub zero_count: u64,
-    pub positive: Option<RExponentialHistogramBuckets>,
-    pub negative: Option<RExponentialHistogramBuckets>,
+    pub positive: Arc<Mutex<Option<Arc<Mutex<RExponentialHistogramBuckets>>>>>,
+    pub negative: Arc<Mutex<Option<Arc<Mutex<RExponentialHistogramBuckets>>>>>,
     pub flags: u32,
     pub exemplars: Arc<Mutex<Vec<Arc<Mutex<RExemplar>>>>>,
     pub min: Option<f64>,

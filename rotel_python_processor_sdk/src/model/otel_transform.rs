@@ -347,13 +347,17 @@ fn transform_histogram_data_point(
 fn transform_exponential_histogram_data_point(
     ehdp: opentelemetry_proto::tonic::metrics::v1::ExponentialHistogramDataPoint,
 ) -> RExponentialHistogramDataPoint {
-    let positive_buckets = ehdp.positive.map(|b| RExponentialHistogramBuckets {
-        offset: b.offset,
-        bucket_counts: b.bucket_counts,
+    let positive_buckets = ehdp.positive.map(|b| {
+        Arc::new(Mutex::new(RExponentialHistogramBuckets {
+            offset: b.offset,
+            bucket_counts: b.bucket_counts,
+        }))
     });
-    let negative_buckets = ehdp.negative.map(|b| RExponentialHistogramBuckets {
-        offset: b.offset,
-        bucket_counts: b.bucket_counts,
+    let negative_buckets = ehdp.negative.map(|b| {
+        Arc::new(Mutex::new(RExponentialHistogramBuckets {
+            offset: b.offset,
+            bucket_counts: b.bucket_counts,
+        }))
     });
 
     let exemplars = ehdp
@@ -370,8 +374,8 @@ fn transform_exponential_histogram_data_point(
         sum: ehdp.sum,
         scale: ehdp.scale,
         zero_count: ehdp.zero_count,
-        positive: positive_buckets,
-        negative: negative_buckets,
+        positive: Arc::new(Mutex::new(positive_buckets)),
+        negative: Arc::new(Mutex::new(negative_buckets)),
         flags: ehdp.flags,
         exemplars: Arc::new(Mutex::new(exemplars)),
         min: ehdp.min,

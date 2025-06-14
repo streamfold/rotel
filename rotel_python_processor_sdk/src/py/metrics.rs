@@ -469,9 +469,6 @@ impl Metric {
 }
 
 // --- PyO3 Bindings for RMetricData (Enum) ---
-// TODO: CHANGE THIS TO HAVE AN INNER
-//
-/////
 
 #[pyclass]
 #[derive(Clone)]
@@ -483,50 +480,6 @@ pub enum MetricData {
     Summary(Summary),
 }
 
-// impl From<Gauge> for RGauge {
-//     fn from(g: Gauge) -> Self {
-//         let v = g.inner.lock().map_err(handle_poison_error)?;
-//         v.clone()
-//     }
-// }
-//
-// impl From<Sum> for RSum {
-//     fn from(s: Sum) -> Self {
-//         s.inner
-//         RSum {
-//             data_points: s.data_points,
-//             aggregation_temporality: s.aggregation_temporality as i32,
-//             is_monotonic: s.is_monotonic,
-//         }
-//     }
-// }
-//
-// impl From<Histogram> for RHistogram {
-//     fn from(h: Histogram) -> Self {
-//         RHistogram {
-//             data_points: h.data_points,
-//             aggregation_temporality: h.aggregation_temporality as i32,
-//         }
-//     }
-// }
-//
-// impl From<ExponentialHistogram> for RExponentialHistogram {
-//     fn from(eh: ExponentialHistogram) -> Self {
-//         RExponentialHistogram {
-//             data_points: eh.data_points,
-//             aggregation_temporality: eh.aggregation_temporality as i32,
-//         }
-//     }
-// }
-//
-// impl From<Summary> for RSummary {
-//     fn from(s: Summary) -> Self {
-//         RSummary {
-//             data_points: s.data_points,
-//         }
-//     }
-// }
-//
 // --- PyO3 Bindings for RGauge ---
 #[pyclass]
 #[derive(Clone)]
@@ -557,17 +510,7 @@ impl Gauge {
         let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
         v.clear();
         for dp in data_points {
-            v.push(Arc::new(Mutex::new(RNumberDataPoint {
-                attributes: dp.attributes.clone(),
-                start_time_unix_nano: dp.start_time_unix_nano,
-                time_unix_nano: dp.time_unix_nano,
-                exemplars: dp.exemplars.clone(),
-                flags: dp.flags,
-                value: dp.value.map(|v| match v {
-                    NumberDataPointValue::AsDouble(d) => RNumberDataPointValue::AsDouble(d),
-                    NumberDataPointValue::AsInt(i) => RNumberDataPointValue::AsInt(i),
-                }),
-            })));
+            v.push(dp.inner.clone());
         }
         Ok(())
     }
@@ -605,7 +548,7 @@ impl Sum {
         let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
         v.clear();
         for dp in data_points {
-            v.push(Arc::new(Mutex::new(dp.into())));
+            v.push(dp.inner.clone());
         }
         Ok(())
     }
@@ -668,7 +611,7 @@ impl Histogram {
         let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
         v.clear();
         for dp in data_points {
-            v.push(Arc::new(Mutex::new(dp.into())));
+            v.push(dp.inner.clone());
         }
         Ok(())
     }
@@ -718,7 +661,7 @@ impl ExponentialHistogram {
         let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
         v.clear();
         for dp in data_points {
-            v.push(Arc::new(Mutex::new(dp.into())));
+            v.push(dp.inner.clone());
         }
         Ok(())
     }
@@ -790,20 +733,9 @@ impl NumberDataPointList {
     fn __getitem__(&self, index: usize) -> PyResult<NumberDataPoint> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
-            Some(item) => {
-                let item_lock = item.lock().unwrap();
-                Ok(NumberDataPoint {
-                    attributes: item_lock.attributes.clone(),
-                    start_time_unix_nano: item_lock.start_time_unix_nano,
-                    time_unix_nano: item_lock.time_unix_nano,
-                    exemplars: item_lock.exemplars.clone(),
-                    flags: item_lock.flags,
-                    value: item_lock.value.clone().map(|v| match v {
-                        RNumberDataPointValue::AsDouble(d) => NumberDataPointValue::AsDouble(d),
-                        RNumberDataPointValue::AsInt(i) => NumberDataPointValue::AsInt(i),
-                    }),
-                })
-            }
+            Some(item) => Ok(NumberDataPoint {
+                inner: item.clone(),
+            }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             )),
@@ -816,18 +748,7 @@ impl NumberDataPointList {
                 "Index out of bounds",
             ));
         }
-
-        inner[index] = Arc::new(Mutex::new(RNumberDataPoint {
-            attributes: value.attributes.clone(),
-            start_time_unix_nano: value.start_time_unix_nano,
-            time_unix_nano: value.time_unix_nano,
-            exemplars: value.exemplars.clone(),
-            flags: value.flags,
-            value: value.value.clone().map(|v| match v {
-                NumberDataPointValue::AsDouble(d) => RNumberDataPointValue::AsDouble(d),
-                NumberDataPointValue::AsInt(i) => RNumberDataPointValue::AsInt(i),
-            }),
-        }));
+        inner[index] = value.inner.clone();
         Ok(())
     }
     fn __delitem__(&self, index: usize) -> PyResult<()> {
@@ -842,7 +763,7 @@ impl NumberDataPointList {
     }
     fn append(&self, item: &NumberDataPoint) -> PyResult<()> {
         let mut k = self.0.lock().map_err(handle_poison_error)?;
-        k.push(Arc::new(Mutex::new(item.to_owned().into())));
+        k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -867,17 +788,8 @@ impl NumberDataPointListIter {
             return Ok(None);
         }
         let inner = item.unwrap();
-        let inner = inner.lock().unwrap();
         Ok(Some(NumberDataPoint {
-            attributes: inner.attributes.clone(),
-            start_time_unix_nano: inner.start_time_unix_nano,
-            time_unix_nano: inner.time_unix_nano,
-            exemplars: inner.exemplars.clone(),
-            flags: inner.flags,
-            value: inner.value.clone().map(|v| match v {
-                RNumberDataPointValue::AsDouble(d) => NumberDataPointValue::AsDouble(d),
-                RNumberDataPointValue::AsInt(i) => NumberDataPointValue::AsInt(i),
-            }),
+            inner: inner.clone(),
         }))
     }
 }
@@ -886,12 +798,7 @@ impl NumberDataPointListIter {
 #[pyclass]
 #[derive(Clone)]
 pub struct NumberDataPoint {
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub start_time_unix_nano: u64,
-    pub time_unix_nano: u64,
-    pub exemplars: Arc<Mutex<Vec<Arc<Mutex<RExemplar>>>>>,
-    pub flags: u32,
-    pub value: Option<NumberDataPointValue>,
+    inner: Arc<Mutex<RNumberDataPoint>>,
 }
 
 #[pymethods]
@@ -899,108 +806,123 @@ impl NumberDataPoint {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(NumberDataPoint {
-            attributes: Arc::new(Mutex::new(vec![])),
-            start_time_unix_nano: 0,
-            time_unix_nano: 0,
-            exemplars: Arc::new(Mutex::new(vec![])),
-            flags: 0,
-            value: None,
+            inner: Arc::new(Mutex::new(RNumberDataPoint {
+                attributes: Arc::new(Default::default()),
+                start_time_unix_nano: 0,
+                time_unix_nano: 0,
+                exemplars: Arc::new(Default::default()),
+                flags: 0,
+                value: None,
+            })),
         })
     }
 
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        Ok(AttributesList(self.attributes.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AttributesList(inner.attributes.clone()))
     }
 
     #[setter]
     fn set_attributes(&mut self, attributes: Vec<KeyValue>) -> PyResult<()> {
-        let mut inner = self.attributes.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.attributes.lock().map_err(handle_poison_error)?;
+        v.clear();
         for kv in attributes {
             let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
-            inner.push(kv_lock.clone());
+            v.push(kv_lock.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn start_time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.start_time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.start_time_unix_nano)
     }
 
     #[setter]
     fn set_start_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.start_time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.start_time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.time_unix_nano)
     }
 
     #[setter]
     fn set_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn exemplars(&self) -> PyResult<ExemplarList> {
-        Ok(ExemplarList(self.exemplars.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(ExemplarList(inner.exemplars.clone()))
     }
 
     #[setter]
     fn set_exemplars(&mut self, exemplars: Vec<Exemplar>) -> PyResult<()> {
-        let mut inner = self.exemplars.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.exemplars.lock().map_err(handle_poison_error)?;
+        v.clear();
         for e in exemplars {
-            inner.push(Arc::new(Mutex::new(e.into())));
+            v.push(e.inner.clone())
         }
         Ok(())
     }
 
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        Ok(self.flags)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.flags)
     }
 
     #[setter]
     fn set_flags(&mut self, flags: u32) -> PyResult<()> {
-        self.flags = flags;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.flags = flags;
         Ok(())
     }
 
     #[getter]
     fn value(&self) -> PyResult<Option<NumberDataPointValue>> {
-        Ok(self.value.clone())
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if inner.value.is_none() {
+            return Ok(None);
+        }
+        let v = inner.value.take().unwrap();
+        let x = v.clone();
+        inner.value.replace(x);
+        match v {
+            RNumberDataPointValue::AsDouble(f) => Ok(Some(NumberDataPointValue::AsDouble(f))),
+            RNumberDataPointValue::AsInt(i) => Ok(Some(NumberDataPointValue::AsInt(i))),
+        }
     }
 
     #[setter]
     fn set_value(&mut self, value: Option<NumberDataPointValue>) -> PyResult<()> {
-        self.value = value;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if value.is_none() {
+            inner.value = None
+        }
+        let x = value.unwrap();
+        match x {
+            NumberDataPointValue::AsDouble(f) => {
+                inner.value.replace(RNumberDataPointValue::AsDouble(f))
+            }
+            NumberDataPointValue::AsInt(i) => inner.value.replace(RNumberDataPointValue::AsInt(i)),
+        };
         Ok(())
     }
 }
 
-impl From<NumberDataPoint> for RNumberDataPoint {
-    fn from(dp: NumberDataPoint) -> Self {
-        RNumberDataPoint {
-            attributes: dp.attributes,
-            start_time_unix_nano: dp.start_time_unix_nano,
-            time_unix_nano: dp.time_unix_nano,
-            exemplars: dp.exemplars,
-            flags: dp.flags,
-            value: dp.value.map(|v| match v {
-                NumberDataPointValue::AsDouble(d) => RNumberDataPointValue::AsDouble(d),
-                NumberDataPointValue::AsInt(i) => RNumberDataPointValue::AsInt(i),
-            }),
-        }
-    }
-}
-
-// --- PyO3 Bindings for RNumberDataPointValue (Enum) ---
 #[pyclass]
 #[derive(Clone)]
 pub enum NumberDataPointValue {
@@ -1025,22 +947,9 @@ impl HistogramDataPointList {
     fn __getitem__(&self, index: usize) -> PyResult<HistogramDataPoint> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
-            Some(item) => {
-                let item_lock = item.lock().unwrap();
-                Ok(HistogramDataPoint {
-                    attributes: item_lock.attributes.clone(),
-                    start_time_unix_nano: item_lock.start_time_unix_nano,
-                    time_unix_nano: item_lock.time_unix_nano,
-                    count: item_lock.count,
-                    sum: item_lock.sum,
-                    bucket_counts: item_lock.bucket_counts.clone(),
-                    explicit_bounds: item_lock.explicit_bounds.clone(),
-                    exemplars: item_lock.exemplars.clone(),
-                    flags: item_lock.flags,
-                    min: item_lock.min,
-                    max: item_lock.max,
-                })
-            }
+            Some(item) => Ok(HistogramDataPoint {
+                inner: item.clone(),
+            }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             )),
@@ -1053,7 +962,7 @@ impl HistogramDataPointList {
                 "Index out of bounds",
             ));
         }
-        inner[index] = Arc::new(Mutex::new(value.to_owned().into()));
+        inner[index] = value.inner.clone();
         Ok(())
     }
     fn __delitem__(&self, index: usize) -> PyResult<()> {
@@ -1068,7 +977,7 @@ impl HistogramDataPointList {
     }
     fn append(&self, item: &HistogramDataPoint) -> PyResult<()> {
         let mut k = self.0.lock().map_err(handle_poison_error)?;
-        k.push(Arc::new(Mutex::new(item.to_owned().into())));
+        k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -1093,19 +1002,8 @@ impl HistogramDataPointListIter {
             return Ok(None);
         }
         let inner = item.unwrap();
-        let inner = inner.lock().unwrap();
         Ok(Some(HistogramDataPoint {
-            attributes: inner.attributes.clone(),
-            start_time_unix_nano: inner.start_time_unix_nano,
-            time_unix_nano: inner.time_unix_nano,
-            count: inner.count,
-            sum: inner.sum,
-            bucket_counts: inner.bucket_counts.clone(),
-            explicit_bounds: inner.explicit_bounds.clone(),
-            exemplars: inner.exemplars.clone(),
-            flags: inner.flags,
-            min: inner.min,
-            max: inner.max,
+            inner: inner.clone(),
         }))
     }
 }
@@ -1114,17 +1012,7 @@ impl HistogramDataPointListIter {
 #[pyclass]
 #[derive(Clone)]
 pub struct HistogramDataPoint {
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub start_time_unix_nano: u64,
-    pub time_unix_nano: u64,
-    pub count: u64,
-    pub sum: Option<f64>,
-    pub bucket_counts: Vec<u64>,
-    pub explicit_bounds: Vec<f64>,
-    pub exemplars: Arc<Mutex<Vec<Arc<Mutex<RExemplar>>>>>,
-    pub flags: u32,
-    pub min: Option<f64>,
-    pub max: Option<f64>,
+    inner: Arc<Mutex<RHistogramDataPoint>>,
 }
 
 #[pymethods]
@@ -1132,166 +1020,172 @@ impl HistogramDataPoint {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(HistogramDataPoint {
-            attributes: Arc::new(Mutex::new(vec![])),
-            start_time_unix_nano: 0,
-            time_unix_nano: 0,
-            count: 0,
-            sum: None,
-            bucket_counts: vec![],
-            explicit_bounds: vec![],
-            exemplars: Arc::new(Mutex::new(vec![])),
-            flags: 0,
-            min: None,
-            max: None,
+            inner: Arc::new(Mutex::new(RHistogramDataPoint {
+                attributes: Arc::new(Default::default()),
+                start_time_unix_nano: 0,
+                time_unix_nano: 0,
+                count: 0,
+                sum: None,
+                bucket_counts: vec![],
+                explicit_bounds: vec![],
+                exemplars: Arc::new(Default::default()),
+                flags: 0,
+                min: None,
+                max: None,
+            })),
         })
     }
 
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        Ok(AttributesList(self.attributes.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AttributesList(inner.attributes.clone()))
     }
 
     #[setter]
     fn set_attributes(&mut self, attributes: Vec<KeyValue>) -> PyResult<()> {
-        let mut inner = self.attributes.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.attributes.lock().map_err(handle_poison_error)?;
+        v.clear();
         for kv in attributes {
-            let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
-            inner.push(kv_lock.clone());
+            let kv_lock = kv.inner.lock().map_err(handle_poison_error)?;
+            v.push(kv_lock.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn start_time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.start_time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.start_time_unix_nano)
     }
 
     #[setter]
     fn set_start_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.start_time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.start_time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.time_unix_nano)
     }
 
     #[setter]
     fn set_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn count(&self) -> PyResult<u64> {
-        Ok(self.count)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.count)
     }
 
     #[setter]
     fn set_count(&mut self, count: u64) -> PyResult<()> {
-        self.count = count;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.count = count;
         Ok(())
     }
 
     #[getter]
     fn sum(&self) -> PyResult<Option<f64>> {
-        Ok(self.sum)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.sum)
     }
 
     #[setter]
     fn set_sum(&mut self, sum: Option<f64>) -> PyResult<()> {
-        self.sum = sum;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.sum = sum;
         Ok(())
     }
 
     #[getter]
     fn bucket_counts(&self) -> PyResult<Vec<u64>> {
-        Ok(self.bucket_counts.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.bucket_counts.clone())
     }
 
     #[setter]
     fn set_bucket_counts(&mut self, bucket_counts: Vec<u64>) -> PyResult<()> {
-        self.bucket_counts = bucket_counts;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.bucket_counts = bucket_counts;
         Ok(())
     }
 
     #[getter]
     fn explicit_bounds(&self) -> PyResult<Vec<f64>> {
-        Ok(self.explicit_bounds.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.explicit_bounds.clone())
     }
 
     #[setter]
     fn set_explicit_bounds(&mut self, explicit_bounds: Vec<f64>) -> PyResult<()> {
-        self.explicit_bounds = explicit_bounds;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.explicit_bounds = explicit_bounds;
         Ok(())
     }
 
     #[getter]
     fn exemplars(&self) -> PyResult<ExemplarList> {
-        Ok(ExemplarList(self.exemplars.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(ExemplarList(inner.exemplars.clone()))
     }
 
     #[setter]
     fn set_exemplars(&mut self, exemplars: Vec<Exemplar>) -> PyResult<()> {
-        let mut inner = self.exemplars.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.exemplars.lock().map_err(handle_poison_error)?;
+        v.clear();
         for e in exemplars {
-            inner.push(Arc::new(Mutex::new(e.into())));
+            v.push(e.inner.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        Ok(self.flags)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.flags)
     }
 
     #[setter]
     fn set_flags(&mut self, flags: u32) -> PyResult<()> {
-        self.flags = flags;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.flags = flags;
         Ok(())
     }
 
     #[getter]
     fn min(&self) -> PyResult<Option<f64>> {
-        Ok(self.min)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.min)
     }
 
     #[setter]
     fn set_min(&mut self, min: Option<f64>) -> PyResult<()> {
-        self.min = min;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.min = min;
         Ok(())
     }
 
     #[getter]
     fn max(&self) -> PyResult<Option<f64>> {
-        Ok(self.max)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.max)
     }
 
     #[setter]
     fn set_max(&mut self, max: Option<f64>) -> PyResult<()> {
-        self.max = max;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.max = max;
         Ok(())
-    }
-}
-
-impl From<HistogramDataPoint> for RHistogramDataPoint {
-    fn from(dp: HistogramDataPoint) -> Self {
-        RHistogramDataPoint {
-            attributes: dp.attributes,
-            start_time_unix_nano: dp.start_time_unix_nano,
-            time_unix_nano: dp.time_unix_nano,
-            count: dp.count,
-            sum: dp.sum,
-            bucket_counts: dp.bucket_counts,
-            explicit_bounds: dp.explicit_bounds,
-            exemplars: dp.exemplars,
-            flags: dp.flags,
-            min: dp.min,
-            max: dp.max,
-        }
     }
 }
 
@@ -1317,25 +1211,9 @@ impl ExponentialHistogramDataPointList {
     fn __getitem__(&self, index: usize) -> PyResult<ExponentialHistogramDataPoint> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
-            Some(item) => {
-                let item_lock = item.lock().unwrap();
-                Ok(ExponentialHistogramDataPoint {
-                    attributes: item_lock.attributes.clone(),
-                    start_time_unix_nano: item_lock.start_time_unix_nano,
-                    time_unix_nano: item_lock.time_unix_nano,
-                    count: item_lock.count,
-                    sum: item_lock.sum,
-                    scale: item_lock.scale,
-                    zero_count: item_lock.zero_count,
-                    positive: item_lock.positive.clone().map(|p| p.to_owned().into()),
-                    negative: item_lock.negative.clone().map(|n| n.to_owned().into()),
-                    flags: item_lock.flags,
-                    exemplars: item_lock.exemplars.clone(),
-                    min: item_lock.min,
-                    max: item_lock.max,
-                    zero_threshold: item_lock.zero_threshold,
-                })
-            }
+            Some(item) => Ok(ExponentialHistogramDataPoint {
+                inner: item.clone(),
+            }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             )),
@@ -1348,7 +1226,7 @@ impl ExponentialHistogramDataPointList {
                 "Index out of bounds",
             ));
         }
-        inner[index] = Arc::new(Mutex::new(value.to_owned().into()));
+        inner[index] = value.inner.clone();
         Ok(())
     }
     fn __delitem__(&self, index: usize) -> PyResult<()> {
@@ -1363,7 +1241,7 @@ impl ExponentialHistogramDataPointList {
     }
     fn append(&self, item: &ExponentialHistogramDataPoint) -> PyResult<()> {
         let mut k = self.0.lock().map_err(handle_poison_error)?;
-        k.push(Arc::new(Mutex::new(item.to_owned().into())));
+        k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -1388,22 +1266,8 @@ impl ExponentialHistogramDataPointListIter {
             return Ok(None);
         }
         let inner = item.unwrap();
-        let inner = inner.lock().unwrap();
         Ok(Some(ExponentialHistogramDataPoint {
-            attributes: inner.attributes.clone(),
-            start_time_unix_nano: inner.start_time_unix_nano,
-            time_unix_nano: inner.time_unix_nano,
-            count: inner.count,
-            sum: inner.sum,
-            scale: inner.scale,
-            zero_count: inner.zero_count,
-            positive: inner.positive.clone().map(|p| p.into()),
-            negative: inner.negative.clone().map(|n| n.into()),
-            flags: inner.flags,
-            exemplars: inner.exemplars.clone(),
-            min: inner.min,
-            max: inner.max,
-            zero_threshold: inner.zero_threshold,
+            inner: inner.clone(),
         }))
     }
 }
@@ -1412,20 +1276,7 @@ impl ExponentialHistogramDataPointListIter {
 #[pyclass]
 #[derive(Clone)]
 pub struct ExponentialHistogramDataPoint {
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub start_time_unix_nano: u64,
-    pub time_unix_nano: u64,
-    pub count: u64,
-    pub sum: Option<f64>,
-    pub scale: i32,
-    pub zero_count: u64,
-    pub positive: Option<ExponentialHistogramBuckets>,
-    pub negative: Option<ExponentialHistogramBuckets>,
-    pub flags: u32,
-    pub exemplars: Arc<Mutex<Vec<Arc<Mutex<RExemplar>>>>>,
-    pub min: Option<f64>,
-    pub max: Option<f64>,
-    pub zero_threshold: f64,
+    inner: Arc<Mutex<RExponentialHistogramDataPoint>>,
 }
 
 #[pymethods]
@@ -1433,226 +1284,240 @@ impl ExponentialHistogramDataPoint {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(ExponentialHistogramDataPoint {
-            attributes: Arc::new(Mutex::new(vec![])),
-            start_time_unix_nano: 0,
-            time_unix_nano: 0,
-            count: 0,
-            sum: None,
-            scale: 0,
-            zero_count: 0,
-            positive: None,
-            negative: None,
-            flags: 0,
-            exemplars: Arc::new(Mutex::new(vec![])),
-            min: None,
-            max: None,
-            zero_threshold: 0.0,
+            inner: Arc::new(Mutex::new(RExponentialHistogramDataPoint {
+                attributes: Arc::new(Default::default()),
+                start_time_unix_nano: 0,
+                time_unix_nano: 0,
+                count: 0,
+                sum: None,
+                scale: 0,
+                zero_count: 0,
+                positive: Arc::new(Mutex::new(None)),
+                negative: Arc::new(Mutex::new(None)),
+                flags: 0,
+                exemplars: Arc::new(Default::default()),
+                min: None,
+                max: None,
+                zero_threshold: 0.0,
+            })),
         })
     }
 
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        Ok(AttributesList(self.attributes.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AttributesList(inner.attributes.clone()))
     }
 
     #[setter]
     fn set_attributes(&mut self, attributes: Vec<KeyValue>) -> PyResult<()> {
-        let mut inner = self.attributes.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.attributes.lock().map_err(handle_poison_error)?;
+        v.clear();
         for kv in attributes {
-            let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
-            inner.push(kv_lock.clone());
+            let kv_lock = kv.inner.lock().map_err(handle_poison_error)?;
+            v.push(kv_lock.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn start_time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.start_time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.start_time_unix_nano)
     }
 
     #[setter]
     fn set_start_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.start_time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.start_time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.time_unix_nano)
     }
 
     #[setter]
     fn set_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn count(&self) -> PyResult<u64> {
-        Ok(self.count)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.count)
     }
 
     #[setter]
     fn set_count(&mut self, count: u64) -> PyResult<()> {
-        self.count = count;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.count = count;
         Ok(())
     }
 
     #[getter]
     fn sum(&self) -> PyResult<Option<f64>> {
-        Ok(self.sum)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.sum)
     }
 
     #[setter]
     fn set_sum(&mut self, sum: Option<f64>) -> PyResult<()> {
-        self.sum = sum;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.sum = sum;
         Ok(())
     }
 
     #[getter]
     fn scale(&self) -> PyResult<i32> {
-        Ok(self.scale)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.scale)
     }
 
     #[setter]
     fn set_scale(&mut self, scale: i32) -> PyResult<()> {
-        self.scale = scale;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.scale = scale;
         Ok(())
     }
 
     #[getter]
     fn zero_count(&self) -> PyResult<u64> {
-        Ok(self.zero_count)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.zero_count)
     }
 
     #[setter]
     fn set_zero_count(&mut self, count: u64) -> PyResult<()> {
-        self.zero_count = count;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.zero_count = count;
         Ok(())
     }
 
     #[getter]
     fn positive(&self) -> PyResult<Option<ExponentialHistogramBuckets>> {
-        Ok(self.positive.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.positive.lock().map_err(handle_poison_error)?;
+        if v.is_none() {
+            return Ok(None);
+        }
+        let x = v.take().unwrap();
+        let y = x.clone();
+        v.replace(x);
+        Ok(Some(ExponentialHistogramBuckets { inner: y }))
     }
 
     #[setter]
     fn set_positive(&mut self, buckets: Option<ExponentialHistogramBuckets>) -> PyResult<()> {
-        self.positive = buckets;
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.positive.lock().map_err(handle_poison_error)?;
+        if buckets.is_none() {
+            *v = None;
+            return Ok(());
+        }
+        let ehb = buckets.unwrap();
+        v.replace(ehb.inner.clone());
         Ok(())
     }
 
     #[getter]
     fn negative(&self) -> PyResult<Option<ExponentialHistogramBuckets>> {
-        Ok(self.negative.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.negative.lock().map_err(handle_poison_error)?;
+        if v.is_none() {
+            return Ok(None);
+        }
+        let x = v.take().unwrap();
+        let y = x.clone();
+        v.replace(x);
+        Ok(Some(ExponentialHistogramBuckets { inner: y }))
     }
 
     #[setter]
     fn set_negative(&mut self, buckets: Option<ExponentialHistogramBuckets>) -> PyResult<()> {
-        self.negative = buckets;
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.negative.lock().map_err(handle_poison_error)?;
+        if buckets.is_none() {
+            *v = None;
+            return Ok(());
+        }
+        let ehb = buckets.unwrap();
+        v.replace(ehb.inner.clone());
         Ok(())
     }
 
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        Ok(self.flags)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.flags)
     }
 
     #[setter]
     fn set_flags(&mut self, flags: u32) -> PyResult<()> {
-        self.flags = flags;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.flags = flags;
         Ok(())
     }
 
     #[getter]
     fn exemplars(&self) -> PyResult<ExemplarList> {
-        Ok(ExemplarList(self.exemplars.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(ExemplarList(inner.exemplars.clone()))
     }
 
     #[setter]
     fn set_exemplars(&mut self, exemplars: Vec<Exemplar>) -> PyResult<()> {
-        let mut inner = self.exemplars.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.exemplars.lock().map_err(handle_poison_error)?;
+        v.clear();
         for e in exemplars {
-            inner.push(Arc::new(Mutex::new(e.into())));
+            v.push(e.inner.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn min(&self) -> PyResult<Option<f64>> {
-        Ok(self.min)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.min)
     }
 
     #[setter]
     fn set_min(&mut self, min: Option<f64>) -> PyResult<()> {
-        self.min = min;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.min = min;
         Ok(())
     }
 
     #[getter]
     fn max(&self) -> PyResult<Option<f64>> {
-        Ok(self.max)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.max)
     }
 
     #[setter]
     fn set_max(&mut self, max: Option<f64>) -> PyResult<()> {
-        self.max = max;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.max = max;
         Ok(())
     }
 
     #[getter]
     fn zero_threshold(&self) -> PyResult<f64> {
-        Ok(self.zero_threshold)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.zero_threshold)
     }
 
     #[setter]
     fn set_zero_threshold(&mut self, threshold: f64) -> PyResult<()> {
-        self.zero_threshold = threshold;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.zero_threshold = threshold;
         Ok(())
-    }
-}
-
-impl From<ExponentialHistogramDataPoint> for RExponentialHistogramDataPoint {
-    fn from(dp: ExponentialHistogramDataPoint) -> Self {
-        RExponentialHistogramDataPoint {
-            attributes: dp.attributes,
-            start_time_unix_nano: dp.start_time_unix_nano,
-            time_unix_nano: dp.time_unix_nano,
-            count: dp.count,
-            sum: dp.sum,
-            scale: dp.scale,
-            zero_count: dp.zero_count,
-            positive: dp.positive.map(|p| p.into()),
-            negative: dp.negative.map(|n| n.into()),
-            flags: dp.flags,
-            exemplars: dp.exemplars,
-            min: dp.min,
-            max: dp.max,
-            zero_threshold: dp.zero_threshold,
-        }
-    }
-}
-
-impl From<RExponentialHistogramDataPoint> for ExponentialHistogramDataPoint {
-    fn from(dp: RExponentialHistogramDataPoint) -> Self {
-        ExponentialHistogramDataPoint {
-            attributes: dp.attributes.clone(),
-            start_time_unix_nano: dp.start_time_unix_nano,
-            time_unix_nano: dp.time_unix_nano,
-            count: dp.count,
-            sum: dp.sum,
-            scale: dp.scale,
-            zero_count: dp.zero_count,
-            positive: dp.positive.map(|p| p.into()),
-            negative: dp.negative.map(|n| n.into()),
-            flags: dp.flags,
-            exemplars: dp.exemplars.clone(),
-            min: dp.min,
-            max: dp.max,
-            zero_threshold: dp.zero_threshold,
-        }
     }
 }
 
@@ -1660,8 +1525,7 @@ impl From<RExponentialHistogramDataPoint> for ExponentialHistogramDataPoint {
 #[pyclass]
 #[derive(Clone)]
 pub struct ExponentialHistogramBuckets {
-    pub offset: i32,
-    pub bucket_counts: Vec<u64>,
+    inner: Arc<Mutex<RExponentialHistogramBuckets>>,
 }
 
 #[pymethods]
@@ -1669,49 +1533,37 @@ impl ExponentialHistogramBuckets {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(ExponentialHistogramBuckets {
-            offset: 0,
-            bucket_counts: vec![],
+            inner: Arc::new(Mutex::new(RExponentialHistogramBuckets {
+                offset: 0,
+                bucket_counts: vec![],
+            })),
         })
     }
 
     #[getter]
     fn offset(&self) -> PyResult<i32> {
-        Ok(self.offset)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.offset)
     }
 
     #[setter]
     fn set_offset(&mut self, offset: i32) -> PyResult<()> {
-        self.offset = offset;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.offset = offset;
         Ok(())
     }
 
     #[getter]
     fn bucket_counts(&self) -> PyResult<Vec<u64>> {
-        Ok(self.bucket_counts.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.bucket_counts.clone())
     }
 
     #[setter]
     fn set_bucket_counts(&mut self, bucket_counts: Vec<u64>) -> PyResult<()> {
-        self.bucket_counts = bucket_counts;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.bucket_counts = bucket_counts;
         Ok(())
-    }
-}
-
-impl From<ExponentialHistogramBuckets> for RExponentialHistogramBuckets {
-    fn from(b: ExponentialHistogramBuckets) -> Self {
-        RExponentialHistogramBuckets {
-            offset: b.offset,
-            bucket_counts: b.bucket_counts,
-        }
-    }
-}
-
-impl From<RExponentialHistogramBuckets> for ExponentialHistogramBuckets {
-    fn from(b: RExponentialHistogramBuckets) -> Self {
-        ExponentialHistogramBuckets {
-            offset: b.offset,
-            bucket_counts: b.bucket_counts,
-        }
     }
 }
 
@@ -2015,19 +1867,9 @@ impl ExemplarList {
     fn __getitem__(&self, index: usize) -> PyResult<Exemplar> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
-            Some(item) => {
-                let item_lock = item.lock().unwrap();
-                Ok(Exemplar {
-                    filtered_attributes: item_lock.filtered_attributes.clone(),
-                    time_unix_nano: item_lock.time_unix_nano,
-                    span_id: item_lock.span_id.clone(),
-                    trace_id: item_lock.trace_id.clone(),
-                    value: item_lock.value.clone().map(|v| match v {
-                        RExemplarValue::AsDouble(d) => ExemplarValue::AsDouble(d),
-                        RExemplarValue::AsInt(i) => ExemplarValue::AsInt(i),
-                    }),
-                })
-            }
+            Some(item) => Ok(Exemplar {
+                inner: item.clone(),
+            }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             )),
@@ -2040,7 +1882,7 @@ impl ExemplarList {
                 "Index out of bounds",
             ));
         }
-        inner[index] = Arc::new(Mutex::new(value.to_owned().into()));
+        inner[index] = value.inner.clone();
         Ok(())
     }
     fn __delitem__(&self, index: usize) -> PyResult<()> {
@@ -2055,7 +1897,7 @@ impl ExemplarList {
     }
     fn append(&self, item: &Exemplar) -> PyResult<()> {
         let mut k = self.0.lock().map_err(handle_poison_error)?;
-        k.push(Arc::new(Mutex::new(item.to_owned().into())));
+        k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -2080,16 +1922,8 @@ impl ExemplarListIter {
             return Ok(None);
         }
         let inner = item.unwrap();
-        let inner = inner.lock().unwrap();
         Ok(Some(Exemplar {
-            filtered_attributes: inner.filtered_attributes.clone(),
-            time_unix_nano: inner.time_unix_nano,
-            span_id: inner.span_id.clone(),
-            trace_id: inner.trace_id.clone(),
-            value: inner.value.clone().map(|v| match v {
-                RExemplarValue::AsDouble(d) => ExemplarValue::AsDouble(d),
-                RExemplarValue::AsInt(i) => ExemplarValue::AsInt(i),
-            }),
+            inner: inner.clone(),
         }))
     }
 }
@@ -2098,11 +1932,7 @@ impl ExemplarListIter {
 #[pyclass]
 #[derive(Clone)]
 pub struct Exemplar {
-    pub filtered_attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub time_unix_nano: u64,
-    pub span_id: Vec<u8>,
-    pub trace_id: Vec<u8>,
-    pub value: Option<ExemplarValue>,
+    inner: Arc<Mutex<RExemplar>>,
 }
 
 #[pymethods]
@@ -2110,90 +1940,105 @@ impl Exemplar {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Exemplar {
-            filtered_attributes: Arc::new(Mutex::new(vec![])),
-            time_unix_nano: 0,
-            span_id: vec![],
-            trace_id: vec![],
-            value: None,
+            inner: Arc::new(Mutex::new(RExemplar {
+                filtered_attributes: Arc::new(Mutex::new(vec![])),
+                time_unix_nano: 0,
+                span_id: vec![],
+                trace_id: vec![],
+                value: None,
+            })),
         })
     }
 
     #[getter]
     fn filtered_attributes(&self) -> PyResult<AttributesList> {
-        Ok(AttributesList(self.filtered_attributes.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AttributesList(inner.filtered_attributes.clone()))
     }
 
     #[setter]
     fn set_filtered_attributes(&mut self, attributes: Vec<KeyValue>) -> PyResult<()> {
-        let mut inner = self
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner
             .filtered_attributes
             .lock()
             .map_err(handle_poison_error)?;
-        inner.clear();
+        v.clear();
         for kv in attributes {
             let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
-            inner.push(kv_lock.clone());
+            v.push(kv_lock.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.time_unix_nano)
     }
 
     #[setter]
     fn set_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn span_id(&self) -> PyResult<Vec<u8>> {
-        Ok(self.span_id.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.span_id.clone())
     }
 
     #[setter]
     fn set_span_id(&mut self, id: Vec<u8>) -> PyResult<()> {
-        self.span_id = id;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.span_id = id;
         Ok(())
     }
 
     #[getter]
     fn trace_id(&self) -> PyResult<Vec<u8>> {
-        Ok(self.trace_id.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.trace_id.clone())
     }
 
     #[setter]
     fn set_trace_id(&mut self, id: Vec<u8>) -> PyResult<()> {
-        self.trace_id = id;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.trace_id = id;
         Ok(())
     }
 
     #[getter]
     fn value(&self) -> PyResult<Option<ExemplarValue>> {
-        Ok(self.value.clone())
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if inner.value.is_some() {
+            let rv = inner.value.take().unwrap();
+            let rv_copy = rv.clone();
+            inner.value.replace(rv);
+            match rv_copy {
+                RExemplarValue::AsDouble(x) => Ok(Some(ExemplarValue::AsDouble(x))),
+                RExemplarValue::AsInt(x) => Ok(Some(ExemplarValue::AsInt(x))),
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     #[setter]
     fn set_value(&mut self, value: Option<ExemplarValue>) -> PyResult<()> {
-        self.value = value;
-        Ok(())
-    }
-}
-
-impl From<Exemplar> for RExemplar {
-    fn from(e: Exemplar) -> Self {
-        RExemplar {
-            filtered_attributes: e.filtered_attributes,
-            time_unix_nano: e.time_unix_nano,
-            span_id: e.span_id,
-            trace_id: e.trace_id,
-            value: e.value.map(|v| match v {
-                ExemplarValue::AsDouble(d) => RExemplarValue::AsDouble(d),
-                ExemplarValue::AsInt(i) => RExemplarValue::AsInt(i),
-            }),
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if value.is_none() {
+            inner.value = None;
+            return Ok(());
         }
+        let v = value.unwrap();
+        match v {
+            ExemplarValue::AsDouble(f) => inner.value = Some(RExemplarValue::AsDouble(f)),
+            ExemplarValue::AsInt(i) => inner.value = Some(RExemplarValue::AsInt(i)),
+        }
+        Ok(())
     }
 }
 

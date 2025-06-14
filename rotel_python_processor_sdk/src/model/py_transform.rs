@@ -424,8 +424,8 @@ fn transform_exponential_histogram_data_point(
             sum: None,
             scale: 0,
             zero_count: 0,
-            positive: None,
-            negative: None,
+            positive: Arc::new(Mutex::new(None)),
+            negative: Arc::new(Mutex::new(None)),
             flags: 0,
             exemplars: Arc::new(Mutex::new(vec![])),
             min: None,
@@ -434,12 +434,16 @@ fn transform_exponential_histogram_data_point(
         },
     );
 
-    let positive_buckets = moved_ehdp
-        .positive
-        .map(transform_exponential_histogram_buckets);
-    let negative_buckets = moved_ehdp
-        .negative
-        .map(transform_exponential_histogram_buckets);
+    let positive_buckets = Arc::into_inner(moved_ehdp.positive)
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    let positive_buckets = positive_buckets.map(transform_exponential_histogram_buckets);
+    let negative_buckets = Arc::into_inner(moved_ehdp.negative)
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    let negative_buckets = negative_buckets.map(transform_exponential_histogram_buckets);
 
     let mut exemplars_vec = moved_ehdp.exemplars.lock().unwrap();
     let exemplars = exemplars_vec
@@ -477,8 +481,9 @@ fn transform_exponential_histogram_data_point(
 }
 
 fn transform_exponential_histogram_buckets(
-    b: RExponentialHistogramBuckets,
+    b: Arc<Mutex<RExponentialHistogramBuckets>>,
 ) -> v1::exponential_histogram_data_point::Buckets {
+    let b = Arc::into_inner(b).unwrap().into_inner().unwrap();
     v1::exponential_histogram_data_point::Buckets {
         offset: b.offset,
         bucket_counts: b.bucket_counts,
