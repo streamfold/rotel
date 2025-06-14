@@ -3,12 +3,12 @@ pub mod agent;
 pub mod args;
 pub mod misc;
 pub mod wait;
-pub mod parquet_exporter;
 
 mod clickhouse_exporter;
 mod datadog_exporter;
 mod otlp_exporter;
 mod xray_exporter;
+mod parquet_exporter;
 
 mod batch;
 #[cfg(feature = "pprof")]
