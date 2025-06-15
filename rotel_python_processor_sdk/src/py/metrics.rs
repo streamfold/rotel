@@ -1,6 +1,6 @@
 // metrics.rs
 
-use crate::model::common::{RInstrumentationScope, RKeyValue};
+use crate::model::common::RInstrumentationScope;
 use crate::model::resource::RResource;
 use crate::py::common::KeyValue;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
@@ -710,7 +710,7 @@ impl Summary {
         let mut v = inner.data_points.lock().map_err(handle_poison_error)?;
         v.clear();
         for dp in data_points {
-            v.push(Arc::new(Mutex::new(dp.into())));
+            v.push(dp.inner.clone());
         }
         Ok(())
     }
@@ -1584,23 +1584,9 @@ impl SummaryDataPointList {
     fn __getitem__(&self, index: usize) -> PyResult<SummaryDataPoint> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         match inner.get(index) {
-            Some(item) => {
-                let item_lock = item.lock().unwrap();
-                Ok(SummaryDataPoint {
-                    attributes: item_lock.attributes.clone(),
-                    start_time_unix_nano: item_lock.start_time_unix_nano,
-                    time_unix_nano: item_lock.time_unix_nano,
-                    count: item_lock.count,
-                    sum: item_lock.sum,
-                    quantile_values: item_lock
-                        .quantile_values
-                        .clone()
-                        .into_iter()
-                        .map(|v| v.into())
-                        .collect(),
-                    flags: item_lock.flags,
-                })
-            }
+            Some(item) => Ok(SummaryDataPoint {
+                inner: item.clone(),
+            }),
             None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "Index out of bounds",
             )),
@@ -1613,7 +1599,7 @@ impl SummaryDataPointList {
                 "Index out of bounds",
             ));
         }
-        inner[index] = Arc::new(Mutex::new(value.to_owned().into()));
+        inner[index] = value.inner.clone();
         Ok(())
     }
     fn __delitem__(&self, index: usize) -> PyResult<()> {
@@ -1628,7 +1614,7 @@ impl SummaryDataPointList {
     }
     fn append(&self, item: &SummaryDataPoint) -> PyResult<()> {
         let mut k = self.0.lock().map_err(handle_poison_error)?;
-        k.push(Arc::new(Mutex::new(item.to_owned().into())));
+        k.push(item.inner.clone());
         Ok(())
     }
     fn __len__(&self) -> PyResult<usize> {
@@ -1653,20 +1639,8 @@ impl SummaryDataPointListIter {
             return Ok(None);
         }
         let inner = item.unwrap();
-        let inner = inner.lock().unwrap();
         Ok(Some(SummaryDataPoint {
-            attributes: inner.attributes.clone(),
-            start_time_unix_nano: inner.start_time_unix_nano,
-            time_unix_nano: inner.time_unix_nano,
-            count: inner.count,
-            sum: inner.sum,
-            quantile_values: inner
-                .quantile_values
-                .clone()
-                .into_iter()
-                .map(|v| v.into())
-                .collect(),
-            flags: inner.flags,
+            inner: inner.clone(),
         }))
     }
 }
@@ -1675,13 +1649,7 @@ impl SummaryDataPointListIter {
 #[pyclass]
 #[derive(Clone)]
 pub struct SummaryDataPoint {
-    pub attributes: Arc<Mutex<Vec<RKeyValue>>>,
-    pub start_time_unix_nano: u64,
-    pub time_unix_nano: u64,
-    pub count: u64,
-    pub sum: f64,
-    pub quantile_values: Vec<ValueAtQuantile>,
-    pub flags: u32,
+    inner: Arc<Mutex<RSummaryDataPoint>>,
 }
 
 #[pymethods]
@@ -1689,110 +1657,121 @@ impl SummaryDataPoint {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(SummaryDataPoint {
-            attributes: Arc::new(Mutex::new(vec![])),
-            start_time_unix_nano: 0,
-            time_unix_nano: 0,
-            count: 0,
-            sum: 0.0,
-            quantile_values: vec![],
-            flags: 0,
+            inner: Arc::new(Mutex::new(RSummaryDataPoint {
+                attributes: Arc::new(Mutex::new(vec![])),
+                start_time_unix_nano: 0,
+                time_unix_nano: 0,
+                count: 0,
+                sum: 0.0,
+                quantile_values: vec![],
+                flags: 0,
+            })),
         })
     }
 
     #[getter]
     fn attributes(&self) -> PyResult<AttributesList> {
-        Ok(AttributesList(self.attributes.clone()))
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(AttributesList(inner.attributes.clone()))
     }
 
     #[setter]
     fn set_attributes(&mut self, attributes: Vec<KeyValue>) -> PyResult<()> {
-        let mut inner = self.attributes.lock().map_err(handle_poison_error)?;
-        inner.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.attributes.lock().map_err(handle_poison_error)?;
+        v.clear();
         for kv in attributes {
             let kv_lock = kv.inner.lock().map_err(handle_poison_error).unwrap();
-            inner.push(kv_lock.clone());
+            v.push(kv_lock.clone());
         }
         Ok(())
     }
 
     #[getter]
     fn start_time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.start_time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.start_time_unix_nano)
     }
 
     #[setter]
     fn set_start_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.start_time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.start_time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn time_unix_nano(&self) -> PyResult<u64> {
-        Ok(self.time_unix_nano)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.time_unix_nano)
     }
 
     #[setter]
     fn set_time_unix_nano(&mut self, time: u64) -> PyResult<()> {
-        self.time_unix_nano = time;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.time_unix_nano = time;
         Ok(())
     }
 
     #[getter]
     fn count(&self) -> PyResult<u64> {
-        Ok(self.count)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.count)
     }
 
     #[setter]
     fn set_count(&mut self, count: u64) -> PyResult<()> {
-        self.count = count;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.count = count;
         Ok(())
     }
 
     #[getter]
     fn sum(&self) -> PyResult<f64> {
-        Ok(self.sum)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.sum)
     }
 
     #[setter]
     fn set_sum(&mut self, sum: f64) -> PyResult<()> {
-        self.sum = sum;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.sum = sum;
         Ok(())
     }
 
     #[getter]
     fn quantile_values(&self) -> PyResult<Vec<ValueAtQuantile>> {
-        Ok(self.quantile_values.clone())
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut values = Vec::with_capacity(inner.quantile_values.len());
+        for value in &inner.quantile_values {
+            values.push(ValueAtQuantile {
+                inner: value.clone(),
+            });
+        }
+        Ok(values)
     }
 
     #[setter]
     fn set_quantile_values(&mut self, values: Vec<ValueAtQuantile>) -> PyResult<()> {
-        self.quantile_values = values;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.quantile_values.clear();
+        for value in values {
+            inner.quantile_values.push(value.inner);
+        }
         Ok(())
     }
 
     #[getter]
     fn flags(&self) -> PyResult<u32> {
-        Ok(self.flags)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.flags)
     }
 
     #[setter]
     fn set_flags(&mut self, flags: u32) -> PyResult<()> {
-        self.flags = flags;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.flags = flags;
         Ok(())
-    }
-}
-
-impl From<SummaryDataPoint> for RSummaryDataPoint {
-    fn from(dp: SummaryDataPoint) -> Self {
-        RSummaryDataPoint {
-            attributes: dp.attributes,
-            start_time_unix_nano: dp.start_time_unix_nano,
-            time_unix_nano: dp.time_unix_nano,
-            count: dp.count,
-            sum: dp.sum,
-            quantile_values: dp.quantile_values.into_iter().map(|v| v.into()).collect(),
-            flags: dp.flags,
-        }
     }
 }
 
