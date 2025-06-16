@@ -335,6 +335,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metrics_success() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).body("ohi");
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let exporter = new_metrics_exporter(addr, brx);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(metrics.resource_metrics).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_ok!(res.0);
+
+        hello_mock.assert();
+    }
+
+    #[tokio::test]
     async fn db_exception() {
         init_crypto();
         let server = MockServer::start();
@@ -387,5 +415,17 @@ mod tests {
                 .unwrap();
 
         builder.build_logs_exporter(brx, None).unwrap()
+    }
+
+    fn new_metrics_exporter<'a>(
+        addr: String,
+        brx: BoundedReceiver<Vec<ResourceMetrics>>,
+    ) -> ExporterType<'a, ResourceMetrics> {
+        let builder =
+            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
+                .build()
+                .unwrap();
+
+        builder.build_metrics_exporter(brx, None).unwrap()
     }
 }
