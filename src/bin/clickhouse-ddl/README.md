@@ -29,6 +29,7 @@ Options:
       --cluster <CLUSTER>            Cluster name
       --traces                       Create trace spans tables
       --logs                         Create logs tables
+      --metrics                      Create metrics tables
       --ttl <TTL>                    TTL [default: 0s]
       --enable-json                  Enable JSON column type
   -h, --help                         Print help

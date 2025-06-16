@@ -1,6 +1,11 @@
 mod ddl;
+mod ddl_logs;
+mod ddl_metrics;
+mod ddl_traces;
 
-use crate::ddl::{get_logs_ddl, get_traces_ddl};
+use crate::ddl_logs::get_logs_ddl;
+use crate::ddl_metrics::get_metrics_ddl;
+use crate::ddl_traces::get_traces_ddl;
 use bytes::Bytes;
 use clap::{Args, Parser};
 use http::{HeaderName, Method};
@@ -54,6 +59,10 @@ pub struct CreateDDLArgs {
     #[arg(long, default_value = "false")]
     pub logs: bool,
 
+    /// Create metrics tables
+    #[arg(long, default_value = "false")]
+    pub metrics: bool,
+
     /// TTL
     #[arg(long, default_value = "0s")]
     pub ttl: humantime::Duration,
@@ -88,7 +97,7 @@ async fn main() -> ExitCode {
 
     match opt.command {
         Some(Commands::Create(ddl)) => {
-            if !ddl.traces && !ddl.logs {
+            if !ddl.traces && !ddl.logs && !ddl.metrics {
                 eprintln!("Must select a resource type to create tables for");
                 return ExitCode::FAILURE;
             }
@@ -128,6 +137,24 @@ async fn main() -> ExitCode {
 
             if ddl.logs {
                 let sql = get_logs_ddl(
+                    &ddl.cluster,
+                    &ddl.database,
+                    &ddl.table_prefix,
+                    &ddl.engine,
+                    &ttl,
+                    ddl.enable_json,
+                );
+
+                for q in sql {
+                    if let Err(e) = execute_ddl(&client, &ddl, q).await {
+                        eprintln!("Can not execute DDL: {}", e);
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+
+            if ddl.metrics {
+                let sql = get_metrics_ddl(
                     &ddl.cluster,
                     &ddl.database,
                     &ddl.table_prefix,
