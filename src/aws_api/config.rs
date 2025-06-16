@@ -8,6 +8,20 @@ pub struct AwsConfig {
 }
 
 impl AwsConfig {
+    pub fn new(
+        region: String,
+        aws_access_key_id: String,
+        aws_secret_access_key: String,
+        aws_session_token: Option<String>,
+    ) -> Self {
+        AwsConfig {
+            region,
+            aws_access_key_id,
+            aws_secret_access_key,
+            aws_session_token,
+        }
+    }
+
     pub fn from_env() -> Self {
         Self {
             region: std::env::var("AWS_DEFAULT_REGION").unwrap_or("us-east-1".to_string()),

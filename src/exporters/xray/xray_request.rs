@@ -18,7 +18,7 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 
 #[derive(Clone)]
 pub struct XRayRequestBuilder {
-    signer: AwsRequestSigner<'static, SystemClock>,
+    signer: AwsRequestSigner<SystemClock>,
     pub base_headers: HeaderMap,
     pub uri: Uri,
 }
@@ -43,17 +43,8 @@ impl XRayRequestBuilder {
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
 
-        // leak for now to ease lifetimes
-        let config = Box::leak(Box::new(config));
-
-        let signer = AwsRequestSigner::new(
-            "xray",
-            config.region.as_str(),
-            config.aws_access_key_id.as_str(),
-            config.aws_secret_access_key.as_str(),
-            config.aws_session_token.as_deref(),
-            SystemClock,
-        );
+        let signer =
+            AwsRequestSigner::new("xray", config.region.clone().as_str(), config, SystemClock);
 
         let s = Self {
             uri,

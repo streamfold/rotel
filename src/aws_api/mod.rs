@@ -1,7 +1,7 @@
 pub mod arn;
-pub(crate) mod auth;
+pub mod auth;
 pub mod config;
-mod error;
+pub mod error;
 pub mod host;
 
 pub const SECRETS_MANAGER_SERVICE: &str = "secretsmanager";

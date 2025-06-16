@@ -1,3 +1,4 @@
+use crate::aws_api::config::AwsConfig;
 use crate::aws_api::error::Error;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -25,33 +26,22 @@ impl Clock for SystemClock {
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
-pub struct AwsRequestSigner<'a, C> {
-    service: &'a str,
-    region: &'a str,
-    access_key: &'a str,
-    secret_key: &'a str,
-    session_token: Option<&'a str>,
+pub struct AwsRequestSigner<C> {
+    service: String,
+    region: String,
+    config: AwsConfig,
     clock: C,
 }
 
-impl<'a, C> AwsRequestSigner<'a, C>
+impl<C> AwsRequestSigner<C>
 where
     C: Clock,
 {
-    pub fn new(
-        service: &'a str,
-        region: &'a str,
-        access_key: &'a str,
-        secret_key: &'a str,
-        session_token: Option<&'a str>,
-        clock: C,
-    ) -> Self {
+    pub fn new(service: &str, region: &str, config: AwsConfig, clock: C) -> Self {
         Self {
-            service,
-            region,
-            access_key,
-            secret_key,
-            session_token,
+            service: service.to_string(),
+            region: region.to_string(),
+            config,
             clock,
         }
     }
@@ -88,11 +78,11 @@ where
         }
 
         // Add session token if provided
-        if let Some(token) = self.session_token {
+        if let Some(token) = &self.config.aws_session_token {
             if !token.is_empty() {
                 headers_mut.insert(
                     "X-Amz-Security-Token",
-                    HeaderValue::from_str(token)
+                    HeaderValue::from_str(token.as_str())
                         .map_err(|_| Error::SignatureError("Invalid session token".to_string()))?,
                 );
             }
@@ -191,7 +181,11 @@ where
         // Step 4: Add signature to request header
         let authorization_header = format!(
             "{} Credential={}/{}, SignedHeaders={}, Signature={}",
-            algorithm, self.access_key, credential_scope, signed_headers_str, signature
+            algorithm,
+            self.config.aws_access_key_id,
+            credential_scope,
+            signed_headers_str,
+            signature
         );
 
         headers_mut.insert(
@@ -214,7 +208,7 @@ where
 
     fn calculate_signature(&self, date_stamp: &str, string_to_sign: &str) -> Result<String, Error> {
         // Create signing key
-        let k_secret = format!("AWS4{}", self.secret_key);
+        let k_secret = format!("AWS4{}", self.config.aws_secret_access_key);
 
         let k_date = self.sign_hmac(k_secret.as_bytes(), date_stamp.as_bytes())?;
         let k_region = self.sign_hmac(&k_date, self.region.as_bytes())?;
@@ -265,14 +259,7 @@ mod tests {
     #[test]
     fn test_sign_basic_request() {
         // Arrange
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            None,
-            SystemClock {},
-        );
+        let signer = AwsRequestSigner::new("s3", "us-east-1", sample_config(), SystemClock {});
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-object"
             .parse::<Uri>()
@@ -297,14 +284,7 @@ mod tests {
     #[test]
     fn test_sign_with_query_parameters() {
         // Arrange
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            None,
-            SystemClock {},
-        );
+        let signer = AwsRequestSigner::new("s3", "us-east-1", sample_config(), SystemClock {});
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-object?prefix=test&delimiter=/"
             .parse::<Uri>()
@@ -328,9 +308,7 @@ mod tests {
         let signer = AwsRequestSigner::new(
             "s3",
             "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            Some("SESSION_TOKEN_EXAMPLE"),
+            sample_config_with_session("SESSION_TOKEN_EXAMPLE"),
             SystemClock {},
         );
 
@@ -354,14 +332,7 @@ mod tests {
     #[tokio::test]
     async fn test_sign_with_existing_headers() {
         // Arrange
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            None,
-            SystemClock {},
-        );
+        let signer = AwsRequestSigner::new("s3", "us-east-1", sample_config(), SystemClock {});
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-object"
             .parse::<Uri>()
@@ -391,14 +362,7 @@ mod tests {
     #[test]
     fn test_sign_with_existing_host_header() {
         // Arrange
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            None,
-            SystemClock {},
-        );
+        let signer = AwsRequestSigner::new("s3", "us-east-1", sample_config(), SystemClock {});
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-object"
             .parse::<Uri>()
@@ -421,14 +385,8 @@ mod tests {
         // Arrange - use a fixed time to generate a deterministic signature
         let fixed_time = Utc.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap();
 
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            None,
-            MockClock(fixed_time),
-        );
+        let signer =
+            AwsRequestSigner::new("s3", "us-east-1", sample_config(), MockClock(fixed_time));
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-key"
             .parse::<Uri>()
@@ -464,14 +422,7 @@ mod tests {
     #[test]
     fn test_uri_with_port() {
         // Arrange
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            None,
-            SystemClock {},
-        );
+        let signer = AwsRequestSigner::new("s3", "us-east-1", sample_config(), SystemClock {});
 
         let uri = "https://s3.amazonaws.com:8443/test-bucket/test-object"
             .parse::<Uri>()
@@ -488,5 +439,23 @@ mod tests {
             headers.get(&HOST.to_string()).unwrap(),
             "s3.amazonaws.com:8443"
         );
+    }
+
+    fn sample_config() -> AwsConfig {
+        AwsConfig {
+            region: "us-east-1".to_string(),
+            aws_access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+            aws_session_token: None,
+        }
+    }
+
+    fn sample_config_with_session(session: &str) -> AwsConfig {
+        AwsConfig {
+            region: "us-east-1".to_string(),
+            aws_access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+            aws_session_token: Some(session.to_string()),
+        }
     }
 }
