@@ -61,8 +61,28 @@ def process_metrics(resource_metrics):
 
     # let's change the start_time_unix_nano
     num_dp.start_time_unix_nano = 2000
+    num_dp.time_unix_nano = 3000
+    num_dp.attributes.append(KeyValue.new_string_value("dp_key2", "dp_value2"))
+    exemplar = Exemplar()
+    exemplar.time_unix_nano = 3500
+    exemplar.span_id = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+    exemplar.trace_id = b"\x08\x07\x06\x05\x04\x03\x02\x01\x08\x07\x06\x05\x04\x03\x02\x01"
+    exemplar.value = ExemplarValue.AsDouble(10.5)
+    exemplar.filtered_attributes.append(KeyValue.new_string_value("filtered_key", "filtered_value"))
+    num_dp.exemplars.append(exemplar)
     num_dp = gauge.data_points[0]
+    num_dp.flags = 1
+    num_dp.value = NumberDataPointValue.AsInt(111)
     assert num_dp.start_time_unix_nano == 2000
+    assert num_dp.time_unix_nano == 3000
+    assert len(num_dp.attributes) == 2
+    del (num_dp.attributes[0])
+    assert len(num_dp.attributes) == 1
+    assert num_dp.attributes[0].key == "dp_key2"
+    assert num_dp.attributes[0].value.value == "dp_value2"
+    assert len(num_dp.exemplars) == 1
+    assert num_dp.flags == 1
+    assert num_dp.value[0] == 111
 
     # --- Mutate the metrics data ---
 
