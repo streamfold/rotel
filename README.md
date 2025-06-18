@@ -80,6 +80,7 @@ Any option above that does not contain a default is considered false or unset by
 | --pid-file                        | /tmp/rotel-agent.pid |                                                |
 | --log-file                        | /tmp/rotel-agent.log |                                                |
 | --debug-log                       |                      | metrics, traces, logs                          |
+| --debug-log-verbosity             | basic                | basic, detailed                                |
 | --otlp-grpc-endpoint              | localhost:4317       |                                                |
 | --otlp-http-endpoint              | localhost:4318       |                                                |
 | --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                |
@@ -390,12 +391,15 @@ run nightly comparing the latest OTEL version against the latest Rotel release.
 
 ## Debugging
 
-If you set the option `--otlp-debug-log` to `["traces"]`, or the environment variable `ROTEL_DEBUG_LOG=traces`, then
+If you set the option `--debug-log` to `["traces"]`, or the environment variable `ROTEL_DEBUG_LOG=traces`, then
 rotel will log a summary to the log file `/tmp/rotel-agent.log` each time it processes trace spans. You can add also
-specify *metrics* to debug metrics and *logs* to debug logs.
+specify *metrics* to debug metrics and *logs* to debug logs. By default the debug logging will output a single line
+summary of the telemetry. You can increase the verbosity by specifying `--debug-log-verbosity detailed`, which will
+include verbose multi-line output.
 
-The default log level is set to INFO and can be changed with the environment variable `RUST_LOG`. For example, setting
-`RUST_LOG=debug` will increase the verbosity of logging.
+Separate from the telemetry logging, Rotel's default log level is set to INFO and can be changed with the environment
+variable `RUST_LOG`. For example, setting `RUST_LOG=debug` will increase the verbosity of all logging to debug level. This
+may include logging from third-party crates used in Rotel.
 
 ## Docker images
 
