@@ -6,7 +6,7 @@ mod traces;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::debug_buffer::DebugBuffer;
 use crate::topology::generic_pipeline::Inspect;
-use tracing::{event, Level};
+use tracing::{Level, event};
 // Basic debug logger, future thoughts on additional configurability:
 //  - support `normal` verbosity level (see: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/debugexporter/README.md)
 //  - configurable log level (defaults to info, but could log to debug, etc)
