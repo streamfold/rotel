@@ -6,6 +6,7 @@ mod traces;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::debug_buffer::DebugBuffer;
 use crate::topology::generic_pipeline::Inspect;
+use tracing::{event, Level};
 // Basic debug logger, future thoughts on additional configurability:
 //  - support `normal` verbosity level (see: https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/debugexporter/README.md)
 //  - configurable log level (defaults to info, but could log to debug, etc)
@@ -45,10 +46,17 @@ where
     [T]: DebugLoggable + Send,
 {
     fn inspect(&self, payload: &[T]) {
+        self.inspect_with_prefix(None, payload);
+    }
+    fn inspect_with_prefix(&self, prefix: Option<String>, payload: &[T]) {
         match self.0 {
             None => {}
-            Some(DebugVerbosity::Basic) => DebugLoggable::log_basic(payload),
+            Some(DebugVerbosity::Basic) => {
+                prefix.map(|message| event!(Level::INFO, message));
+                DebugLoggable::log_basic(payload)
+            }
             Some(DebugVerbosity::Detailed) => {
+                prefix.map(|message| event!(Level::INFO, message));
                 let out = DebugLoggable::log_detailed(payload);
 
                 // we forego the tracing library because we want to maintain multi-line output
