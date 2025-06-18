@@ -223,10 +223,10 @@ where
 
         #[cfg(feature = "pyo3")]
         let processor_modules = self.initialize_processors()?;
-        let len_processor_modules = processor_modules.len();
         #[cfg(not(feature = "pyo3"))]
         let processor_modules: Vec<String> = vec![];
 
+        let len_processor_modules = processor_modules.len();
         let mut flush_listener = self.flush_listener.take();
 
         let mut send_fut: Option<SendFut<Vec<T>>> = None;
