@@ -223,6 +223,7 @@ where
 
         #[cfg(feature = "pyo3")]
         let processor_modules = self.initialize_processors()?;
+        let len_processor_modules = processor_modules.len();
         #[cfg(not(feature = "pyo3"))]
         let processor_modules: Vec<String> = vec![];
 
@@ -275,7 +276,11 @@ where
                     let mut items = item.unwrap();
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
-                    inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
+                    if len_processor_modules > 0 {
+                        inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
+                    } else {
+                        inspector.inspect(&items);
+                    }
                     // If any resource attributes were provided on start, set or append them to the resources
                     if !self.resource_attributes.is_empty() {
                         for item in &mut items {
@@ -294,7 +299,9 @@ where
                        items = new_items;
                     }
 
-                    inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
+                    if len_processor_modules > 0 {
+                        inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
+                    }
 
                     match batch.offer(items) {
                         Ok(Some(popped)) => {
