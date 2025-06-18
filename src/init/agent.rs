@@ -526,7 +526,11 @@ impl Agent {
             );
 
             let log_traces = config.debug_log.contains(&DebugLogParam::Traces);
-            let dbg_log = DebugLogger::new(log_traces);
+            let dbg_log = DebugLogger::new(
+                log_traces
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
 
             let pipeline_cancel = pipeline_cancel.clone();
             pipeline_task_set
@@ -544,7 +548,11 @@ impl Agent {
             );
 
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
-            let dbg_log = DebugLogger::new(log_metrics);
+            let dbg_log = DebugLogger::new(
+                log_metrics
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
 
             let pipeline_cancel = pipeline_cancel.clone();
             pipeline_task_set
@@ -562,7 +570,11 @@ impl Agent {
             );
 
             let log_logs = config.debug_log.contains(&DebugLogParam::Logs);
-            let dbg_log = DebugLogger::new(log_logs);
+            let dbg_log = DebugLogger::new(
+                log_logs
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
 
             let pipeline_cancel = pipeline_cancel.clone();
             pipeline_task_set
@@ -580,7 +592,11 @@ impl Agent {
             );
 
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
-            let dbg_log = DebugLogger::new(log_metrics);
+            let dbg_log = DebugLogger::new(
+                log_metrics
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
 
             let pipeline_cancel = pipeline_cancel.clone();
             pipeline_task_set.spawn(async move {

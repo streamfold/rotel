@@ -4,6 +4,7 @@ use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
+use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -26,6 +27,15 @@ pub struct AgentRun {
     /// Debug log
     #[arg(value_enum, long, env = "ROTEL_DEBUG_LOG", default_value = "none")]
     pub debug_log: Vec<DebugLogParam>,
+
+    /// Debug log verbosity
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_DEBUG_LOG_VERBOSITY",
+        default_value = "basic"
+    )]
+    pub debug_log_verbosity: DebugLogVerbosity,
 
     /// OTLP gRPC endpoint
     #[arg(long, env = "ROTEL_OTLP_GRPC_ENDPOINT", default_value = "localhost:4317", value_parser = parse_endpoint
@@ -174,6 +184,21 @@ pub enum Exporter {
     Clickhouse,
 
     AwsXray,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+pub enum DebugLogVerbosity {
+    Basic,
+    Detailed,
+}
+
+impl From<DebugLogVerbosity> for DebugVerbosity {
+    fn from(value: DebugLogVerbosity) -> Self {
+        match value {
+            DebugLogVerbosity::Basic => DebugVerbosity::Basic,
+            DebugLogVerbosity::Detailed => DebugVerbosity::Detailed,
+        }
+    }
 }
 
 /// Parse a single key-value pair
