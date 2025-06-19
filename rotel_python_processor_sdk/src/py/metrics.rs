@@ -405,64 +405,44 @@ impl Metric {
     #[getter]
     fn data(&self) -> PyResult<Option<MetricData>> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
-        let mut data = v.data.lock().map_err(handle_poison_error)?;
+        let data = v.data.lock().map_err(handle_poison_error)?;
+
         if data.is_none() {
             return Ok(None);
         }
-        let d = data.take().unwrap();
-        let x = d.clone();
-        data.replace(x);
-        match d {
-            RMetricData::Gauge(g) => Ok(Some(MetricData::Gauge(Gauge {
-                inner: Arc::new(Mutex::new(g)),
-            }))),
-            RMetricData::Sum(s) => Ok(Some(MetricData::Sum(Sum {
-                inner: Arc::new(Mutex::new(s)),
-            }))),
-            RMetricData::Histogram(h) => Ok(Some(MetricData::Histogram(Histogram {
-                inner: Arc::new(Mutex::new(h)),
-            }))),
-            RMetricData::ExponentialHistogram(e) => Ok(Some(MetricData::ExponentialHistogram(
-                ExponentialHistogram {
-                    inner: Arc::new(Mutex::new(e)),
-                },
-            ))),
-            RMetricData::Summary(s) => Ok(Some(MetricData::Summary(Summary {
-                inner: Arc::new(Mutex::new(s)),
-            }))),
-        }
+
+        let arc_data = data.as_ref().unwrap().clone();
+        let guard = arc_data.lock().map_err(handle_poison_error)?;
+        let result = match &*guard {
+            RMetricData::Gauge(g) => MetricData::Gauge(Gauge { inner: g.clone() }),
+            RMetricData::Sum(s) => MetricData::Sum(Sum { inner: s.clone() }),
+            RMetricData::Histogram(h) => MetricData::Histogram(Histogram { inner: h.clone() }),
+            RMetricData::ExponentialHistogram(eh) => {
+                MetricData::ExponentialHistogram(ExponentialHistogram { inner: eh.clone() })
+            }
+            RMetricData::Summary(s) => MetricData::Summary(Summary { inner: s.clone() }),
+        };
+
+        Ok(Some(result))
     }
 
     #[setter]
     fn set_data(&mut self, data: Option<MetricData>) -> PyResult<()> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
         let mut data_lock = v.data.lock().map_err(handle_poison_error)?;
+
         if data.is_none() {
-            *data_lock = None
+            *data_lock = None;
         } else {
             let new_data = data.unwrap();
-            match new_data {
-                MetricData::Gauge(g) => {
-                    let v = g.inner.lock().map_err(handle_poison_error)?;
-                    data_lock.replace(RMetricData::Gauge(v.clone()));
-                }
-                MetricData::Sum(s) => {
-                    let v = s.inner.lock().map_err(handle_poison_error)?;
-                    data_lock.replace(RMetricData::Sum(v.clone()));
-                }
-                MetricData::Histogram(h) => {
-                    let v = h.inner.lock().map_err(handle_poison_error)?;
-                    data_lock.replace(RMetricData::Histogram(v.clone()));
-                }
-                MetricData::ExponentialHistogram(e) => {
-                    let v = e.inner.lock().map_err(handle_poison_error)?;
-                    data_lock.replace(RMetricData::ExponentialHistogram(v.clone()));
-                }
-                MetricData::Summary(s) => {
-                    let v = s.inner.lock().map_err(handle_poison_error)?;
-                    data_lock.replace(RMetricData::Summary(v.clone()));
-                }
-            }
+            let rmetric_data = match new_data {
+                MetricData::Gauge(g) => RMetricData::Gauge(g.inner),
+                MetricData::Sum(s) => RMetricData::Sum(s.inner),
+                MetricData::Histogram(h) => RMetricData::Histogram(h.inner),
+                MetricData::ExponentialHistogram(e) => RMetricData::ExponentialHistogram(e.inner),
+                MetricData::Summary(s) => RMetricData::Summary(s.inner),
+            };
+            *data_lock = Some(Arc::new(Mutex::new(rmetric_data)));
         }
         Ok(())
     }
@@ -1663,7 +1643,7 @@ impl SummaryDataPoint {
                 time_unix_nano: 0,
                 count: 0,
                 sum: 0.0,
-                quantile_values: vec![],
+                quantile_values: Arc::new(Mutex::new(vec![])),
                 flags: 0,
             })),
         })
@@ -1740,23 +1720,20 @@ impl SummaryDataPoint {
     }
 
     #[getter]
-    fn quantile_values(&self) -> PyResult<Vec<ValueAtQuantile>> {
+    fn quantile_values(&self) -> PyResult<QuantileValuesList> {
         let inner = self.inner.lock().map_err(handle_poison_error)?;
-        let mut values = Vec::with_capacity(inner.quantile_values.len());
-        for value in &inner.quantile_values {
-            values.push(ValueAtQuantile {
-                inner: value.clone(),
-            });
-        }
-        Ok(values)
+        Ok(QuantileValuesList {
+            0: inner.quantile_values.clone(),
+        })
     }
 
     #[setter]
     fn set_quantile_values(&mut self, values: Vec<ValueAtQuantile>) -> PyResult<()> {
-        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
-        inner.quantile_values.clear();
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut v = inner.quantile_values.lock().map_err(handle_poison_error)?;
+        v.clear();
         for value in values {
-            inner.quantile_values.push(value.inner);
+            v.push(value.inner);
         }
         Ok(())
     }
@@ -1775,11 +1752,89 @@ impl SummaryDataPoint {
     }
 }
 
+// --- PyO3 Bindings for ExemplarList ---
+#[pyclass]
+pub struct QuantileValuesList(Arc<Mutex<Vec<Arc<Mutex<RValueAtQuantile>>>>>);
+
+#[pymethods]
+impl QuantileValuesList {
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<QuantileValuesListIter>> {
+        let inner = self.0.lock().map_err(handle_poison_error)?;
+        let iter = QuantileValuesListIter {
+            inner: inner.clone().into_iter(),
+        };
+        Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<ValueAtQuantile> {
+        let inner = self.0.lock().map_err(handle_poison_error)?;
+        match inner.get(index) {
+            Some(item) => Ok(ValueAtQuantile {
+                inner: item.clone(),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+    fn __setitem__(&self, index: usize, value: &ValueAtQuantile) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
+    }
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.0.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
+    fn append(&self, item: &ValueAtQuantile) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
+        k.push(item.inner.clone());
+        Ok(())
+    }
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.0.lock().map_err(handle_poison_error)?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+pub struct QuantileValuesListIter {
+    inner: vec::IntoIter<Arc<Mutex<RValueAtQuantile>>>,
+}
+
+#[pymethods]
+impl QuantileValuesListIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<ValueAtQuantile>> {
+        let item = slf.inner.next();
+        if item.is_none() {
+            return Ok(None);
+        }
+        let inner = item.unwrap();
+        Ok(Some(ValueAtQuantile {
+            inner: inner.clone(),
+        }))
+    }
+}
+
 // --- PyO3 Bindings for RValueAtQuantile ---
 #[pyclass]
 #[derive(Clone)]
 pub struct ValueAtQuantile {
-    pub inner: RValueAtQuantile, // This one was already direct, keeping as is
+    pub inner: Arc<Mutex<RValueAtQuantile>>, // This one was already direct, keeping as is
 }
 
 #[pymethods]
@@ -1787,45 +1842,37 @@ impl ValueAtQuantile {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(ValueAtQuantile {
-            inner: RValueAtQuantile {
+            inner: Arc::new(Mutex::new(RValueAtQuantile {
                 quantile: 0.0,
                 value: 0.0,
-            },
+            })),
         })
     }
 
     #[getter]
     fn quantile(&self) -> PyResult<f64> {
-        Ok(self.inner.quantile)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.quantile)
     }
 
     #[setter]
     fn set_quantile(&mut self, quantile: f64) -> PyResult<()> {
-        self.inner.quantile = quantile;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.quantile = quantile;
         Ok(())
     }
 
     #[getter]
     fn value(&self) -> PyResult<f64> {
-        Ok(self.inner.value)
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.value)
     }
 
     #[setter]
     fn set_value(&mut self, value: f64) -> PyResult<()> {
-        self.inner.value = value;
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.value = value;
         Ok(())
-    }
-}
-
-impl From<ValueAtQuantile> for RValueAtQuantile {
-    fn from(v: ValueAtQuantile) -> Self {
-        v.inner
-    }
-}
-
-impl From<RValueAtQuantile> for ValueAtQuantile {
-    fn from(v: RValueAtQuantile) -> Self {
-        ValueAtQuantile { inner: v }
     }
 }
 

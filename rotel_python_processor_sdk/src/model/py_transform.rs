@@ -219,16 +219,40 @@ fn transform_metric(m_arc: Arc<Mutex<RMetric>>) -> v1::Metric {
         .unwrap()
         .into_inner()
         .unwrap();
+
     let data = match m_data {
-        Some(RMetricData::Gauge(g)) => Some(v1::metric::Data::Gauge(transform_gauge(g))),
-        Some(RMetricData::Sum(s)) => Some(v1::metric::Data::Sum(transform_sum(s))),
-        Some(RMetricData::Histogram(h)) => {
-            Some(v1::metric::Data::Histogram(transform_histogram(h)))
+        Some(arc_rmetric_data) => {
+            let rmetric_data = Arc::into_inner(arc_rmetric_data)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+
+            match rmetric_data {
+                RMetricData::Gauge(gauge_arc) => {
+                    let gauge = Arc::into_inner(gauge_arc).unwrap().into_inner().unwrap();
+                    Some(v1::metric::Data::Gauge(transform_gauge(gauge)))
+                }
+                RMetricData::Sum(sum_arc) => {
+                    let sum = Arc::into_inner(sum_arc).unwrap().into_inner().unwrap();
+                    Some(v1::metric::Data::Sum(transform_sum(sum)))
+                }
+                RMetricData::Histogram(hist_arc) => {
+                    let histogram = Arc::into_inner(hist_arc).unwrap().into_inner().unwrap();
+                    Some(v1::metric::Data::Histogram(transform_histogram(histogram)))
+                }
+                RMetricData::ExponentialHistogram(exp_hist_arc) => {
+                    let exp_histogram =
+                        Arc::into_inner(exp_hist_arc).unwrap().into_inner().unwrap();
+                    Some(v1::metric::Data::ExponentialHistogram(
+                        transform_exponential_histogram(exp_histogram),
+                    ))
+                }
+                RMetricData::Summary(summary_arc) => {
+                    let summary = Arc::into_inner(summary_arc).unwrap().into_inner().unwrap();
+                    Some(v1::metric::Data::Summary(transform_summary(summary)))
+                }
+            }
         }
-        Some(RMetricData::ExponentialHistogram(eh)) => Some(
-            v1::metric::Data::ExponentialHistogram(transform_exponential_histogram(eh)),
-        ),
-        Some(RMetricData::Summary(s)) => Some(v1::metric::Data::Summary(transform_summary(s))),
         None => None,
     };
 
@@ -501,16 +525,16 @@ fn transform_summary_data_point(sdp_arc: Arc<Mutex<RSummaryDataPoint>>) -> v1::S
             time_unix_nano: 0,
             count: 0,
             sum: 0.0,
-            quantile_values: vec![],
+            quantile_values: Arc::new(Mutex::new(vec![])),
             flags: 0,
         },
     );
 
-    let quantile_values = moved_sdp
-        .quantile_values
-        .into_iter()
-        .map(transform_value_at_quantile)
-        .collect();
+    let qvs = Arc::into_inner(moved_sdp.quantile_values)
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    let quantile_values = qvs.into_iter().map(transform_value_at_quantile).collect();
 
     let x = v1::SummaryDataPoint {
         attributes: moved_sdp
@@ -534,7 +558,10 @@ fn transform_summary_data_point(sdp_arc: Arc<Mutex<RSummaryDataPoint>>) -> v1::S
     x
 }
 
-fn transform_value_at_quantile(qv: RValueAtQuantile) -> v1::summary_data_point::ValueAtQuantile {
+fn transform_value_at_quantile(
+    qv: Arc<Mutex<RValueAtQuantile>>,
+) -> v1::summary_data_point::ValueAtQuantile {
+    let qv = Arc::into_inner(qv).unwrap().into_inner().unwrap();
     v1::summary_data_point::ValueAtQuantile {
         quantile: qv.quantile,
         value: qv.value,

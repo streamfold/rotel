@@ -27,17 +27,17 @@ pub struct RMetric {
     pub description: String,
     pub unit: String,
     pub metadata: Arc<Mutex<Vec<RKeyValue>>>,
-    pub data: Arc<Mutex<Option<RMetricData>>>,
+    pub data: Arc<Mutex<Option<Arc<Mutex<RMetricData>>>>>,
 }
 
-/// RMetricData determines the aggregation type (if any) of the metric.
+// Alternative approach - change your RMetricData to hold Arcs
 #[derive(Debug, Clone)]
 pub enum RMetricData {
-    Gauge(RGauge),
-    Sum(RSum),
-    Histogram(RHistogram),
-    ExponentialHistogram(RExponentialHistogram),
-    Summary(RSummary),
+    Gauge(Arc<Mutex<RGauge>>),
+    Sum(Arc<Mutex<RSum>>),
+    Histogram(Arc<Mutex<RHistogram>>),
+    ExponentialHistogram(Arc<Mutex<RExponentialHistogram>>),
+    Summary(Arc<Mutex<RSummary>>),
 }
 
 /// RGauge represents the type of a scalar metric that always exports the
@@ -151,7 +151,7 @@ pub struct RSummaryDataPoint {
     pub time_unix_nano: u64,
     pub count: u64,
     pub sum: f64,
-    pub quantile_values: Vec<RValueAtQuantile>,
+    pub quantile_values: Arc<Mutex<Vec<Arc<Mutex<RValueAtQuantile>>>>>,
     pub flags: u32,
 }
 

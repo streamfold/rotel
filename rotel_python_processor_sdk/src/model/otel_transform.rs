@@ -202,23 +202,33 @@ pub fn transform_resource_metrics(
 fn transform_metric(m: opentelemetry_proto::tonic::metrics::v1::Metric) -> RMetric {
     let data = match m.data {
         Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(g)) => {
-            Some(RMetricData::Gauge(transform_gauge(g)))
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(RMetricData::Gauge(
+                Arc::new(Mutex::new(transform_gauge(g))),
+            ))))))
         }
         Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Sum(s)) => {
-            Some(RMetricData::Sum(transform_sum(s)))
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(RMetricData::Sum(
+                Arc::new(Mutex::new(transform_sum(s))),
+            ))))))
         }
         Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Histogram(h)) => {
-            Some(RMetricData::Histogram(transform_histogram(h)))
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(
+                RMetricData::Histogram(Arc::new(Mutex::new(transform_histogram(h)))),
+            )))))
         }
         Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::ExponentialHistogram(eh)) => {
-            Some(RMetricData::ExponentialHistogram(
-                transform_exponential_histogram(eh),
-            ))
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(
+                RMetricData::ExponentialHistogram(Arc::new(Mutex::new(
+                    transform_exponential_histogram(eh),
+                ))),
+            )))))
         }
         Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Summary(s)) => {
-            Some(RMetricData::Summary(transform_summary(s)))
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(
+                RMetricData::Summary(Arc::new(Mutex::new(transform_summary(s)))),
+            )))))
         }
-        None => None,
+        None => Arc::new(Mutex::new(None)),
     };
 
     RMetric {
@@ -226,7 +236,7 @@ fn transform_metric(m: opentelemetry_proto::tonic::metrics::v1::Metric) -> RMetr
         description: m.description,
         unit: m.unit,
         metadata: Arc::new(Mutex::new(convert_attributes(m.metadata))),
-        data: Arc::new(Mutex::new(data)),
+        data,
     }
 }
 
@@ -387,15 +397,15 @@ fn transform_exponential_histogram_data_point(
 fn transform_summary_data_point(
     sdp: opentelemetry_proto::tonic::metrics::v1::SummaryDataPoint,
 ) -> RSummaryDataPoint {
-    let quantile_values = sdp
-        .quantile_values
-        .into_iter()
-        .map(|qv| RValueAtQuantile {
-            quantile: qv.quantile,
-            value: qv.value,
-        })
-        .collect();
-
+    let mut vals = Vec::with_capacity(sdp.quantile_values.len());
+    for vaq in sdp.quantile_values.iter() {
+        let rvaq = Arc::new(Mutex::new(RValueAtQuantile {
+            quantile: vaq.quantile,
+            value: vaq.value,
+        }));
+        vals.push(rvaq);
+    }
+    let quantile_values = Arc::new(Mutex::new(vals));
     RSummaryDataPoint {
         attributes: Arc::new(Mutex::new(convert_attributes(sdp.attributes))),
         start_time_unix_nano: sdp.start_time_unix_nano,
