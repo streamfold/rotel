@@ -2589,7 +2589,7 @@ mod tests {
     }
 
     #[test]
-    fn read_and_write_metrics_comprehensive() {
+    fn read_and_write_metrics_test() {
         initialize();
 
         // Create comprehensive initial OpenTelemetry protobuf with ALL metric types
@@ -2599,7 +2599,7 @@ mod tests {
                     opentelemetry_proto::tonic::common::v1::KeyValue {
                         key: "initial_resource_key".to_string(),
                         value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("initial_resource_value".to_string())),
+                            value: Some(Value::StringValue("initial_resource_value".to_string())),
                         }),
                     },
                 ],
@@ -2614,7 +2614,7 @@ mod tests {
                             opentelemetry_proto::tonic::common::v1::KeyValue {
                                 key: "initial_scope_key".to_string(),
                                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                    value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(true)),
+                                    value: Some(Value::BoolValue(true)),
                                 }),
                             },
                         ],
@@ -2630,7 +2630,7 @@ mod tests {
                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                     key: "gauge_metadata_key".to_string(),
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("gauge_metadata_value".to_string())),
+                                        value: Some(Value::StringValue("gauge_metadata_value".to_string())),
                                     }),
                                 },
                             ],
@@ -2642,7 +2642,7 @@ mod tests {
                                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                                     key: "gauge_dp_key".to_string(),
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("gauge_dp_value".to_string())),
+                                                        value: Some(Value::StringValue("gauge_dp_value".to_string())),
                                                     }),
                                                 },
                                             ],
@@ -2654,7 +2654,7 @@ mod tests {
                                                         opentelemetry_proto::tonic::common::v1::KeyValue {
                                                             key: "gauge_exemplar_key".to_string(),
                                                             value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("gauge_exemplar_value".to_string())),
+                                                                value: Some(Value::StringValue("gauge_exemplar_value".to_string())),
                                                             }),
                                                         },
                                                     ],
@@ -2680,7 +2680,7 @@ mod tests {
                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                     key: "sum_metadata_key".to_string(),
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(42)),
+                                        value: Some(Value::IntValue(42)),
                                     }),
                                 },
                             ],
@@ -2692,7 +2692,7 @@ mod tests {
                                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                                     key: "sum_dp_key".to_string(),
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("sum_dp_value".to_string())),
+                                                        value: Some(Value::StringValue("sum_dp_value".to_string())),
                                                     }),
                                                 },
                                             ],
@@ -2717,7 +2717,7 @@ mod tests {
                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                     key: "histogram_metadata_key".to_string(),
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(false)),
+                                        value: Some(Value::BoolValue(false)),
                                     }),
                                 },
                             ],
@@ -2729,7 +2729,7 @@ mod tests {
                                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                                     key: "histogram_dp_key".to_string(),
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("histogram_dp_value".to_string())),
+                                                        value: Some(Value::StringValue("histogram_dp_value".to_string())),
                                                     }),
                                                 },
                                             ],
@@ -2766,7 +2766,7 @@ mod tests {
                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                     key: "exp_histogram_metadata_key".to_string(),
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(3.14)),
+                                        value: Some(Value::DoubleValue(3.14)),
                                     }),
                                 },
                             ],
@@ -2778,7 +2778,7 @@ mod tests {
                                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                                     key: "exp_histogram_dp_key".to_string(),
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("exp_histogram_dp_value".to_string())),
+                                                        value: Some(Value::StringValue("exp_histogram_dp_value".to_string())),
                                                     }),
                                                 },
                                             ],
@@ -2803,7 +2803,7 @@ mod tests {
                                                         opentelemetry_proto::tonic::common::v1::KeyValue {
                                                             key: "exp_exemplar_key".to_string(),
                                                             value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                                value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("exp_exemplar_value".to_string())),
+                                                                value: Some(Value::StringValue("exp_exemplar_value".to_string())),
                                                             }),
                                                         },
                                                     ],
@@ -2831,7 +2831,7 @@ mod tests {
                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                     key: "summary_metadata_key".to_string(),
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b"summary_bytes".to_vec())),
+                                        value: Some(Value::BytesValue(b"summary_bytes".to_vec())),
                                     }),
                                 },
                             ],
@@ -2843,7 +2843,7 @@ mod tests {
                                                 opentelemetry_proto::tonic::common::v1::KeyValue {
                                                     key: "summary_dp_key".to_string(),
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                                                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("summary_dp_value".to_string())),
+                                                        value: Some(Value::StringValue("summary_dp_value".to_string())),
                                                     }),
                                                 },
                                             ],
@@ -3078,7 +3078,6 @@ mod tests {
             }
             _ => panic!("Expected Summary metric data"),
         }
-
         println!("All comprehensive metric mutation verifications passed!");
     }
 }
