@@ -60,6 +60,11 @@ impl TelemetryActivation {
                 traces: TelemetryState::Active,
                 metrics: TelemetryState::NoListeners,
             },
+            Exporter::File => TelemetryActivation {
+                traces: TelemetryState::Active,
+                metrics: TelemetryState::Active,
+                logs: TelemetryState::Active,
+            },
         };
 
         if config.otlp_receiver_traces_disabled {

@@ -2,6 +2,7 @@ use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+use crate::init::file_exporter::FileExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
@@ -130,6 +131,9 @@ pub struct AgentRun {
     #[command(flatten)]
     pub aws_xray_exporter: XRayExporterArgs,
 
+    #[command(flatten)]
+    pub file_exporter: FileExporterArgs,
+
     #[cfg(feature = "pprof")]
     #[clap(flatten)]
     pub profile_group: ProfileGroup,
@@ -176,14 +180,11 @@ pub struct ProfileGroup {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
 pub enum Exporter {
     Otlp,
-
     Blackhole,
-
     Datadog,
-
     Clickhouse,
-
     AwsXray,
+    File,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]

@@ -3,6 +3,7 @@
 pub mod blackhole;
 pub mod clickhouse;
 pub mod datadog;
+pub mod file;
 pub mod otlp;
 pub mod xray;
 
