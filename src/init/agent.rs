@@ -103,8 +103,6 @@ impl Agent {
 
         let num_cpus = num_cpus::get();
 
-        //let config = get_real_config(config);
-
         let mut receivers_task_set = JoinSet::new();
         let mut pipeline_task_set = JoinSet::new();
         let mut exporters_task_set = JoinSet::new();
