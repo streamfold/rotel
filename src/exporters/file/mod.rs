@@ -57,5 +57,4 @@ pub trait FileExporter: Send + Sync {
 pub mod config;
 pub mod json;
 pub mod parquet;
-pub mod schema;
 pub mod task;

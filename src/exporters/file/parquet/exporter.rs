@@ -1,4 +1,4 @@
-use crate::exporters::file::schema::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
+use super::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
 use crate::exporters::file::{FileExporter, FileExporterError, Result};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;

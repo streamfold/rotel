@@ -1,3 +1,4 @@
+use crate::init::file_exporter::FileExporterFormat;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,8 +27,8 @@ pub enum ConfigError {
 /// Configuration for the file exporter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileExporterConfig {
-    /// The format to use for exporting files (e.g., "parquet")
-    pub format: String,
+    /// The format to use for exporting files
+    pub format: FileExporterFormat,
 
     /// The directory where files will be written
     pub path: PathBuf,
@@ -39,7 +40,7 @@ pub struct FileExporterConfig {
 
 impl FileExporterConfig {
     /// Creates a new configuration with the required fields
-    pub fn new(format: String, path: PathBuf, flush_interval: Duration) -> Self {
+    pub fn new(format: FileExporterFormat, path: PathBuf, flush_interval: Duration) -> Self {
         Self {
             format,
             path,
@@ -51,28 +52,14 @@ impl FileExporterConfig {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigError::InvalidFormat` if the format is empty or unsupported,
-    /// `ConfigError::InvalidPath` if the path does not exist or is not a directory,
+    /// Returns `ConfigError::InvalidPath` if the path does not exist or is not a directory,
     /// or `ConfigError::InvalidFlushInterval` if the flush interval is zero.
     ///
     /// # Recovery
-    /// - Ensure the format is set to a supported value (e.g., "parquet" or "json").
     /// - Create the output directory if it does not exist.
     /// - Set a non-zero flush interval.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Validate format
-        if self.format.is_empty() {
-            return Err(ConfigError::InvalidFormat(
-                "Format cannot be empty".to_string(),
-            ));
-        }
-        let allowed_formats = ["parquet", "json"];
-        if !allowed_formats.contains(&self.format.to_lowercase().as_str()) {
-            return Err(ConfigError::InvalidFormat(format!(
-                "Unsupported format: {}. Supported formats are: parquet, json",
-                self.format
-            )));
-        }
+        // Format validation is now handled by the enum type itself, no need to validate
 
         // Validate path
         if !self.path.exists() {
@@ -111,7 +98,7 @@ mod tests {
     fn test_valid_config() {
         let temp_dir = tempdir().unwrap();
         let config = FileExporterConfig {
-            format: "parquet".to_string(),
+            format: FileExporterFormat::Parquet,
             path: temp_dir.path().to_path_buf(),
             flush_interval: Duration::from_secs(5),
         };
@@ -119,26 +106,13 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
-    #[test]
-    fn test_invalid_format() {
-        let temp_dir = tempdir().unwrap();
-        let config = FileExporterConfig {
-            format: "".to_string(),
-            path: temp_dir.path().to_path_buf(),
-            flush_interval: Duration::from_secs(5),
-        };
-
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::InvalidFormat(_))
-        ));
-    }
+    // Note: Format validation test removed since enum prevents invalid formats at compile time
 
     #[test]
     fn test_invalid_flush_interval() {
         let temp_dir = tempdir().unwrap();
         let config = FileExporterConfig {
-            format: "parquet".to_string(),
+            format: FileExporterFormat::Parquet,
             path: temp_dir.path().to_path_buf(),
             flush_interval: Duration::from_secs(0),
         };

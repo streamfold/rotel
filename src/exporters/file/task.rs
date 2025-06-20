@@ -1,9 +1,9 @@
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::file::config::FileExporterConfig;
 use crate::exporters::file::json::JsonExporter;
-use crate::exporters::file::schema::{LogRecordRow, MetricRow, SpanRow};
-use crate::exporters::file::{
-    FileExporterError, config::FileExporterConfig, parquet::ParquetExporter,
-};
+use crate::exporters::file::parquet::{LogRecordRow, MetricRow, ParquetExporter, SpanRow};
+use crate::exporters::file::{FileExporterError, Result};
+use crate::init::file_exporter::FileExporterFormat;
 use chrono::Utc;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -17,12 +17,10 @@ pub async fn run_file_exporter(
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     token: CancellationToken,
-) -> Result<(), FileExporterError> {
-    let _format = config.format;
+) -> Result<()> {
+    let format = config.format;
     let path = config.path;
     let flush_interval = config.flush_interval;
-
-    let format = _format.to_lowercase();
 
     // Create output directories if they don't exist
     let traces_dir = path.join("spans");
@@ -39,8 +37,8 @@ pub async fn run_file_exporter(
         path.display()
     );
 
-    match format.as_str() {
-        "parquet" => {
+    match format {
+        FileExporterFormat::Parquet => {
             let exporter = ParquetExporter::new();
             run_export_loop_parquet(
                 exporter,
@@ -55,7 +53,7 @@ pub async fn run_file_exporter(
             )
             .await
         }
-        "json" => {
+        FileExporterFormat::Json => {
             let exporter = JsonExporter::new();
             run_export_loop_json(
                 exporter,
@@ -70,10 +68,6 @@ pub async fn run_file_exporter(
             )
             .await
         }
-        _ => Err(FileExporterError::Config(format!(
-            "Unsupported export format: {}",
-            format
-        ))),
     }
 }
 
@@ -89,7 +83,7 @@ async fn run_export_loop_parquet(
     mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
-) -> Result<(), FileExporterError> {
+) -> Result<()> {
     let file_ext = ".parquet";
 
     // ---------------------------------------------------------------------
@@ -104,7 +98,7 @@ async fn run_export_loop_parquet(
     let flush = |span_buf: &mut Vec<SpanRow>,
                  metric_buf: &mut Vec<MetricRow>,
                  log_buf: &mut Vec<LogRecordRow>|
-     -> Result<(), FileExporterError> {
+     -> Result<()> {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         if !span_buf.is_empty() {
             let rows = span_buf.len();
@@ -179,7 +173,7 @@ async fn run_export_loop_json(
     mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
-) -> Result<(), FileExporterError> {
+) -> Result<()> {
     let file_ext = ".json";
 
     // Buffers
@@ -191,7 +185,7 @@ async fn run_export_loop_json(
     let flush = |tr_buf: &mut Vec<ResourceSpans>,
                  met_buf: &mut Vec<ResourceMetrics>,
                  log_buf: &mut Vec<ResourceLogs>|
-     -> Result<(), FileExporterError> {
+     -> Result<()> {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         if !tr_buf.is_empty() {
             let items = tr_buf.len();
