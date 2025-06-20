@@ -5,6 +5,7 @@ use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::{DatadogTraceExporterBuilder, Region};
 use crate::exporters::otlp;
+use crate::exporters::otlp::Endpoint;
 use crate::exporters::xray::XRayTraceExporterBuilder;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
@@ -262,11 +263,18 @@ impl Agent {
                 });
             }
             Exporter::Otlp => {
-                let endpoint = config.otlp_exporter.otlp_exporter_endpoint.as_ref();
+                let endpoint = config.otlp_exporter.base.endpoint.as_ref();
                 if activation.traces == TelemetryState::Active {
-                    let traces_config = build_traces_config(config.otlp_exporter.clone(), endpoint);
+                    let endpoint = config
+                        .otlp_exporter
+                        .base
+                        .traces_endpoint
+                        .as_ref()
+                        .map(|e| Endpoint::Full(e.clone()))
+                        .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
+                    let traces_config = build_traces_config(config.otlp_exporter.clone());
                     let mut traces = otlp::exporter::build_traces_exporter(
-                        traces_config,
+                        traces_config.into_exporter_config("otlp_traces", endpoint),
                         trace_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
@@ -285,10 +293,19 @@ impl Agent {
                     });
                 }
                 if activation.metrics == TelemetryState::Active {
-                    let metrics_config =
-                        build_metrics_config(config.otlp_exporter.clone(), endpoint);
+                    let endpoint = config
+                        .otlp_exporter
+                        .base
+                        .metrics_endpoint
+                        .as_ref()
+                        .map(|e| Endpoint::Full(e.clone()))
+                        .unwrap_or_else(|| Endpoint::Base(endpoint.clone().unwrap().clone()));
+
+                    let metrics_config = build_metrics_config(config.otlp_exporter.clone());
                     let mut metrics = otlp::exporter::build_metrics_exporter(
-                        metrics_config.clone(),
+                        metrics_config
+                            .clone()
+                            .into_exporter_config("otlp_metrics", endpoint.clone()),
                         metrics_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
@@ -308,7 +325,7 @@ impl Agent {
 
                     if config.enable_internal_telemetry {
                         let mut internal_metrics = otlp::exporter::build_internal_metrics_exporter(
-                            metrics_config.clone(),
+                            metrics_config.into_exporter_config("otlp_metrics", endpoint),
                             internal_metrics_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                         )?;
@@ -328,9 +345,17 @@ impl Agent {
                     }
                 }
                 if activation.logs == TelemetryState::Active {
-                    let logs_config = build_logs_config(config.otlp_exporter.clone(), endpoint);
+                    let endpoint = config
+                        .otlp_exporter
+                        .base
+                        .logs_endpoint
+                        .as_ref()
+                        .map(|e| Endpoint::Full(e.clone()))
+                        .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
+
+                    let logs_config = build_logs_config(config.otlp_exporter.clone());
                     let mut logs = otlp::exporter::build_logs_exporter(
-                        logs_config,
+                        logs_config.into_exporter_config("otlp_logs", endpoint),
                         logs_pipeline_out_rx.clone(),
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                     )?;
@@ -351,20 +376,17 @@ impl Agent {
             }
 
             Exporter::Datadog => {
-                if config.datadog_exporter.datadog_exporter_api_key.is_none() {
+                if config.datadog_exporter.api_key.is_none() {
                     // todo: is there a way to make this config required with the exporter mode?
                     return Err("must specify Datadog exporter API key".into());
                 }
-                let api_key = config.datadog_exporter.datadog_exporter_api_key.unwrap();
+                let api_key = config.datadog_exporter.api_key.unwrap();
 
                 let hostname = get_hostname();
 
                 let mut builder = DatadogTraceExporterBuilder::new(
-                    config.datadog_exporter.datadog_exporter_region.into(),
-                    config
-                        .datadog_exporter
-                        .datadog_exporter_custom_endpoint
-                        .clone(),
+                    config.datadog_exporter.region.into(),
+                    config.datadog_exporter.custom_endpoint.clone(),
                     api_key,
                 )
                 .with_environment(self.environment.clone());
@@ -393,8 +415,8 @@ impl Agent {
 
             Exporter::AwsXray => {
                 let builder = XRayTraceExporterBuilder::new(
-                    config.aws_xray_exporter.xray_exporter_region,
-                    config.aws_xray_exporter.xray_exporter_custom_endpoint,
+                    config.aws_xray_exporter.region,
+                    config.aws_xray_exporter.custom_endpoint,
                 );
                 let config = AwsConfig::from_env();
                 let exp = builder.build(
@@ -418,39 +440,27 @@ impl Agent {
             }
 
             Exporter::Clickhouse => {
-                if config
-                    .clickhouse_exporter
-                    .clickhouse_exporter_endpoint
-                    .is_none()
-                {
+                if config.clickhouse_exporter.endpoint.is_none() {
                     return Err("must specify a Clickhouse exporter endpoint".into());
                 }
 
-                let async_insert =
-                    parse_bool_value(config.clickhouse_exporter.clickhouse_exporter_async_insert)?;
+                let async_insert = parse_bool_value(config.clickhouse_exporter.async_insert)?;
 
                 let mut cfg_builder = ClickhouseExporterConfigBuilder::new(
-                    config
-                        .clickhouse_exporter
-                        .clickhouse_exporter_endpoint
-                        .unwrap(),
-                    config.clickhouse_exporter.clickhouse_exporter_database,
-                    config.clickhouse_exporter.clickhouse_exporter_table_prefix,
+                    config.clickhouse_exporter.endpoint.unwrap(),
+                    config.clickhouse_exporter.database,
+                    config.clickhouse_exporter.table_prefix,
                 )
-                .with_compression(config.clickhouse_exporter.clickhouse_exporter_compression)
+                .with_compression(config.clickhouse_exporter.compression)
                 .with_async_insert(async_insert)
-                .with_json(config.clickhouse_exporter.clickhouse_exporter_enable_json)
-                .with_json_underscore(
-                    config
-                        .clickhouse_exporter
-                        .clickhouse_exporter_json_underscore,
-                );
+                .with_json(config.clickhouse_exporter.enable_json)
+                .with_json_underscore(config.clickhouse_exporter.json_underscore);
 
-                if let Some(user) = config.clickhouse_exporter.clickhouse_exporter_user {
+                if let Some(user) = config.clickhouse_exporter.user {
                     cfg_builder = cfg_builder.with_user(user);
                 }
 
-                if let Some(password) = config.clickhouse_exporter.clickhouse_exporter_password {
+                if let Some(password) = config.clickhouse_exporter.password {
                     cfg_builder = cfg_builder.with_password(password);
                 }
 

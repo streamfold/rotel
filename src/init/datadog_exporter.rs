@@ -4,20 +4,28 @@ use clap::{Args, ValueEnum};
 pub struct DatadogExporterArgs {
     /// Datadog Exporter Region
     #[arg(
+        id("DATADOG_REGION"),
         value_enum,
-        long,
+        long("datadog-exporter-region"),
         env = "ROTEL_DATADOG_EXPORTER_REGION",
         default_value = "us1"
     )]
-    pub datadog_exporter_region: DatadogRegion,
+    pub region: DatadogRegion,
 
     /// Datadog Exporter custom endpoint override
-    #[arg(long, env = "ROTEL_DATADOG_EXPORTER_CUSTOM_ENDPOINT")]
-    pub datadog_exporter_custom_endpoint: Option<String>,
+    #[arg(
+        id("DATADOG_CUSTOM_ENDPOINT"),
+        long("datadog-exporter-custom-endpoint"),
+        env = "ROTEL_DATADOG_EXPORTER_CUSTOM_ENDPOINT"
+    )]
+    pub custom_endpoint: Option<String>,
 
     /// Datadog Exporter API key
-    #[arg(long, env = "ROTEL_DATADOG_EXPORTER_API_KEY")]
-    pub datadog_exporter_api_key: Option<String>,
+    #[arg(
+        long("datadog-exporter-api-key"),
+        env = "ROTEL_DATADOG_EXPORTER_API_KEY"
+    )]
+    pub api_key: Option<String>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]

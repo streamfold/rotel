@@ -9,8 +9,8 @@ use crate::py::common::KeyValue;
 use crate::py::metrics::{
     AggregationTemporality, DataPointFlags, Exemplar, ExemplarValue, ExponentialHistogram,
     ExponentialHistogramBuckets, ExponentialHistogramDataPoint, Gauge, Histogram,
-    HistogramDataPoint, Metric, MetricData, NumberDataPoint, NumberDataPointValue, Sum, Summary,
-    SummaryDataPoint, ValueAtQuantile,
+    HistogramDataPoint, Metric, MetricData, NumberDataPoint, NumberDataPointValue, ResourceMetrics,
+    ScopeMetrics, Sum, Summary, SummaryDataPoint, ValueAtQuantile,
 };
 use py::common::*;
 use py::logs::*;
@@ -130,6 +130,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     logs_v1_module.add_class::<LogRecords>()?; // Added LogRecords class
     logs_v1_module.add_class::<LogRecord>()?; // Added LogRecord class
 
+    metrics_v1_module.add_class::<ResourceMetrics>()?;
+    metrics_v1_module.add_class::<ScopeMetrics>()?;
     metrics_v1_module.add_class::<Metric>()?;
     metrics_v1_module.add_class::<MetricData>()?;
     metrics_v1_module.add_class::<Gauge>()?;
@@ -2907,7 +2909,7 @@ mod tests {
             .unwrap()
             .into_inner()
             .unwrap();
-        let mut scope_metrics = py_transform::transform_metrics(scope_metrics_vec);
+        let scope_metrics = py_transform::transform_metrics(scope_metrics_vec);
 
         assert_eq!(scope_metrics.len(), 1);
         let proto_scope_metrics = &scope_metrics[0];
