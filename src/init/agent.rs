@@ -495,9 +495,9 @@ impl Agent {
 
             Exporter::File => {
                 let config = crate::exporters::file::config::FileExporterConfig::new(
-                    config.file_exporter.format,
-                    config.file_exporter.path.clone(),
-                    config.file_exporter.flush_interval,
+                    config.file_exporter.file_exporter_format,
+                    config.file_exporter.file_exporter_path.clone(),
+                    config.file_exporter.file_exporter_flush_interval,
                 );
                 config.validate()?;
                 let traces_rx = trace_pipeline_out_rx;

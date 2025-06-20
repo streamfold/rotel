@@ -31,13 +31,13 @@ impl std::fmt::Display for FileExporterFormat {
 pub struct FileExporterArgs {
     /// File format for export
     #[arg(value_enum, long, env = "ROTEL_FILE_OUTPUT_FORMAT", default_value = "parquet")]
-    pub format: FileExporterFormat,
+    pub file_exporter_format: FileExporterFormat,
 
     /// Directory where files will be written
     #[arg(long, env = "ROTEL_FILE_OUTPUT_DIR", default_value = "/tmp/rotel")]
-    pub path: PathBuf,
+    pub file_exporter_path: PathBuf,
 
     /// How often to flush data to disk (e.g., "5s")
     #[arg(long, env = "ROTEL_FILE_FLUSH_INTERVAL", default_value = "5s", value_parser = humantime::parse_duration)]
-    pub flush_interval: Duration,
+    pub file_exporter_flush_interval: Duration,
 }
