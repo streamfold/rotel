@@ -6,6 +6,7 @@ from rotel_sdk.open_telemetry.metrics.v1 import (
     NumberDataPoint,
     HistogramDataPoint,
     ExponentialHistogramDataPoint,
+    ResourceMetrics,
     SummaryDataPoint,
     ValueAtQuantile,
     Exemplar,
@@ -17,7 +18,7 @@ from rotel_sdk.open_telemetry.metrics.v1 import (
 from rotel_sdk.open_telemetry.common.v1 import KeyValue
 
 
-def process_metrics(resource_metrics):
+def process_metrics(resource_metrics: ResourceMetrics):
     """
     1. Verifies ALL initial metric values created by Rust
     2. Mutates ALL metric types and their properties
