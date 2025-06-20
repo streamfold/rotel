@@ -1,5 +1,6 @@
 pub mod common;
 pub mod logs;
+pub mod metrics;
 pub mod otel_transform;
 pub mod py_transform;
 pub mod resource;

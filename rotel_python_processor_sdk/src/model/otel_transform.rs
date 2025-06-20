@@ -3,6 +3,7 @@ use crate::model::common::RValue::{
 };
 use crate::model::common::*;
 use crate::model::logs::*;
+use crate::model::metrics::*;
 use crate::model::trace::*;
 use std::sync::{Arc, Mutex};
 
@@ -149,6 +150,290 @@ fn transform_log_record(lr: opentelemetry_proto::tonic::logs::v1::LogRecord) -> 
         trace_id: lr.trace_id,
         span_id: lr.span_id,
         event_name: lr.event_name,
+    }
+}
+
+pub fn transform_resource_metrics(
+    rm: opentelemetry_proto::tonic::metrics::v1::ResourceMetrics,
+) -> RResourceMetrics {
+    let mut resource_metrics = RResourceMetrics {
+        resource: Arc::new(Mutex::new(None)),
+        scope_metrics: Arc::new(Mutex::new(vec![])),
+        schema_url: rm.schema_url,
+    };
+
+    if rm.resource.is_some() {
+        let resource = rm.resource.unwrap();
+        let dropped_attributes_count = resource.dropped_attributes_count;
+        let kvs = build_rotel_sdk_resource(resource);
+        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
+            attributes: Arc::new(Mutex::new(kvs.to_owned())),
+            dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
+        })));
+        resource_metrics.resource = res.clone();
+    }
+
+    let mut scope_metrics_vec = vec![];
+    for sm in rm.scope_metrics {
+        let scope = sm.scope.map(|s| RInstrumentationScope {
+            name: s.name,
+            version: s.version,
+            attributes_raw: s.attributes,
+            attributes_arc: None,
+            dropped_attributes_count: s.dropped_attributes_count,
+        });
+
+        let mut metrics_vec = vec![];
+        for m in sm.metrics {
+            metrics_vec.push(Arc::new(Mutex::new(transform_metric(m))));
+        }
+
+        let scope_metrics = RScopeMetrics {
+            scope: Arc::new(Mutex::new(scope)),
+            metrics: Arc::new(Mutex::new(metrics_vec)),
+            schema_url: Arc::new(Mutex::new(sm.schema_url)),
+        };
+        scope_metrics_vec.push(Arc::new(Mutex::new(scope_metrics)));
+    }
+    resource_metrics.scope_metrics = Arc::new(Mutex::new(scope_metrics_vec));
+    resource_metrics
+}
+
+fn transform_metric(m: opentelemetry_proto::tonic::metrics::v1::Metric) -> RMetric {
+    let data = match m.data {
+        Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(g)) => {
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(RMetricData::Gauge(
+                Arc::new(Mutex::new(transform_gauge(g))),
+            ))))))
+        }
+        Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Sum(s)) => {
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(RMetricData::Sum(
+                Arc::new(Mutex::new(transform_sum(s))),
+            ))))))
+        }
+        Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Histogram(h)) => {
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(
+                RMetricData::Histogram(Arc::new(Mutex::new(transform_histogram(h)))),
+            )))))
+        }
+        Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::ExponentialHistogram(eh)) => {
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(
+                RMetricData::ExponentialHistogram(Arc::new(Mutex::new(
+                    transform_exponential_histogram(eh),
+                ))),
+            )))))
+        }
+        Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Summary(s)) => {
+            Arc::new(Mutex::new(Some(Arc::new(Mutex::new(
+                RMetricData::Summary(Arc::new(Mutex::new(transform_summary(s)))),
+            )))))
+        }
+        None => Arc::new(Mutex::new(None)),
+    };
+
+    RMetric {
+        name: m.name,
+        description: m.description,
+        unit: m.unit,
+        metadata: Arc::new(Mutex::new(convert_attributes(m.metadata))),
+        data,
+    }
+}
+
+fn transform_gauge(g: opentelemetry_proto::tonic::metrics::v1::Gauge) -> RGauge {
+    let data_points = g
+        .data_points
+        .into_iter()
+        .map(|dp| Arc::new(Mutex::new(transform_number_data_point(dp))))
+        .collect();
+    RGauge {
+        data_points: Arc::new(Mutex::new(data_points)),
+    }
+}
+
+fn transform_sum(s: opentelemetry_proto::tonic::metrics::v1::Sum) -> RSum {
+    let data_points = s
+        .data_points
+        .into_iter()
+        .map(|dp| Arc::new(Mutex::new(transform_number_data_point(dp))))
+        .collect();
+    RSum {
+        data_points: Arc::new(Mutex::new(data_points)),
+        aggregation_temporality: s.aggregation_temporality,
+        is_monotonic: s.is_monotonic,
+    }
+}
+
+fn transform_histogram(h: opentelemetry_proto::tonic::metrics::v1::Histogram) -> RHistogram {
+    let data_points = h
+        .data_points
+        .into_iter()
+        .map(|dp| Arc::new(Mutex::new(transform_histogram_data_point(dp))))
+        .collect();
+    RHistogram {
+        data_points: Arc::new(Mutex::new(data_points)),
+        aggregation_temporality: h.aggregation_temporality,
+    }
+}
+
+fn transform_exponential_histogram(
+    eh: opentelemetry_proto::tonic::metrics::v1::ExponentialHistogram,
+) -> RExponentialHistogram {
+    let data_points = eh
+        .data_points
+        .into_iter()
+        .map(|dp| Arc::new(Mutex::new(transform_exponential_histogram_data_point(dp))))
+        .collect();
+    RExponentialHistogram {
+        data_points: Arc::new(Mutex::new(data_points)),
+        aggregation_temporality: eh.aggregation_temporality,
+    }
+}
+
+fn transform_summary(s: opentelemetry_proto::tonic::metrics::v1::Summary) -> RSummary {
+    let data_points = s
+        .data_points
+        .into_iter()
+        .map(|dp| Arc::new(Mutex::new(transform_summary_data_point(dp))))
+        .collect();
+    RSummary {
+        data_points: Arc::new(Mutex::new(data_points)),
+    }
+}
+
+fn transform_number_data_point(
+    ndp: opentelemetry_proto::tonic::metrics::v1::NumberDataPoint,
+) -> RNumberDataPoint {
+    let value = match ndp.value {
+        Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(d)) => {
+            Some(RNumberDataPointValue::AsDouble(d))
+        }
+        Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(i)) => {
+            Some(RNumberDataPointValue::AsInt(i))
+        }
+        None => None,
+    };
+
+    let exemplars = ndp
+        .exemplars
+        .into_iter()
+        .map(|e| Arc::new(Mutex::new(transform_exemplar(e))))
+        .collect();
+
+    RNumberDataPoint {
+        attributes: Arc::new(Mutex::new(convert_attributes(ndp.attributes))),
+        start_time_unix_nano: ndp.start_time_unix_nano,
+        time_unix_nano: ndp.time_unix_nano,
+        exemplars: Arc::new(Mutex::new(exemplars)),
+        flags: ndp.flags,
+        value,
+    }
+}
+
+fn transform_histogram_data_point(
+    hdp: opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint,
+) -> RHistogramDataPoint {
+    let exemplars = hdp
+        .exemplars
+        .into_iter()
+        .map(|e| Arc::new(Mutex::new(transform_exemplar(e))))
+        .collect();
+
+    RHistogramDataPoint {
+        attributes: Arc::new(Mutex::new(convert_attributes(hdp.attributes))),
+        start_time_unix_nano: hdp.start_time_unix_nano,
+        time_unix_nano: hdp.time_unix_nano,
+        count: hdp.count,
+        sum: hdp.sum,
+        bucket_counts: hdp.bucket_counts,
+        explicit_bounds: hdp.explicit_bounds,
+        exemplars: Arc::new(Mutex::new(exemplars)),
+        flags: hdp.flags,
+        min: hdp.min,
+        max: hdp.max,
+    }
+}
+
+fn transform_exponential_histogram_data_point(
+    ehdp: opentelemetry_proto::tonic::metrics::v1::ExponentialHistogramDataPoint,
+) -> RExponentialHistogramDataPoint {
+    let positive_buckets = ehdp.positive.map(|b| {
+        Arc::new(Mutex::new(RExponentialHistogramBuckets {
+            offset: b.offset,
+            bucket_counts: b.bucket_counts,
+        }))
+    });
+    let negative_buckets = ehdp.negative.map(|b| {
+        Arc::new(Mutex::new(RExponentialHistogramBuckets {
+            offset: b.offset,
+            bucket_counts: b.bucket_counts,
+        }))
+    });
+
+    let exemplars = ehdp
+        .exemplars
+        .into_iter()
+        .map(|e| Arc::new(Mutex::new(transform_exemplar(e))))
+        .collect();
+
+    RExponentialHistogramDataPoint {
+        attributes: Arc::new(Mutex::new(convert_attributes(ehdp.attributes))),
+        start_time_unix_nano: ehdp.start_time_unix_nano,
+        time_unix_nano: ehdp.time_unix_nano,
+        count: ehdp.count,
+        sum: ehdp.sum,
+        scale: ehdp.scale,
+        zero_count: ehdp.zero_count,
+        positive: Arc::new(Mutex::new(positive_buckets)),
+        negative: Arc::new(Mutex::new(negative_buckets)),
+        flags: ehdp.flags,
+        exemplars: Arc::new(Mutex::new(exemplars)),
+        min: ehdp.min,
+        max: ehdp.max,
+        zero_threshold: ehdp.zero_threshold,
+    }
+}
+
+fn transform_summary_data_point(
+    sdp: opentelemetry_proto::tonic::metrics::v1::SummaryDataPoint,
+) -> RSummaryDataPoint {
+    let mut vals = Vec::with_capacity(sdp.quantile_values.len());
+    for vaq in sdp.quantile_values.iter() {
+        let rvaq = Arc::new(Mutex::new(RValueAtQuantile {
+            quantile: vaq.quantile,
+            value: vaq.value,
+        }));
+        vals.push(rvaq);
+    }
+    let quantile_values = Arc::new(Mutex::new(vals));
+    RSummaryDataPoint {
+        attributes: Arc::new(Mutex::new(convert_attributes(sdp.attributes))),
+        start_time_unix_nano: sdp.start_time_unix_nano,
+        time_unix_nano: sdp.time_unix_nano,
+        count: sdp.count,
+        sum: sdp.sum,
+        quantile_values,
+        flags: sdp.flags,
+    }
+}
+
+fn transform_exemplar(e: opentelemetry_proto::tonic::metrics::v1::Exemplar) -> RExemplar {
+    let value = match e.value {
+        Some(opentelemetry_proto::tonic::metrics::v1::exemplar::Value::AsDouble(d)) => {
+            Some(RExemplarValue::AsDouble(d))
+        }
+        Some(opentelemetry_proto::tonic::metrics::v1::exemplar::Value::AsInt(i)) => {
+            Some(RExemplarValue::AsInt(i))
+        }
+        None => None,
+    };
+
+    RExemplar {
+        filtered_attributes: Arc::new(Mutex::new(convert_attributes(e.filtered_attributes))),
+        time_unix_nano: e.time_unix_nano,
+        span_id: e.span_id,
+        trace_id: e.trace_id,
+        value,
     }
 }
 

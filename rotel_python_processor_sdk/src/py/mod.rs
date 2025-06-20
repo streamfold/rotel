@@ -1,10 +1,16 @@
 pub mod common;
 pub mod logs;
+mod metrics;
 pub mod resource;
 pub mod trace;
 
 use crate::py;
 use crate::py::common::KeyValue;
+use crate::py::metrics::{
+    AggregationTemporality, DataPointFlags, Exemplar, ExemplarValue, ExponentialHistogramBuckets,
+    ExponentialHistogramDataPoint, Gauge, Histogram, HistogramDataPoint, Metric, MetricData,
+    NumberDataPoint, NumberDataPointValue, Sum, SummaryDataPoint, ValueAtQuantile,
+};
 use py::common::*;
 use py::logs::*;
 use py::resource::*;
@@ -36,10 +42,12 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let resource_module = PyModule::new(open_telemetry_module.py(), "resource")?;
     let common_module = PyModule::new(open_telemetry_module.py(), "common")?;
     let logs_module = PyModule::new(open_telemetry_module.py(), "logs")?; // Added logs module
+    let metrics_module = PyModule::new(open_telemetry_module.py(), "metrics")?; // Added logs module
     let trace_v1_module = PyModule::new(trace_module.py(), "v1")?;
     let common_v1_module = PyModule::new(common_module.py(), "v1")?;
     let resource_v1_module = PyModule::new(resource_module.py(), "v1")?;
-    let logs_v1_module = PyModule::new(logs_module.py(), "v1")?; // Added logs v1 module
+    let logs_v1_module = PyModule::new(logs_module.py(), "v1")?;
+    let metrics_v1_module = PyModule::new(metrics_module.py(), "v1")?; // Added logs v1 module
 
     trace_module.add_submodule(&trace_v1_module)?;
     common_module.add_submodule(&common_v1_module)?;
@@ -90,6 +98,15 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .getattr("modules")?
         .set_item("rotel_sdk.open_telemetry.logs.v1", &logs_v1_module)?;
 
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel_sdk.open_telemetry.metrics", &metrics_module)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel_sdk.open_telemetry.metrics.v1", &metrics_v1_module)?;
+
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
     common_v1_module.add_class::<KeyValueList>()?;
@@ -112,6 +129,23 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     logs_v1_module.add_class::<LogRecords>()?; // Added LogRecords class
     logs_v1_module.add_class::<LogRecord>()?; // Added LogRecord class
 
+    metrics_v1_module.add_class::<Metric>()?;
+    metrics_v1_module.add_class::<MetricData>()?;
+    metrics_v1_module.add_class::<Gauge>()?;
+    metrics_v1_module.add_class::<Sum>()?;
+    metrics_v1_module.add_class::<Histogram>()?;
+    metrics_v1_module.add_class::<NumberDataPoint>()?;
+    metrics_v1_module.add_class::<HistogramDataPoint>()?;
+    metrics_v1_module.add_class::<Exemplar>()?;
+    metrics_v1_module.add_class::<ExemplarValue>()?;
+    metrics_v1_module.add_class::<AggregationTemporality>()?;
+    metrics_v1_module.add_class::<DataPointFlags>()?;
+    metrics_v1_module.add_class::<NumberDataPointValue>()?;
+    metrics_v1_module.add_class::<ExponentialHistogramBuckets>()?;
+    metrics_v1_module.add_class::<ExponentialHistogramDataPoint>()?;
+    metrics_v1_module.add_class::<SummaryDataPoint>()?;
+    metrics_v1_module.add_class::<ValueAtQuantile>()?;
+
     Ok(())
 }
 
@@ -121,6 +155,8 @@ mod tests {
     use super::*;
     use crate::model::common::RValue::*;
     use crate::model::common::{RAnyValue, RKeyValue};
+    use crate::model::{otel_transform, py_transform};
+    use crate::py::metrics::ResourceMetrics;
     use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use opentelemetry_proto::tonic::trace::v1;
@@ -2550,5 +2586,498 @@ mod tests {
                 panic!("Unexpected log record value type");
             }
         }
+    }
+
+    #[test]
+    fn read_and_write_metrics_test() {
+        initialize();
+
+        // Create comprehensive initial OpenTelemetry protobuf with ALL metric types
+        let resource_metrics = opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
+            resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
+                attributes: vec![
+                    opentelemetry_proto::tonic::common::v1::KeyValue {
+                        key: "initial_resource_key".to_string(),
+                        value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                            value: Some(Value::StringValue("initial_resource_value".to_string())),
+                        }),
+                    },
+                ],
+                dropped_attributes_count: 10,
+            }),
+            scope_metrics: vec![
+                opentelemetry_proto::tonic::metrics::v1::ScopeMetrics {
+                    scope: Some(opentelemetry_proto::tonic::common::v1::InstrumentationScope {
+                        name: "initial_scope_name".to_string(),
+                        version: "1.0.0".to_string(),
+                        attributes: vec![
+                            opentelemetry_proto::tonic::common::v1::KeyValue {
+                                key: "initial_scope_key".to_string(),
+                                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                    value: Some(Value::BoolValue(true)),
+                                }),
+                            },
+                        ],
+                        dropped_attributes_count: 5,
+                    }),
+                    metrics: vec![
+                        // 1. Gauge metric
+                        opentelemetry_proto::tonic::metrics::v1::Metric {
+                            name: "initial_gauge_metric".to_string(),
+                            description: "initial_gauge_description".to_string(),
+                            unit: "initial_gauge_unit".to_string(),
+                            metadata: vec![
+                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                    key: "gauge_metadata_key".to_string(),
+                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                        value: Some(Value::StringValue("gauge_metadata_value".to_string())),
+                                    }),
+                                },
+                            ],
+                            data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
+                                opentelemetry_proto::tonic::metrics::v1::Gauge {
+                                    data_points: vec![
+                                        opentelemetry_proto::tonic::metrics::v1::NumberDataPoint {
+                                            attributes: vec![
+                                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                    key: "gauge_dp_key".to_string(),
+                                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                        value: Some(Value::StringValue("gauge_dp_value".to_string())),
+                                                    }),
+                                                },
+                                            ],
+                                            start_time_unix_nano: 1000,
+                                            time_unix_nano: 2000,
+                                            exemplars: vec![
+                                                opentelemetry_proto::tonic::metrics::v1::Exemplar {
+                                                    filtered_attributes: vec![
+                                                        opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                            key: "gauge_exemplar_key".to_string(),
+                                                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                                value: Some(Value::StringValue("gauge_exemplar_value".to_string())),
+                                                            }),
+                                                        },
+                                                    ],
+                                                    time_unix_nano: 1500,
+                                                    span_id: b"\x01\x02\x03\x04\x05\x06\x07\x08".to_vec(),
+                                                    trace_id: b"\x08\x07\x06\x05\x04\x03\x02\x01\x08\x07\x06\x05\x04\x03\x02\x01".to_vec(),
+                                                    value: Some(opentelemetry_proto::tonic::metrics::v1::exemplar::Value::AsDouble(15.5)),
+                                                },
+                                            ],
+                                            flags: 0,
+                                            value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(123.45)),
+                                        },
+                                    ],
+                                },
+                            )),
+                        },
+                        // 2. Sum metric
+                        opentelemetry_proto::tonic::metrics::v1::Metric {
+                            name: "initial_sum_metric".to_string(),
+                            description: "initial_sum_description".to_string(),
+                            unit: "initial_sum_unit".to_string(),
+                            metadata: vec![
+                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                    key: "sum_metadata_key".to_string(),
+                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                        value: Some(Value::IntValue(42)),
+                                    }),
+                                },
+                            ],
+                            data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Sum(
+                                opentelemetry_proto::tonic::metrics::v1::Sum {
+                                    data_points: vec![
+                                        opentelemetry_proto::tonic::metrics::v1::NumberDataPoint {
+                                            attributes: vec![
+                                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                    key: "sum_dp_key".to_string(),
+                                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                        value: Some(Value::StringValue("sum_dp_value".to_string())),
+                                                    }),
+                                                },
+                                            ],
+                                            start_time_unix_nano: 3000,
+                                            time_unix_nano: 4000,
+                                            exemplars: vec![],
+                                            flags: 0,
+                                            value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(100)),
+                                        },
+                                    ],
+                                    aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Delta as i32,
+                                    is_monotonic: true,
+                                },
+                            )),
+                        },
+                        // 3. Histogram metric
+                        opentelemetry_proto::tonic::metrics::v1::Metric {
+                            name: "initial_histogram_metric".to_string(),
+                            description: "initial_histogram_description".to_string(),
+                            unit: "initial_histogram_unit".to_string(),
+                            metadata: vec![
+                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                    key: "histogram_metadata_key".to_string(),
+                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                        value: Some(Value::BoolValue(false)),
+                                    }),
+                                },
+                            ],
+                            data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Histogram(
+                                opentelemetry_proto::tonic::metrics::v1::Histogram {
+                                    data_points: vec![
+                                        opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
+                                            attributes: vec![
+                                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                    key: "histogram_dp_key".to_string(),
+                                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                        value: Some(Value::StringValue("histogram_dp_value".to_string())),
+                                                    }),
+                                                },
+                                            ],
+                                            start_time_unix_nano: 5000,
+                                            time_unix_nano: 6000,
+                                            count: 50,
+                                            sum: Some(500.0),
+                                            bucket_counts: vec![5, 10, 15, 20],
+                                            explicit_bounds: vec![1.0, 5.0, 10.0],
+                                            exemplars: vec![
+                                                opentelemetry_proto::tonic::metrics::v1::Exemplar {
+                                                    filtered_attributes: vec![],
+                                                    time_unix_nano: 5500,
+                                                    span_id: b"\x11\x12\x13\x14\x15\x16\x17\x18".to_vec(),
+                                                    trace_id: b"\x18\x17\x16\x15\x14\x13\x12\x11\x18\x17\x16\x15\x14\x13\x12\x11".to_vec(),
+                                                    value: Some(opentelemetry_proto::tonic::metrics::v1::exemplar::Value::AsInt(25)),
+                                                },
+                                            ],
+                                            flags: 1,
+                                            min: Some(0.1),
+                                            max: Some(20.0),
+                                        },
+                                    ],
+                                    aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative as i32,
+                                },
+                            )),
+                        },
+                        // 4. ExponentialHistogram metric
+                        opentelemetry_proto::tonic::metrics::v1::Metric {
+                            name: "initial_exp_histogram_metric".to_string(),
+                            description: "initial_exp_histogram_description".to_string(),
+                            unit: "initial_exp_histogram_unit".to_string(),
+                            metadata: vec![
+                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                    key: "exp_histogram_metadata_key".to_string(),
+                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                        value: Some(Value::DoubleValue(3.14)),
+                                    }),
+                                },
+                            ],
+                            data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::ExponentialHistogram(
+                                opentelemetry_proto::tonic::metrics::v1::ExponentialHistogram {
+                                    data_points: vec![
+                                        opentelemetry_proto::tonic::metrics::v1::ExponentialHistogramDataPoint {
+                                            attributes: vec![
+                                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                    key: "exp_histogram_dp_key".to_string(),
+                                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                        value: Some(Value::StringValue("exp_histogram_dp_value".to_string())),
+                                                    }),
+                                                },
+                                            ],
+                                            start_time_unix_nano: 7000,
+                                            time_unix_nano: 8000,
+                                            count: 75,
+                                            sum: Some(750.0),
+                                            scale: 1,
+                                            zero_count: 3,
+                                            positive: Some(opentelemetry_proto::tonic::metrics::v1::exponential_histogram_data_point::Buckets {
+                                                offset: 2,
+                                                bucket_counts: vec![2, 4, 6, 8],
+                                            }),
+                                            negative: Some(opentelemetry_proto::tonic::metrics::v1::exponential_histogram_data_point::Buckets {
+                                                offset: -1,
+                                                bucket_counts: vec![1, 2, 3],
+                                            }),
+                                            flags: 0,
+                                            exemplars: vec![
+                                                opentelemetry_proto::tonic::metrics::v1::Exemplar {
+                                                    filtered_attributes: vec![
+                                                        opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                            key: "exp_exemplar_key".to_string(),
+                                                            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                                value: Some(Value::StringValue("exp_exemplar_value".to_string())),
+                                                            }),
+                                                        },
+                                                    ],
+                                                    time_unix_nano: 7500,
+                                                    span_id: b"\x21\x22\x23\x24\x25\x26\x27\x28".to_vec(),
+                                                    trace_id: b"\x28\x27\x26\x25\x24\x23\x22\x21\x28\x27\x26\x25\x24\x23\x22\x21".to_vec(),
+                                                    value: Some(opentelemetry_proto::tonic::metrics::v1::exemplar::Value::AsDouble(37.5)),
+                                                },
+                                            ],
+                                            min: Some(0.5),
+                                            max: Some(50.0),
+                                            zero_threshold: 0.01,
+                                        },
+                                    ],
+                                    aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Delta as i32,
+                                },
+                            )),
+                        },
+                        // 5. Summary metric
+                        opentelemetry_proto::tonic::metrics::v1::Metric {
+                            name: "initial_summary_metric".to_string(),
+                            description: "initial_summary_description".to_string(),
+                            unit: "initial_summary_unit".to_string(),
+                            metadata: vec![
+                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                    key: "summary_metadata_key".to_string(),
+                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                        value: Some(Value::BytesValue(b"summary_bytes".to_vec())),
+                                    }),
+                                },
+                            ],
+                            data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Summary(
+                                opentelemetry_proto::tonic::metrics::v1::Summary {
+                                    data_points: vec![
+                                        opentelemetry_proto::tonic::metrics::v1::SummaryDataPoint {
+                                            attributes: vec![
+                                                opentelemetry_proto::tonic::common::v1::KeyValue {
+                                                    key: "summary_dp_key".to_string(),
+                                                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                                                        value: Some(Value::StringValue("summary_dp_value".to_string())),
+                                                    }),
+                                                },
+                                            ],
+                                            start_time_unix_nano: 9000,
+                                            time_unix_nano: 10000,
+                                            count: 25,
+                                            sum: 250.0,
+                                            quantile_values: vec![
+                                                opentelemetry_proto::tonic::metrics::v1::summary_data_point::ValueAtQuantile {
+                                                    quantile: 0.5,
+                                                    value: 10.0,
+                                                },
+                                                opentelemetry_proto::tonic::metrics::v1::summary_data_point::ValueAtQuantile {
+                                                    quantile: 0.95,
+                                                    value: 19.0,
+                                                },
+                                                opentelemetry_proto::tonic::metrics::v1::summary_data_point::ValueAtQuantile {
+                                                    quantile: 0.99,
+                                                    value: 19.8,
+                                                },
+                                            ],
+                                            flags: 1,
+                                        },
+                                    ],
+                                },
+                            )),
+                        },
+                    ],
+                    schema_url: "initial_schema_url_scope".to_string(),
+                },
+            ],
+            schema_url: "initial_schema_url_resource".to_string(),
+        };
+
+        // Transform to our internal model
+        let r_resource_metrics = otel_transform::transform_resource_metrics(resource_metrics);
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+        };
+
+        // Execute the Python script that will verify initial values and then mutate them
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "read_and_write_metrics_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        // --- RUST VERIFICATION OF PYTHON MUTATIONS ---
+
+        // Transform back to protobuf for verification
+        let scope_metrics_vec = Arc::into_inner(r_resource_metrics.scope_metrics)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_metrics = py_transform::transform_metrics(scope_metrics_vec);
+
+        assert_eq!(scope_metrics.len(), 1);
+        let proto_scope_metrics = &scope_metrics[0];
+
+        // Should still have 5 metrics after Python processing
+        assert_eq!(proto_scope_metrics.metrics.len(), 5);
+
+        // --- Verify ResourceMetrics mutations ---
+        let resource = Arc::into_inner(r_resource_metrics.resource)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        let resource_proto = py_transform::transform_resource(resource).unwrap();
+        assert_eq!(resource_proto.dropped_attributes_count, 25); // Changed from 10 to 25
+        assert_eq!(resource_proto.attributes.len(), 2); // Added one attribute
+        assert_eq!(
+            resource_proto.attributes[1].key,
+            "python_added_resource_key"
+        );
+
+        // --- Verify ScopeMetrics mutations ---
+        assert_eq!(
+            proto_scope_metrics.schema_url,
+            "python_modified_schema_url_scope"
+        );
+        let proto_scope = proto_scope_metrics.scope.as_ref().unwrap();
+        assert_eq!(proto_scope.name, "python_modified_scope_name");
+        assert_eq!(proto_scope.version, "python_modified_scope_version");
+        assert_eq!(proto_scope.dropped_attributes_count, 15); // Changed from 5 to 15
+        assert_eq!(proto_scope.attributes.len(), 2); // Added one attribute
+        assert_eq!(proto_scope.attributes[1].key, "python_added_scope_key");
+
+        // --- Verify Gauge metric mutations ---
+        let gauge_metric = &proto_scope_metrics.metrics[0];
+        assert_eq!(gauge_metric.name, "python_modified_gauge_metric");
+        assert_eq!(
+            gauge_metric.description,
+            "python_modified_gauge_description"
+        );
+        assert_eq!(gauge_metric.unit, "python_modified_gauge_unit");
+        assert_eq!(gauge_metric.metadata.len(), 2); // Added one metadata
+        assert_eq!(gauge_metric.metadata[1].key, "python_added_gauge_metadata");
+
+        match gauge_metric.data.as_ref().unwrap() {
+            opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(g) => {
+                assert_eq!(g.data_points.len(), 2); // Added one data point
+                let dp = &g.data_points[0];
+                assert_eq!(dp.start_time_unix_nano, 1100); // Changed from 1000
+                assert_eq!(dp.time_unix_nano, 2200); // Changed from 2000
+                assert_eq!(dp.flags, 1); // Changed from 0
+                assert_eq!(dp.attributes.len(), 2); // Added one attribute
+                assert_eq!(dp.exemplars.len(), 2); // Added one exemplar
+            }
+            _ => panic!("Expected Gauge metric data"),
+        }
+
+        // --- Verify Sum metric mutations ---
+        let sum_metric = &proto_scope_metrics.metrics[1];
+        assert_eq!(sum_metric.name, "python_modified_sum_metric");
+        assert_eq!(sum_metric.description, "python_modified_sum_description");
+        assert_eq!(sum_metric.unit, "python_modified_sum_unit");
+
+        match sum_metric.data.as_ref().unwrap() {
+            opentelemetry_proto::tonic::metrics::v1::metric::Data::Sum(s) => {
+                assert_eq!(
+                    s.aggregation_temporality,
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative
+                        as i32
+                ); // Changed from Delta
+                assert!(!s.is_monotonic); // Changed from true to false
+                assert_eq!(s.data_points.len(), 2); // Added one data point
+                let dp = &s.data_points[0];
+                assert_eq!(dp.start_time_unix_nano, 3300); // Changed from 3000
+                assert_eq!(dp.time_unix_nano, 4400); // Changed from 4000
+            }
+            _ => panic!("Expected Sum metric data"),
+        }
+
+        // --- Verify Histogram metric mutations ---
+        let hist_metric = &proto_scope_metrics.metrics[2];
+        assert_eq!(hist_metric.name, "python_modified_histogram_metric");
+        assert_eq!(
+            hist_metric.description,
+            "python_modified_histogram_description"
+        );
+        assert_eq!(hist_metric.unit, "python_modified_histogram_unit");
+
+        match hist_metric.data.as_ref().unwrap() {
+            opentelemetry_proto::tonic::metrics::v1::metric::Data::Histogram(h) => {
+                assert_eq!(
+                    h.aggregation_temporality,
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Delta as i32
+                ); // Changed from Cumulative
+                assert_eq!(h.data_points.len(), 2); // Added one data point
+                let dp = &h.data_points[0];
+                assert_eq!(dp.count, 75); // Changed from 50
+                assert_eq!(dp.sum.unwrap(), 750.0); // Changed from 500.0
+                assert_eq!(dp.bucket_counts, vec![10, 20, 30, 40]); // Changed values
+                assert_eq!(dp.explicit_bounds, vec![2.0, 10.0, 20.0]); // Changed values
+                assert_eq!(dp.min.unwrap(), 0.2); // Changed from 0.1
+                assert_eq!(dp.max.unwrap(), 25.0); // Changed from 20.0
+            }
+            _ => panic!("Expected Histogram metric data"),
+        }
+
+        // --- Verify ExponentialHistogram metric mutations ---
+        let exp_hist_metric = &proto_scope_metrics.metrics[3];
+        assert_eq!(exp_hist_metric.name, "python_modified_exp_histogram_metric");
+        assert_eq!(
+            exp_hist_metric.description,
+            "python_modified_exp_histogram_description"
+        );
+        assert_eq!(exp_hist_metric.unit, "python_modified_exp_histogram_unit");
+
+        match exp_hist_metric.data.as_ref().unwrap() {
+            opentelemetry_proto::tonic::metrics::v1::metric::Data::ExponentialHistogram(eh) => {
+                assert_eq!(
+                    eh.aggregation_temporality,
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative
+                        as i32
+                ); // Changed from Delta
+                assert_eq!(eh.data_points.len(), 2); // Added one data point
+                let dp = &eh.data_points[0];
+                assert_eq!(dp.count, 100); // Changed from 75
+                assert_eq!(dp.sum.unwrap(), 1000.0); // Changed from 750.0
+                assert_eq!(dp.scale, 2); // Changed from 1
+                assert_eq!(dp.zero_count, 5); // Changed from 3
+                assert_eq!(dp.zero_threshold, 0.02); // Changed from 0.01
+
+                // Verify positive buckets were modified
+                let positive = dp.positive.as_ref().unwrap();
+                assert_eq!(positive.offset, 3); // Changed from 2
+                assert_eq!(positive.bucket_counts, vec![4, 8, 12, 16]); // Changed values
+
+                // Verify negative buckets were modified
+                let negative = dp.negative.as_ref().unwrap();
+                assert_eq!(negative.offset, -2); // Changed from -1
+                assert_eq!(negative.bucket_counts, vec![2, 4, 6]); // Changed values
+            }
+            _ => panic!("Expected ExponentialHistogram metric data"),
+        }
+
+        // --- Verify Summary metric mutations ---
+        let summary_metric = &proto_scope_metrics.metrics[4];
+        assert_eq!(summary_metric.name, "python_modified_summary_metric");
+        assert_eq!(
+            summary_metric.description,
+            "python_modified_summary_description"
+        );
+        assert_eq!(summary_metric.unit, "python_modified_summary_unit");
+
+        match summary_metric.data.as_ref().unwrap() {
+            opentelemetry_proto::tonic::metrics::v1::metric::Data::Summary(s) => {
+                assert_eq!(s.data_points.len(), 2); // Added one data point
+                let dp = &s.data_points[0];
+                assert_eq!(dp.count, 50); // Changed from 25
+                assert_eq!(dp.sum, 500.0); // Changed from 250.0
+                assert_eq!(dp.flags, 0); // Changed from 1
+
+                // Verify quantile values were modified
+                assert_eq!(dp.quantile_values.len(), 4); // Added one quantile
+                assert_eq!(dp.quantile_values[0].quantile, 0.5);
+                assert_eq!(dp.quantile_values[0].value, 20.0); // Changed from 10.0
+                assert_eq!(dp.quantile_values[1].quantile, 0.95);
+                assert_eq!(dp.quantile_values[1].value, 38.0); // Changed from 19.0
+                assert_eq!(dp.quantile_values[2].quantile, 0.99);
+                assert_eq!(dp.quantile_values[2].value, 39.6); // Changed from 19.8
+                assert_eq!(dp.quantile_values[3].quantile, 0.999); // New quantile
+                assert_eq!(dp.quantile_values[3].value, 39.96); // New value
+            }
+            _ => panic!("Expected Summary metric data"),
+        }
+        println!("All comprehensive metric mutation verifications passed!");
     }
 }
