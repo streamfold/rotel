@@ -88,69 +88,12 @@ pub fn get_meter() -> Meter {
 }
 
 pub fn config_builder(
-    type_name: String,
+    type_name: &str,
     endpoint: Endpoint,
     protocol: Protocol,
 ) -> OTLPExporterConfig {
     OTLPExporterConfig {
-        type_name,
-        endpoint,
-        protocol,
-        ..Default::default()
-    }
-}
-
-/// Creates a configuration builder for OTLP trace export
-///
-/// # Arguments
-///
-/// * `endpoint` - The OTLP endpoint configuration
-/// * `protocol` - The transport protocol to use
-///
-/// # Returns
-///
-/// An `OTLPExporterConfig` configured for trace export
-pub fn trace_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
-    OTLPExporterConfig {
-        type_name: "otlp_traces".to_string(),
-        endpoint,
-        protocol,
-        ..Default::default()
-    }
-}
-
-/// Creates a configuration builder for OTLP metrics export
-///
-/// # Arguments
-///
-/// * `endpoint` - The OTLP endpoint configuration  
-/// * `protocol` - The transport protocol to use
-///
-/// # Returns
-///
-/// An `OTLPExporterConfig` configured for metrics export
-pub fn metrics_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
-    OTLPExporterConfig {
-        type_name: "otlp_metrics".to_string(),
-        endpoint,
-        protocol,
-        ..Default::default()
-    }
-}
-
-/// Creates a configuration builder for OTLP logs export
-///
-/// # Arguments
-///
-/// * `endpoint` - The OTLP endpoint configuration  
-/// * `protocol` - The transport protocol to use
-///
-/// # Returns
-///
-/// An `OTLPExporterConfig` configured for metrics export
-pub fn logs_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
-    OTLPExporterConfig {
-        type_name: "otlp_logs".to_string(),
+        type_name: type_name.to_string(),
         endpoint,
         protocol,
         ..Default::default()
@@ -160,7 +103,7 @@ pub fn logs_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExport
 #[cfg(test)]
 mod tests {
     use crate::bounded_channel::{BoundedSender, bounded};
-    use crate::exporters::otlp::{Endpoint, Protocol};
+    use crate::exporters::otlp::{Endpoint, Protocol, config_builder};
     extern crate utilities;
     use utilities::otlp::FakeOTLP;
 
@@ -189,6 +132,7 @@ mod tests {
 
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::otlp;
+    use crate::exporters::otlp::config::OTLPExporterConfig;
     use crate::exporters::otlp::exporter::Exporter;
     use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
     use crate::topology::flush_control::FlushBroadcast;
@@ -537,7 +481,7 @@ mod tests {
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
 
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -611,7 +555,7 @@ mod tests {
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
 
-        let metrics_config = otlp::metrics_config_builder(
+        let metrics_config = metrics_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -686,7 +630,7 @@ mod tests {
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
 
-        let logs_config = otlp::logs_config_builder(
+        let logs_config = logs_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -755,7 +699,7 @@ mod tests {
         // Full client auth should succeed
         let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(1);
 
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("localhost:{}", port)),
             Protocol::Grpc,
         )
@@ -830,7 +774,7 @@ mod tests {
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
 
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -845,7 +789,7 @@ mod tests {
 
         // Fails because CA is missing
         let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -858,7 +802,7 @@ mod tests {
         //
         // Fails because missing key
         let (_trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -870,7 +814,7 @@ mod tests {
 
         // Fails because missing cert
         let (_trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -882,7 +826,7 @@ mod tests {
 
         // Succeeds because no identity but provides a CA and a correct domain
         let (_trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -893,7 +837,7 @@ mod tests {
 
         // Fails because we have a CA but incorrect domain
         let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
         )
@@ -929,7 +873,7 @@ mod tests {
         });
 
         let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
         );
@@ -958,7 +902,7 @@ mod tests {
         });
 
         let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
         )
@@ -996,7 +940,7 @@ mod tests {
         });
 
         let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
-        let traces_config = otlp::trace_config_builder(
+        let traces_config = trace_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
         )
@@ -1038,7 +982,7 @@ mod tests {
         });
 
         let (metrics_btx, metrics_brx) = bounded::<Vec<ResourceMetrics>>(100);
-        let metrics_config = otlp::metrics_config_builder(
+        let metrics_config = metrics_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
         );
@@ -1073,7 +1017,7 @@ mod tests {
         });
 
         let (logs_btx, logs_brx) = bounded::<Vec<ResourceLogs>>(100);
-        let logs_config = otlp::logs_config_builder(
+        let logs_config = logs_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
         );
@@ -1296,5 +1240,17 @@ mod tests {
     ) -> Result<LogsServiceClient<Channel>, Box<dyn Error + Send + Sync + 'static>> {
         let e = format!("http://{}", endpoint);
         Ok(LogsServiceClient::connect(e).await?)
+    }
+
+    fn trace_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
+        config_builder("otlp_traces", endpoint, protocol)
+    }
+
+    fn metrics_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
+        config_builder("otlp_metrics", endpoint, protocol)
+    }
+
+    fn logs_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
+        config_builder("otlp_logs", endpoint, protocol)
     }
 }

@@ -583,16 +583,15 @@ pub fn build_logs_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
 
 impl OTLPExporterBaseArgs {
     pub fn into_exporter_config(self, type_name: &str, endpoint: Endpoint) -> OTLPExporterConfig {
-        let mut builder =
-            otlp::config_builder(type_name.to_string(), endpoint, self.protocol.into())
-                .with_authenticator(self.authenticator.map(|a| a.into()))
-                .with_tls_skip_verify(self.tls_skip_verify)
-                .with_headers(self.custom_headers.as_slice())
-                .with_request_timeout(self.request_timeout.into())
-                .with_max_elapsed_time(self.retry_max_elapsed_time.into())
-                .with_initial_backoff(self.retry_initial_backoff.into())
-                .with_max_backoff(self.retry_max_backoff.into())
-                .with_compression_encoding(self.compression.into());
+        let mut builder = otlp::config_builder(type_name, endpoint, self.protocol.into())
+            .with_authenticator(self.authenticator.map(|a| a.into()))
+            .with_tls_skip_verify(self.tls_skip_verify)
+            .with_headers(self.custom_headers.as_slice())
+            .with_request_timeout(self.request_timeout.into())
+            .with_max_elapsed_time(self.retry_max_elapsed_time.into())
+            .with_initial_backoff(self.retry_initial_backoff.into())
+            .with_max_backoff(self.retry_max_backoff.into())
+            .with_compression_encoding(self.compression.into());
 
         if let Some(tls_cert_file) = self.cert_group.tls_cert_file {
             builder = builder.with_cert_file(tls_cert_file.as_str());
