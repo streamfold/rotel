@@ -1,15 +1,16 @@
 pub mod common;
 pub mod logs;
-mod metrics;
+pub mod metrics;
 pub mod resource;
 pub mod trace;
 
 use crate::py;
 use crate::py::common::KeyValue;
 use crate::py::metrics::{
-    AggregationTemporality, DataPointFlags, Exemplar, ExemplarValue, ExponentialHistogramBuckets,
-    ExponentialHistogramDataPoint, Gauge, Histogram, HistogramDataPoint, Metric, MetricData,
-    NumberDataPoint, NumberDataPointValue, Sum, SummaryDataPoint, ValueAtQuantile,
+    AggregationTemporality, DataPointFlags, Exemplar, ExemplarValue, ExponentialHistogram,
+    ExponentialHistogramBuckets, ExponentialHistogramDataPoint, Gauge, Histogram,
+    HistogramDataPoint, Metric, MetricData, NumberDataPoint, NumberDataPointValue, Sum, Summary,
+    SummaryDataPoint, ValueAtQuantile,
 };
 use py::common::*;
 use py::logs::*;
@@ -134,6 +135,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     metrics_v1_module.add_class::<Gauge>()?;
     metrics_v1_module.add_class::<Sum>()?;
     metrics_v1_module.add_class::<Histogram>()?;
+    metrics_v1_module.add_class::<ExponentialHistogram>()?;
+    metrics_v1_module.add_class::<Summary>()?;
     metrics_v1_module.add_class::<NumberDataPoint>()?;
     metrics_v1_module.add_class::<HistogramDataPoint>()?;
     metrics_v1_module.add_class::<Exemplar>()?;
