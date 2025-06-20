@@ -1,37 +1,126 @@
 use crate::exporters::otlp;
-use crate::exporters::otlp::config::{
-    OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
-};
+use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::init::args;
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
 
-#[derive(Debug, Clone, clap::Args)]
-pub struct OTLPExporterArgs {
+#[derive(Debug, clap::Args, Clone)]
+pub struct OTLPExporterBaseArgs {
     /// OTLP Exporter Endpoint - Used as default for all OTLP data types unless more specific flag specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_ENDPOINT")]
-    pub otlp_exporter_endpoint: Option<String>,
+    #[arg(long("otlp-exporter-endpoint"), env = "ROTEL_OTLP_EXPORTER_ENDPOINT")]
+    pub endpoint: Option<String>,
 
+    //
+    // These are broken out in the base definition because the HTTP
+    // exporter may have a different endpoint per telemetry type.
+    //
     /// OTLP Exporter Traces Endpoint - Overrides otlp_exporter_endpoint if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_ENDPOINT")]
-    pub otlp_exporter_traces_endpoint: Option<String>,
+    #[arg(
+        long("otlp-exporter-traces-endpoint"),
+        env = "ROTEL_OTLP_EXPORTER_TRACES_ENDPOINT"
+    )]
+    pub traces_endpoint: Option<String>,
 
     /// OTLP Exporter Metrics Endpoint - Overrides otlp_exporter_endpoint if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_ENDPOINT")]
-    pub otlp_exporter_metrics_endpoint: Option<String>,
+    #[arg(
+        long("otlp-exporter-metrics-endpoint"),
+        env = "ROTEL_OTLP_EXPORTER_METRICS_ENDPOINT"
+    )]
+    pub metrics_endpoint: Option<String>,
 
     /// OTLP Exporter Logs Endpoint - Overrides otlp_exporter_endpoint if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_ENDPOINT")]
-    pub otlp_exporter_logs_endpoint: Option<String>,
+    #[arg(
+        long("otlp-exporter-logs-endpoint"),
+        env = "ROTEL_OTLP_EXPORTER_LOGS_ENDPOINT"
+    )]
+    pub logs_endpoint: Option<String>,
 
     /// OTLP Exporter Protocol - Used as default for all OTLP data types unless more specific flag specified
     #[arg(
         value_enum,
-        long,
+        long("otlp-exporter-protocol"),
         env = "ROTEL_OTLP_EXPORTER_PROTOCOL",
         default_value = "grpc"
     )]
-    pub otlp_exporter_protocol: OTLPExporterProtocol,
+    pub protocol: OTLPExporterProtocol,
+
+    /// OTLP Exporter authenticator
+    #[arg(
+        value_enum,
+        long("otlp-exporter-authenticator"),
+        env = "ROTEL_OTLP_EXPORTER_AUTHENTICATOR"
+    )]
+    pub authenticator: Option<OTLPExporterAuthenticator>,
+
+    /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
+    #[arg(long("otlp-exporter-custom-headers"), env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    )]
+    pub custom_headers: Vec<(String, String)>,
+
+    /// OTLP Exporter Compression - Used as default for all OTLP data types unless more specific flag specified
+    #[arg(
+        value_enum,
+        long("otlp-exporter-compression"),
+        env = "ROTEL_OTLP_EXPORTER_COMPRESSION",
+        default_value = "gzip"
+    )]
+    pub compression: CompressionEncoding,
+
+    #[clap(flatten)]
+    pub cert_group: CertGroup,
+
+    #[clap(flatten)]
+    pub key_group: KeyGroup,
+
+    #[clap(flatten)]
+    pub ca_group: CaGroup,
+
+    /// OTLP Exporter TLS SKIP VERIFY - Used as default for all OTLP data types unless more specific flag specified
+    /// THIS SHOULD ONLY BE USED IN SITUATIONS WHERE YOU ABSOLUTELY NEED TO BYPASS SSL CERTIFICATE VERIFICATION FOR TESTING PURPOSES OR WHEN CONNECTING TO A SERVER WITH A SELF-SIGNED CERTIFICATE THAT YOU FULLY TRUST!!!
+    #[arg(
+        long("otlp-exporter-tls-skip-verify"),
+        env = "ROTEL_OTLP_EXPORTER_TLS_SKIP_VERIFY",
+        default_value = "false"
+    )]
+    pub tls_skip_verify: bool,
+
+    /// OTLP Exporter Request Timeout - Used as default for all OTLP data types unless more specific flag specified.
+    #[arg(
+        long("otlp-exporter-request-timeout"),
+        env = "ROTEL_OTLP_EXPORTER_REQUEST_TIMEOUT",
+        default_value = "5s"
+    )]
+    pub request_timeout: humantime::Duration,
+
+    /// OTLP Exporter Retry initial backoff - Used as default for all OTLP data types unless more specific flag specified.
+    #[arg(
+        long("otlp-exporter-retry-initial-backoff"),
+        env = "ROTEL_OTLP_EXPORTER_RETRY_INITIAL_BACKOFF",
+        default_value = "5s"
+    )]
+    pub retry_initial_backoff: humantime::Duration,
+
+    /// OTLP Exporter Retry max backoff - Used as default for all OTLP data types unless more specific flag specified.
+    #[arg(
+        long("otlp-exporter-retry-max-backoff"),
+        env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_BACKOFF",
+        default_value = "30s"
+    )]
+    pub retry_max_backoff: humantime::Duration,
+
+    /// OTLP Exporter Retry max elapsed time - Used as default for all OTLP data types unless more specific flag specified.
+    #[arg(
+        long("otlp-exporter-retry-max-elapsed-time"),
+        env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_ELAPSED_TIME",
+        default_value = "300s"
+    )]
+    pub retry_max_elapsed_time: humantime::Duration,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct OTLPExporterArgs {
+    #[clap(flatten)]
+    pub base: OTLPExporterBaseArgs,
 
     /// OTLP Exporter Traces Protocol - Overrides otlp_exporter_protocol if specified
     #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_TRACES_PROTOCOL")]
@@ -44,15 +133,6 @@ pub struct OTLPExporterArgs {
     /// OTLP Exporter Logs Protocol - Overrides otlp_exporter_protocol if specified
     #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_LOGS_PROTOCOL")]
     pub otlp_exporter_logs_protocol: Option<OTLPExporterProtocol>,
-
-    /// OTLP Exporter authenticator
-    #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_AUTHENTICATOR")]
-    pub otlp_exporter_authenticator: Option<OTLPExporterAuthenticator>,
-
-    /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
-    )]
-    pub otlp_exporter_custom_headers: Vec<(String, String)>,
 
     /// OTLP Exporter Traces Headers - Overrides otlp_exporter_custom_headers if specified
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
@@ -68,15 +148,6 @@ pub struct OTLPExporterArgs {
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ',')]
     pub otlp_exporter_logs_custom_headers: Option<Vec<(String, String)>>,
 
-    /// OTLP Exporter Compression - Used as default for all OTLP data types unless more specific flag specified
-    #[arg(
-        value_enum,
-        long,
-        env = "ROTEL_OTLP_EXPORTER_COMPRESSION",
-        default_value = "gzip"
-    )]
-    pub otlp_exporter_compression: CompressionEncoding,
-
     /// OTLP Exporter Traces Compression - Overrides otlp_exporter_compression if specified
     #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_TRACES_COMPRESSION")]
     pub otlp_exporter_traces_compression: Option<CompressionEncoding>,
@@ -88,15 +159,6 @@ pub struct OTLPExporterArgs {
     /// OTLP Exporter Logs Compression - Overrides otlp_exporter_compression if specified
     #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_LOGS_COMPRESSION")]
     pub otlp_exporter_logs_compression: Option<CompressionEncoding>,
-
-    #[clap(flatten)]
-    pub otlp_exporter_cert_group: CertGroup,
-
-    #[clap(flatten)]
-    pub otlp_exporter_key_group: KeyGroup,
-
-    #[clap(flatten)]
-    pub otlp_exporter_ca_group: CaGroup,
 
     #[clap(flatten)]
     otlp_exporter_traces_cert_group: TracesCertGroup,
@@ -125,15 +187,6 @@ pub struct OTLPExporterArgs {
     #[clap(flatten)]
     otlp_exporter_logs_ca_group: LogsCaGroup,
 
-    /// OTLP Exporter TLS SKIP VERIFY - Used as default for all OTLP data types unless more specific flag specified
-    /// THIS SHOULD ONLY BE USED IN SITUATIONS WHERE YOU ABSOLUTELY NEED TO BYPASS SSL CERTIFICATE VERIFICATION FOR TESTING PURPOSES OR WHEN CONNECTING TO A SERVER WITH A SELF-SIGNED CERTIFICATE THAT YOU FULLY TRUST!!!
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_TLS_SKIP_VERIFY",
-        default_value = "false"
-    )]
-    pub otlp_exporter_tls_skip_verify: bool,
-
     /// OTLP Exporter traces TLS SKIP VERIFY - Overrides otlp_exporter_tls_skip_verify for OTLP traces if specified
     /// THIS SHOULD ONLY BE USED IN SITUATIONS WHERE YOU ABSOLUTELY NEED TO BYPASS SSL CERTIFICATE VERIFICATION FOR TESTING PURPOSES OR WHEN CONNECTING TO A SERVER WITH A SELF-SIGNED CERTIFICATE THAT YOU FULLY TRUST!!!
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_TLS_SKIP_VERIFY")]
@@ -149,14 +202,6 @@ pub struct OTLPExporterArgs {
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_TLS_SKIP_VERIFY")]
     pub otlp_exporter_logs_tls_skip_verify: Option<bool>,
 
-    /// OTLP Exporter Request Timeout - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_REQUEST_TIMEOUT",
-        default_value = "5s"
-    )]
-    pub otlp_exporter_request_timeout: humantime::Duration,
-
     /// OTLP Exporter traces Request Timeout - Overrides otlp_exporter_request_timeout for OTLP traces if specified
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_REQUEST_TIMEOUT")]
     pub otlp_exporter_traces_request_timeout: Option<humantime::Duration>,
@@ -168,14 +213,6 @@ pub struct OTLPExporterArgs {
     /// OTLP Exporter logs Request Timeout - Overrides otlp_exporter_request_timeout for OTLP logs if specified
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_REQUEST_TIMEOUT")]
     pub otlp_exporter_logs_request_timeout: Option<humantime::Duration>,
-
-    /// OTLP Exporter Retry initial backoff - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_RETRY_INITIAL_BACKOFF",
-        default_value = "5s"
-    )]
-    pub otlp_exporter_retry_initial_backoff: humantime::Duration,
 
     /// OTLP Exporter traces Retry initial backoff - Overrides otlp_exporter_retry_initial_backoff for OTLP traces if specified.
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_INITIAL_BACKOFF")]
@@ -189,14 +226,6 @@ pub struct OTLPExporterArgs {
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_INITIAL_BACKOFF")]
     pub otlp_exporter_logs_retry_initial_backoff: Option<humantime::Duration>,
 
-    /// OTLP Exporter Retry max backoff - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_BACKOFF",
-        default_value = "30s"
-    )]
-    pub otlp_exporter_retry_max_backoff: humantime::Duration,
-
     /// OTLP Exporter traces Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP traces if specified.
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_BACKOFF")]
     pub otlp_exporter_traces_retry_max_backoff: Option<humantime::Duration>,
@@ -208,14 +237,6 @@ pub struct OTLPExporterArgs {
     /// OTLP Exporter logs Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP logs if specified.
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_BACKOFF")]
     pub otlp_exporter_logs_retry_max_backoff: Option<humantime::Duration>,
-
-    /// OTLP Exporter Retry max elapsed time - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_ELAPSED_TIME",
-        default_value = "300s"
-    )]
-    pub otlp_exporter_retry_max_elapsed_time: humantime::Duration,
 
     /// OTLP Exporter traces Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP traces if specified.
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_ELAPSED_TIME")]
@@ -242,31 +263,31 @@ impl From<OTLPExporterProtocol> for Protocol {
 #[derive(Debug, clap::Args, Clone)]
 #[group(required = false, multiple = false)]
 pub struct CertGroup {
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_CERT_FILE", default_value = None)]
-    otlp_exporter_tls_cert_file: Option<String>,
+    #[arg(long("otlp-exporter-tls-cert-file"), env = "ROTEL_OTLP_EXPORTER_TLS_CERT_FILE", default_value = None)]
+    tls_cert_file: Option<String>,
 
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_CERT_PEM", default_value = None)]
-    otlp_exporter_tls_cert_pem: Option<String>,
+    #[arg(long("otlp-exporter-tls-cert-pem"), env = "ROTEL_OTLP_EXPORTER_TLS_CERT_PEM", default_value = None)]
+    tls_cert_pem: Option<String>,
 }
 
 #[derive(Debug, clap::Args, Clone)]
 #[group(required = false, multiple = false)]
 pub struct KeyGroup {
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_KEY_FILE", default_value = None)]
-    otlp_exporter_tls_key_file: Option<String>,
+    #[arg(long("otlp-exporter-tls-key-file"), env = "ROTEL_OTLP_EXPORTER_TLS_KEY_FILE", default_value = None)]
+    tls_key_file: Option<String>,
 
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_KEY_PEM", default_value = None)]
-    otlp_exporter_tls_key_pem: Option<String>,
+    #[arg(long("otlp-exporter-tls-key-pem"), env = "ROTEL_OTLP_EXPORTER_TLS_KEY_PEM", default_value = None)]
+    tls_key_pem: Option<String>,
 }
 
 #[derive(Debug, clap::Args, Clone)]
 #[group(required = false, multiple = false)]
 pub struct CaGroup {
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_CA_FILE", default_value = None)]
-    otlp_exporter_tls_ca_file: Option<String>,
+    #[arg(long("otlp-exporter-tls-ca-file"), env = "ROTEL_OTLP_EXPORTER_TLS_CA_FILE", default_value = None)]
+    tls_ca_file: Option<String>,
 
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TLS_CA_PEM", default_value = None)]
-    otlp_exporter_tls_ca_pem: Option<String>,
+    #[arg(long("otlp-exporter-tls-ca-pem"), env = "ROTEL_OTLP_EXPORTER_TLS_CA_PEM", default_value = None)]
+    tls_ca_pem: Option<String>,
 }
 
 #[derive(Debug, clap::Args, Clone)]
@@ -359,335 +380,236 @@ pub struct LogsCaGroup {
     otlp_exporter_logs_tls_ca_pem: Option<String>,
 }
 
-pub fn build_traces_config(
-    agent: OTLPExporterArgs,
-    endpoint: Option<&String>,
-) -> OTLPExporterTracesConfig {
-    let mut traces_config_builder = otlp::trace_config_builder(
-        agent
-            .otlp_exporter_traces_endpoint
-            .map(|e| Endpoint::Full(e))
-            .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone())), // This is only safe to unwrap endpoint here because we ensure that at least one of them is Some in the caller.
-        agent
-            .otlp_exporter_traces_protocol
-            .unwrap_or(agent.otlp_exporter_protocol)
-            .into(),
-    )
-    .with_authenticator(agent.otlp_exporter_authenticator.map(|a| a.into()))
-    .with_tls_skip_verify(
-        agent
-            .otlp_exporter_traces_tls_skip_verify
-            .unwrap_or(agent.otlp_exporter_tls_skip_verify),
-    )
-    .with_headers(
-        agent
-            .otlp_exporter_traces_custom_headers
-            .as_ref()
-            .unwrap_or(&agent.otlp_exporter_custom_headers),
-    )
-    .with_request_timeout(
-        agent
-            .otlp_exporter_traces_request_timeout
-            .unwrap_or(agent.otlp_exporter_request_timeout)
-            .into(),
-    )
-    .with_max_elapsed_time(
-        agent
-            .otlp_exporter_traces_retry_max_elapsed_time
-            .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
-            .into(),
-    )
-    .with_initial_backoff(
-        agent
-            .otlp_exporter_traces_retry_initial_backoff
-            .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
-            .into(),
-    )
-    .with_max_backoff(
-        agent
-            .otlp_exporter_traces_retry_max_backoff
-            .unwrap_or(agent.otlp_exporter_retry_max_backoff)
-            .into(),
-    )
-    .with_compression_encoding(
-        agent
-            .otlp_exporter_traces_compression
-            .unwrap_or(agent.otlp_exporter_compression)
-            .into(),
-    );
+pub fn build_traces_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
+    let mut config = agent.base;
 
-    let traces_tls_cert_file = agent
+    if let Some(protocol) = agent.otlp_exporter_traces_protocol {
+        config.protocol = protocol
+    }
+    if let Some(headers) = agent.otlp_exporter_traces_custom_headers {
+        config.custom_headers = headers
+    }
+    if let Some(compression) = agent.otlp_exporter_traces_compression {
+        config.compression = compression
+    }
+    if let Some(tls_skip_verify) = agent.otlp_exporter_traces_tls_skip_verify {
+        config.tls_skip_verify = tls_skip_verify
+    }
+    if let Some(request_time) = agent.otlp_exporter_traces_request_timeout {
+        config.request_timeout = request_time
+    }
+    if let Some(max_elapsed_time) = agent.otlp_exporter_traces_retry_max_elapsed_time {
+        config.retry_max_elapsed_time = max_elapsed_time
+    }
+    if let Some(initial_backoff) = agent.otlp_exporter_traces_retry_initial_backoff {
+        config.retry_initial_backoff = initial_backoff
+    }
+    if let Some(max_backoff) = agent.otlp_exporter_traces_retry_max_backoff {
+        config.retry_max_backoff = max_backoff
+    }
+    if let Some(tls_cert_file) = agent
         .otlp_exporter_traces_cert_group
         .otlp_exporter_traces_tls_cert_file
-        .or(agent.otlp_exporter_cert_group.otlp_exporter_tls_cert_file);
-    let traces_tls_cert_pem = agent
+    {
+        config.cert_group.tls_cert_file = Some(tls_cert_file)
+    }
+    if let Some(tls_cert_pem) = agent
         .otlp_exporter_traces_cert_group
         .otlp_exporter_traces_tls_cert_pem
-        .or(agent.otlp_exporter_cert_group.otlp_exporter_tls_cert_pem);
-
-    let traces_tls_key_file = agent
+    {
+        config.cert_group.tls_cert_pem = Some(tls_cert_pem)
+    }
+    if let Some(tls_key_file) = agent
         .otlp_exporter_traces_key_group
         .otlp_exporter_traces_tls_key_file
-        .or(agent.otlp_exporter_key_group.otlp_exporter_tls_key_file);
-    let traces_tls_key_pem = agent
+    {
+        config.key_group.tls_key_file = Some(tls_key_file)
+    }
+    if let Some(tls_key_pem) = agent
         .otlp_exporter_traces_key_group
         .otlp_exporter_traces_tls_key_pem
-        .or(agent.otlp_exporter_key_group.otlp_exporter_tls_key_pem);
-
-    let traces_tls_ca_file = agent
+    {
+        config.key_group.tls_key_pem = Some(tls_key_pem)
+    }
+    if let Some(tls_ca_file) = agent
         .otlp_exporter_traces_ca_group
         .otlp_exporter_traces_tls_ca_file
-        .or(agent.otlp_exporter_ca_group.otlp_exporter_tls_ca_file);
-
-    let traces_tls_ca_pem = agent
+    {
+        config.ca_group.tls_ca_file = Some(tls_ca_file)
+    }
+    if let Some(tls_ca_pem) = agent
         .otlp_exporter_traces_ca_group
         .otlp_exporter_traces_tls_ca_pem
-        .or(agent.otlp_exporter_ca_group.otlp_exporter_tls_ca_pem);
-
-    if traces_tls_cert_file.is_some() {
-        traces_config_builder =
-            traces_config_builder.with_cert_file(traces_tls_cert_file.unwrap().as_str());
-    } else if traces_tls_cert_pem.is_some() {
-        traces_config_builder =
-            traces_config_builder.with_cert_pem(traces_tls_cert_pem.unwrap().as_str());
+    {
+        config.ca_group.tls_ca_pem = Some(tls_ca_pem)
     }
 
-    if traces_tls_key_file.is_some() {
-        traces_config_builder =
-            traces_config_builder.with_key_file(traces_tls_key_file.unwrap().as_str());
-    } else if traces_tls_key_pem.is_some() {
-        traces_config_builder =
-            traces_config_builder.with_key_pem(traces_tls_key_pem.unwrap().as_str());
-    }
-
-    if traces_tls_ca_file.is_some() {
-        traces_config_builder =
-            traces_config_builder.with_ca_file(traces_tls_ca_file.unwrap().as_str())
-    } else if traces_tls_ca_pem.is_some() {
-        traces_config_builder =
-            traces_config_builder.with_ca_pem(traces_tls_ca_pem.unwrap().as_str())
-    }
-
-    traces_config_builder
+    config
 }
 
-pub fn build_metrics_config(
-    agent: OTLPExporterArgs,
-    endpoint: Option<&String>,
-) -> OTLPExporterMetricsConfig {
-    let mut metrics_config_builder = otlp::metrics_config_builder(
-        agent
-            .otlp_exporter_metrics_endpoint
-            .map(|e| Endpoint::Full(e))
-            .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone())), // This is only safe to unwrap endpoint here because we ensure that at least one of them is Some in the caller.
-        agent
-            .otlp_exporter_metrics_protocol
-            .unwrap_or(agent.otlp_exporter_protocol)
-            .into(),
-    )
-    .with_authenticator(agent.otlp_exporter_authenticator.map(|a| a.into()))
-    .with_tls_skip_verify(
-        agent
-            .otlp_exporter_metrics_tls_skip_verify
-            .unwrap_or(agent.otlp_exporter_tls_skip_verify),
-    )
-    .with_headers(
-        agent
-            .otlp_exporter_metrics_custom_headers
-            .as_ref()
-            .unwrap_or(&agent.otlp_exporter_custom_headers),
-    )
-    .with_request_timeout(
-        agent
-            .otlp_exporter_metrics_request_timeout
-            .unwrap_or(agent.otlp_exporter_request_timeout)
-            .into(),
-    )
-    .with_max_elapsed_time(
-        agent
-            .otlp_exporter_metrics_retry_max_elapsed_time
-            .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
-            .into(),
-    )
-    .with_initial_backoff(
-        agent
-            .otlp_exporter_metrics_retry_initial_backoff
-            .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
-            .into(),
-    )
-    .with_max_backoff(
-        agent
-            .otlp_exporter_metrics_retry_max_backoff
-            .unwrap_or(agent.otlp_exporter_retry_max_backoff)
-            .into(),
-    )
-    .with_compression_encoding(
-        agent
-            .otlp_exporter_metrics_compression
-            .unwrap_or(agent.otlp_exporter_compression)
-            .into(),
-    );
+pub fn build_metrics_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
+    let mut config = agent.base;
 
-    let metrics_tls_cert_file = agent
+    if let Some(protocol) = agent.otlp_exporter_metrics_protocol {
+        config.protocol = protocol
+    }
+    if let Some(headers) = agent.otlp_exporter_metrics_custom_headers {
+        config.custom_headers = headers
+    }
+    if let Some(compression) = agent.otlp_exporter_metrics_compression {
+        config.compression = compression
+    }
+    if let Some(tls_skip_verify) = agent.otlp_exporter_metrics_tls_skip_verify {
+        config.tls_skip_verify = tls_skip_verify
+    }
+    if let Some(request_time) = agent.otlp_exporter_metrics_request_timeout {
+        config.request_timeout = request_time
+    }
+    if let Some(max_elapsed_time) = agent.otlp_exporter_metrics_retry_max_elapsed_time {
+        config.retry_max_elapsed_time = max_elapsed_time
+    }
+    if let Some(initial_backoff) = agent.otlp_exporter_metrics_retry_initial_backoff {
+        config.retry_initial_backoff = initial_backoff
+    }
+    if let Some(max_backoff) = agent.otlp_exporter_metrics_retry_max_backoff {
+        config.retry_max_backoff = max_backoff
+    }
+    if let Some(tls_cert_file) = agent
         .otlp_exporter_metrics_cert_group
         .otlp_exporter_metrics_tls_cert_file
-        .or(agent.otlp_exporter_cert_group.otlp_exporter_tls_cert_file);
-    let metrics_tls_cert_pem = agent
+    {
+        config.cert_group.tls_cert_file = Some(tls_cert_file)
+    }
+    if let Some(tls_cert_pem) = agent
         .otlp_exporter_metrics_cert_group
         .otlp_exporter_metrics_tls_cert_pem
-        .or(agent.otlp_exporter_cert_group.otlp_exporter_tls_cert_pem);
-
-    let metrics_tls_key_file = agent
+    {
+        config.cert_group.tls_cert_pem = Some(tls_cert_pem)
+    }
+    if let Some(tls_key_file) = agent
         .otlp_exporter_metrics_key_group
         .otlp_exporter_metrics_tls_key_file
-        .or(agent.otlp_exporter_key_group.otlp_exporter_tls_key_file);
-    let metrics_tls_key_pem = agent
+    {
+        config.key_group.tls_key_file = Some(tls_key_file)
+    }
+    if let Some(tls_key_pem) = agent
         .otlp_exporter_metrics_key_group
         .otlp_exporter_metrics_tls_key_pem
-        .or(agent.otlp_exporter_key_group.otlp_exporter_tls_key_pem);
-
-    let metrics_tls_ca_file = agent
+    {
+        config.key_group.tls_key_pem = Some(tls_key_pem)
+    }
+    if let Some(tls_ca_file) = agent
         .otlp_exporter_metrics_ca_group
         .otlp_exporter_metrics_tls_ca_file
-        .or(agent.otlp_exporter_ca_group.otlp_exporter_tls_ca_file);
-
-    let metrics_tls_ca_pem = agent
+    {
+        config.ca_group.tls_ca_file = Some(tls_ca_file)
+    }
+    if let Some(tls_ca_pem) = agent
         .otlp_exporter_metrics_ca_group
         .otlp_exporter_metrics_tls_ca_pem
-        .or(agent.otlp_exporter_ca_group.otlp_exporter_tls_ca_pem);
-
-    if metrics_tls_cert_file.is_some() {
-        metrics_config_builder =
-            metrics_config_builder.with_cert_file(metrics_tls_cert_file.unwrap().as_str());
-    } else if metrics_tls_cert_pem.is_some() {
-        metrics_config_builder =
-            metrics_config_builder.with_cert_pem(metrics_tls_cert_pem.unwrap().as_str());
+    {
+        config.ca_group.tls_ca_pem = Some(tls_ca_pem)
     }
 
-    if metrics_tls_key_file.is_some() {
-        metrics_config_builder =
-            metrics_config_builder.with_key_file(metrics_tls_key_file.unwrap().as_str());
-    } else if metrics_tls_key_pem.is_some() {
-        metrics_config_builder =
-            metrics_config_builder.with_key_pem(metrics_tls_key_pem.unwrap().as_str());
-    }
-
-    if metrics_tls_ca_file.is_some() {
-        metrics_config_builder =
-            metrics_config_builder.with_ca_file(metrics_tls_ca_file.unwrap().as_str())
-    } else if metrics_tls_ca_pem.is_some() {
-        metrics_config_builder =
-            metrics_config_builder.with_ca_pem(metrics_tls_ca_pem.unwrap().as_str())
-    }
-
-    metrics_config_builder
+    config
 }
 
-pub fn build_logs_config(
-    agent: OTLPExporterArgs,
-    endpoint: Option<&String>,
-) -> OTLPExporterLogsConfig {
-    let mut logs_config_builder = otlp::logs_config_builder(
-        agent
-            .otlp_exporter_logs_endpoint
-            .map(|e| Endpoint::Full(e))
-            .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone())), // This is only safe to unwrap endpoint here because we ensure that at least one of them is Some in the caller.
-        agent
-            .otlp_exporter_logs_protocol
-            .unwrap_or(agent.otlp_exporter_protocol)
-            .into(),
-    )
-    .with_authenticator(agent.otlp_exporter_authenticator.map(|a| a.into()))
-    .with_tls_skip_verify(
-        agent
-            .otlp_exporter_logs_tls_skip_verify
-            .unwrap_or(agent.otlp_exporter_tls_skip_verify),
-    )
-    .with_headers(
-        agent
-            .otlp_exporter_logs_custom_headers
-            .as_ref()
-            .unwrap_or(&agent.otlp_exporter_custom_headers),
-    )
-    .with_request_timeout(
-        agent
-            .otlp_exporter_logs_request_timeout
-            .unwrap_or(agent.otlp_exporter_request_timeout)
-            .into(),
-    )
-    .with_max_elapsed_time(
-        agent
-            .otlp_exporter_logs_retry_max_elapsed_time
-            .unwrap_or(agent.otlp_exporter_retry_max_elapsed_time)
-            .into(),
-    )
-    .with_initial_backoff(
-        agent
-            .otlp_exporter_logs_retry_initial_backoff
-            .unwrap_or(agent.otlp_exporter_retry_initial_backoff)
-            .into(),
-    )
-    .with_max_backoff(
-        agent
-            .otlp_exporter_logs_retry_max_backoff
-            .unwrap_or(agent.otlp_exporter_retry_max_backoff)
-            .into(),
-    )
-    .with_compression_encoding(
-        agent
-            .otlp_exporter_logs_compression
-            .unwrap_or(agent.otlp_exporter_compression)
-            .into(),
-    );
+pub fn build_logs_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
+    let mut config = agent.base;
 
-    let logs_tls_cert_file = agent
+    if let Some(protocol) = agent.otlp_exporter_logs_protocol {
+        config.protocol = protocol
+    }
+    if let Some(headers) = agent.otlp_exporter_logs_custom_headers {
+        config.custom_headers = headers
+    }
+    if let Some(compression) = agent.otlp_exporter_logs_compression {
+        config.compression = compression
+    }
+    if let Some(tls_skip_verify) = agent.otlp_exporter_logs_tls_skip_verify {
+        config.tls_skip_verify = tls_skip_verify
+    }
+    if let Some(request_time) = agent.otlp_exporter_logs_request_timeout {
+        config.request_timeout = request_time
+    }
+    if let Some(max_elapsed_time) = agent.otlp_exporter_logs_retry_max_elapsed_time {
+        config.retry_max_elapsed_time = max_elapsed_time
+    }
+    if let Some(initial_backoff) = agent.otlp_exporter_logs_retry_initial_backoff {
+        config.retry_initial_backoff = initial_backoff
+    }
+    if let Some(max_backoff) = agent.otlp_exporter_logs_retry_max_backoff {
+        config.retry_max_backoff = max_backoff
+    }
+    if let Some(tls_cert_file) = agent
         .otlp_exporter_logs_cert_group
         .otlp_exporter_logs_tls_cert_file
-        .or(agent.otlp_exporter_cert_group.otlp_exporter_tls_cert_file);
-    let logs_tls_cert_pem = agent
+    {
+        config.cert_group.tls_cert_file = Some(tls_cert_file)
+    }
+    if let Some(tls_cert_pem) = agent
         .otlp_exporter_logs_cert_group
         .otlp_exporter_logs_tls_cert_pem
-        .or(agent.otlp_exporter_cert_group.otlp_exporter_tls_cert_pem);
-
-    let logs_tls_key_file = agent
+    {
+        config.cert_group.tls_cert_pem = Some(tls_cert_pem)
+    }
+    if let Some(tls_key_file) = agent
         .otlp_exporter_logs_key_group
         .otlp_exporter_logs_tls_key_file
-        .or(agent.otlp_exporter_key_group.otlp_exporter_tls_key_file);
-    let logs_tls_key_pem = agent
+    {
+        config.key_group.tls_key_file = Some(tls_key_file)
+    }
+    if let Some(tls_key_pem) = agent
         .otlp_exporter_logs_key_group
         .otlp_exporter_logs_tls_key_pem
-        .or(agent.otlp_exporter_key_group.otlp_exporter_tls_key_pem);
-
-    let logs_tls_ca_file = agent
+    {
+        config.key_group.tls_key_pem = Some(tls_key_pem)
+    }
+    if let Some(tls_ca_file) = agent
         .otlp_exporter_logs_ca_group
         .otlp_exporter_logs_tls_ca_file
-        .or(agent.otlp_exporter_ca_group.otlp_exporter_tls_ca_file);
-
-    let logs_tls_ca_pem = agent
+    {
+        config.ca_group.tls_ca_file = Some(tls_ca_file)
+    }
+    if let Some(tls_ca_pem) = agent
         .otlp_exporter_logs_ca_group
         .otlp_exporter_logs_tls_ca_pem
-        .or(agent.otlp_exporter_ca_group.otlp_exporter_tls_ca_pem);
-
-    if logs_tls_cert_file.is_some() {
-        logs_config_builder =
-            logs_config_builder.with_cert_file(logs_tls_cert_file.unwrap().as_str());
-    } else if logs_tls_cert_pem.is_some() {
-        logs_config_builder =
-            logs_config_builder.with_cert_pem(logs_tls_cert_pem.unwrap().as_str());
+    {
+        config.ca_group.tls_ca_pem = Some(tls_ca_pem)
     }
 
-    if logs_tls_key_file.is_some() {
-        logs_config_builder =
-            logs_config_builder.with_key_file(logs_tls_key_file.unwrap().as_str());
-    } else if logs_tls_key_pem.is_some() {
-        logs_config_builder = logs_config_builder.with_key_pem(logs_tls_key_pem.unwrap().as_str());
-    }
+    config
+}
 
-    if logs_tls_ca_file.is_some() {
-        logs_config_builder = logs_config_builder.with_ca_file(logs_tls_ca_file.unwrap().as_str())
-    } else if logs_tls_ca_pem.is_some() {
-        logs_config_builder = logs_config_builder.with_ca_pem(logs_tls_ca_pem.unwrap().as_str())
-    }
+impl OTLPExporterBaseArgs {
+    pub fn into_exporter_config(self, type_name: &str, endpoint: Endpoint) -> OTLPExporterConfig {
+        let mut builder = otlp::config_builder(type_name, endpoint, self.protocol.into())
+            .with_authenticator(self.authenticator.map(|a| a.into()))
+            .with_tls_skip_verify(self.tls_skip_verify)
+            .with_headers(self.custom_headers.as_slice())
+            .with_request_timeout(self.request_timeout.into())
+            .with_max_elapsed_time(self.retry_max_elapsed_time.into())
+            .with_initial_backoff(self.retry_initial_backoff.into())
+            .with_max_backoff(self.retry_max_backoff.into())
+            .with_compression_encoding(self.compression.into());
 
-    logs_config_builder
+        if let Some(tls_cert_file) = self.cert_group.tls_cert_file {
+            builder = builder.with_cert_file(tls_cert_file.as_str());
+        } else if let Some(tls_cert_pem) = self.cert_group.tls_cert_pem {
+            builder = builder.with_cert_pem(tls_cert_pem.as_str());
+        }
+
+        if let Some(tls_key_file) = self.key_group.tls_key_file {
+            builder = builder.with_cert_file(tls_key_file.as_str());
+        } else if let Some(tls_key_pem) = self.key_group.tls_key_pem {
+            builder = builder.with_cert_pem(tls_key_pem.as_str());
+        }
+        if let Some(tls_ca_file) = self.ca_group.tls_ca_file {
+            builder = builder.with_cert_file(tls_ca_file.as_str());
+        } else if let Some(tls_ca_pem) = self.ca_group.tls_ca_pem {
+            builder = builder.with_cert_pem(tls_ca_pem.as_str());
+        }
+
+        builder
+    }
 }

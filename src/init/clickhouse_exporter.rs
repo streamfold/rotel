@@ -4,61 +4,76 @@ use clap::{Args, ValueEnum};
 #[derive(Debug, Clone, Args)]
 pub struct ClickhouseExporterArgs {
     /// Clickhouse Exporter endpoint
-    #[arg(long, env = "ROTEL_CLICKHOUSE_EXPORTER_ENDPOINT")]
-    pub clickhouse_exporter_endpoint: Option<String>,
+    #[arg(
+        id("CLICKHOUSE_ENDPOINT"),
+        long("clickhouse-exporter-endpoint"),
+        env = "ROTEL_CLICKHOUSE_EXPORTER_ENDPOINT"
+    )]
+    pub endpoint: Option<String>,
 
     /// Clickhouse Exporter database
     #[arg(
-        long,
+        long("clickhouse-exporter-database"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_DATABASE",
         default_value = "otel"
     )]
-    pub clickhouse_exporter_database: String,
+    pub database: String,
 
     /// Clickhouse Exporter table prefix (e.g., "otel" prefix will become "otel_traces" for traces)
-    #[arg(long, env = "ROTEL_CLICKHOUSE_TABLE_PREFIX", default_value = "otel")]
-    pub clickhouse_exporter_table_prefix: String,
+    #[arg(
+        long("clickhouse-exporter-table-prefix"),
+        env = "ROTEL_CLICKHOUSE_TABLE_PREFIX",
+        default_value = "otel"
+    )]
+    pub table_prefix: String,
 
     /// Clickhouse Exporter compression (lz4 or none)
     #[arg(
+        id("CLICKHOUSE_COMPRESSION"),
         value_enum,
-        long,
+        long("clickhouse-exporter-compression"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_COMPRESSION",
         default_value = "lz4"
     )]
-    pub clickhouse_exporter_compression: Compression,
+    pub compression: Compression,
 
     /// Clickhouse Exporter user
-    #[arg(long, env = "ROTEL_CLICKHOUSE_EXPORTER_USER")]
-    pub clickhouse_exporter_user: Option<String>,
+    #[arg(
+        long("clickhouse-exporter-user"),
+        env = "ROTEL_CLICKHOUSE_EXPORTER_USER"
+    )]
+    pub user: Option<String>,
 
     /// Clickhouse Exporter password
-    #[arg(long, env = "ROTEL_CLICKHOUSE_EXPORTER_PASSWORD")]
-    pub clickhouse_exporter_password: Option<String>,
+    #[arg(
+        long("clickhouse-exporter-password"),
+        env = "ROTEL_CLICKHOUSE_EXPORTER_PASSWORD"
+    )]
+    pub password: Option<String>,
 
     /// Clickhouse Exporter async insert
     #[arg(
-        long,
+        long("clickhouse-exporter-async-insert"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_ASYNC_INSERT",
         default_value = "true"
     )]
-    pub clickhouse_exporter_async_insert: String,
+    pub async_insert: String,
 
     /// Clickhouse Exporter enable JSON column type
     #[arg(
-        long,
+        long("clickhouse-exporter-enable-json"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_ENABLE_JSON",
         default_value = "false"
     )]
-    pub clickhouse_exporter_enable_json: bool,
+    pub enable_json: bool,
 
     /// Clickhouse Exporter replace periods in JSON keys with underscores
     #[arg(
-        long,
+        long("clickhouse-exporter-json-underscore"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_JSON_UNDERSCORE",
         default_value = "false"
     )]
-    pub clickhouse_exporter_json_underscore: bool,
+    pub json_underscore: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
