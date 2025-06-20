@@ -5,17 +5,6 @@
 //! This module provides functionality for exporting telemetry data using the OpenTelemetry Protocol (OTLP).
 //! It supports both gRPC and HTTP protocols for sending trace and metric data to OTLP-compatible backends.
 //!
-//! # Examples
-//!
-//! ```rust,no_run
-//! use rotel::exporters::otlp::{trace_config_builder, Protocol, Endpoint};
-//!
-//! // Create a basic OTLP trace exporter config
-//! let config = trace_config_builder(
-//!     Endpoint::Base("http://localhost:4317".to_string()),
-//!     Protocol::Grpc
-//! );
-//! ```
 //!
 //! # Features
 //!
