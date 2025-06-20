@@ -30,7 +30,12 @@ impl std::fmt::Display for FileExporterFormat {
 #[derive(Debug, Args, Clone)]
 pub struct FileExporterArgs {
     /// File format for export
-    #[arg(value_enum, long, env = "ROTEL_FILE_OUTPUT_FORMAT", default_value = "parquet")]
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_FILE_OUTPUT_FORMAT",
+        default_value = "parquet"
+    )]
     pub file_exporter_format: FileExporterFormat,
 
     /// Directory where files will be written

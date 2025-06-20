@@ -14,6 +14,62 @@ use super::common::{
 use crate::exporters::file::FileExporterError;
 use crate::{build_i64_array, build_string_array, build_u64_array};
 
+// Static schema created once and reused for all span record batches
+static SPAN_SCHEMA: std::sync::LazyLock<Arc<Schema>> = std::sync::LazyLock::new(|| {
+    Arc::new(Schema::new(vec![
+        Field::new("timestamp", DataType::UInt64, false),
+        Field::new("trace_id", DataType::Utf8, false),
+        Field::new("span_id", DataType::Utf8, false),
+        Field::new("parent_span_id", DataType::Utf8, false),
+        Field::new("trace_state", DataType::Utf8, false),
+        Field::new("span_name", DataType::Utf8, false),
+        Field::new("span_kind", DataType::Utf8, false),
+        Field::new("service_name", DataType::Utf8, false),
+        Field::new("resource_attributes", DataType::Utf8, false),
+        Field::new("scope_name", DataType::Utf8, false),
+        Field::new("scope_version", DataType::Utf8, false),
+        Field::new("span_attributes", DataType::Utf8, false),
+        Field::new("duration", DataType::Int64, false),
+        Field::new("status_code", DataType::Utf8, false),
+        Field::new("status_message", DataType::Utf8, false),
+        Field::new(
+            "events_timestamp",
+            DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
+            false,
+        ),
+        Field::new(
+            "events_name",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+        Field::new(
+            "events_attributes",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+        Field::new(
+            "links_trace_id",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+        Field::new(
+            "links_span_id",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+        Field::new(
+            "links_trace_state",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+        Field::new(
+            "links_attributes",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+    ]))
+});
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct SpanRow {
     pub timestamp: u64,
@@ -42,7 +98,6 @@ pub struct SpanRow {
 
 impl ToRecordBatch for SpanRow {
     fn to_record_batch(rows: &[Self]) -> Result<RecordBatch, FileExporterError> {
-        // Primitive columns --------------------------------------------------
         let timestamp = build_u64_array!(rows, timestamp);
         let trace_id = build_string_array!(rows, trace_id);
         let span_id = build_string_array!(rows, span_id);
@@ -66,8 +121,6 @@ impl ToRecordBatch for SpanRow {
         let duration = build_i64_array!(rows, duration);
         let status_code = build_string_array!(rows, status_code);
         let status_message = build_string_array!(rows, status_message);
-
-        // Repeated / list columns -------------------------------------------
         let events_timestamp = vec_u64_to_list_array(
             &rows
                 .iter()
@@ -111,60 +164,6 @@ impl ToRecordBatch for SpanRow {
                 .collect::<Vec<_>>(),
         );
 
-        // Schema -------------------------------------------------------------
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", DataType::UInt64, false),
-            Field::new("trace_id", DataType::Utf8, false),
-            Field::new("span_id", DataType::Utf8, false),
-            Field::new("parent_span_id", DataType::Utf8, false),
-            Field::new("trace_state", DataType::Utf8, false),
-            Field::new("span_name", DataType::Utf8, false),
-            Field::new("span_kind", DataType::Utf8, false),
-            Field::new("service_name", DataType::Utf8, false),
-            Field::new("resource_attributes", DataType::Utf8, false),
-            Field::new("scope_name", DataType::Utf8, false),
-            Field::new("scope_version", DataType::Utf8, false),
-            Field::new("span_attributes", DataType::Utf8, false),
-            Field::new("duration", DataType::Int64, false),
-            Field::new("status_code", DataType::Utf8, false),
-            Field::new("status_message", DataType::Utf8, false),
-            Field::new(
-                "events_timestamp",
-                DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
-                false,
-            ),
-            Field::new(
-                "events_name",
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                false,
-            ),
-            Field::new(
-                "events_attributes",
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                false,
-            ),
-            Field::new(
-                "links_trace_id",
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                false,
-            ),
-            Field::new(
-                "links_span_id",
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                false,
-            ),
-            Field::new(
-                "links_trace_state",
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                false,
-            ),
-            Field::new(
-                "links_attributes",
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                false,
-            ),
-        ]));
-
         let columns: Vec<ArrayRef> = vec![
             Arc::new(timestamp),
             Arc::new(trace_id),
@@ -190,7 +189,9 @@ impl ToRecordBatch for SpanRow {
             Arc::new(links_attributes),
         ];
 
-        RecordBatch::try_new(schema, columns).map_err(|e| FileExporterError::Export(e.to_string()))
+        // Use the static schema instead of creating a new one
+        RecordBatch::try_new(SPAN_SCHEMA.clone(), columns)
+            .map_err(|e| FileExporterError::Export(e.to_string()))
     }
 }
 

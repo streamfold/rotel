@@ -10,6 +10,27 @@ use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
 use crate::{build_string_array, build_u8_array, build_u64_array};
 
+// Static schema created once and reused for all log record batches
+static LOG_SCHEMA: std::sync::LazyLock<Arc<Schema>> = std::sync::LazyLock::new(|| {
+    Arc::new(Schema::new(vec![
+        Field::new("timestamp", DataType::UInt64, false),
+        Field::new("trace_id", DataType::Utf8, false),
+        Field::new("span_id", DataType::Utf8, false),
+        Field::new("trace_flags", DataType::UInt8, false),
+        Field::new("severity_text", DataType::Utf8, false),
+        Field::new("severity_number", DataType::UInt8, false),
+        Field::new("service_name", DataType::Utf8, false),
+        Field::new("body", DataType::Utf8, false),
+        Field::new("resource_schema_url", DataType::Utf8, false),
+        Field::new("resource_attributes", DataType::Utf8, false),
+        Field::new("scope_schema_url", DataType::Utf8, false),
+        Field::new("scope_name", DataType::Utf8, false),
+        Field::new("scope_version", DataType::Utf8, false),
+        Field::new("scope_attributes", DataType::Utf8, false),
+        Field::new("log_attributes", DataType::Utf8, false),
+    ]))
+});
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct LogRecordRow {
     pub timestamp: u64,
@@ -59,24 +80,6 @@ impl ToRecordBatch for LogRecordRow {
                 .collect::<Vec<_>>(),
         );
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", DataType::UInt64, false),
-            Field::new("trace_id", DataType::Utf8, false),
-            Field::new("span_id", DataType::Utf8, false),
-            Field::new("trace_flags", DataType::UInt8, false),
-            Field::new("severity_text", DataType::Utf8, false),
-            Field::new("severity_number", DataType::UInt8, false),
-            Field::new("service_name", DataType::Utf8, false),
-            Field::new("body", DataType::Utf8, false),
-            Field::new("resource_schema_url", DataType::Utf8, false),
-            Field::new("resource_attributes", DataType::Utf8, false),
-            Field::new("scope_schema_url", DataType::Utf8, false),
-            Field::new("scope_name", DataType::Utf8, false),
-            Field::new("scope_version", DataType::Utf8, false),
-            Field::new("scope_attributes", DataType::Utf8, false),
-            Field::new("log_attributes", DataType::Utf8, false),
-        ]));
-
         let columns: Vec<ArrayRef> = vec![
             Arc::new(timestamp),
             Arc::new(trace_id),
@@ -95,7 +98,9 @@ impl ToRecordBatch for LogRecordRow {
             Arc::new(log_attributes),
         ];
 
-        RecordBatch::try_new(schema, columns).map_err(|e| FileExporterError::Export(e.to_string()))
+        // Use the static schema instead of creating a new one
+        RecordBatch::try_new(LOG_SCHEMA.clone(), columns)
+            .map_err(|e| FileExporterError::Export(e.to_string()))
     }
 }
 

@@ -11,6 +11,23 @@ use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
 use crate::{build_string_array, build_u64_array};
 
+// Static schema created once and reused for all metric record batches
+static METRIC_SCHEMA: std::sync::LazyLock<Arc<Schema>> = std::sync::LazyLock::new(|| {
+    Arc::new(Schema::new(vec![
+        Field::new("timestamp", DataType::UInt64, false),
+        Field::new("name", DataType::Utf8, false),
+        Field::new("description", DataType::Utf8, false),
+        Field::new("unit", DataType::Utf8, false),
+        Field::new("type_", DataType::Utf8, false),
+        Field::new("service_name", DataType::Utf8, false),
+        Field::new("value", DataType::Utf8, false),
+        Field::new("resource_attributes", DataType::Utf8, false),
+        Field::new("scope_name", DataType::Utf8, false),
+        Field::new("scope_version", DataType::Utf8, false),
+        Field::new("scope_attributes", DataType::Utf8, false),
+    ]))
+});
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct MetricRow {
     pub timestamp: u64,
@@ -52,20 +69,6 @@ impl ToRecordBatch for MetricRow {
                 .collect::<Vec<_>>(),
         );
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", DataType::UInt64, false),
-            Field::new("name", DataType::Utf8, false),
-            Field::new("description", DataType::Utf8, false),
-            Field::new("unit", DataType::Utf8, false),
-            Field::new("type_", DataType::Utf8, false),
-            Field::new("service_name", DataType::Utf8, false),
-            Field::new("value", DataType::Utf8, false),
-            Field::new("resource_attributes", DataType::Utf8, false),
-            Field::new("scope_name", DataType::Utf8, false),
-            Field::new("scope_version", DataType::Utf8, false),
-            Field::new("scope_attributes", DataType::Utf8, false),
-        ]));
-
         let columns: Vec<ArrayRef> = vec![
             Arc::new(timestamp),
             Arc::new(name),
@@ -80,7 +83,9 @@ impl ToRecordBatch for MetricRow {
             Arc::new(scope_attributes),
         ];
 
-        RecordBatch::try_new(schema, columns).map_err(|e| FileExporterError::Export(e.to_string()))
+        // Use the static schema instead of creating a new one
+        RecordBatch::try_new(METRIC_SCHEMA.clone(), columns)
+            .map_err(|e| FileExporterError::Export(e.to_string()))
     }
 }
 
