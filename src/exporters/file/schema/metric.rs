@@ -7,8 +7,8 @@ use arrow::record_batch::RecordBatch;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 
+use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
-use super::common::{map_or_json_to_string, MapOrJson, ToRecordBatch};
 use crate::{build_string_array, build_u64_array};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -34,11 +34,23 @@ impl ToRecordBatch for MetricRow {
         let unit = build_string_array!(rows, unit);
         let type_ = build_string_array!(rows, type_);
         let service_name = build_string_array!(rows, service_name);
-        let value = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.value)).collect::<Vec<_>>());
-        let resource_attributes = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.resource_attributes)).collect::<Vec<_>>());
+        let value = arrow::array::StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.value))
+                .collect::<Vec<_>>(),
+        );
+        let resource_attributes = arrow::array::StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.resource_attributes))
+                .collect::<Vec<_>>(),
+        );
         let scope_name = build_string_array!(rows, scope_name);
         let scope_version = build_string_array!(rows, scope_version);
-        let scope_attributes = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.scope_attributes)).collect::<Vec<_>>());
+        let scope_attributes = arrow::array::StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.scope_attributes))
+                .collect::<Vec<_>>(),
+        );
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", DataType::UInt64, false),
@@ -73,7 +85,9 @@ impl ToRecordBatch for MetricRow {
 }
 
 impl MetricRow {
-    pub fn from_resource_metrics(resource_metrics: &ResourceMetrics) -> Result<Vec<MetricRow>, FileExporterError> {
+    pub fn from_resource_metrics(
+        resource_metrics: &ResourceMetrics,
+    ) -> Result<Vec<MetricRow>, FileExporterError> {
         // retain core imports only
         use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValue;
 
@@ -139,26 +153,31 @@ impl MetricRow {
 
                 // We treat the *first* data point as representative for timestamp & value.
                 let (timestamp, value_json) = match &metric.data {
-                    Some(Data::Gauge(g)) => g.data_points.first().map(|dp| (
-                        dp.time_unix_nano,
-                        number_datapoint_to_json(dp)
-                    )).unwrap_or((0, "null".to_string())),
-                    Some(Data::Sum(s)) => s.data_points.first().map(|dp| (
-                        dp.time_unix_nano,
-                        number_datapoint_to_json(dp)
-                    )).unwrap_or((0, "null".to_string())),
-                    Some(Data::Histogram(h)) => h.data_points.first().map(|dp| (
-                        dp.time_unix_nano,
-                        histogram_datapoint_to_json(dp)
-                    )).unwrap_or((0, "{}".to_string())),
-                    Some(Data::ExponentialHistogram(eh)) => eh.data_points.first().map(|dp| (
-                        dp.time_unix_nano,
-                        exp_hist_datapoint_to_json(dp)
-                    )).unwrap_or((0, "{}".to_string())),
-                    Some(Data::Summary(su)) => su.data_points.first().map(|dp| (
-                        dp.time_unix_nano,
-                        summary_datapoint_to_json(dp)
-                    )).unwrap_or((0, "{}".to_string())),
+                    Some(Data::Gauge(g)) => g
+                        .data_points
+                        .first()
+                        .map(|dp| (dp.time_unix_nano, number_datapoint_to_json(dp)))
+                        .unwrap_or((0, "null".to_string())),
+                    Some(Data::Sum(s)) => s
+                        .data_points
+                        .first()
+                        .map(|dp| (dp.time_unix_nano, number_datapoint_to_json(dp)))
+                        .unwrap_or((0, "null".to_string())),
+                    Some(Data::Histogram(h)) => h
+                        .data_points
+                        .first()
+                        .map(|dp| (dp.time_unix_nano, histogram_datapoint_to_json(dp)))
+                        .unwrap_or((0, "{}".to_string())),
+                    Some(Data::ExponentialHistogram(eh)) => eh
+                        .data_points
+                        .first()
+                        .map(|dp| (dp.time_unix_nano, exp_hist_datapoint_to_json(dp)))
+                        .unwrap_or((0, "{}".to_string())),
+                    Some(Data::Summary(su)) => su
+                        .data_points
+                        .first()
+                        .map(|dp| (dp.time_unix_nano, summary_datapoint_to_json(dp)))
+                        .unwrap_or((0, "{}".to_string())),
                     None => (0, "{}".to_string()),
                 };
 
@@ -184,16 +203,24 @@ impl MetricRow {
 
 // ---- helper functions --------------------------------------------
 
-fn number_datapoint_to_json(dp: &opentelemetry_proto::tonic::metrics::v1::NumberDataPoint) -> String {
+fn number_datapoint_to_json(
+    dp: &opentelemetry_proto::tonic::metrics::v1::NumberDataPoint,
+) -> String {
     use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::*;
-    let v = dp.value.as_ref().map(|val| match val {
-        AsInt(i) => serde_json::json!(*i),
-        AsDouble(d) => serde_json::json!(*d),
-    }).unwrap_or(serde_json::json!(null));
+    let v = dp
+        .value
+        .as_ref()
+        .map(|val| match val {
+            AsInt(i) => serde_json::json!(*i),
+            AsDouble(d) => serde_json::json!(*d),
+        })
+        .unwrap_or(serde_json::json!(null));
     v.to_string()
 }
 
-fn histogram_datapoint_to_json(dp: &opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint) -> String {
+fn histogram_datapoint_to_json(
+    dp: &opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint,
+) -> String {
     let v = serde_json::json!({
         "count": dp.count,
         "sum": dp.sum,
@@ -203,7 +230,9 @@ fn histogram_datapoint_to_json(dp: &opentelemetry_proto::tonic::metrics::v1::His
     v.to_string()
 }
 
-fn exp_hist_datapoint_to_json(dp: &opentelemetry_proto::tonic::metrics::v1::ExponentialHistogramDataPoint) -> String {
+fn exp_hist_datapoint_to_json(
+    dp: &opentelemetry_proto::tonic::metrics::v1::ExponentialHistogramDataPoint,
+) -> String {
     let v = serde_json::json!({
         "count": dp.count,
         "sum": dp.sum.unwrap_or(0.0),
@@ -221,17 +250,23 @@ fn exp_hist_datapoint_to_json(dp: &opentelemetry_proto::tonic::metrics::v1::Expo
     v.to_string()
 }
 
-fn summary_datapoint_to_json(dp: &opentelemetry_proto::tonic::metrics::v1::SummaryDataPoint) -> String {
-    let quantiles: Vec<_> = dp.quantile_values.iter().map(|qv| {
-        serde_json::json!({
-            "quantile": qv.quantile,
-            "value": qv.value,
+fn summary_datapoint_to_json(
+    dp: &opentelemetry_proto::tonic::metrics::v1::SummaryDataPoint,
+) -> String {
+    let quantiles: Vec<_> = dp
+        .quantile_values
+        .iter()
+        .map(|qv| {
+            serde_json::json!({
+                "quantile": qv.quantile,
+                "value": qv.value,
+            })
         })
-    }).collect();
+        .collect();
     let v = serde_json::json!({
         "count": dp.count,
         "sum": dp.sum,
         "quantile_values": quantiles,
     });
     v.to_string()
-} 
+}

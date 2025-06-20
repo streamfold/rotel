@@ -15,13 +15,13 @@ use thiserror::Error;
 pub enum FileExporterError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Invalid data format: {0}")]
     InvalidData(String),
-    
+
     #[error("Configuration error: {0}")]
     Config(String),
-    
+
     #[error("Export error: {0}")]
     Export(String),
 }
@@ -42,20 +42,20 @@ pub trait FileExporter: Send + Sync {
     /// `FileExporterError::InvalidData` for malformed data,
     /// or `FileExporterError::Export` for Parquet/Arrow failures.
     fn export(&self, data: &[u8], path: &Path) -> Result<()>;
-    
+
     /// Validate the data before export.
     ///
     /// # Errors
     ///
     /// Returns `FileExporterError::InvalidData` if the data is not valid for export.
     fn validate(&self, data: &[u8]) -> Result<()>;
-    
+
     /// Get list of supported file formats.
     fn get_supported_formats(&self) -> Vec<String>;
 }
 
 pub mod config;
+pub mod json;
 pub mod parquet;
 pub mod schema;
 pub mod task;
-pub mod json; 

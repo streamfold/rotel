@@ -503,16 +503,13 @@ impl Agent {
                 let traces_rx = trace_pipeline_out_rx;
                 let metrics_rx = metrics_pipeline_out_rx;
                 let logs_rx = logs_pipeline_out_rx;
-                let _flush = self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe());
                 let token = exporters_cancel.clone();
                 exporters_task_set.spawn(async move {
                     match crate::exporters::file::task::run_file_exporter(
-                        config,
-                        traces_rx,
-                        metrics_rx,
-                        logs_rx,
-                        token,
-                    ).await {
+                        config, traces_rx, metrics_rx, logs_rx, token,
+                    )
+                    .await
+                    {
                         Ok(_) => Ok(()),
                         Err(e) => {
                             error!(error = ?e, "File exporter returned from run loop with error.");

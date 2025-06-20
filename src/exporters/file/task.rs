@@ -1,13 +1,15 @@
 use crate::bounded_channel::BoundedReceiver;
-use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
-use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
-use crate::exporters::file::schema::{SpanRow, MetricRow, LogRecordRow};
-use crate::exporters::file::{FileExporterError, config::FileExporterConfig, parquet::ParquetExporter};
-use chrono::Utc;
-use tokio_util::sync::CancellationToken;
-use tracing::{info, debug};
 use crate::exporters::file::json::JsonExporter;
+use crate::exporters::file::schema::{LogRecordRow, MetricRow, SpanRow};
+use crate::exporters::file::{
+    FileExporterError, config::FileExporterConfig, parquet::ParquetExporter,
+};
+use chrono::Utc;
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info};
 
 pub async fn run_file_exporter(
     config: FileExporterConfig,
@@ -19,33 +21,59 @@ pub async fn run_file_exporter(
     let _format = config.format;
     let path = config.path;
     let flush_interval = config.flush_interval;
-    
+
     let format = _format.to_lowercase();
 
     // Create output directories if they don't exist
     let traces_dir = path.join("spans");
     let metrics_dir = path.join("metrics");
     let logs_dir = path.join("logs");
-    
-    std::fs::create_dir_all(&traces_dir)
-        .map_err(FileExporterError::Io)?;
-    std::fs::create_dir_all(&metrics_dir)
-        .map_err(FileExporterError::Io)?;
-    std::fs::create_dir_all(&logs_dir)
-        .map_err(FileExporterError::Io)?;
 
-    info!("File exporter started, writing {} data to {}", format, path.display());
+    std::fs::create_dir_all(&traces_dir).map_err(FileExporterError::Io)?;
+    std::fs::create_dir_all(&metrics_dir).map_err(FileExporterError::Io)?;
+    std::fs::create_dir_all(&logs_dir).map_err(FileExporterError::Io)?;
+
+    info!(
+        "File exporter started, writing {} data to {}",
+        format,
+        path.display()
+    );
 
     match format.as_str() {
         "parquet" => {
             let exporter = ParquetExporter::new();
-            run_export_loop_parquet(exporter, traces_dir, metrics_dir, logs_dir, traces_rx, metrics_rx, logs_rx, flush_interval, token).await
+            run_export_loop_parquet(
+                exporter,
+                traces_dir,
+                metrics_dir,
+                logs_dir,
+                traces_rx,
+                metrics_rx,
+                logs_rx,
+                flush_interval,
+                token,
+            )
+            .await
         }
         "json" => {
             let exporter = JsonExporter::new();
-            run_export_loop_json(exporter, traces_dir, metrics_dir, logs_dir, traces_rx, metrics_rx, logs_rx, flush_interval, token).await
+            run_export_loop_json(
+                exporter,
+                traces_dir,
+                metrics_dir,
+                logs_dir,
+                traces_rx,
+                metrics_rx,
+                logs_rx,
+                flush_interval,
+                token,
+            )
+            .await
         }
-        _ => Err(FileExporterError::Config(format!("Unsupported export format: {}", format)))
+        _ => Err(FileExporterError::Config(format!(
+            "Unsupported export format: {}",
+            format
+        ))),
     }
 }
 
@@ -56,9 +84,9 @@ async fn run_export_loop_parquet(
     traces_dir: std::path::PathBuf,
     metrics_dir: std::path::PathBuf,
     logs_dir: std::path::PathBuf,
-    mut traces_rx: BoundedReceiver<Vec<ResourceSpans>>,    
-    mut metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,    
-    mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,    
+    mut traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    mut metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
 ) -> Result<(), FileExporterError> {
@@ -75,7 +103,8 @@ async fn run_export_loop_parquet(
     // Helper that writes out any non-empty buffer and clears it afterwards
     let flush = |span_buf: &mut Vec<SpanRow>,
                  metric_buf: &mut Vec<MetricRow>,
-                 log_buf: &mut Vec<LogRecordRow>| -> Result<(), FileExporterError> {
+                 log_buf: &mut Vec<LogRecordRow>|
+     -> Result<(), FileExporterError> {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         if !span_buf.is_empty() {
             let rows = span_buf.len();
@@ -145,9 +174,9 @@ async fn run_export_loop_json(
     traces_dir: std::path::PathBuf,
     metrics_dir: std::path::PathBuf,
     logs_dir: std::path::PathBuf,
-    mut traces_rx: BoundedReceiver<Vec<ResourceSpans>>,    
-    mut metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,    
-    mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,    
+    mut traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    mut metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
 ) -> Result<(), FileExporterError> {
@@ -161,7 +190,8 @@ async fn run_export_loop_json(
     // Flush helper
     let flush = |tr_buf: &mut Vec<ResourceSpans>,
                  met_buf: &mut Vec<ResourceMetrics>,
-                 log_buf: &mut Vec<ResourceLogs>| -> Result<(), FileExporterError> {
+                 log_buf: &mut Vec<ResourceLogs>|
+     -> Result<(), FileExporterError> {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         if !tr_buf.is_empty() {
             let items = tr_buf.len();
@@ -212,4 +242,4 @@ async fn run_export_loop_json(
 
     info!("File exporter shutting down, flush complete");
     Ok(())
-} 
+}

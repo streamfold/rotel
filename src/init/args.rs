@@ -2,29 +2,13 @@ use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+use crate::init::file_exporter::FileExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
 use clap::{Args, ValueEnum};
 use std::error::Error;
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::time::Duration;
 use tower::BoxError;
-
-#[derive(Debug, Args, Clone)]
-pub struct FileExporterArgs {
-    /// File format for export (e.g., "parquet")
-    #[arg(long, env = "ROTEL_FILE_FORMAT", default_value = "parquet")]
-    pub format: String,
-
-    /// Directory where files will be written
-    #[arg(long, env = "ROTEL_FILE_PATH", default_value = "/tmp/rotel")]
-    pub path: PathBuf,
-
-    /// How often to flush data to disk (e.g., "5s")
-    #[arg(long, env = "ROTEL_FILE_FLUSH_INTERVAL", default_value = "5s", value_parser = humantime::parse_duration)]
-    pub flush_interval: Duration,
-}
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {

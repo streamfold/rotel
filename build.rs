@@ -1,5 +1,5 @@
-use std::io::Result;
 use std::env;
+use std::io::Result;
 
 fn main() -> Result<()> {
     println!("cargo::rerun-if-changed=proto/datadog");

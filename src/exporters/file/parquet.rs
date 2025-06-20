@@ -1,11 +1,11 @@
-use std::path::Path;
+use crate::exporters::file::schema::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
+use crate::exporters::file::{FileExporter, FileExporterError, Result};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
-use parquet::file::properties::WriterProperties;
 use parquet::basic::Compression;
-use crate::exporters::file::{FileExporter, Result, FileExporterError};
-use crate::exporters::file::schema::{SpanRow, MetricRow, LogRecordRow, ToRecordBatch};
+use parquet::file::properties::WriterProperties;
 use serde_json::Value;
+use std::path::Path;
 
 /// A Parquet file exporter implementation
 pub struct ParquetExporter {
@@ -19,10 +19,10 @@ impl ParquetExporter {
         let writer_properties = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
             .build();
-            
+
         Self { writer_properties }
     }
-    
+
     /// Creates a new ParquetExporter with custom writer properties
     pub fn with_properties(writer_properties: WriterProperties) -> Self {
         Self { writer_properties }
@@ -48,13 +48,17 @@ impl ParquetExporter {
 
     /// Export a generic RecordBatch to Parquet
     pub fn export_record_batch(&self, batch: &RecordBatch, path: &Path) -> Result<()> {
-        let file = std::fs::File::create(path)
-            .map_err(FileExporterError::Io)?;
-        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(self.writer_properties.clone()))
-            .map_err(|e| FileExporterError::Export(format!("Failed to create ArrowWriter: {}", e)))?;
-        writer.write(batch)
-            .map_err(|e| FileExporterError::Export(format!("Failed to write RecordBatch: {}", e)))?;
-        writer.close()
+        let file = std::fs::File::create(path).map_err(FileExporterError::Io)?;
+        let mut writer =
+            ArrowWriter::try_new(file, batch.schema(), Some(self.writer_properties.clone()))
+                .map_err(|e| {
+                    FileExporterError::Export(format!("Failed to create ArrowWriter: {}", e))
+                })?;
+        writer.write(batch).map_err(|e| {
+            FileExporterError::Export(format!("Failed to write RecordBatch: {}", e))
+        })?;
+        writer
+            .close()
             .map_err(|e| FileExporterError::Export(format!("Failed to close writer: {}", e)))?;
         Ok(())
     }
@@ -75,9 +79,8 @@ impl FileExporter for ParquetExporter {
     /// Performs lightweight validation ensuring the payload is a **non-empty**
     /// JSON array (e.g. `[{...}, {...}]`).
     fn validate(&self, data: &[u8]) -> Result<()> {
-        let value: Value = serde_json::from_slice(data).map_err(|e| {
-            FileExporterError::InvalidData(format!("Failed to parse JSON: {}", e))
-        })?;
+        let value: Value = serde_json::from_slice(data)
+            .map_err(|e| FileExporterError::InvalidData(format!("Failed to parse JSON: {}", e)))?;
 
         let arr = value.as_array().ok_or_else(|| {
             FileExporterError::InvalidData("Expected JSON array of objects".to_string())
@@ -91,7 +94,7 @@ impl FileExporter for ParquetExporter {
 
         Ok(())
     }
-    
+
     fn get_supported_formats(&self) -> Vec<String> {
         vec!["parquet".to_string()]
     }
@@ -107,21 +110,22 @@ impl Default for ParquetExporter {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    
+
     #[test]
     fn test_get_supported_formats() {
         let exporter = ParquetExporter::new();
         let formats = exporter.get_supported_formats();
         assert_eq!(formats, vec!["parquet"]);
     }
-    
+
     #[test]
     fn test_validate_valid_json() {
         let exporter = ParquetExporter::new();
         let data = r#"[
             {"id": 1, "name": "test1"},
             {"id": 2, "name": "test2"}
-        ]"#.as_bytes();
+        ]"#
+        .as_bytes();
         let result = exporter.validate(data);
         assert!(result.is_ok());
     }
@@ -148,12 +152,13 @@ mod tests {
         let data = r#"[
             {"id": 1, "name": "test1"},
             {"id": 2, "name": "test2"}
-        ]"#.as_bytes();
+        ]"#
+        .as_bytes();
         let path = PathBuf::from("test.parquet");
         let result = exporter.export(data, &path);
         assert!(result.is_ok());
-        
+
         // Clean up
         let _ = std::fs::remove_file(path);
     }
-} 
+}

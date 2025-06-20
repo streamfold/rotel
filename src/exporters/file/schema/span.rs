@@ -7,9 +7,12 @@ use arrow::record_batch::RecordBatch;
 
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
-use super::common::{map_or_json_to_string, vec_u64_to_list_array, vec_string_to_list_array, vec_maporjson_to_list_array, MapOrJson, ToRecordBatch};
+use super::common::{
+    MapOrJson, ToRecordBatch, map_or_json_to_string, vec_maporjson_to_list_array,
+    vec_string_to_list_array, vec_u64_to_list_array,
+};
 use crate::exporters::file::FileExporterError;
-use crate::{build_string_array, build_u64_array, build_i64_array};
+use crate::{build_i64_array, build_string_array, build_u64_array};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct SpanRow {
@@ -48,22 +51,65 @@ impl ToRecordBatch for SpanRow {
         let span_name = build_string_array!(rows, span_name);
         let span_kind = build_string_array!(rows, span_kind);
         let service_name = build_string_array!(rows, service_name);
-        let resource_attributes = StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.resource_attributes)).collect::<Vec<_>>());
+        let resource_attributes = StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.resource_attributes))
+                .collect::<Vec<_>>(),
+        );
         let scope_name = build_string_array!(rows, scope_name);
         let scope_version = build_string_array!(rows, scope_version);
-        let span_attributes = StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.span_attributes)).collect::<Vec<_>>());
+        let span_attributes = StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.span_attributes))
+                .collect::<Vec<_>>(),
+        );
         let duration = build_i64_array!(rows, duration);
         let status_code = build_string_array!(rows, status_code);
         let status_message = build_string_array!(rows, status_message);
 
         // Repeated / list columns -------------------------------------------
-        let events_timestamp = vec_u64_to_list_array(&rows.iter().map(|r| r.events_timestamp.clone()).collect::<Vec<_>>());
-        let events_name = vec_string_to_list_array(&rows.iter().map(|r| r.events_name.clone()).collect::<Vec<_>>());
-        let events_attributes = vec_maporjson_to_list_array(&rows.iter().map(|r| r.events_attributes.clone()).collect::<Vec<_>>());
-        let links_trace_id = vec_string_to_list_array(&rows.iter().map(|r| r.links_trace_id.clone()).collect::<Vec<_>>());
-        let links_span_id = vec_string_to_list_array(&rows.iter().map(|r| r.links_span_id.clone()).collect::<Vec<_>>());
-        let links_trace_state = vec_string_to_list_array(&rows.iter().map(|r| r.links_trace_state.clone()).collect::<Vec<_>>());
-        let links_attributes = vec_maporjson_to_list_array(&rows.iter().map(|r| r.links_attributes.clone()).collect::<Vec<_>>());
+        let events_timestamp = vec_u64_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.events_timestamp.clone())
+                .collect::<Vec<_>>(),
+        );
+        let events_name = vec_string_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.events_name.clone())
+                .collect::<Vec<_>>(),
+        );
+        let events_attributes = vec_maporjson_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.events_attributes.clone())
+                .collect::<Vec<_>>(),
+        );
+        let links_trace_id = vec_string_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.links_trace_id.clone())
+                .collect::<Vec<_>>(),
+        );
+        let links_span_id = vec_string_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.links_span_id.clone())
+                .collect::<Vec<_>>(),
+        );
+        let links_trace_state = vec_string_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.links_trace_state.clone())
+                .collect::<Vec<_>>(),
+        );
+        let links_attributes = vec_maporjson_to_list_array(
+            &rows
+                .iter()
+                .map(|r| r.links_attributes.clone())
+                .collect::<Vec<_>>(),
+        );
 
         // Schema -------------------------------------------------------------
         let schema = Arc::new(Schema::new(vec![
@@ -82,13 +128,41 @@ impl ToRecordBatch for SpanRow {
             Field::new("duration", DataType::Int64, false),
             Field::new("status_code", DataType::Utf8, false),
             Field::new("status_message", DataType::Utf8, false),
-            Field::new("events_timestamp", DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))), false),
-            Field::new("events_name", DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))), false),
-            Field::new("events_attributes", DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))), false),
-            Field::new("links_trace_id", DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))), false),
-            Field::new("links_span_id", DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))), false),
-            Field::new("links_trace_state", DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))), false),
-            Field::new("links_attributes", DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))), false),
+            Field::new(
+                "events_timestamp",
+                DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
+                false,
+            ),
+            Field::new(
+                "events_name",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                false,
+            ),
+            Field::new(
+                "events_attributes",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                false,
+            ),
+            Field::new(
+                "links_trace_id",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                false,
+            ),
+            Field::new(
+                "links_span_id",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                false,
+            ),
+            Field::new(
+                "links_trace_state",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                false,
+            ),
+            Field::new(
+                "links_attributes",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                false,
+            ),
         ]));
 
         let columns: Vec<ArrayRef> = vec![
@@ -121,7 +195,9 @@ impl ToRecordBatch for SpanRow {
 }
 
 impl SpanRow {
-    pub fn from_resource_spans(resource_spans: &ResourceSpans) -> Result<Vec<SpanRow>, FileExporterError> {
+    pub fn from_resource_spans(
+        resource_spans: &ResourceSpans,
+    ) -> Result<Vec<SpanRow>, FileExporterError> {
         let mut rows = Vec::new();
 
         // Convert resource attributes into a map ---------------------------------
@@ -149,24 +225,48 @@ impl SpanRow {
 
         // Extract service.name from resource attributes, default to "unknown" ---
         let service_name = if let MapOrJson::Map(map) = &resource_attributes {
-            map.get("service.name").cloned().unwrap_or_else(|| "unknown".to_string())
+            map.get("service.name")
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string())
         } else {
             "unknown".to_string()
         };
 
         // Helper to convert attribute list to MapOrJson --------------------------
-        fn attrs_to_map(attrs: &Vec<opentelemetry_proto::tonic::common::v1::KeyValue>) -> MapOrJson {
+        fn attrs_to_map(
+            attrs: &Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
+        ) -> MapOrJson {
             let mut map = HashMap::new();
             for attr in attrs {
                 if let Some(any_value) = &attr.value {
                     let value_str = match &any_value.value {
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => s.clone(),
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => b.to_string(),
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => i.to_string(),
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => d.to_string(),
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(_)) => "[]".to_string(),
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(_)) => "{}".to_string(),
-                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(_)) => "".to_string(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                                s,
+                            ),
+                        ) => s.clone(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b),
+                        ) => b.to_string(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i),
+                        ) => i.to_string(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(
+                                d,
+                            ),
+                        ) => d.to_string(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(_),
+                        ) => "[]".to_string(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(
+                                _,
+                            ),
+                        ) => "{}".to_string(),
+                        Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(_),
+                        ) => "".to_string(),
                         None => "".to_string(),
                     };
                     map.insert(attr.key.clone(), value_str);
@@ -219,10 +319,12 @@ impl SpanRow {
                 .as_ref()
                 .map_or("".to_string(), |s| s.version.clone());
 
-            let _scope_attributes = attrs_to_map(&scope_spans
-                .scope
-                .as_ref()
-                .map_or(vec![], |s| s.attributes.clone()));
+            let _scope_attributes = attrs_to_map(
+                &scope_spans
+                    .scope
+                    .as_ref()
+                    .map_or(vec![], |s| s.attributes.clone()),
+            );
 
             for span in &scope_spans.spans {
                 // Build the row --------------------------------------------------
@@ -272,4 +374,4 @@ impl SpanRow {
 
         Ok(rows)
     }
-} 
+}

@@ -5,9 +5,9 @@ use serde::Serialize;
 
 use crate::exporters::file::{FileExporterError, Result};
 
-use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 /// A JSON file exporter for native OTLP protobuf structures (ResourceSpans,
 /// ResourceMetrics, ResourceLogs).  Each exported file contains a JSON array of
@@ -23,9 +23,8 @@ impl JsonExporter {
     /// Serialize and write any `Serialize` payload to the given path.
     fn export_payload<T: Serialize + ?Sized>(&self, payload: &T, path: &Path) -> Result<()> {
         let file = File::create(path).map_err(FileExporterError::Io)?;
-        serde_json::to_writer_pretty(file, payload).map_err(|e| {
-            FileExporterError::Export(format!("Failed to write JSON: {}", e))
-        })
+        serde_json::to_writer_pretty(file, payload)
+            .map_err(|e| FileExporterError::Export(format!("Failed to write JSON: {}", e)))
     }
 
     /// Export traces (`Vec<ResourceSpans>`) as JSON.
@@ -66,4 +65,4 @@ mod tests {
         let contents = std::fs::read_to_string(&path).unwrap();
         assert_eq!(contents.trim(), "[]");
     }
-} 
+}

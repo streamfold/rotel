@@ -1,11 +1,11 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{StringArray, UInt64Array, ListArray};
+use arrow::array::{ListArray, StringArray, UInt64Array};
+use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
-use arrow::buffer::OffsetBuffer;
 
 use crate::exporters::file::FileExporterError;
 
@@ -33,9 +33,7 @@ pub trait ToRecordBatch {
 #[macro_export]
 macro_rules! build_string_array {
     ($rows:expr, $field:ident) => {
-        arrow::array::StringArray::from(
-            $rows.iter().map(|r| r.$field.clone()).collect::<Vec<_>>()
-        )
+        arrow::array::StringArray::from($rows.iter().map(|r| r.$field.clone()).collect::<Vec<_>>())
     };
 }
 
@@ -43,9 +41,7 @@ macro_rules! build_string_array {
 #[macro_export]
 macro_rules! build_u64_array {
     ($rows:expr, $field:ident) => {
-        arrow::array::UInt64Array::from(
-            $rows.iter().map(|r| r.$field).collect::<Vec<_>>()
-        )
+        arrow::array::UInt64Array::from($rows.iter().map(|r| r.$field).collect::<Vec<_>>())
     };
 }
 
@@ -53,9 +49,7 @@ macro_rules! build_u64_array {
 #[macro_export]
 macro_rules! build_i64_array {
     ($rows:expr, $field:ident) => {
-        arrow::array::Int64Array::from(
-            $rows.iter().map(|r| r.$field).collect::<Vec<_>>()
-        )
+        arrow::array::Int64Array::from($rows.iter().map(|r| r.$field).collect::<Vec<_>>())
     };
 }
 
@@ -63,9 +57,7 @@ macro_rules! build_i64_array {
 #[macro_export]
 macro_rules! build_u8_array {
     ($rows:expr, $field:ident) => {
-        arrow::array::UInt8Array::from(
-            $rows.iter().map(|r| r.$field).collect::<Vec<_>>()
-        )
+        arrow::array::UInt8Array::from($rows.iter().map(|r| r.$field).collect::<Vec<_>>())
     };
 }
 
@@ -79,9 +71,12 @@ pub(crate) fn map_or_json_to_string(m: &MapOrJson) -> String {
 
 /// Helper that builds a `ListArray<UInt64Array>` from a `Vec<Vec<u64>>` field.
 pub(crate) fn vec_u64_to_list_array(data: &[Vec<u64>]) -> ListArray {
-    let value_arrays: Vec<UInt64Array> = data.iter().map(|v| UInt64Array::from(v.clone())).collect();
+    let value_arrays: Vec<UInt64Array> =
+        data.iter().map(|v| UInt64Array::from(v.clone())).collect();
     let values = arrow::array::UInt64Array::from_iter(
-        value_arrays.iter().flat_map(|arr| arr.values().iter().copied()),
+        value_arrays
+            .iter()
+            .flat_map(|arr| arr.values().iter().copied()),
     );
     let offsets = OffsetBuffer::from_lengths(data.iter().map(|v| v.len()));
     ListArray::new(
@@ -94,9 +89,12 @@ pub(crate) fn vec_u64_to_list_array(data: &[Vec<u64>]) -> ListArray {
 
 /// Helper that builds a `ListArray<StringArray>` from a `Vec<Vec<String>>` field.
 pub(crate) fn vec_string_to_list_array(data: &[Vec<String>]) -> ListArray {
-    let value_arrays: Vec<StringArray> = data.iter().map(|v| StringArray::from(v.clone())).collect();
+    let value_arrays: Vec<StringArray> =
+        data.iter().map(|v| StringArray::from(v.clone())).collect();
     let values = arrow::array::StringArray::from_iter(
-        value_arrays.iter().flat_map(|arr| arr.iter().map(|s| s.map(|s| s.to_string()))),
+        value_arrays
+            .iter()
+            .flat_map(|arr| arr.iter().map(|s| s.map(|s| s.to_string()))),
     );
     let offsets = OffsetBuffer::from_lengths(data.iter().map(|v| v.len()));
     ListArray::new(
@@ -114,7 +112,9 @@ pub(crate) fn vec_maporjson_to_list_array(data: &[Vec<MapOrJson>]) -> ListArray 
         .map(|v| StringArray::from(v.iter().map(map_or_json_to_string).collect::<Vec<_>>()))
         .collect();
     let values = arrow::array::StringArray::from_iter(
-        value_arrays.iter().flat_map(|arr| arr.iter().map(|s| s.map(|s| s.to_string()))),
+        value_arrays
+            .iter()
+            .flat_map(|arr| arr.iter().map(|s| s.map(|s| s.to_string()))),
     );
     let offsets = OffsetBuffer::from_lengths(data.iter().map(|v| v.len()));
     ListArray::new(
@@ -123,4 +123,4 @@ pub(crate) fn vec_maporjson_to_list_array(data: &[Vec<MapOrJson>]) -> ListArray 
         Arc::new(values),
         None,
     )
-} 
+}

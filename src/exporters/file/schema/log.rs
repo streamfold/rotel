@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef};
+use arrow::array::ArrayRef;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 
+use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
-use super::common::{map_or_json_to_string, MapOrJson, ToRecordBatch};
-use crate::{build_string_array, build_u64_array, build_u8_array};
+use crate::{build_string_array, build_u8_array, build_u64_array};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct LogRecordRow {
@@ -40,12 +40,24 @@ impl ToRecordBatch for LogRecordRow {
         let service_name = build_string_array!(rows, service_name);
         let body = build_string_array!(rows, body);
         let resource_schema_url = build_string_array!(rows, resource_schema_url);
-        let resource_attributes = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.resource_attributes)).collect::<Vec<_>>());
+        let resource_attributes = arrow::array::StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.resource_attributes))
+                .collect::<Vec<_>>(),
+        );
         let scope_schema_url = build_string_array!(rows, scope_schema_url);
         let scope_name = build_string_array!(rows, scope_name);
         let scope_version = build_string_array!(rows, scope_version);
-        let scope_attributes = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.scope_attributes)).collect::<Vec<_>>());
-        let log_attributes = arrow::array::StringArray::from(rows.iter().map(|r| map_or_json_to_string(&r.log_attributes)).collect::<Vec<_>>());
+        let scope_attributes = arrow::array::StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.scope_attributes))
+                .collect::<Vec<_>>(),
+        );
+        let log_attributes = arrow::array::StringArray::from(
+            rows.iter()
+                .map(|r| map_or_json_to_string(&r.log_attributes))
+                .collect::<Vec<_>>(),
+        );
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", DataType::UInt64, false),
@@ -88,7 +100,9 @@ impl ToRecordBatch for LogRecordRow {
 }
 
 impl LogRecordRow {
-    pub fn from_resource_logs(resource_logs: &ResourceLogs) -> Result<Vec<LogRecordRow>, FileExporterError> {
+    pub fn from_resource_logs(
+        resource_logs: &ResourceLogs,
+    ) -> Result<Vec<LogRecordRow>, FileExporterError> {
         use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValue;
 
         fn attrs_to_map(attrs: &[opentelemetry_proto::tonic::common::v1::KeyValue]) -> MapOrJson {
@@ -175,4 +189,4 @@ impl LogRecordRow {
 
         Ok(rows)
     }
-} 
+}
