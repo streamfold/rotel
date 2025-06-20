@@ -8,8 +8,106 @@ use chrono::Utc;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::path::Path;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
+
+/// Generic trait for file exporters that can handle different data formats
+trait TypedFileExporter {
+    /// The type used to represent span data in this exporter
+    type SpanData: Clone;
+    /// The type used to represent metric data in this exporter
+    type MetricData: Clone;
+    /// The type used to represent log data in this exporter
+    type LogData: Clone;
+
+    /// Convert ResourceSpans to the exporter's span data format
+    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>>;
+    /// Convert ResourceMetrics to the exporter's metric data format
+    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>>;
+    /// Convert ResourceLogs to the exporter's log data format
+    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>>;
+
+    /// Export span data to a file
+    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()>;
+    /// Export metric data to a file
+    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()>;
+    /// Export log data to a file
+    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()>;
+
+    /// Get the file extension for this exporter
+    fn file_extension(&self) -> &'static str;
+}
+
+/// Implementation of TypedFileExporter for ParquetExporter
+impl TypedFileExporter for ParquetExporter {
+    type SpanData = SpanRow;
+    type MetricData = MetricRow;
+    type LogData = LogRecordRow;
+
+    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
+        SpanRow::from_resource_spans(resource_spans)
+    }
+
+    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
+        MetricRow::from_resource_metrics(resource_metrics)
+    }
+
+    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
+        LogRecordRow::from_resource_logs(resource_logs)
+    }
+
+    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()> {
+        self.export_span_rows(data, path)
+    }
+
+    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()> {
+        self.export_metric_rows(data, path)
+    }
+
+    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()> {
+        self.export_log_record_rows(data, path)
+    }
+
+    fn file_extension(&self) -> &'static str {
+        ".parquet"
+    }
+}
+
+/// Implementation of TypedFileExporter for JsonExporter
+impl TypedFileExporter for JsonExporter {
+    type SpanData = ResourceSpans;
+    type MetricData = ResourceMetrics;
+    type LogData = ResourceLogs;
+
+    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
+        Ok(vec![resource_spans.clone()])
+    }
+
+    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
+        Ok(vec![resource_metrics.clone()])
+    }
+
+    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
+        Ok(vec![resource_logs.clone()])
+    }
+
+    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()> {
+        self.export_traces(data, path)
+    }
+
+    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()> {
+        self.export_metrics(data, path)
+    }
+
+    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()> {
+        self.export_logs(data, path)
+    }
+
+    fn file_extension(&self) -> &'static str {
+        ".json"
+    }
+}
 
 pub async fn run_file_exporter(
     config: FileExporterConfig,
@@ -40,7 +138,7 @@ pub async fn run_file_exporter(
     match format {
         FileExporterFormat::Parquet => {
             let exporter = ParquetExporter::new();
-            run_export_loop_parquet(
+            run_export_loop(
                 exporter,
                 traces_dir,
                 metrics_dir,
@@ -55,7 +153,7 @@ pub async fn run_file_exporter(
         }
         FileExporterFormat::Json => {
             let exporter = JsonExporter::new();
-            run_export_loop_json(
+            run_export_loop(
                 exporter,
                 traces_dir,
                 metrics_dir,
@@ -71,10 +169,10 @@ pub async fn run_file_exporter(
     }
 }
 
-/// Parquet export loop (typed row conversion).
+/// Generic export loop that works with any TypedFileExporter implementation
 #[allow(clippy::too_many_arguments)]
-async fn run_export_loop_parquet(
-    exporter: ParquetExporter,
+async fn run_export_loop<E>(
+    exporter: E,
     traces_dir: std::path::PathBuf,
     metrics_dir: std::path::PathBuf,
     logs_dir: std::path::PathBuf,
@@ -83,42 +181,42 @@ async fn run_export_loop_parquet(
     mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
-) -> Result<()> {
-    let file_ext = ".parquet";
+) -> Result<()>
+where
+    E: TypedFileExporter,
+{
+    let file_ext = exporter.file_extension();
 
-    // ---------------------------------------------------------------------
-    // In-memory buffers.  We accumulate until `flush_interval` elapses or a
-    // shutdown signal arrives, then write ONE file per signal type.
-    // ---------------------------------------------------------------------
-    let mut span_buffer: Vec<SpanRow> = Vec::new();
-    let mut metric_buffer: Vec<MetricRow> = Vec::new();
-    let mut log_buffer: Vec<LogRecordRow> = Vec::new();
+    // In-memory buffers for accumulating data
+    let mut span_buffer: Vec<E::SpanData> = Vec::new();
+    let mut metric_buffer: Vec<E::MetricData> = Vec::new();
+    let mut log_buffer: Vec<E::LogData> = Vec::new();
 
     // Helper that writes out any non-empty buffer and clears it afterwards
-    let flush = |span_buf: &mut Vec<SpanRow>,
-                 metric_buf: &mut Vec<MetricRow>,
-                 log_buf: &mut Vec<LogRecordRow>|
+    let flush = |span_buf: &mut Vec<E::SpanData>,
+                 metric_buf: &mut Vec<E::MetricData>,
+                 log_buf: &mut Vec<E::LogData>|
      -> Result<()> {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         if !span_buf.is_empty() {
             let rows = span_buf.len();
             let file_path = traces_dir.join(format!("spans_{}{}", timestamp, file_ext));
-            exporter.export_span_rows(span_buf, &file_path)?;
-            debug!(rows, path=%file_path.display(), "Flushed spans parquet file");
+            exporter.export_spans(span_buf, &file_path)?;
+            debug!(rows, path=%file_path.display(), "Flushed spans file");
             span_buf.clear();
         }
         if !metric_buf.is_empty() {
             let rows = metric_buf.len();
             let file_path = metrics_dir.join(format!("metrics_{}{}", timestamp, file_ext));
-            exporter.export_metric_rows(metric_buf, &file_path)?;
-            debug!(rows, path=%file_path.display(), "Flushed metrics parquet file");
+            exporter.export_metrics(metric_buf, &file_path)?;
+            debug!(rows, path=%file_path.display(), "Flushed metrics file");
             metric_buf.clear();
         }
         if !log_buf.is_empty() {
             let rows = log_buf.len();
             let file_path = logs_dir.join(format!("logs_{}{}", timestamp, file_ext));
-            exporter.export_log_record_rows(log_buf, &file_path)?;
-            debug!(rows, path=%file_path.display(), "Flushed logs parquet file");
+            exporter.export_logs(log_buf, &file_path)?;
+            debug!(rows, path=%file_path.display(), "Flushed logs file");
             log_buf.clear();
         }
         Ok(())
@@ -129,20 +227,20 @@ async fn run_export_loop_parquet(
         tokio::select! {
             Some(traces) = traces_rx.next() => {
                 for resource_spans in traces {
-                    let mut span_rows = SpanRow::from_resource_spans(&resource_spans)?;
-                    span_buffer.append(&mut span_rows);
+                    let mut converted_spans = exporter.convert_spans(&resource_spans)?;
+                    span_buffer.append(&mut converted_spans);
                 }
             }
             Some(metrics) = metrics_rx.next() => {
                 for resource_metrics in metrics {
-                    let mut metric_rows = MetricRow::from_resource_metrics(&resource_metrics)?;
-                    metric_buffer.append(&mut metric_rows);
+                    let mut converted_metrics = exporter.convert_metrics(&resource_metrics)?;
+                    metric_buffer.append(&mut converted_metrics);
                 }
             }
             Some(logs) = logs_rx.next() => {
                 for resource_logs in logs {
-                    let mut log_rows = LogRecordRow::from_resource_logs(&resource_logs)?;
-                    log_buffer.append(&mut log_rows);
+                    let mut converted_logs = exporter.convert_logs(&resource_logs)?;
+                    log_buffer.append(&mut converted_logs);
                 }
             }
             _ = flush_timer.tick() => {
@@ -152,83 +250,6 @@ async fn run_export_loop_parquet(
                 info!("File exporter received shutdown signal");
                 // Final flush before exit
                 flush(&mut span_buffer, &mut metric_buffer, &mut log_buffer)?;
-                break;
-            }
-        }
-    }
-
-    info!("File exporter shutting down, flush complete");
-    Ok(())
-}
-
-/// JSON export loop (native OTLP JSON).
-#[allow(clippy::too_many_arguments)]
-async fn run_export_loop_json(
-    exporter: JsonExporter,
-    traces_dir: std::path::PathBuf,
-    metrics_dir: std::path::PathBuf,
-    logs_dir: std::path::PathBuf,
-    mut traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
-    mut metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
-    mut logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
-    flush_interval: std::time::Duration,
-    token: CancellationToken,
-) -> Result<()> {
-    let file_ext = ".json";
-
-    // Buffers
-    let mut trace_buffer: Vec<ResourceSpans> = Vec::new();
-    let mut metric_buffer: Vec<ResourceMetrics> = Vec::new();
-    let mut log_buffer: Vec<ResourceLogs> = Vec::new();
-
-    // Flush helper
-    let flush = |tr_buf: &mut Vec<ResourceSpans>,
-                 met_buf: &mut Vec<ResourceMetrics>,
-                 log_buf: &mut Vec<ResourceLogs>|
-     -> Result<()> {
-        let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-        if !tr_buf.is_empty() {
-            let items = tr_buf.len();
-            let file_path = traces_dir.join(format!("spans_{}{}", timestamp, file_ext));
-            exporter.export_traces(tr_buf, &file_path)?;
-            debug!(items, path=%file_path.display(), "Flushed spans JSON file");
-            tr_buf.clear();
-        }
-        if !met_buf.is_empty() {
-            let items = met_buf.len();
-            let file_path = metrics_dir.join(format!("metrics_{}{}", timestamp, file_ext));
-            exporter.export_metrics(met_buf, &file_path)?;
-            debug!(items, path=%file_path.display(), "Flushed metrics JSON file");
-            met_buf.clear();
-        }
-        if !log_buf.is_empty() {
-            let items = log_buf.len();
-            let file_path = logs_dir.join(format!("logs_{}{}", timestamp, file_ext));
-            exporter.export_logs(log_buf, &file_path)?;
-            debug!(items, path=%file_path.display(), "Flushed logs JSON file");
-            log_buf.clear();
-        }
-        Ok(())
-    };
-
-    let mut flush_timer = tokio::time::interval(flush_interval);
-    loop {
-        tokio::select! {
-            Some(traces) = traces_rx.next() => {
-                trace_buffer.extend(traces);
-            }
-            Some(metrics) = metrics_rx.next() => {
-                metric_buffer.extend(metrics);
-            }
-            Some(logs) = logs_rx.next() => {
-                log_buffer.extend(logs);
-            }
-            _ = flush_timer.tick() => {
-                flush(&mut trace_buffer, &mut metric_buffer, &mut log_buffer)?;
-            }
-            _ = token.cancelled() => {
-                info!("File exporter received shutdown signal");
-                flush(&mut trace_buffer, &mut metric_buffer, &mut log_buffer)?;
                 break;
             }
         }
