@@ -115,7 +115,8 @@ pub struct AgentRun {
     pub batch: BatchArgs,
 
     /// Exporter
-    #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]
+    #[arg(value_enum, long, env = "ROTEL_EXPORTER")]
+    //pub exporter: Option<Exporter>,
     pub exporter: Exporter,
 
     #[command(flatten)]

@@ -87,6 +87,19 @@ pub fn get_meter() -> Meter {
     global::meter("exporters")
 }
 
+pub fn config_builder(
+    type_name: String,
+    endpoint: Endpoint,
+    protocol: Protocol,
+) -> OTLPExporterConfig {
+    OTLPExporterConfig {
+        type_name,
+        endpoint,
+        protocol,
+        ..Default::default()
+    }
+}
+
 /// Creates a configuration builder for OTLP trace export
 ///
 /// # Arguments
