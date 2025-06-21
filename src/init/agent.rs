@@ -1,5 +1,5 @@
 use crate::aws_api::config::AwsConfig;
-use crate::bounded_channel::{bounded, BoundedReceiver};
+use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
@@ -8,7 +8,7 @@ use crate::exporters::otlp;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::xray::XRayTraceExporterBuilder;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{parse_bool_value, AgentRun, DebugLogParam, Exporter};
+use crate::init::args::{AgentRun, DebugLogParam, Exporter, parse_bool_value};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
@@ -29,8 +29,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
