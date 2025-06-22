@@ -7,6 +7,7 @@ pub mod resource;
 pub mod trace;
 
 use crate::py::logs::*;
+use crate::py::metrics::*;
 use crate::py::rotel_sdk;
 use crate::py::trace::*;
 use pyo3::prelude::*;
@@ -83,9 +84,42 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, _processor: &str) -> Self {
-        // Noop
-        self
+    fn process(self, processor: &str) -> Self {
+        let inner = otel_transform::transform_resource_metrics(self);
+        // Build the PyObject
+        let spans = ResourceMetrics {
+            resource: inner.resource.clone(),
+            scope_metrics: inner.scope_metrics.clone(),
+            schema_url: inner.schema_url.clone(),
+        };
+        let res = Python::with_gil(|py| -> PyResult<()> {
+            let py_mod = PyModule::import(py, processor)?;
+            let result_py_object = py_mod.getattr("process_metrics")?.call1((spans,));
+            if result_py_object.is_err() {
+                let err = result_py_object.unwrap_err();
+                return Err(err);
+            }
+            Ok(())
+        });
+        if res.is_err() {
+            error!("{}", res.err().unwrap().to_string())
+        }
+        let mut resource_metrics = opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
+            resource: None,
+            scope_metrics: vec![],
+            schema_url: inner.schema_url,
+        };
+        let mut resource = inner.resource.lock().unwrap();
+        let resource = resource.take();
+        if resource.is_some() {
+            resource_metrics.resource = py_transform::transform_resource(resource.unwrap());
+        }
+        let scope_metrics = Arc::into_inner(inner.scope_metrics)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        resource_metrics.scope_metrics = py_transform::transform_metrics(scope_metrics);
+        resource_metrics
     }
 }
 

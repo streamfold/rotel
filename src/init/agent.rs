@@ -553,7 +553,7 @@ impl Agent {
                 metrics_pipeline_out_tx,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
-                vec![],
+                config.otlp_with_metrics_processor.clone(),
                 config.otel_resource_attributes.clone(),
             );
 

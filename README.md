@@ -177,7 +177,8 @@ Specifying a custom endpoint will override the region selection.
 
 ### Clickhouse exporter configuration
 
-The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter supports metrics, logs,
+The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter supports metrics,
+logs,
 and traces.
 
 | Option                                | Default | Options     |
@@ -357,8 +358,8 @@ Current prebuilt processors include...
 
 | Name                 | Supported telemetry types |
 |----------------------|---------------------------|
-| Attributes Processor | logs, traces              |
-| Redaction Processor  | logs, traces              |
+| Attributes Processor | logs, metrics, traces,    |
+| Redaction Processor  | logs, metrics, traces     |
 
 #### Technical Implementation
 
@@ -398,7 +399,8 @@ summary of the telemetry. You can increase the verbosity by specifying `--debug-
 include verbose multi-line output.
 
 Separate from the telemetry logging, Rotel's default log level is set to INFO and can be changed with the environment
-variable `RUST_LOG`. For example, setting `RUST_LOG=debug` will increase the verbosity of all logging to debug level. This
+variable `RUST_LOG`. For example, setting `RUST_LOG=debug` will increase the verbosity of all logging to debug level.
+This
 may include logging from third-party crates used in Rotel.
 
 ## Docker images
