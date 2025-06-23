@@ -10,5 +10,6 @@ mod otlp_exporter;
 mod xray_exporter;
 
 mod batch;
+mod config;
 #[cfg(feature = "pprof")]
 pub mod pprof;
