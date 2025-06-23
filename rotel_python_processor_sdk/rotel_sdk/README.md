@@ -44,7 +44,7 @@ architecture and the version of Python you have installed .
 
 For example is you are going to run Rotel and write processors on `x86_64` with `Python 3.13` download and install...
 
-[rotel_py_processor_3.13_v0.0.1-alpha5_x86_64-unknown-linux-gnu.tar.gz](https://github.com/streamfold/rotel/releases/download/v0.0.1-alpha5/rotel_py_processor_3.13_v0.0.1-alpha5_x86_64-unknown-linux-gnu.tar.gz)
+[rotel_py_processor_3.13_v0.0.1-alpha19_x86_64-unknown-linux-gnu.tar.gz](https://github.com/streamfold/rotel/releases/download/v0.0.1-alpha5/rotel_py_processor_3.13_v0.0.1-alpha19_x86_64-unknown-linux-gnu.tar.gz)
 
 ### Setting up a rotel processor development environment
 
