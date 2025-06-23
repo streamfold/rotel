@@ -415,6 +415,9 @@ impl Agent {
             }
         }
 
+        //
+        // LOGS
+        //
         if activation.logs == TelemetryState::Active {
             match exp_config.logs {
                 Some(ExporterConfig::Otlp(exp_config)) => {
