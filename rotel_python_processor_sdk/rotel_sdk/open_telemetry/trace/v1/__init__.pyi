@@ -1,6 +1,7 @@
+from typing import Optional
+
 from rotel_sdk.open_telemetry.common.v1 import InstrumentationScope, KeyValue
 from rotel_sdk.open_telemetry.resource.v1 import Resource
-from typing import Optional
 
 
 class ResourceSpans:
@@ -176,7 +177,7 @@ class Span:
     dropped_events_count is the number of dropped events. If the value is 0, then no
     events were dropped.
     """
-    links: List[Link]
+    links: list[Link]
     """
     links is a collection of Links, which are references from this span to a span
     in the same or different trace.
@@ -207,7 +208,7 @@ class Event:
     name of the event.
     This field is semantically required to be set to non-empty string.
     """
-    attributes: List[KeyValue]
+    attributes: list[KeyValue]
     """
     attributes is a collection of attribute key/value pairs on the event.
     Attribute keys MUST be unique (it is not allowed to have more than one
@@ -240,7 +241,7 @@ class Link:
     """
     The trace_state associated with the link.
     """
-    attributes: List[KeyValue]
+    attributes: list[KeyValue]
     """
     attributes is a collection of attribute key/value pairs on the link.
     Attribute keys MUST be unique (it is not allowed to have more than one
