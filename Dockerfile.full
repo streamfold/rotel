@@ -1,0 +1,67 @@
+# Multi-stage build for rotel
+
+############################
+# Builder stage
+############################
+FROM --platform=$BUILDPLATFORM rust:1.87-slim-bullseye AS builder
+
+# Install build dependencies that are not part of the base image
+# (pkg-config & OpenSSL are common requirements; add more as needed)
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates build-essential cmake protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---
+# Pre-cache Cargo dependencies
+#   1. Copy only the manifest files.
+#   2. Create a dummy main to allow `cargo build` to resolve and build
+#      all dependency crates so the result can be cached.
+# ---
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src \
+    && echo 'fn main() { /* dummy */ }' > src/main.rs
+
+# Use cache mounts so dependency downloads persist across builds.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --bin dummy || true
+
+# Remove the dummy source; real sources will come next.
+RUN rm -rf src
+
+# ---
+# Copy the actual project sources and build for release.
+# ---
+COPY src ./src
+COPY build.rs ./
+COPY benches ./benches
+COPY rotel_python_processor_sdk ./rotel_python_processor_sdk
+COPY utilities ./utilities
+COPY proto ./proto
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --bin rotel && \
+    # Copy the resulting binary to a predictable location irrespective of target triple
+    mkdir -p /app/bin && \
+    cp $(find /app/target -maxdepth 3 -type f -name rotel -perm -111 | head -n 1) /app/bin/rotel
+
+############################
+# Runtime stage
+############################
+# Use distroless for a minimal, non-root runtime image that
+# still provides the glibc runtime expected by the Rust binary.
+FROM gcr.io/distroless/cc-debian12 AS runtime
+
+# Copy the statically-linked (or mostly-static) binary from the builder.
+COPY --from=builder /app/bin/rotel /rotel
+
+# Expose OTLP ports
+EXPOSE 4317 4318
+
+# Run as an unprivileged user provided by distroless (UID 65532)
+USER 65532:65532
+
+ENTRYPOINT ["/rotel", "start", "--exporter", "otlp", "--otlp-exporter-endpoint", "http://0.0.0.0"]
