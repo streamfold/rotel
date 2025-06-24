@@ -1,5 +1,4 @@
 use crate::init::file_exporter::FileExporterFormat;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
@@ -25,7 +24,7 @@ pub enum ConfigError {
 }
 
 /// Configuration for the file exporter
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileExporterConfig {
     /// The format to use for exporting files
     pub format: FileExporterFormat,
@@ -34,7 +33,6 @@ pub struct FileExporterConfig {
     pub path: PathBuf,
 
     /// How often to flush data to disk (e.g., "5s")
-    #[serde(with = "humantime_serde")]
     pub flush_interval: Duration,
 }
 
