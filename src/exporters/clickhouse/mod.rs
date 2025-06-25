@@ -55,7 +55,7 @@ pub enum Compression {
     Lz4,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ClickhouseExporterConfigBuilder {
     retry_config: RetryConfig,
     compression: Compression,
@@ -72,7 +72,7 @@ pub struct ClickhouseExporterConfigBuilder {
 type SvcType =
     TowerRetry<RetryPolicy<()>, Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>>;
 
-type ExporterType<'a, Resource> = Exporter<
+pub type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
             RecvStream<'a, Vec<Resource>>,

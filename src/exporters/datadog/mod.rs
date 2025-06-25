@@ -71,7 +71,7 @@ impl Region {
     }
 }
 
-pub struct DatadogTraceExporterBuilder {
+pub struct DatadogExporterConfigBuilder {
     region: Region,
     custom_endpoint: Option<String>,
     api_token: String,
@@ -80,7 +80,16 @@ pub struct DatadogTraceExporterBuilder {
     retry_config: RetryConfig,
 }
 
-impl Default for DatadogTraceExporterBuilder {
+pub struct DatadogExporterBuilder {
+    region: Region,
+    custom_endpoint: Option<String>,
+    api_token: String,
+    environment: String,
+    hostname: String,
+    retry_config: RetryConfig,
+}
+
+impl Default for DatadogExporterConfigBuilder {
     fn default() -> Self {
         Self {
             region: Region::US1,
@@ -93,7 +102,7 @@ impl Default for DatadogTraceExporterBuilder {
     }
 }
 
-impl DatadogTraceExporterBuilder {
+impl DatadogExporterConfigBuilder {
     pub fn new(region: Region, custom_endpoint: Option<String>, api_key: String) -> Self {
         Self {
             region,
@@ -119,6 +128,19 @@ impl DatadogTraceExporterBuilder {
         self
     }
 
+    pub fn build(self) -> DatadogExporterBuilder {
+        DatadogExporterBuilder {
+            region: self.region,
+            custom_endpoint: self.custom_endpoint,
+            api_token: self.api_token,
+            environment: self.environment,
+            hostname: self.hostname,
+            retry_config: self.retry_config,
+        }
+    }
+}
+
+impl DatadogExporterBuilder {
     pub fn build<'a>(
         self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
@@ -168,7 +190,7 @@ mod tests {
 
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
-    use crate::exporters::datadog::{DatadogTraceExporterBuilder, ExporterType, Region};
+    use crate::exporters::datadog::{DatadogExporterConfigBuilder, ExporterType, Region};
     use crate::exporters::http::retry::RetryConfig;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -238,12 +260,13 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
     ) -> ExporterType<'a, ResourceSpans> {
-        DatadogTraceExporterBuilder::new(Region::US1, Some(addr), "1234".to_string())
+        DatadogExporterConfigBuilder::new(Region::US1, Some(addr), "1234".to_string())
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
                 max_backoff: Duration::from_millis(50),
                 max_elapsed_time: Duration::from_millis(50),
             })
+            .build()
             .build(brx, None)
             .unwrap()
     }

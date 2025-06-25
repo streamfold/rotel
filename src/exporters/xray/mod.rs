@@ -165,13 +165,13 @@ impl From<String> for Region {
     }
 }
 
-pub struct XRayTraceExporterBuilder {
+pub struct XRayExporterConfigBuilder {
     region: Region,
     custom_endpoint: Option<String>,
     retry_config: RetryConfig,
 }
 
-impl Default for XRayTraceExporterBuilder {
+impl Default for XRayExporterConfigBuilder {
     fn default() -> Self {
         Self {
             region: Region::UsEast1,
@@ -181,7 +181,7 @@ impl Default for XRayTraceExporterBuilder {
     }
 }
 
-impl XRayTraceExporterBuilder {
+impl XRayExporterConfigBuilder {
     pub fn new(region: Region, custom_endpoint: Option<String>) -> Self {
         Self {
             region,
@@ -196,6 +196,22 @@ impl XRayTraceExporterBuilder {
         self
     }
 
+    pub fn build(self) -> XRayExporterBuilder {
+        XRayExporterBuilder {
+            region: self.region,
+            custom_endpoint: self.custom_endpoint,
+            retry_config: self.retry_config,
+        }
+    }
+}
+
+pub struct XRayExporterBuilder {
+    region: Region,
+    custom_endpoint: Option<String>,
+    retry_config: RetryConfig,
+}
+
+impl XRayExporterBuilder {
     pub fn build<'a>(
         self,
         rx: BoundedReceiver<Vec<ResourceSpans>>,
@@ -273,7 +289,7 @@ mod tests {
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
-    use crate::exporters::xray::{ExporterType, Region, XRayTraceExporterBuilder};
+    use crate::exporters::xray::{ExporterType, Region, XRayExporterConfigBuilder};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
@@ -345,12 +361,13 @@ mod tests {
         brx: BoundedReceiver<Vec<ResourceSpans>>,
         config: AwsConfig,
     ) -> ExporterType<'a, ResourceSpans> {
-        XRayTraceExporterBuilder::new(Region::UsEast1, Some(addr))
+        XRayExporterConfigBuilder::new(Region::UsEast1, Some(addr))
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
                 max_backoff: Duration::from_millis(50),
                 max_elapsed_time: Duration::from_millis(50),
             })
+            .build()
             .build(brx, None, "production".to_string(), config)
             .unwrap()
     }
