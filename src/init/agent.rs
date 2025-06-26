@@ -467,6 +467,32 @@ impl Agent {
                 }
                 _ => {}
             }
+
+            Exporter::File => {
+                let config = crate::exporters::file::config::FileExporterConfig::new(
+                    config.file_exporter.file_exporter_format,
+                    config.file_exporter.file_exporter_output_dir.clone(),
+                    config.file_exporter.file_exporter_flush_interval,
+                );
+                config.validate()?;
+                let traces_rx = trace_pipeline_out_rx;
+                let metrics_rx = metrics_pipeline_out_rx;
+                let logs_rx = logs_pipeline_out_rx;
+                let token = exporters_cancel.clone();
+                exporters_task_set.spawn(async move {
+                    match crate::exporters::file::task::run_file_exporter(
+                        config, traces_rx, metrics_rx, logs_rx, token,
+                    )
+                    .await
+                    {
+                        Ok(_) => Ok(()),
+                        Err(e) => {
+                            error!(error = ?e, "File exporter returned from run loop with error.");
+                            Err(e.into())
+                        }
+                    }
+                });
+            }
         }
 
         if traces_output.is_some() {
