@@ -40,7 +40,7 @@ pub struct FileExporterArgs {
 
     /// Directory where files will be written
     #[arg(long, env = "ROTEL_FILE_OUTPUT_DIR", default_value = "/tmp/rotel")]
-    pub file_exporter_path: PathBuf,
+    pub file_exporter_output_dir: PathBuf,
 
     /// How often to flush data to disk (e.g., "5s")
     #[arg(long, env = "ROTEL_FILE_FLUSH_INTERVAL", default_value = "5s", value_parser = humantime::parse_duration)]

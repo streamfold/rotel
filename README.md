@@ -249,7 +249,7 @@ out as periodic files on the local filesystem.  Currently **Parquet** and
 | Option                    | Default       | Description                                   |
 |---------------------------|---------------|-----------------------------------------------|
 | --file-exporter-format             | parquet       | `parquet` or `json`                           |
-| --file-exproter-fpath               | /tmp/rotel    | Directory to place output files               |
+| --file-exporter-output-dir               | /tmp/rotel    | Directory to place output files               |
 | --file-exporter-flush-interval     | 5s            | How often to flush accumulated telemetry to a
                                               new file (accepts Go-style durations like
                                               `30s`, `2m`, `1h`) |

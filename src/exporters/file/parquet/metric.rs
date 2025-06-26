@@ -164,58 +164,96 @@ impl MetricRow {
                 .unwrap_or(MapOrJson::Map(Default::default()));
 
             for metric in &scope_metrics.metrics {
-                let type_ = match metric.data.as_ref() {
-                    Some(Data::Gauge(_)) => "gauge",
-                    Some(Data::Sum(_)) => "sum",
-                    Some(Data::Histogram(_)) => "histogram",
-                    Some(Data::ExponentialHistogram(_)) => "exponential_histogram",
-                    Some(Data::Summary(_)) => "summary",
-                    None => "unknown",
-                };
-
-                // We treat the *first* data point as representative for timestamp & value.
-                let (timestamp, value_json) = match &metric.data {
-                    Some(Data::Gauge(g)) => g
-                        .data_points
-                        .first()
-                        .map(|dp| (dp.time_unix_nano, number_datapoint_to_json(dp)))
-                        .unwrap_or((0, "null".to_string())),
-                    Some(Data::Sum(s)) => s
-                        .data_points
-                        .first()
-                        .map(|dp| (dp.time_unix_nano, number_datapoint_to_json(dp)))
-                        .unwrap_or((0, "null".to_string())),
-                    Some(Data::Histogram(h)) => h
-                        .data_points
-                        .first()
-                        .map(|dp| (dp.time_unix_nano, histogram_datapoint_to_json(dp)))
-                        .unwrap_or((0, "{}".to_string())),
-                    Some(Data::ExponentialHistogram(eh)) => eh
-                        .data_points
-                        .first()
-                        .map(|dp| (dp.time_unix_nano, exp_hist_datapoint_to_json(dp)))
-                        .unwrap_or((0, "{}".to_string())),
-                    Some(Data::Summary(su)) => su
-                        .data_points
-                        .first()
-                        .map(|dp| (dp.time_unix_nano, summary_datapoint_to_json(dp)))
-                        .unwrap_or((0, "{}".to_string())),
-                    None => (0, "{}".to_string()),
-                };
-
-                rows.push(MetricRow {
-                    timestamp,
-                    name: metric.name.clone(),
-                    description: metric.description.clone(),
-                    unit: metric.unit.clone(),
-                    type_: type_.to_string(),
-                    service_name: service_name.clone(),
-                    value: MapOrJson::Json(value_json),
-                    resource_attributes: resource_attrs.clone(),
-                    scope_name: scope_name.clone(),
-                    scope_version: scope_version.clone(),
-                    scope_attributes: scope_attributes.clone(),
-                });
+                match metric.data.as_ref() {
+                    Some(Data::Gauge(g)) => {
+                        for dp in &g.data_points {
+                            rows.push(MetricRow {
+                                timestamp: dp.time_unix_nano,
+                                name: metric.name.clone(),
+                                description: metric.description.clone(),
+                                unit: metric.unit.clone(),
+                                type_: "gauge".to_string(),
+                                service_name: service_name.clone(),
+                                value: MapOrJson::Json(number_datapoint_to_json(dp)),
+                                resource_attributes: resource_attrs.clone(),
+                                scope_name: scope_name.clone(),
+                                scope_version: scope_version.clone(),
+                                scope_attributes: scope_attributes.clone(),
+                            });
+                        }
+                    }
+                    Some(Data::Sum(s)) => {
+                        for dp in &s.data_points {
+                            rows.push(MetricRow {
+                                timestamp: dp.time_unix_nano,
+                                name: metric.name.clone(),
+                                description: metric.description.clone(),
+                                unit: metric.unit.clone(),
+                                type_: "sum".to_string(),
+                                service_name: service_name.clone(),
+                                value: MapOrJson::Json(number_datapoint_to_json(dp)),
+                                resource_attributes: resource_attrs.clone(),
+                                scope_name: scope_name.clone(),
+                                scope_version: scope_version.clone(),
+                                scope_attributes: scope_attributes.clone(),
+                            });
+                        }
+                    }
+                    Some(Data::Histogram(h)) => {
+                        for dp in &h.data_points {
+                            rows.push(MetricRow {
+                                timestamp: dp.time_unix_nano,
+                                name: metric.name.clone(),
+                                description: metric.description.clone(),
+                                unit: metric.unit.clone(),
+                                type_: "histogram".to_string(),
+                                service_name: service_name.clone(),
+                                value: MapOrJson::Json(histogram_datapoint_to_json(dp)),
+                                resource_attributes: resource_attrs.clone(),
+                                scope_name: scope_name.clone(),
+                                scope_version: scope_version.clone(),
+                                scope_attributes: scope_attributes.clone(),
+                            });
+                        }
+                    }
+                    Some(Data::ExponentialHistogram(eh)) => {
+                        for dp in &eh.data_points {
+                            rows.push(MetricRow {
+                                timestamp: dp.time_unix_nano,
+                                name: metric.name.clone(),
+                                description: metric.description.clone(),
+                                unit: metric.unit.clone(),
+                                type_: "exponential_histogram".to_string(),
+                                service_name: service_name.clone(),
+                                value: MapOrJson::Json(exp_hist_datapoint_to_json(dp)),
+                                resource_attributes: resource_attrs.clone(),
+                                scope_name: scope_name.clone(),
+                                scope_version: scope_version.clone(),
+                                scope_attributes: scope_attributes.clone(),
+                            });
+                        }
+                    }
+                    Some(Data::Summary(su)) => {
+                        for dp in &su.data_points {
+                            rows.push(MetricRow {
+                                timestamp: dp.time_unix_nano,
+                                name: metric.name.clone(),
+                                description: metric.description.clone(),
+                                unit: metric.unit.clone(),
+                                type_: "summary".to_string(),
+                                service_name: service_name.clone(),
+                                value: MapOrJson::Json(summary_datapoint_to_json(dp)),
+                                resource_attributes: resource_attrs.clone(),
+                                scope_name: scope_name.clone(),
+                                scope_version: scope_version.clone(),
+                                scope_attributes: scope_attributes.clone(),
+                            });
+                        }
+                    }
+                    None => {
+                        // Unknown metric type, skip or handle as needed
+                    }
+                }
             }
         }
 
@@ -291,4 +329,72 @@ fn summary_datapoint_to_json(
         "quantile_values": quantiles,
     });
     v.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics, Metric, Gauge, NumberDataPoint};
+    use opentelemetry_proto::tonic::resource::v1::Resource;
+    use opentelemetry_proto::tonic::common::v1::{KeyValue, AnyValue, InstrumentationScope};
+
+    #[test]
+    fn test_from_resource_metrics_multiple_gauge_datapoints() {
+        // Create two data points
+        let dp1 = NumberDataPoint {
+            time_unix_nano: 111,
+            value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(42)),
+            ..Default::default()
+        };
+        let dp2 = NumberDataPoint {
+            time_unix_nano: 222,
+            value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(3.14)),
+            ..Default::default()
+        };
+        let gauge = Gauge {
+            data_points: vec![dp1.clone(), dp2.clone()],
+            ..Default::default()
+        };
+        let metric = Metric {
+            name: "test_metric".to_string(),
+            description: "desc".to_string(),
+            unit: "unit".to_string(),
+            data: Some(Data::Gauge(gauge)),
+            ..Default::default()
+        };
+        let scope_metrics = ScopeMetrics {
+            scope: Some(InstrumentationScope {
+                name: "myscope".to_string(),
+                version: "1.0".to_string(),
+                ..Default::default()
+            }),
+            metrics: vec![metric],
+            ..Default::default()
+        };
+        let resource = Resource {
+            attributes: vec![KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue { value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("svc".to_string())) }),
+            }],
+            ..Default::default()
+        };
+        let resource_metrics = ResourceMetrics {
+            resource: Some(resource),
+            scope_metrics: vec![scope_metrics],
+            ..Default::default()
+        };
+
+        let rows = MetricRow::from_resource_metrics(&resource_metrics).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].timestamp, 111);
+        assert_eq!(rows[1].timestamp, 222);
+        assert_eq!(rows[0].name, "test_metric");
+        assert_eq!(rows[0].type_, "gauge");
+        assert_eq!(rows[0].service_name, "svc");
+        assert_eq!(rows[0].scope_name, "myscope");
+        assert_eq!(rows[0].scope_version, "1.0");
+        // Check value serialization
+        assert_eq!(rows[0].value, MapOrJson::Json("42".to_string()));
+        assert_eq!(rows[1].value, MapOrJson::Json("3.14".to_string()));
+    }
 }

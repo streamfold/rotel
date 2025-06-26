@@ -3427,6 +3427,7 @@ name = "rotel"
 version = "0.0.1-alpha10"
 dependencies = [
  "arrow",
+ "base64 0.22.1",
  "bstr",
  "bytes",
  "chrono",

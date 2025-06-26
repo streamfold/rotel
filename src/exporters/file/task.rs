@@ -15,11 +15,11 @@ use tracing::{debug, info};
 /// Generic trait for file exporters that can handle different data formats
 trait TypedFileExporter {
     /// The type used to represent span data in this exporter
-    type SpanData: Clone;
+    type SpanData: Clone + Send;
     /// The type used to represent metric data in this exporter
-    type MetricData: Clone;
+    type MetricData: Clone + Send;
     /// The type used to represent log data in this exporter
-    type LogData: Clone;
+    type LogData: Clone + Send;
 
     /// Convert ResourceSpans to the exporter's span data format
     fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>>;
@@ -138,119 +138,102 @@ pub async fn run_file_exporter(
     match format {
         FileExporterFormat::Parquet => {
             let exporter = std::sync::Arc::new(ParquetExporter::new());
-
-            // Spawn separate tasks for each telemetry type
-            let traces_task = {
-                let exporter = exporter.clone();
-                let traces_dir = traces_dir.clone();
-                let token = token.clone();
-                tokio::spawn(async move {
-                    run_traces_loop(exporter, traces_dir, traces_rx, flush_interval, token).await
-                })
-            };
-
-            let metrics_task = {
-                let exporter = exporter.clone();
-                let metrics_dir = metrics_dir.clone();
-                let token = token.clone();
-                tokio::spawn(async move {
-                    run_metrics_loop(exporter, metrics_dir, metrics_rx, flush_interval, token).await
-                })
-            };
-
-            let logs_task = {
-                let exporter = exporter.clone();
-                let logs_dir = logs_dir.clone();
-                let token = token.clone();
-                tokio::spawn(async move {
-                    run_logs_loop(exporter, logs_dir, logs_rx, flush_interval, token).await
-                })
-            };
-
-            // Wait for all tasks to complete
-            let (traces_result, metrics_result, logs_result) =
-                tokio::join!(traces_task, metrics_task, logs_task);
-
-            // Check if any task failed
-            if let Err(e) = traces_result {
-                return Err(FileExporterError::Export(format!(
-                    "Traces task failed: {}",
-                    e
-                )));
-            }
-            if let Err(e) = metrics_result {
-                return Err(FileExporterError::Export(format!(
-                    "Metrics task failed: {}",
-                    e
-                )));
-            }
-            if let Err(e) = logs_result {
-                return Err(FileExporterError::Export(format!(
-                    "Logs task failed: {}",
-                    e
-                )));
-            }
-
-            Ok(())
+            run_exporter_tasks(
+                exporter,
+                traces_dir,
+                metrics_dir,
+                logs_dir,
+                traces_rx,
+                metrics_rx,
+                logs_rx,
+                flush_interval,
+                token,
+            )
+            .await
         }
         FileExporterFormat::Json => {
             let exporter = std::sync::Arc::new(JsonExporter::new());
-
-            // Spawn separate tasks for each telemetry type
-            let traces_task = {
-                let exporter = exporter.clone();
-                let traces_dir = traces_dir.clone();
-                let token = token.clone();
-                tokio::spawn(async move {
-                    run_traces_loop(exporter, traces_dir, traces_rx, flush_interval, token).await
-                })
-            };
-
-            let metrics_task = {
-                let exporter = exporter.clone();
-                let metrics_dir = metrics_dir.clone();
-                let token = token.clone();
-                tokio::spawn(async move {
-                    run_metrics_loop(exporter, metrics_dir, metrics_rx, flush_interval, token).await
-                })
-            };
-
-            let logs_task = {
-                let exporter = exporter.clone();
-                let logs_dir = logs_dir.clone();
-                let token = token.clone();
-                tokio::spawn(async move {
-                    run_logs_loop(exporter, logs_dir, logs_rx, flush_interval, token).await
-                })
-            };
-
-            // Wait for all tasks to complete
-            let (traces_result, metrics_result, logs_result) =
-                tokio::join!(traces_task, metrics_task, logs_task);
-
-            // Check if any task failed
-            if let Err(e) = traces_result {
-                return Err(FileExporterError::Export(format!(
-                    "Traces task failed: {}",
-                    e
-                )));
-            }
-            if let Err(e) = metrics_result {
-                return Err(FileExporterError::Export(format!(
-                    "Metrics task failed: {}",
-                    e
-                )));
-            }
-            if let Err(e) = logs_result {
-                return Err(FileExporterError::Export(format!(
-                    "Logs task failed: {}",
-                    e
-                )));
-            }
-
-            Ok(())
+            run_exporter_tasks(
+                exporter,
+                traces_dir,
+                metrics_dir,
+                logs_dir,
+                traces_rx,
+                metrics_rx,
+                logs_rx,
+                flush_interval,
+                token,
+            )
+            .await
         }
     }
+}
+
+/// Helper function to spawn and join exporter tasks for traces, metrics, and logs
+async fn run_exporter_tasks<E>(
+    exporter: std::sync::Arc<E>,
+    traces_dir: std::path::PathBuf,
+    metrics_dir: std::path::PathBuf,
+    logs_dir: std::path::PathBuf,
+    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    flush_interval: std::time::Duration,
+    token: CancellationToken,
+) -> Result<()>
+where
+    E: TypedFileExporter + Send + Sync + 'static,
+{
+    let traces_task = {
+        let exporter = exporter.clone();
+        let traces_dir = traces_dir.clone();
+        let token = token.clone();
+        tokio::spawn(async move {
+            run_traces_loop(exporter, traces_dir, traces_rx, flush_interval, token).await
+        })
+    };
+
+    let metrics_task = {
+        let exporter = exporter.clone();
+        let metrics_dir = metrics_dir.clone();
+        let token = token.clone();
+        tokio::spawn(async move {
+            run_metrics_loop(exporter, metrics_dir, metrics_rx, flush_interval, token).await
+        })
+    };
+
+    let logs_task = {
+        let exporter = exporter.clone();
+        let logs_dir = logs_dir.clone();
+        let token = token.clone();
+        tokio::spawn(async move {
+            run_logs_loop(exporter, logs_dir, logs_rx, flush_interval, token).await
+        })
+    };
+
+    let (traces_result, metrics_result, logs_result) =
+        tokio::join!(traces_task, metrics_task, logs_task);
+
+    if let Err(e) = traces_result {
+        return Err(FileExporterError::Export(format!(
+            "Traces task failed: {}",
+            e
+        )));
+    }
+    if let Err(e) = metrics_result {
+        return Err(FileExporterError::Export(format!(
+            "Metrics task failed: {}",
+            e
+        )));
+    }
+    if let Err(e) = logs_result {
+        return Err(FileExporterError::Export(format!(
+            "Logs task failed: {}",
+            e
+        )));
+    }
+
+    Ok(())
 }
 
 /// Event loop for processing trace data

@@ -63,6 +63,7 @@ sha2 = "0.10"
 regex = "1.11.1"
 parquet = "55.1.0"
 arrow = "55.1.0"
+base64 = "0.22.1"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

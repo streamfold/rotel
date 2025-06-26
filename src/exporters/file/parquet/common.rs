@@ -11,7 +11,7 @@ use crate::exporters::file::FileExporterError;
 
 /// Unified representation used in Arrow columns where the data could be a
 /// key/value map (flattened) or an already-encoded JSON string.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum MapOrJson {
     Map(HashMap<String, String>),
     Json(String),

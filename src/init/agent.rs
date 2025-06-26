@@ -527,7 +527,7 @@ impl Agent {
             Exporter::File => {
                 let config = crate::exporters::file::config::FileExporterConfig::new(
                     config.file_exporter.file_exporter_format,
-                    config.file_exporter.file_exporter_path.clone(),
+                    config.file_exporter.file_exporter_output_dir.clone(),
                     config.file_exporter.file_exporter_flush_interval,
                 );
                 config.validate()?;
