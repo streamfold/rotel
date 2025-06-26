@@ -334,21 +334,27 @@ fn summary_datapoint_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics, Metric, Gauge, NumberDataPoint};
+    use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue};
+    use opentelemetry_proto::tonic::metrics::v1::{
+        Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics,
+    };
     use opentelemetry_proto::tonic::resource::v1::Resource;
-    use opentelemetry_proto::tonic::common::v1::{KeyValue, AnyValue, InstrumentationScope};
 
     #[test]
     fn test_from_resource_metrics_multiple_gauge_datapoints() {
         // Create two data points
         let dp1 = NumberDataPoint {
             time_unix_nano: 111,
-            value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(42)),
+            value: Some(
+                opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(42),
+            ),
             ..Default::default()
         };
         let dp2 = NumberDataPoint {
             time_unix_nano: 222,
-            value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(3.14)),
+            value: Some(
+                opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(3.14),
+            ),
             ..Default::default()
         };
         let gauge = Gauge {
@@ -374,7 +380,13 @@ mod tests {
         let resource = Resource {
             attributes: vec![KeyValue {
                 key: "service.name".to_string(),
-                value: Some(AnyValue { value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("svc".to_string())) }),
+                value: Some(AnyValue {
+                    value: Some(
+                        opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                            "svc".to_string(),
+                        ),
+                    ),
+                }),
             }],
             ..Default::default()
         };

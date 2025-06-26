@@ -12,9 +12,9 @@ use super::common::{
     vec_string_to_list_array, vec_u64_to_list_array,
 };
 use crate::exporters::file::FileExporterError;
-use serde_json;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use serde_json;
 // No longer using the macros since we consume data directly
 
 // Static schema created once and reused for all span record batches
@@ -287,10 +287,16 @@ impl SpanRow {
                             ),
                         ) => d.to_string(),
                         Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(arr),
-                        ) => serde_json::to_string(&arr.values).unwrap_or_else(|_| "[]".to_string()),
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(
+                                arr,
+                            ),
+                        ) => {
+                            serde_json::to_string(&arr.values).unwrap_or_else(|_| "[]".to_string())
+                        }
                         Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(kvlist),
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(
+                                kvlist,
+                            ),
                         ) => {
                             let map: std::collections::HashMap<_, _> = kvlist.values.iter().map(|kv| {
                                 let v = match &kv.value {
@@ -311,7 +317,9 @@ impl SpanRow {
                             serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
                         }
                         Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(bytes),
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(
+                                bytes,
+                            ),
                         ) => BASE64_STANDARD.encode(bytes),
                         None => "".to_string(),
                     };
