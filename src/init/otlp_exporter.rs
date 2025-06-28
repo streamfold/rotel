@@ -1,10 +1,13 @@
 use crate::exporters::otlp;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
-use crate::init::args;
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
+use crate::init::parse;
+use serde::Deserialize;
+use std::time::Duration;
 
-#[derive(Debug, clap::Args, Clone)]
+#[derive(Debug, clap::Args, Clone, Deserialize)]
+#[serde(default)]
 pub struct OTLPExporterBaseArgs {
     /// OTLP Exporter Endpoint - Used as default for all OTLP data types unless more specific flag specified
     #[arg(long("otlp-exporter-endpoint"), env = "ROTEL_OTLP_EXPORTER_ENDPOINT")]
@@ -53,8 +56,9 @@ pub struct OTLPExporterBaseArgs {
     pub authenticator: Option<OTLPExporterAuthenticator>,
 
     /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
-    #[arg(long("otlp-exporter-custom-headers"), env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(long("otlp-exporter-custom-headers"), env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
     )]
+    #[serde(deserialize_with = "parse::deserialize_key_value_pairs")]
     pub custom_headers: Vec<(String, String)>,
 
     /// OTLP Exporter Compression - Used as default for all OTLP data types unless more specific flag specified
@@ -67,12 +71,15 @@ pub struct OTLPExporterBaseArgs {
     pub compression: CompressionEncoding,
 
     #[clap(flatten)]
+    #[serde(flatten)]
     pub cert_group: CertGroup,
 
     #[clap(flatten)]
+    #[serde(flatten)]
     pub key_group: KeyGroup,
 
     #[clap(flatten)]
+    #[serde(flatten)]
     pub ca_group: CaGroup,
 
     /// OTLP Exporter TLS SKIP VERIFY - Used as default for all OTLP data types unless more specific flag specified
@@ -88,33 +95,69 @@ pub struct OTLPExporterBaseArgs {
     #[arg(
         long("otlp-exporter-request-timeout"),
         env = "ROTEL_OTLP_EXPORTER_REQUEST_TIMEOUT",
-        default_value = "5s"
+        default_value = "5s",
+        value_parser = humantime::parse_duration,
     )]
-    pub request_timeout: humantime::Duration,
+    pub request_timeout: std::time::Duration,
 
     /// OTLP Exporter Retry initial backoff - Used as default for all OTLP data types unless more specific flag specified.
     #[arg(
         long("otlp-exporter-retry-initial-backoff"),
         env = "ROTEL_OTLP_EXPORTER_RETRY_INITIAL_BACKOFF",
-        default_value = "5s"
+        default_value = "5s",
+        value_parser = humantime::parse_duration,
     )]
-    pub retry_initial_backoff: humantime::Duration,
+    pub retry_initial_backoff: std::time::Duration,
 
     /// OTLP Exporter Retry max backoff - Used as default for all OTLP data types unless more specific flag specified.
     #[arg(
         long("otlp-exporter-retry-max-backoff"),
         env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_BACKOFF",
-        default_value = "30s"
+        default_value = "30s",
+        value_parser = humantime::parse_duration,
     )]
-    pub retry_max_backoff: humantime::Duration,
+    pub retry_max_backoff: std::time::Duration,
 
     /// OTLP Exporter Retry max elapsed time - Used as default for all OTLP data types unless more specific flag specified.
     #[arg(
         long("otlp-exporter-retry-max-elapsed-time"),
         env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_ELAPSED_TIME",
-        default_value = "300s"
+        default_value = "300s",
+        value_parser = humantime::parse_duration,
     )]
-    pub retry_max_elapsed_time: humantime::Duration,
+    pub retry_max_elapsed_time: std::time::Duration,
+}
+
+impl Default for OTLPExporterBaseArgs {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            traces_endpoint: None,
+            metrics_endpoint: None,
+            logs_endpoint: None,
+            protocol: OTLPExporterProtocol::Grpc,
+            authenticator: None,
+            custom_headers: vec![],
+            compression: CompressionEncoding::Gzip,
+            cert_group: CertGroup {
+                tls_cert_file: None,
+                tls_cert_pem: None,
+            },
+            key_group: KeyGroup {
+                tls_key_file: None,
+                tls_key_pem: None,
+            },
+            ca_group: CaGroup {
+                tls_ca_file: None,
+                tls_ca_pem: None,
+            },
+            tls_skip_verify: false,
+            request_timeout: Duration::from_secs(5),
+            retry_initial_backoff: Duration::from_secs(5),
+            retry_max_backoff: Duration::from_secs(30),
+            retry_max_elapsed_time: Duration::from_secs(300),
+        }
+    }
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -135,17 +178,17 @@ pub struct OTLPExporterArgs {
     pub otlp_exporter_logs_protocol: Option<OTLPExporterProtocol>,
 
     /// OTLP Exporter Traces Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
     )]
     pub otlp_exporter_traces_custom_headers: Option<Vec<(String, String)>>,
 
     /// OTLP Exporter Metrics Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
     )]
     pub otlp_exporter_metrics_custom_headers: Option<Vec<(String, String)>>,
 
     /// OTLP Exporter Logs Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ',')]
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
     pub otlp_exporter_logs_custom_headers: Option<Vec<(String, String)>>,
 
     /// OTLP Exporter Traces Compression - Overrides otlp_exporter_compression if specified
@@ -203,52 +246,64 @@ pub struct OTLPExporterArgs {
     pub otlp_exporter_logs_tls_skip_verify: Option<bool>,
 
     /// OTLP Exporter traces Request Timeout - Overrides otlp_exporter_request_timeout for OTLP traces if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_REQUEST_TIMEOUT")]
-    pub otlp_exporter_traces_request_timeout: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_REQUEST_TIMEOUT",
+        value_parser = humantime::parse_duration)]
+    pub otlp_exporter_traces_request_timeout: Option<std::time::Duration>,
 
     /// OTLP Exporter metrics Request Timeout - Overrides otlp_exporter_request_timeout for OTLP metrics if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_REQUEST_TIMEOUT")]
-    pub otlp_exporter_metrics_request_timeout: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_REQUEST_TIMEOUT",
+        value_parser = humantime::parse_duration)]
+    pub otlp_exporter_metrics_request_timeout: Option<std::time::Duration>,
 
     /// OTLP Exporter logs Request Timeout - Overrides otlp_exporter_request_timeout for OTLP logs if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_REQUEST_TIMEOUT")]
-    pub otlp_exporter_logs_request_timeout: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_REQUEST_TIMEOUT",
+        value_parser = humantime::parse_duration)]
+    pub otlp_exporter_logs_request_timeout: Option<std::time::Duration>,
 
     /// OTLP Exporter traces Retry initial backoff - Overrides otlp_exporter_retry_initial_backoff for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_INITIAL_BACKOFF")]
-    pub otlp_exporter_traces_retry_initial_backoff: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_INITIAL_BACKOFF",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_traces_retry_initial_backoff: Option<std::time::Duration>,
 
     /// OTLP Exporter metrics Retry initial backoff  - Overrides otlp_exporter_retry_initial_backoff for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_INITIAL_BACKOFF")]
-    pub otlp_exporter_metrics_retry_initial_backoff: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_INITIAL_BACKOFF",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_metrics_retry_initial_backoff: Option<std::time::Duration>,
 
     /// OTLP Exporter logs Retry initial backoff  - Overrides otlp_exporter_retry_initial_backoff for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_INITIAL_BACKOFF")]
-    pub otlp_exporter_logs_retry_initial_backoff: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_INITIAL_BACKOFF",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_logs_retry_initial_backoff: Option<std::time::Duration>,
 
     /// OTLP Exporter traces Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_BACKOFF")]
-    pub otlp_exporter_traces_retry_max_backoff: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_BACKOFF",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_traces_retry_max_backoff: Option<std::time::Duration>,
 
     /// OTLP Exporter metrics Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_MAX_BACKOFF")]
-    pub otlp_exporter_metrics_retry_max_backoff: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_MAX_BACKOFF",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_metrics_retry_max_backoff: Option<std::time::Duration>,
 
     /// OTLP Exporter logs Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_BACKOFF")]
-    pub otlp_exporter_logs_retry_max_backoff: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_BACKOFF",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_logs_retry_max_backoff: Option<std::time::Duration>,
 
     /// OTLP Exporter traces Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_ELAPSED_TIME")]
-    pub otlp_exporter_traces_retry_max_elapsed_time: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_ELAPSED_TIME",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_traces_retry_max_elapsed_time: Option<std::time::Duration>,
 
     /// OTLP Exporter metrics Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_MAX_ELAPSED_TIME")]
-    pub otlp_exporter_metrics_retry_max_elapsed_time: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_MAX_ELAPSED_TIME",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_metrics_retry_max_elapsed_time: Option<std::time::Duration>,
 
     /// OTLP Exporter logs Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_ELAPSED_TIME")]
-    pub otlp_exporter_logs_retry_max_elapsed_time: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_ELAPSED_TIME",
+        value_parser = humantime::parse_duration,)]
+    pub otlp_exporter_logs_retry_max_elapsed_time: Option<std::time::Duration>,
 }
 
 impl From<OTLPExporterProtocol> for Protocol {
@@ -260,7 +315,7 @@ impl From<OTLPExporterProtocol> for Protocol {
     }
 }
 
-#[derive(Debug, clap::Args, Clone)]
+#[derive(Debug, clap::Args, Clone, Deserialize)]
 #[group(required = false, multiple = false)]
 pub struct CertGroup {
     #[arg(long("otlp-exporter-tls-cert-file"), env = "ROTEL_OTLP_EXPORTER_TLS_CERT_FILE", default_value = None)]
@@ -270,7 +325,7 @@ pub struct CertGroup {
     tls_cert_pem: Option<String>,
 }
 
-#[derive(Debug, clap::Args, Clone)]
+#[derive(Debug, clap::Args, Clone, Deserialize)]
 #[group(required = false, multiple = false)]
 pub struct KeyGroup {
     #[arg(long("otlp-exporter-tls-key-file"), env = "ROTEL_OTLP_EXPORTER_TLS_KEY_FILE", default_value = None)]
@@ -280,7 +335,7 @@ pub struct KeyGroup {
     tls_key_pem: Option<String>,
 }
 
-#[derive(Debug, clap::Args, Clone)]
+#[derive(Debug, clap::Args, Clone, Deserialize)]
 #[group(required = false, multiple = false)]
 pub struct CaGroup {
     #[arg(long("otlp-exporter-tls-ca-file"), env = "ROTEL_OTLP_EXPORTER_TLS_CA_FILE", default_value = None)]

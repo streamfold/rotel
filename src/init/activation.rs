@@ -1,4 +1,5 @@
-use crate::init::args::{AgentRun, Exporter};
+use crate::init::args::AgentRun;
+use crate::init::config::ExporterConfigs;
 
 #[derive(Default)]
 pub struct TelemetryActivation {
@@ -16,43 +17,21 @@ pub enum TelemetryState {
 }
 
 impl TelemetryActivation {
-    pub fn from_config(config: &AgentRun) -> Self {
-        let mut activation = match config.exporter {
-            Exporter::Otlp => {
-                let has_global_endpoint = config.otlp_exporter.base.endpoint.is_some();
-                let mut activation = TelemetryActivation::default();
-                if !has_global_endpoint && config.otlp_exporter.base.traces_endpoint.is_none() {
-                    activation.traces = TelemetryState::NoListeners
-                }
-                if !has_global_endpoint && config.otlp_exporter.base.metrics_endpoint.is_none() {
-                    activation.metrics = TelemetryState::NoListeners
-                }
-                if !has_global_endpoint && config.otlp_exporter.base.logs_endpoint.is_none() {
-                    activation.logs = TelemetryState::NoListeners
-                }
-                activation
-            }
-            Exporter::Blackhole => TelemetryActivation::default(),
-            Exporter::Datadog => {
-                // Only supports traces for now
-                TelemetryActivation {
-                    traces: TelemetryState::Active,
-                    metrics: TelemetryState::NoListeners,
-                    logs: TelemetryState::NoListeners,
-                }
-            }
-            Exporter::Clickhouse => TelemetryActivation {
-                logs: TelemetryState::Active,
-                traces: TelemetryState::Active,
-                metrics: TelemetryState::Active,
-            },
-            Exporter::AwsXray => TelemetryActivation {
-                logs: TelemetryState::NoListeners,
-                traces: TelemetryState::Active,
-                metrics: TelemetryState::NoListeners,
-            },
-        };
+    pub(crate) fn from_config(config: &AgentRun, exporter_config: &ExporterConfigs) -> Self {
+        let mut activation = TelemetryActivation::default();
 
+        // Update based on exporters
+        if exporter_config.traces.is_none() {
+            activation.traces = TelemetryState::NoListeners;
+        }
+        if exporter_config.metrics.is_none() {
+            activation.metrics = TelemetryState::NoListeners;
+        }
+        if exporter_config.logs.is_none() {
+            activation.logs = TelemetryState::NoListeners;
+        }
+
+        // Check if any are explicitly disabled
         if config.otlp_receiver_traces_disabled {
             activation.traces = TelemetryState::Disabled
         }

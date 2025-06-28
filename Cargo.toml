@@ -61,6 +61,8 @@ indexmap = "2.9.0"
 hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
+figment = {  version = "0.10.19", default-features = false, features = ["env"] }
+humantime-serde = "1.1.1"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

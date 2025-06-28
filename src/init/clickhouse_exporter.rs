@@ -1,7 +1,9 @@
 use crate::exporters::clickhouse;
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Deserialize)]
+#[serde(default)]
 pub struct ClickhouseExporterArgs {
     /// Clickhouse Exporter endpoint
     #[arg(
@@ -76,7 +78,23 @@ pub struct ClickhouseExporterArgs {
     pub json_underscore: bool,
 }
 
-#[derive(Clone, Debug, Copy, ValueEnum)]
+impl Default for ClickhouseExporterArgs {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            database: "otel".to_string(),
+            table_prefix: "otel".to_string(),
+            compression: Compression::Lz4,
+            user: None,
+            password: None,
+            async_insert: "true".to_string(),
+            enable_json: false,
+            json_underscore: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy, ValueEnum, Deserialize)]
 pub enum Compression {
     None,
     Lz4,

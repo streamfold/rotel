@@ -3,12 +3,12 @@ use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
+use crate::init::parse;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
-use std::error::Error;
+use serde::Deserialize;
 use std::net::SocketAddr;
-use tower::BoxError;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -38,12 +38,12 @@ pub struct AgentRun {
     pub debug_log_verbosity: DebugLogVerbosity,
 
     /// OTLP gRPC endpoint
-    #[arg(long, env = "ROTEL_OTLP_GRPC_ENDPOINT", default_value = "localhost:4317", value_parser = parse_endpoint
+    #[arg(long, env = "ROTEL_OTLP_GRPC_ENDPOINT", default_value = "localhost:4317", value_parser = parse::parse_endpoint
     )]
     pub otlp_grpc_endpoint: SocketAddr,
 
     /// OTLP HTTP endpoint
-    #[arg(long, env = "ROTEL_OTLP_HTTP_ENDPOINT", default_value = "localhost:4318", value_parser = parse_endpoint
+    #[arg(long, env = "ROTEL_OTLP_HTTP_ENDPOINT", default_value = "localhost:4318", value_parser = parse::parse_endpoint
     )]
     pub otlp_http_endpoint: SocketAddr,
 
@@ -107,7 +107,7 @@ pub struct AgentRun {
     pub otlp_with_metrics_processor: Vec<String>,
 
     /// Comma-separated, key=value pairs of resource attributes to set
-    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse_key_val::<String, String>, value_delimiter = ',')]
+    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
     pub otel_resource_attributes: Vec<(String, String)>,
 
     /// Enable reporting of internal telemetry
@@ -118,8 +118,12 @@ pub struct AgentRun {
     pub batch: BatchArgs,
 
     /// Exporter
-    #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]
-    pub exporter: Exporter,
+    #[arg(value_enum, long, env = "ROTEL_EXPORTER")]
+    pub exporter: Option<Exporter>,
+
+    /// Exporters
+    #[arg(value_enum, long, env = "ROTEL_EXPORTERS")]
+    pub exporters: Option<String>,
 
     #[command(flatten)]
     pub otlp_exporter: OTLPExporterArgs,
@@ -138,7 +142,7 @@ pub struct AgentRun {
     pub profile_group: ProfileGroup,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum)]
 pub enum DebugLogParam {
     None,
     Traces,
@@ -146,13 +150,13 @@ pub enum DebugLogParam {
     Logs,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
 pub enum OTLPExporterProtocol {
     Grpc,
     Http,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
 pub enum OTLPExporterAuthenticator {
     Sigv4auth,
 }
@@ -201,66 +205,5 @@ impl From<DebugLogVerbosity> for DebugVerbosity {
             DebugLogVerbosity::Basic => DebugVerbosity::Basic,
             DebugLogVerbosity::Detailed => DebugVerbosity::Detailed,
         }
-    }
-}
-
-/// Parse a single key-value pair
-pub fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + Send + Sync + 'static,
-    U: std::str::FromStr,
-    U::Err: Error + Send + Sync + 'static,
-{
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{s}`"))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
-}
-
-/// Parse an endpoint
-pub fn parse_endpoint(s: &str) -> Result<SocketAddr, Box<dyn Error + Send + Sync + 'static>> {
-    // Use actual localhost address instead of localhost name
-    let s = if s.starts_with("localhost:") {
-        s.replace("localhost:", "127.0.0.1:")
-    } else {
-        s.to_string()
-    };
-    let sa: SocketAddr = s.parse()?;
-    Ok(sa)
-}
-
-#[cfg(test)]
-mod test {
-    use crate::init::args::parse_endpoint;
-    use tokio_test::assert_ok;
-
-    #[test]
-    fn endpoint_parse() {
-        let sa = parse_endpoint("localhost:4317");
-        assert_ok!(sa);
-        let sa = sa.unwrap();
-        assert!(sa.is_ipv4());
-        assert_eq!("127.0.0.1", sa.ip().to_string());
-        assert_eq!(4317, sa.port());
-
-        let sa = parse_endpoint("[::1]:4317");
-        assert_ok!(sa);
-        let sa = sa.unwrap();
-        assert!(sa.is_ipv6());
-        assert_eq!("::1", sa.ip().to_string());
-
-        let sa = parse_endpoint("0.0.0.0:1234");
-        assert_ok!(sa);
-        let sa = sa.unwrap();
-        assert_eq!("0.0.0.0", sa.ip().to_string());
-    }
-}
-
-pub(crate) fn parse_bool_value(val: &String) -> Result<bool, BoxError> {
-    match val.to_lowercase().as_str() {
-        "0" | "false" => Ok(false),
-        "1" | "true" => Ok(true),
-        _ => Err(format!("Unable to parse bool value: {}", val).into()),
     }
 }
