@@ -3,8 +3,9 @@ use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::init::args;
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
+use serde::Deserialize;
 
-#[derive(Debug, clap::Args, Clone)]
+#[derive(Debug, clap::Args, Clone, Deserialize)]
 pub struct OTLPExporterBaseArgs {
     /// OTLP Exporter Endpoint - Used as default for all OTLP data types unless more specific flag specified
     #[arg(long("otlp-exporter-endpoint"), env = "ROTEL_OTLP_EXPORTER_ENDPOINT")]

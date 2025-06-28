@@ -1,6 +1,7 @@
 use clap::Args;
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Deserialize)]
 pub struct XRayExporterArgs {
     /// X-Ray Exporter Region
     #[arg(

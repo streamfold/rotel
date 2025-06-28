@@ -1,7 +1,8 @@
 use crate::exporters::clickhouse;
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Deserialize)]
 pub struct ClickhouseExporterArgs {
     /// Clickhouse Exporter endpoint
     #[arg(
