@@ -84,7 +84,7 @@ Any option above that does not contain a default is considered false or unset by
 | --otlp-grpc-endpoint              | localhost:4317       |                                                |
 | --otlp-http-endpoint              | localhost:4318       |                                                |
 | --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                |
-| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray |
+| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray, kafka |
 | --otlp-receiver-traces-disabled   |                      |                                                |
 | --otlp-receiver-metrics-disabled  |                      |                                                |
 | --otlp-receiver-logs-disabled     |                      |                                                |
@@ -239,6 +239,59 @@ automatically sourced from Rotel's environment on startup.
 | --xray-exporter-custom-endpoint |           |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
+
+### Kafka exporter configuration
+
+The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka exporter supports metrics,
+logs, and traces.
+
+| Option                                     | Default       | Options           |
+|--------------------------------------------|---------------|-------------------|
+| --kafka-exporter-brokers                  | localhost:9092|                   |
+| --kafka-exporter-traces-topic             | otlp_traces   |                   |
+| --kafka-exporter-metrics-topic            | otlp_metrics  |                   |
+| --kafka-exporter-logs-topic               | otlp_logs     |                   |
+| --kafka-exporter-format                   | json          | json, protobuf    |
+| --kafka-exporter-compression              |               | gzip, snappy, lz4, zstd, none |
+| --kafka-exporter-request-timeout          | 30s           |                   |
+| --kafka-exporter-sasl-username            |               |                   |
+| --kafka-exporter-sasl-password            |               |                   |
+| --kafka-exporter-sasl-mechanism           |               | PLAIN, SCRAM-SHA-256, SCRAM-SHA-512 |
+| --kafka-exporter-security-protocol        | PLAINTEXT     | PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL |
+
+The Kafka broker addresses must be specified (comma-separated for multiple brokers). The exporter will create separate
+topics for traces, metrics, and logs. Data can be serialized as JSON or Protobuf format.
+
+For secure connections, you can configure SASL authentication:
+
+```shell
+rotel start --exporter kafka \
+  --kafka-exporter-brokers "broker1:9092,broker2:9092" \
+  --kafka-exporter-sasl-username "your-username" \
+  --kafka-exporter-sasl-password "your-password" \
+  --kafka-exporter-sasl-mechanism "SCRAM-SHA-256" \
+  --kafka-exporter-security-protocol "SASL_SSL" \
+  --kafka-exporter-compression "gzip"
+```
+
+The Kafka exporter uses the high-performance rdkafka library and includes built-in retry logic and error handling.
+
+#### Testing the Kafka Exporter
+
+To run integration tests that verify actual Kafka functionality:
+
+```shell
+# Start test environment
+./scripts/kafka-test-env.sh start
+
+# Run integration tests
+cargo test --test kafka_integration_tests --features integration-tests
+
+# Stop test environment  
+./scripts/kafka-test-env.sh stop
+```
+
+See [KAFKA_INTEGRATION_TESTS.md](KAFKA_INTEGRATION_TESTS.md) for detailed testing instructions.
 
 ### Batch configuration
 

@@ -2,6 +2,7 @@ use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
@@ -133,6 +134,9 @@ pub struct AgentRun {
     #[command(flatten)]
     pub aws_xray_exporter: XRayExporterArgs,
 
+    #[command(flatten)]
+    pub kafka_exporter: KafkaExporterArgs,
+
     #[cfg(feature = "pprof")]
     #[clap(flatten)]
     pub profile_group: ProfileGroup,
@@ -187,6 +191,8 @@ pub enum Exporter {
     Clickhouse,
 
     AwsXray,
+
+    Kafka,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]

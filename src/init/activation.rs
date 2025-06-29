@@ -51,6 +51,11 @@ impl TelemetryActivation {
                 traces: TelemetryState::Active,
                 metrics: TelemetryState::NoListeners,
             },
+            Exporter::Kafka => TelemetryActivation {
+                logs: TelemetryState::Active,
+                traces: TelemetryState::Active,
+                metrics: TelemetryState::Active,
+            },
         };
 
         if config.otlp_receiver_traces_disabled {
