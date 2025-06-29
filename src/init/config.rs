@@ -3,12 +3,13 @@ use crate::exporters::datadog::DatadogExporterConfigBuilder;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
-use crate::init::args::{AgentRun, Exporter, parse_bool_value};
+use crate::init::args::{AgentRun, Exporter};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::{
     OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
 };
+use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
 use figment::{Figment, providers::Env};
 use gethostname::gethostname;
@@ -28,7 +29,6 @@ impl FromStr for ExporterMap {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let exporters: HashMap<String, ExporterArgs> = s
             .split(",")
-            .into_iter()
             .map(|exporter| {
                 let sp: Vec<&str> = exporter.split(":").collect();
                 if sp.len() > 2 {
@@ -385,43 +385,50 @@ fn get_single_exporter_config(
     match exporter {
         Exporter::Otlp => {
             let endpoint = config.otlp_exporter.base.endpoint.as_ref();
-            cfg.traces = Some(ExporterConfig::Otlp({
-                let endpoint = config
-                    .otlp_exporter
-                    .base
-                    .traces_endpoint
-                    .as_ref()
-                    .map(|e| Endpoint::Full(e.clone()))
-                    .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
-                let traces_config = build_traces_config(config.otlp_exporter.clone());
-                traces_config.into_exporter_config("otlp_traces", endpoint)
-            }));
-            cfg.metrics = Some(ExporterConfig::Otlp({
-                let endpoint = config
-                    .otlp_exporter
-                    .base
-                    .metrics_endpoint
-                    .as_ref()
-                    .map(|e| Endpoint::Full(e.clone()))
-                    .unwrap_or_else(|| Endpoint::Base(endpoint.clone().unwrap().clone()));
 
-                let metrics_config = build_metrics_config(config.otlp_exporter.clone());
-                metrics_config
-                    .clone()
-                    .into_exporter_config("otlp_metrics", endpoint.clone())
-            }));
-            cfg.logs = Some(ExporterConfig::Otlp({
-                let endpoint = config
-                    .otlp_exporter
-                    .base
-                    .logs_endpoint
-                    .as_ref()
-                    .map(|e| Endpoint::Full(e.clone()))
-                    .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
+            if endpoint.is_some() || config.otlp_exporter.base.traces_endpoint.is_some() {
+                cfg.traces = Some(ExporterConfig::Otlp({
+                    let endpoint = config
+                        .otlp_exporter
+                        .base
+                        .traces_endpoint
+                        .as_ref()
+                        .map(|e| Endpoint::Full(e.clone()))
+                        .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
+                    let traces_config = build_traces_config(config.otlp_exporter.clone());
+                    traces_config.into_exporter_config("otlp_traces", endpoint)
+                }));
+            }
+            if endpoint.is_some() || config.otlp_exporter.base.metrics_endpoint.is_some() {
+                cfg.metrics = Some(ExporterConfig::Otlp({
+                    let endpoint = config
+                        .otlp_exporter
+                        .base
+                        .metrics_endpoint
+                        .as_ref()
+                        .map(|e| Endpoint::Full(e.clone()))
+                        .unwrap_or_else(|| Endpoint::Base(endpoint.clone().unwrap().clone()));
 
-                let logs_config = build_logs_config(config.otlp_exporter.clone());
-                logs_config.into_exporter_config("otlp_logs", endpoint)
-            }));
+                    let metrics_config = build_metrics_config(config.otlp_exporter.clone());
+                    metrics_config
+                        .clone()
+                        .into_exporter_config("otlp_metrics", endpoint.clone())
+                }));
+            }
+            if endpoint.is_some() || config.otlp_exporter.base.logs_endpoint.is_some() {
+                cfg.logs = Some(ExporterConfig::Otlp({
+                    let endpoint = config
+                        .otlp_exporter
+                        .base
+                        .logs_endpoint
+                        .as_ref()
+                        .map(|e| Endpoint::Full(e.clone()))
+                        .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
+
+                    let logs_config = build_logs_config(config.otlp_exporter.clone());
+                    logs_config.into_exporter_config("otlp_logs", endpoint)
+                }));
+            }
         }
         Exporter::Blackhole => {
             cfg.traces = Some(ExporterConfig::Blackhole {});

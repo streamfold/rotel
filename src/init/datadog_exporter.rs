@@ -2,6 +2,7 @@ use clap::{Args, ValueEnum};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Args, Deserialize)]
+#[serde(default)]
 pub struct DatadogExporterArgs {
     /// Datadog Exporter Region
     #[arg(
@@ -27,6 +28,16 @@ pub struct DatadogExporterArgs {
         env = "ROTEL_DATADOG_EXPORTER_API_KEY"
     )]
     pub api_key: Option<String>,
+}
+
+impl Default for DatadogExporterArgs {
+    fn default() -> Self {
+        Self {
+            region: DatadogRegion::US1,
+            custom_endpoint: None,
+            api_key: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]

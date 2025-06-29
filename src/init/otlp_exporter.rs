@@ -1,11 +1,13 @@
 use crate::exporters::otlp;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
-use crate::init::args;
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
+use crate::init::parse;
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Debug, clap::Args, Clone, Deserialize)]
+#[serde(default)]
 pub struct OTLPExporterBaseArgs {
     /// OTLP Exporter Endpoint - Used as default for all OTLP data types unless more specific flag specified
     #[arg(long("otlp-exporter-endpoint"), env = "ROTEL_OTLP_EXPORTER_ENDPOINT")]
@@ -54,8 +56,9 @@ pub struct OTLPExporterBaseArgs {
     pub authenticator: Option<OTLPExporterAuthenticator>,
 
     /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
-    #[arg(long("otlp-exporter-custom-headers"), env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(long("otlp-exporter-custom-headers"), env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
     )]
+    #[serde(deserialize_with = "parse::deserialize_key_value_pairs")]
     pub custom_headers: Vec<(String, String)>,
 
     /// OTLP Exporter Compression - Used as default for all OTLP data types unless more specific flag specified
@@ -125,6 +128,38 @@ pub struct OTLPExporterBaseArgs {
     pub retry_max_elapsed_time: std::time::Duration,
 }
 
+impl Default for OTLPExporterBaseArgs {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            traces_endpoint: None,
+            metrics_endpoint: None,
+            logs_endpoint: None,
+            protocol: OTLPExporterProtocol::Grpc,
+            authenticator: None,
+            custom_headers: vec![],
+            compression: CompressionEncoding::Gzip,
+            cert_group: CertGroup {
+                tls_cert_file: None,
+                tls_cert_pem: None,
+            },
+            key_group: KeyGroup {
+                tls_key_file: None,
+                tls_key_pem: None,
+            },
+            ca_group: CaGroup {
+                tls_ca_file: None,
+                tls_ca_pem: None,
+            },
+            tls_skip_verify: false,
+            request_timeout: Duration::from_secs(5),
+            retry_initial_backoff: Duration::from_secs(5),
+            retry_max_backoff: Duration::from_secs(30),
+            retry_max_elapsed_time: Duration::from_secs(300),
+        }
+    }
+}
+
 #[derive(Debug, Clone, clap::Args)]
 pub struct OTLPExporterArgs {
     #[clap(flatten)]
@@ -143,17 +178,17 @@ pub struct OTLPExporterArgs {
     pub otlp_exporter_logs_protocol: Option<OTLPExporterProtocol>,
 
     /// OTLP Exporter Traces Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
     )]
     pub otlp_exporter_traces_custom_headers: Option<Vec<(String, String)>>,
 
     /// OTLP Exporter Metrics Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
     )]
     pub otlp_exporter_metrics_custom_headers: Option<Vec<(String, String)>>,
 
     /// OTLP Exporter Logs Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS", value_parser = args::parse_key_val::<String, String>, value_delimiter = ',')]
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
     pub otlp_exporter_logs_custom_headers: Option<Vec<(String, String)>>,
 
     /// OTLP Exporter Traces Compression - Overrides otlp_exporter_compression if specified
