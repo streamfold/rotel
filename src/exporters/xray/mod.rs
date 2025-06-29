@@ -21,6 +21,7 @@ use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use serde::Deserialize;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
@@ -49,7 +50,7 @@ type ExporterType<'a, Resource> = Exporter<
     XRayResultLogger,
 >;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Deserialize)]
 pub enum Region {
     UsEast1,
     UsEast2,

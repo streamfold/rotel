@@ -29,7 +29,7 @@ pub struct DatadogExporterArgs {
     pub api_key: Option<String>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
 pub enum DatadogRegion {
     US1,
     US3,

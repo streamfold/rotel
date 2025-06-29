@@ -17,7 +17,7 @@ pub enum TelemetryState {
 }
 
 impl TelemetryActivation {
-    pub fn from_config(config: &AgentRun, exporter_config: &ExporterConfigs) -> Self {
+    pub(crate) fn from_config(config: &AgentRun, exporter_config: &ExporterConfigs) -> Self {
         let mut activation = TelemetryActivation::default();
 
         // Update based on exporters

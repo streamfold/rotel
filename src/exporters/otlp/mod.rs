@@ -40,13 +40,14 @@ use crate::exporters::otlp::config::OTLPExporterConfig;
 use clap::ValueEnum;
 use opentelemetry::global;
 use opentelemetry::metrics::Meter;
+use serde::Deserialize;
 use std::time::Duration;
 
 /// Default timeout duration for OTLP requests
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Supported compression encodings for OTLP data
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, Deserialize, ValueEnum)]
 pub enum CompressionEncoding {
     Gzip,
     None,

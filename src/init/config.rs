@@ -17,21 +17,16 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use tower::BoxError;
 use tracing::error;
-use tracing_subscriber::fmt::format;
 
-struct ExporterMap<T> {
-    exporters: HashMap<String, T>,
+struct ExporterMap {
+    exporters: HashMap<String, ExporterArgs>,
 }
 
-trait FromPrefixedEnv {
-    fn from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArgs, BoxError>;
-}
-
-impl<T: FromPrefixedEnv> FromStr for ExporterMap<T> {
+impl FromStr for ExporterMap {
     type Err = BoxError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let exporters: HashMap<String, T> = s
+        let exporters: HashMap<String, ExporterArgs> = s
             .split(",")
             .into_iter()
             .map(|exporter| {
@@ -46,21 +41,21 @@ impl<T: FromPrefixedEnv> FromStr for ExporterMap<T> {
                     (sp[0], sp[1])
                 };
 
-                let cfg = match T::from_env_prefix(exporter_type, name) {
-                    Ok(cfg) => cfg,
+                let args = match args_from_env_prefix(exporter_type, name) {
+                    Ok(args) => args,
                     Err(e) => return Err(e),
                 };
 
-                Ok((name.to_string(), cfg))
+                Ok((name.to_string(), args))
             })
-            .collect()?;
+            .collect::<Result<HashMap<String, ExporterArgs>, BoxError>>()?;
 
         Ok(ExporterMap { exporters })
     }
 }
 
-impl<T> ExporterMap<T> {
-    fn get(&self, name: &String) -> Option<&T> {
+impl ExporterMap {
+    fn get(&self, name: &String) -> Option<&ExporterArgs> {
         self.exporters.get(name)
     }
 }
@@ -110,52 +105,6 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
-}
-
-impl FromPrefixedEnv for ExporterArgs {
-    fn from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArgs, BoxError> {
-        let figment = Figment::new().merge(Env::prefixed(
-            format!("ROTEL_{}_EXPORTER", prefix.to_uppercase()).as_str(),
-        ));
-        match exporter_type {
-            "blackhole" => Ok(ExporterArgs::Blackhole),
-            "otlp" => {
-                let args: OTLPExporterBaseArgs = match figment.extract() {
-                    Ok(args) => args,
-                    Err(e) => return Err(format!("failed to parse OTLP config: {}", e).into()),
-                };
-
-                Ok(ExporterArgs::Otlp(args))
-            }
-            "datadog" => {
-                let args: DatadogExporterArgs = match figment.extract() {
-                    Ok(args) => args,
-                    Err(e) => return Err(format!("failed to parse Datadog config: {}", e).into()),
-                };
-
-                Ok(ExporterArgs::Datadog(args))
-            }
-            "clickhouse" => {
-                let args: ClickhouseExporterArgs = match figment.extract() {
-                    Ok(args) => args,
-                    Err(e) => {
-                        return Err(format!("failed to parse Clickhouse config: {}", e).into());
-                    }
-                };
-
-                Ok(ExporterArgs::Clickhouse(args))
-            }
-            "xray" => {
-                let args: XRayExporterArgs = match figment.extract() {
-                    Ok(args) => args,
-                    Err(e) => return Err(format!("failed to parse X-Ray config: {}", e).into()),
-                };
-
-                Ok(ExporterArgs::Xray(args))
-            }
-            _ => Err(format!("unknown exporter type: {}", exporter_type).into()),
-        }
-    }
 }
 
 impl TryIntoConfig for ExporterArgs {
@@ -298,19 +247,14 @@ pub(crate) fn get_exporters_config(
         return get_single_exporter_config(config, exporter, environment);
     }
 
-    get_multi_exporter_config(
-        config,
-        config.exporters.as_ref().unwrap().clone(),
-        environment,
-    )
+    get_multi_exporter_config(config.exporters.as_ref().unwrap().clone(), environment)
 }
 
 fn get_multi_exporter_config(
-    config: &AgentRun,
     exporters: String,
     environment: &str,
 ) -> Result<ExporterConfigs, BoxError> {
-    let exporter_map = exporters.parse::<ExporterMap<ExporterArgs>>()?;
+    let exporter_map = exporters.parse::<ExporterMap>()?;
 
     let mut cfg = ExporterConfigs {
         metrics: None,
@@ -351,7 +295,9 @@ fn get_multi_exporter_config(
         let args = match exporter_map.get(&sp[0].to_string()) {
             Some(args) => args,
             None => {
-                return Err(format!("Can not find exporter {} for metrics exporters", sp[0]).into());
+                return Err(
+                    format!("Can not find exporter {} for metrics exporters", sp[0]).into(),
+                );
             }
         };
 
@@ -379,6 +325,50 @@ fn get_multi_exporter_config(
     }
 
     Ok(cfg)
+}
+
+fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArgs, BoxError> {
+    let figment = Figment::new().merge(Env::prefixed(
+        format!("ROTEL_{}_EXPORTER", prefix.to_uppercase()).as_str(),
+    ));
+    match exporter_type {
+        "blackhole" => Ok(ExporterArgs::Blackhole),
+        "otlp" => {
+            let args: OTLPExporterBaseArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => return Err(format!("failed to parse OTLP config: {}", e).into()),
+            };
+
+            Ok(ExporterArgs::Otlp(args))
+        }
+        "datadog" => {
+            let args: DatadogExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => return Err(format!("failed to parse Datadog config: {}", e).into()),
+            };
+
+            Ok(ExporterArgs::Datadog(args))
+        }
+        "clickhouse" => {
+            let args: ClickhouseExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => {
+                    return Err(format!("failed to parse Clickhouse config: {}", e).into());
+                }
+            };
+
+            Ok(ExporterArgs::Clickhouse(args))
+        }
+        "xray" => {
+            let args: XRayExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => return Err(format!("failed to parse X-Ray config: {}", e).into()),
+            };
+
+            Ok(ExporterArgs::Xray(args))
+        }
+        _ => Err(format!("unknown exporter type: {}", exporter_type).into()),
+    }
 }
 
 fn get_single_exporter_config(

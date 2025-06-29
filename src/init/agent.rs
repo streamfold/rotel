@@ -6,7 +6,7 @@ use crate::exporters::datadog::Region;
 use crate::exporters::otlp;
 use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter};
+use crate::init::args::{AgentRun, DebugLogParam};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };

@@ -6,6 +6,7 @@ use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 use std::error::Error;
 use std::net::SocketAddr;
 use tower::BoxError;
@@ -142,7 +143,7 @@ pub struct AgentRun {
     pub profile_group: ProfileGroup,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum)]
 pub enum DebugLogParam {
     None,
     Traces,
@@ -150,13 +151,13 @@ pub enum DebugLogParam {
     Logs,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
 pub enum OTLPExporterProtocol {
     Grpc,
     Http,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
 pub enum OTLPExporterAuthenticator {
     Sigv4auth,
 }
