@@ -24,37 +24,37 @@ impl Default for SerializationFormat {
 pub struct KafkaExporterConfig {
     /// Kafka broker addresses (comma-separated)
     pub brokers: String,
-    
+
     /// Topic name for traces
     pub traces_topic: Option<String>,
-    
+
     /// Topic name for metrics
     pub metrics_topic: Option<String>,
-    
+
     /// Topic name for logs
     pub logs_topic: Option<String>,
-    
+
     /// Serialization format
     pub serialization_format: SerializationFormat,
-    
+
     /// Request timeout
     pub request_timeout: Duration,
-    
+
     /// Producer configuration options
     pub producer_config: HashMap<String, String>,
-    
+
     /// Enable compression
     pub compression: Option<String>,
-    
+
     /// SASL username for authentication
     pub sasl_username: Option<String>,
-    
+
     /// SASL password for authentication
     pub sasl_password: Option<String>,
-    
+
     /// SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
     pub sasl_mechanism: Option<String>,
-    
+
     /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
     pub security_protocol: Option<String>,
 }
@@ -86,37 +86,37 @@ impl KafkaExporterConfig {
             ..Default::default()
         }
     }
-    
+
     /// Set the traces topic
     pub fn with_traces_topic(mut self, topic: String) -> Self {
         self.traces_topic = Some(topic);
         self
     }
-    
+
     /// Set the metrics topic
     pub fn with_metrics_topic(mut self, topic: String) -> Self {
         self.metrics_topic = Some(topic);
         self
     }
-    
+
     /// Set the logs topic
     pub fn with_logs_topic(mut self, topic: String) -> Self {
         self.logs_topic = Some(topic);
         self
     }
-    
+
     /// Set the serialization format
     pub fn with_serialization_format(mut self, format: SerializationFormat) -> Self {
         self.serialization_format = format;
         self
     }
-    
+
     /// Set compression type
     pub fn with_compression(mut self, compression: String) -> Self {
         self.compression = Some(compression);
         self
     }
-    
+
     /// Set SASL authentication
     pub fn with_sasl_auth(
         mut self,
@@ -131,47 +131,47 @@ impl KafkaExporterConfig {
         self.security_protocol = Some(security_protocol);
         self
     }
-    
+
     /// Build rdkafka ClientConfig from this configuration
     pub fn build_client_config(&self) -> ClientConfig {
         let mut config = ClientConfig::new();
-        
+
         config.set("bootstrap.servers", &self.brokers);
-        
+
         // Set compression if specified
         if let Some(ref compression) = self.compression {
             config.set("compression.type", compression);
         }
-        
+
         // Set security configuration
         if let Some(ref protocol) = self.security_protocol {
             config.set("security.protocol", protocol);
         }
-        
+
         // Set SASL configuration
         if let Some(ref mechanism) = self.sasl_mechanism {
             config.set("sasl.mechanism", mechanism);
         }
-        
+
         if let Some(ref username) = self.sasl_username {
             config.set("sasl.username", username);
         }
-        
+
         if let Some(ref password) = self.sasl_password {
             config.set("sasl.password", password);
         }
-        
+
         // Set additional producer configuration
         for (key, value) in &self.producer_config {
             config.set(key, value);
         }
-        
+
         // Set some sensible defaults
         config.set("message.timeout.ms", "30000");
         config.set("request.timeout.ms", "30000");
         config.set("linger.ms", "5");
         config.set("batch.size", "16384");
-        
+
         config
     }
 }

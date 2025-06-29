@@ -524,17 +524,17 @@ impl Agent {
                     Ok(())
                 });
             }
-            
+
             Exporter::Kafka => {
                 let kafka_config = config.kafka_exporter.build_config();
-                
+
                 let mut kafka_exporter = KafkaExporter::new(
                     kafka_config,
                     trace_pipeline_out_rx,
                     metrics_pipeline_out_rx,
                     logs_pipeline_out_rx,
                 )?;
-                
+
                 let token = exporters_cancel.clone();
                 exporters_task_set.spawn(async move {
                     kafka_exporter.start(token).await;

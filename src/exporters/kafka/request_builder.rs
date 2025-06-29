@@ -24,13 +24,13 @@ impl MessageKey {
             resource_id: None,
         }
     }
-    
+
     /// Set the resource ID
     pub fn with_resource_id(mut self, id: String) -> Self {
         self.resource_id = Some(id);
         self
     }
-    
+
     /// Convert to string representation
     pub fn to_string(&self) -> String {
         match &self.resource_id {
@@ -52,7 +52,7 @@ impl KafkaRequestBuilder {
             serialization_format: format,
         }
     }
-    
+
     /// Build message from trace spans
     pub fn build_trace_message(&self, spans: &[ResourceSpans]) -> Result<(MessageKey, Bytes)> {
         let key = MessageKey::new("traces");
@@ -62,9 +62,12 @@ impl KafkaRequestBuilder {
         };
         Ok((key, payload))
     }
-    
+
     /// Build message from metrics
-    pub fn build_metrics_message(&self, metrics: &[ResourceMetrics]) -> Result<(MessageKey, Bytes)> {
+    pub fn build_metrics_message(
+        &self,
+        metrics: &[ResourceMetrics],
+    ) -> Result<(MessageKey, Bytes)> {
         let key = MessageKey::new("metrics");
         let payload = match self.serialization_format {
             SerializationFormat::Json => self.serialize_json(&metrics)?,
@@ -72,7 +75,7 @@ impl KafkaRequestBuilder {
         };
         Ok((key, payload))
     }
-    
+
     /// Build message from logs
     pub fn build_logs_message(&self, logs: &[ResourceLogs]) -> Result<(MessageKey, Bytes)> {
         let key = MessageKey::new("logs");
@@ -82,44 +85,46 @@ impl KafkaRequestBuilder {
         };
         Ok((key, payload))
     }
-    
+
     /// Serialize data as JSON
     fn serialize_json<T: Serialize>(&self, data: &T) -> Result<Bytes> {
         let json = serde_json::to_vec(data)?;
         Ok(Bytes::from(json))
     }
-    
+
     /// Serialize traces as protobuf
     fn serialize_protobuf_traces(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
         // Create a TracesData message (from OTLP spec)
-        let traces_data = opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest {
-            resource_spans: spans.to_vec(),
-        };
-        
+        let traces_data =
+            opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest {
+                resource_spans: spans.to_vec(),
+            };
+
         let mut buf = Vec::new();
         traces_data.encode(&mut buf)?;
         Ok(Bytes::from(buf))
     }
-    
+
     /// Serialize metrics as protobuf
     fn serialize_protobuf_metrics(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
         // Create a MetricsData message (from OTLP spec)
-        let metrics_data = opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest {
-            resource_metrics: metrics.to_vec(),
-        };
-        
+        let metrics_data =
+            opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest {
+                resource_metrics: metrics.to_vec(),
+            };
+
         let mut buf = Vec::new();
         metrics_data.encode(&mut buf)?;
         Ok(Bytes::from(buf))
     }
-    
+
     /// Serialize logs as protobuf
     fn serialize_protobuf_logs(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
         // Create a LogsData message (from OTLP spec)
         let logs_data = opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest {
             resource_logs: logs.to_vec(),
         };
-        
+
         let mut buf = Vec::new();
         logs_data.encode(&mut buf)?;
         Ok(Bytes::from(buf))
@@ -130,24 +135,24 @@ impl KafkaRequestBuilder {
 mod tests {
     use super::*;
     use crate::exporters::kafka::config::SerializationFormat;
-    
+
     #[test]
     fn test_message_key() {
         let key = MessageKey::new("traces");
         assert_eq!(key.to_string(), "traces");
-        
+
         let key_with_id = MessageKey::new("metrics").with_resource_id("service-123".to_string());
         assert_eq!(key_with_id.to_string(), "metrics:service-123");
     }
-    
+
     #[test]
     fn test_json_serialization() {
         let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
         let spans: Vec<ResourceSpans> = vec![];
-        
+
         let result = builder.build_trace_message(&spans);
         assert!(result.is_ok());
-        
+
         let (key, payload) = result.unwrap();
         assert_eq!(key.telemetry_type, "traces");
         assert!(!payload.is_empty());
