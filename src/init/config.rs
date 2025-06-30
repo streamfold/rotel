@@ -364,7 +364,7 @@ fn get_multi_exporter_config(
 
 fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArgs, BoxError> {
     let figment = Figment::new().merge(Env::prefixed(
-        format!("ROTEL_EXPORTER_{}", prefix.to_uppercase()).as_str(),
+        format!("ROTEL_EXPORTER_{}_", prefix.to_uppercase()).as_str(),
     ));
     match exporter_type {
         "blackhole" => Ok(ExporterArgs::Blackhole),
