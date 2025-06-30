@@ -32,5 +32,5 @@ mod tests;
 
 pub use config::KafkaExporterConfig;
 pub use exporter::{
-    KafkaExporter, build_traces_exporter, build_metrics_exporter, build_logs_exporter
+    KafkaExporter, build_logs_exporter, build_metrics_exporter, build_traces_exporter,
 };

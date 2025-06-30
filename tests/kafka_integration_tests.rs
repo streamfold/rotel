@@ -16,8 +16,8 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rotel::bounded_channel::bounded;
-use rotel::exporters::kafka::{build_traces_exporter, build_metrics_exporter, build_logs_exporter};
 use rotel::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
+use rotel::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
 use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -82,8 +82,8 @@ async fn test_kafka_exporter_traces_json() {
         .with_traces_topic(topic.to_string())
         .with_serialization_format(SerializationFormat::Json);
 
-    let mut exporter = build_traces_exporter(config, traces_rx)
-        .expect("Failed to create Kafka traces exporter");
+    let mut exporter =
+        build_traces_exporter(config, traces_rx).expect("Failed to create Kafka traces exporter");
 
     let cancel_token = CancellationToken::new();
     let exporter_token = cancel_token.clone();
@@ -201,8 +201,8 @@ async fn test_kafka_exporter_logs_with_compression() {
         .with_serialization_format(SerializationFormat::Json)
         .with_compression("gzip".to_string());
 
-    let mut exporter = build_logs_exporter(config, logs_rx)
-        .expect("Failed to create Kafka logs exporter");
+    let mut exporter =
+        build_logs_exporter(config, logs_rx).expect("Failed to create Kafka logs exporter");
 
     let cancel_token = CancellationToken::new();
     let exporter_token = cancel_token.clone();
@@ -265,11 +265,11 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
         .expect("Failed to create Kafka traces exporter");
     let mut metrics_exporter = build_metrics_exporter(config.clone(), metrics_rx)
         .expect("Failed to create Kafka metrics exporter");
-    let mut logs_exporter = build_logs_exporter(config, logs_rx)
-        .expect("Failed to create Kafka logs exporter");
+    let mut logs_exporter =
+        build_logs_exporter(config, logs_rx).expect("Failed to create Kafka logs exporter");
 
     let cancel_token = CancellationToken::new();
-    
+
     // Start all exporters
     let traces_handle = tokio::spawn({
         let token = cancel_token.clone();
@@ -277,14 +277,14 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
             traces_exporter.start(token).await;
         }
     });
-    
+
     let metrics_handle = tokio::spawn({
         let token = cancel_token.clone();
         async move {
             metrics_exporter.start(token).await;
         }
     });
-    
+
     let logs_handle = tokio::spawn({
         let token = cancel_token.clone();
         async move {

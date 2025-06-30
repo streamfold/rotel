@@ -23,7 +23,7 @@ pub trait KafkaExportable: Debug + Send + Sized + 'static {
         builder: &KafkaRequestBuilder,
         data: &[Self],
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)>;
-    
+
     /// Get the telemetry type name
     fn telemetry_type() -> &'static str;
 }
@@ -35,7 +35,7 @@ impl KafkaExportable for ResourceSpans {
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
         builder.build_trace_message(spans)
     }
-    
+
     fn telemetry_type() -> &'static str {
         "traces"
     }
@@ -48,7 +48,7 @@ impl KafkaExportable for ResourceMetrics {
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
         builder.build_metrics_message(metrics)
     }
-    
+
     fn telemetry_type() -> &'static str {
         "metrics"
     }
@@ -61,7 +61,7 @@ impl KafkaExportable for ResourceLogs {
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
         builder.build_logs_message(logs)
     }
-    
+
     fn telemetry_type() -> &'static str {
         "logs"
     }
