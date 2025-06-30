@@ -95,6 +95,7 @@ impl Default for ClickhouseExporterArgs {
 }
 
 #[derive(Clone, Debug, Copy, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Compression {
     None,
     Lz4,

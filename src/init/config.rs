@@ -133,17 +133,23 @@ impl TryIntoConfig for ExporterArgs {
                 let endpoint = otlp.endpoint.as_ref();
                 match pipeline_type {
                     PipelineType::Metrics => {
+                        if endpoint.is_none() && otlp.metrics_endpoint.is_none() {
+                            return Err("must specify an endpoint for OTLP metrics".into());
+                        }
                         let endpoint = otlp
                             .metrics_endpoint
                             .as_ref()
                             .map(|e| Endpoint::Full(e.clone()))
-                            .unwrap_or_else(|| Endpoint::Base(endpoint.clone().unwrap().clone()));
+                            .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
                         Ok(ExporterConfig::Otlp(
                             otlp.into_exporter_config("otlp_metrics", endpoint),
                         ))
                     }
                     PipelineType::Logs => {
+                        if endpoint.is_none() && otlp.logs_endpoint.is_none() {
+                            return Err("must specify an endpoint for OTLP logs".into());
+                        }
                         let endpoint = otlp
                             .logs_endpoint
                             .as_ref()
@@ -155,6 +161,9 @@ impl TryIntoConfig for ExporterArgs {
                         ))
                     }
                     PipelineType::Traces => {
+                        if endpoint.is_none() && otlp.traces_endpoint.is_none() {
+                            return Err("must specify an endpoint for OTLP traces".into());
+                        }
                         let endpoint = otlp
                             .traces_endpoint
                             .as_ref()
@@ -546,5 +555,373 @@ fn get_hostname() -> Option<String> {
             error!(error = ?e, "Unable to lookup hostname");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::init::args::AgentRun;
+    use std::collections::HashMap;
+    use std::env;
+
+    // Helper struct to manage environment variables during tests
+    struct EnvManager {
+        original_vars: HashMap<String, Option<String>>,
+    }
+
+    impl EnvManager {
+        fn new() -> Self {
+            Self {
+                original_vars: HashMap::new(),
+            }
+        }
+
+        fn set_var(&mut self, key: &str, value: &str) {
+            // Save original value if not already saved
+            if !self.original_vars.contains_key(key) {
+                self.original_vars
+                    .insert(key.to_string(), env::var(key).ok());
+            }
+            unsafe { env::set_var(key, value) };
+        }
+
+        fn remove_var(&mut self, key: &str) {
+            // Save original value if not already saved
+            if !self.original_vars.contains_key(key) {
+                self.original_vars
+                    .insert(key.to_string(), env::var(key).ok());
+            }
+            unsafe { env::remove_var(key) };
+        }
+    }
+
+    impl Drop for EnvManager {
+        fn drop(&mut self) {
+            // Restore all environment variables
+            for (key, original_value) in &self.original_vars {
+                match original_value {
+                    Some(value) => unsafe { env::set_var(key, value) },
+                    None => unsafe { env::remove_var(key) },
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_blackhole_traces_only() {
+        let config = AgentRun {
+            exporters_traces: Some("test_blackhole".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(
+            &config,
+            "test_blackhole:blackhole".to_string(),
+            "production",
+        );
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert!(exporters.traces.is_some());
+        assert!(exporters.metrics.is_none());
+        assert!(exporters.logs.is_none());
+
+        match exporters.traces.unwrap() {
+            ExporterConfig::Blackhole => {}
+            _ => panic!("Expected Blackhole exporter"),
+        }
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_blackhole_all_pipelines() {
+        let config = AgentRun {
+            exporters_traces: Some("test_blackhole".to_string()),
+            exporters_metrics: Some("test_blackhole".to_string()),
+            exporters_logs: Some("test_blackhole".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(
+            &config,
+            "test_blackhole:blackhole".to_string(),
+            "production",
+        );
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert!(exporters.traces.is_some());
+        assert!(exporters.metrics.is_some());
+        assert!(exporters.logs.is_some());
+
+        match exporters.traces.unwrap() {
+            ExporterConfig::Blackhole => {}
+            _ => panic!("Expected Blackhole exporter for traces"),
+        }
+        match exporters.metrics.unwrap() {
+            ExporterConfig::Blackhole => {}
+            _ => panic!("Expected Blackhole exporter for metrics"),
+        }
+        match exporters.logs.unwrap() {
+            ExporterConfig::Blackhole => {}
+            _ => panic!("Expected Blackhole exporter for logs"),
+        }
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_otlp_with_endpoint() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_ENDPOINT", "http://localhost:4317");
+
+        let config = AgentRun {
+            exporters_traces: Some("test".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "test:otlp".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert!(exporters.traces.is_some());
+        assert!(exporters.metrics.is_none());
+        assert!(exporters.logs.is_none());
+
+        match exporters.traces.unwrap() {
+            ExporterConfig::Otlp(otlp) => assert_eq!(
+                Endpoint::Base("http://localhost:4317".to_string()),
+                otlp.endpoint
+            ),
+            _ => panic!("Expected OTLP exporter"),
+        }
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_datadog_with_api_key() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_DD_API_KEY", "test-api-key");
+        env_manager.set_var("ROTEL_EXPORTER_DD_REGION", "us1");
+
+        let config = AgentRun {
+            exporters_traces: Some("dd".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "dd:datadog".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert!(exporters.traces.is_some());
+
+        match exporters.traces.unwrap() {
+            ExporterConfig::Datadog(_) => {}
+            _ => panic!("Expected Datadog exporter"),
+        }
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_datadog_missing_api_key() {
+        let mut env_manager = EnvManager::new();
+        env_manager.remove_var("ROTEL_EXPORTER_DD_API_KEY");
+
+        let config = AgentRun {
+            exporters_traces: Some("dd".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "dd:datadog".to_string(), "production");
+
+        match result {
+            Ok(_) => panic!("should have failed"),
+            Err(err) => {
+                assert!(
+                    err.to_string()
+                        .contains("must specify Datadog exporter API key")
+                );
+            }
+        };
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_datadog_metrics_not_supported() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_DD_API_KEY", "test-api-key");
+
+        let config = AgentRun {
+            exporters_metrics: Some("dd".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "dd:datadog".to_string(), "production");
+        match result {
+            Ok(_) => panic!("should have failed"),
+            Err(err) => {
+                assert!(
+                    err.to_string()
+                        .contains("Datadog exporter not supported for pipeline type metrics")
+                );
+            }
+        };
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_multiple_exporters_error() {
+        let config = AgentRun {
+            exporters_traces: Some("exp1,exp2".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(
+            &config,
+            "exp1:blackhole,exp2:blackhole".to_string(),
+            "production",
+        );
+
+        match result {
+            Ok(_) => panic!("should have failed"),
+            Err(err) => {
+                assert!(
+                    err.to_string()
+                        .contains("Only one exporter supported for ROTEL_EXPORTERS_TRACES")
+                );
+            }
+        };
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_exporter_not_found() {
+        let config = AgentRun {
+            exporters_traces: Some("nonexistent".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "exp1:blackhole".to_string(), "production");
+
+        match result {
+            Ok(_) => panic!("should have failed"),
+            Err(err) => {
+                assert!(
+                    err.to_string()
+                        .contains("Can not find exporter nonexistent for traces exporters")
+                );
+            }
+        };
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_no_exporters_configured() {
+        let config = AgentRun::default();
+
+        let result = get_multi_exporter_config(&config, "exp1:blackhole".to_string(), "production");
+        match result {
+            Ok(_) => panic!("should have failed"),
+            Err(err) => {
+                assert!(err.to_string().contains("No telemetry pipeline exporters"));
+            }
+        };
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_mixed_exporters() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_DD_API_KEY", "test-api-key");
+        env_manager.set_var("ROTEL_EXPORTER_CH_ENDPOINT", "http://localhost:8123");
+
+        let config = AgentRun {
+            exporters_traces: Some("dd".to_string()),
+            exporters_metrics: Some("ch".to_string()),
+            exporters_logs: Some("bh".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(
+            &config,
+            "dd:datadog,ch:clickhouse,bh:blackhole".to_string(),
+            "production",
+        );
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert!(exporters.traces.is_some());
+        assert!(exporters.metrics.is_some());
+        assert!(exporters.logs.is_some());
+
+        match exporters.traces.unwrap() {
+            ExporterConfig::Datadog(_) => {}
+            _ => panic!("Expected Datadog exporter for traces"),
+        }
+        match exporters.metrics.unwrap() {
+            ExporterConfig::Clickhouse(_) => {}
+            _ => panic!("Expected Clickhouse exporter for metrics"),
+        }
+        match exporters.logs.unwrap() {
+            ExporterConfig::Blackhole => {}
+            _ => panic!("Expected Blackhole exporter for logs"),
+        }
+    }
+
+    #[test]
+    fn test_args_from_env_prefix_otlp() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_ENDPOINT", "http://localhost:4317");
+
+        let result = args_from_env_prefix("otlp", "test");
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            ExporterArgs::Otlp(_) => {}
+            _ => panic!("Expected OTLP args"),
+        }
+    }
+
+    #[test]
+    fn test_args_from_env_prefix_awsxray() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_REGION", "us-west-1");
+
+        let result = args_from_env_prefix("xray", "test");
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            ExporterArgs::Xray(_) => {}
+            _ => panic!("Expected Xray args"),
+        }
+    }
+
+    #[test]
+    fn test_exporter_map_from_str_invalid_format() {
+        let result = "exp1:type1:extra".parse::<ExporterMap>();
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("invalid exporter config"));
+    }
+
+    #[test]
+    fn test_exporter_map_from_str_unknown_type() {
+        let result = "exp1:unknown".parse::<ExporterMap>();
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("unknown exporter type: unknown"));
+    }
+
+    #[test]
+    fn test_get_multi_exporter_config_figment_parse_error() {
+        let mut env_manager = EnvManager::new();
+        // Set an invalid value that would cause figment parsing to fail
+        env_manager.set_var("ROTEL_EXPORTER_TEST_REQUEST_TIMEOUT", "not_a_number");
+
+        let config = AgentRun {
+            exporters_traces: Some("test".to_string()),
+            ..AgentRun::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "test:otlp".to_string(), "production");
+        match result {
+            Ok(_) => panic!("should have failed"),
+            Err(err) => {
+                assert!(err.to_string().contains("failed to parse OTLP config"));
+            }
+        };
     }
 }

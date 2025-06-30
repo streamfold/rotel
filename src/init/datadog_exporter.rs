@@ -41,6 +41,7 @@ impl Default for DatadogExporterArgs {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum DatadogRegion {
     US1,
     US3,

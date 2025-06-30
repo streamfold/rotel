@@ -154,6 +154,47 @@ pub struct AgentRun {
     pub profile_group: ProfileGroup,
 }
 
+impl Default for AgentRun {
+    fn default() -> Self {
+        AgentRun {
+            daemon: false,
+            pid_file: "/tmp/rotel-agent.pid".to_string(),
+            log_file: "/tmp/rotel-agent.log".to_string(),
+            debug_log: vec![DebugLogParam::None],
+            debug_log_verbosity: DebugLogVerbosity::Basic,
+            otlp_grpc_endpoint: "127.0.0.1:4317".parse().unwrap(),
+            otlp_http_endpoint: "127.0.0.1:4318".parse().unwrap(),
+            otlp_grpc_max_recv_msg_size_mib: 4,
+            otlp_receiver_traces_disabled: false,
+            otlp_receiver_metrics_disabled: false,
+            otlp_receiver_logs_disabled: false,
+            otlp_receiver_traces_http_path: "/v1/traces".to_string(),
+            otlp_receiver_metrics_http_path: "/v1/metrics".to_string(),
+            otlp_receiver_logs_http_path: "/v1/logs".to_string(),
+            otlp_with_trace_processor: Vec::new(),
+            otlp_with_logs_processor: Vec::new(),
+            otlp_with_metrics_processor: Vec::new(),
+            otel_resource_attributes: Vec::new(),
+            enable_internal_telemetry: false,
+            batch: BatchArgs::default(),
+            exporter: None,
+            exporters: None,
+            exporters_traces: None,
+            exporters_metrics: None,
+            exporters_logs: None,
+            otlp_exporter: OTLPExporterArgs::default(),
+            datadog_exporter: DatadogExporterArgs::default(),
+            clickhouse_exporter: ClickhouseExporterArgs::default(),
+            aws_xray_exporter: XRayExporterArgs::default(),
+            #[cfg(feature = "pprof")]
+            profile_group: ProfileGroup {
+                pprof_flame_graph: false,
+                pprof_call_graph: false,
+            },
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Debug, ValueEnum)]
 pub enum DebugLogParam {
     None,
@@ -163,12 +204,14 @@ pub enum DebugLogParam {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum OTLPExporterProtocol {
     Grpc,
     Http,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum OTLPExporterAuthenticator {
     Sigv4auth,
 }

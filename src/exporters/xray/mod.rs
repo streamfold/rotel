@@ -51,6 +51,7 @@ type ExporterType<'a, Resource> = Exporter<
 >;
 
 #[derive(Copy, Clone, Debug, Deserialize)]
+#[serde(from = "String")]
 pub enum Region {
     UsEast1,
     UsEast2,

@@ -306,6 +306,74 @@ pub struct OTLPExporterArgs {
     pub otlp_exporter_logs_retry_max_elapsed_time: Option<std::time::Duration>,
 }
 
+impl Default for OTLPExporterArgs {
+    fn default() -> Self {
+        Self {
+            base: OTLPExporterBaseArgs::default(),
+            otlp_exporter_traces_protocol: None,
+            otlp_exporter_metrics_protocol: None,
+            otlp_exporter_logs_protocol: None,
+            otlp_exporter_traces_custom_headers: None,
+            otlp_exporter_metrics_custom_headers: None,
+            otlp_exporter_logs_custom_headers: None,
+            otlp_exporter_traces_compression: None,
+            otlp_exporter_metrics_compression: None,
+            otlp_exporter_logs_compression: None,
+            otlp_exporter_traces_cert_group: TracesCertGroup {
+                otlp_exporter_traces_tls_cert_file: None,
+                otlp_exporter_traces_tls_cert_pem: None,
+            },
+            otlp_exporter_traces_key_group: TracesKeyGroup {
+                otlp_exporter_traces_tls_key_file: None,
+                otlp_exporter_traces_tls_key_pem: None,
+            },
+            otlp_exporter_traces_ca_group: TracesCaGroup {
+                otlp_exporter_traces_tls_ca_file: None,
+                otlp_exporter_traces_tls_ca_pem: None,
+            },
+            otlp_exporter_metrics_cert_group: MetricsCertGroup {
+                otlp_exporter_metrics_tls_cert_file: None,
+                otlp_exporter_metrics_tls_cert_pem: None,
+            },
+            otlp_exporter_metrics_key_group: MetricsKeyGroup {
+                otlp_exporter_metrics_tls_key_file: None,
+                otlp_exporter_metrics_tls_key_pem: None,
+            },
+            otlp_exporter_metrics_ca_group: MetricsCaGroup {
+                otlp_exporter_metrics_tls_ca_file: None,
+                otlp_exporter_metrics_tls_ca_pem: None,
+            },
+            otlp_exporter_logs_cert_group: LogsCertGroup {
+                otlp_exporter_logs_tls_cert_file: None,
+                otlp_exporter_logs_tls_cert_pem: None,
+            },
+            otlp_exporter_logs_key_group: LogsKeyGroup {
+                otlp_exporter_logs_tls_key_file: None,
+                otlp_exporter_logs_tls_key_pem: None,
+            },
+            otlp_exporter_logs_ca_group: LogsCaGroup {
+                otlp_exporter_logs_tls_ca_file: None,
+                otlp_exporter_logs_tls_ca_pem: None,
+            },
+            otlp_exporter_traces_tls_skip_verify: None,
+            otlp_exporter_metrics_tls_skip_verify: None,
+            otlp_exporter_logs_tls_skip_verify: None,
+            otlp_exporter_traces_request_timeout: None,
+            otlp_exporter_metrics_request_timeout: None,
+            otlp_exporter_logs_request_timeout: None,
+            otlp_exporter_traces_retry_initial_backoff: None,
+            otlp_exporter_metrics_retry_initial_backoff: None,
+            otlp_exporter_logs_retry_initial_backoff: None,
+            otlp_exporter_traces_retry_max_backoff: None,
+            otlp_exporter_metrics_retry_max_backoff: None,
+            otlp_exporter_logs_retry_max_backoff: None,
+            otlp_exporter_traces_retry_max_elapsed_time: None,
+            otlp_exporter_metrics_retry_max_elapsed_time: None,
+            otlp_exporter_logs_retry_max_elapsed_time: None,
+        }
+    }
+}
+
 impl From<OTLPExporterProtocol> for Protocol {
     fn from(value: OTLPExporterProtocol) -> Protocol {
         match value {
