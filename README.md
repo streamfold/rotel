@@ -254,6 +254,7 @@ logs, and traces.
 | --kafka-exporter-format                   | json          | json, protobuf    |
 | --kafka-exporter-compression              |               | gzip, snappy, lz4, zstd, none |
 | --kafka-exporter-request-timeout          | 30s           |                   |
+| --kafka-exporter-acks                     | one           | none, one, all    |
 | --kafka-exporter-sasl-username            |               |                   |
 | --kafka-exporter-sasl-password            |               |                   |
 | --kafka-exporter-sasl-mechanism           |               | PLAIN, SCRAM-SHA-256, SCRAM-SHA-512 |
@@ -261,6 +262,14 @@ logs, and traces.
 
 The Kafka broker addresses must be specified (comma-separated for multiple brokers). The exporter will create separate
 topics for traces, metrics, and logs. Data can be serialized as JSON or Protobuf format.
+
+#### Acknowledgement Modes
+
+The `--kafka-exporter-acks` option controls the producer acknowledgement behavior, balancing between performance and durability:
+
+- `none` (acks=0): No acknowledgement required - fastest performance but least durable, data may be lost if the leader fails
+- `one` (acks=1): Wait for leader acknowledgement only - balanced approach, good performance with reasonable durability (default)
+- `all` (acks=all): Wait for all in-sync replicas to acknowledge - slowest but most durable, ensures data is not lost
 
 For secure connections, you can configure SASL authentication:
 
@@ -271,7 +280,8 @@ rotel start --exporter kafka \
   --kafka-exporter-sasl-password "your-password" \
   --kafka-exporter-sasl-mechanism "SCRAM-SHA-256" \
   --kafka-exporter-security-protocol "SASL_SSL" \
-  --kafka-exporter-compression "gzip"
+  --kafka-exporter-compression "gzip" \
+  --kafka-exporter-acks "all"
 ```
 
 The Kafka exporter uses the high-performance rdkafka library and includes built-in retry logic and error handling.
