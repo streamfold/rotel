@@ -3,6 +3,7 @@
 use crate::exporters::kafka::config::{
     AcknowledgementMode, KafkaExporterConfig, SerializationFormat,
 };
+use crate::init::args;
 use clap::{Args, ValueEnum};
 
 #[derive(Debug, Args, Clone)]
@@ -69,6 +70,87 @@ pub struct KafkaExporterArgs {
     )]
     pub kafka_exporter_acks: KafkaAcknowledgementMode,
 
+    /// Client ID for the Kafka producer
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID",
+        default_value = "rotel"
+    )]
+    pub kafka_exporter_client_id: String,
+
+    /// Maximum message size in bytes
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_MAX_MESSAGE_BYTES",
+        default_value = "1000000"
+    )]
+    pub kafka_exporter_max_message_bytes: usize,
+
+    /// Linger time in milliseconds
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_LINGER_MS",
+        default_value = "5"
+    )]
+    pub kafka_exporter_linger_ms: u32,
+
+    /// Number of retries for message sending
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_RETRIES",
+        default_value = "2147483647"
+    )]
+    pub kafka_exporter_retries: u32,
+
+    /// Retry backoff time in milliseconds
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_RETRY_BACKOFF_MS",
+        default_value = "100"
+    )]
+    pub kafka_exporter_retry_backoff_ms: u32,
+
+    /// Maximum retry backoff time in milliseconds
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_RETRY_BACKOFF_MAX_MS",
+        default_value = "1000"
+    )]
+    pub kafka_exporter_retry_backoff_max_ms: u32,
+
+    /// Message timeout in milliseconds
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_MESSAGE_TIMEOUT_MS",
+        default_value = "300000"
+    )]
+    pub kafka_exporter_message_timeout_ms: u32,
+
+    /// Request timeout in milliseconds
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_REQUEST_TIMEOUT_MS",
+        default_value = "30000"
+    )]
+    pub kafka_exporter_request_timeout_ms: u32,
+
+    /// Batch size in bytes
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_BATCH_SIZE",
+        default_value = "1000000"
+    )]
+    pub kafka_exporter_batch_size: u32,
+
+    /// Custom Kafka producer configuration parameters (key=value pairs). These will override built-in options if conflicts exist.
+    #[arg(
+        long("kafka-exporter-custom-config"),
+        env = "ROTEL_KAFKA_EXPORTER_CUSTOM_CONFIG",
+        value_parser = args::parse_key_val::<String, String>,
+        value_delimiter = ','
+    )]
+    pub kafka_exporter_custom_config: Vec<(String, String)>,
+
     /// SASL username for authentication
     #[arg(long, env = "ROTEL_KAFKA_EXPORTER_SASL_USERNAME")]
     pub kafka_exporter_sasl_username: Option<String>,
@@ -132,7 +214,17 @@ impl KafkaExporterArgs {
             .with_metrics_topic(self.kafka_exporter_metrics_topic.clone())
             .with_logs_topic(self.kafka_exporter_logs_topic.clone())
             .with_serialization_format(self.kafka_exporter_format.into())
-            .with_acks(self.kafka_exporter_acks.into());
+            .with_acks(self.kafka_exporter_acks.into())
+            .with_client_id(self.kafka_exporter_client_id.clone())
+            .with_max_message_bytes(self.kafka_exporter_max_message_bytes)
+            .with_linger_ms(self.kafka_exporter_linger_ms)
+            .with_retries(self.kafka_exporter_retries)
+            .with_retry_backoff_ms(self.kafka_exporter_retry_backoff_ms)
+            .with_retry_backoff_max_ms(self.kafka_exporter_retry_backoff_max_ms)
+            .with_message_timeout_ms(self.kafka_exporter_message_timeout_ms)
+            .with_request_timeout_ms(self.kafka_exporter_request_timeout_ms)
+            .with_batch_size(self.kafka_exporter_batch_size)
+            .with_custom_config(self.kafka_exporter_custom_config.clone());
 
         config.request_timeout = self.kafka_exporter_request_timeout.into();
 

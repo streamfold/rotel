@@ -8,6 +8,7 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use prost::Message;
 use serde::Serialize;
+use std::fmt::{Display, Formatter};
 
 /// Key for Kafka messages
 #[derive(Clone, Debug)]
@@ -31,11 +32,20 @@ impl MessageKey {
         self
     }
 
-    /// Convert to string representation
-    pub fn to_string(&self) -> String {
+    // /// Convert to string representation
+    // pub fn to_string(&self) -> String {
+    //     match &self.resource_id {
+    //         Some(id) => format!("{}:{}", self.telemetry_type, id),
+    //         None => self.telemetry_type.clone(),
+    //     }
+    // }
+}
+
+impl Display for MessageKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.resource_id {
-            Some(id) => format!("{}:{}", self.telemetry_type, id),
-            None => self.telemetry_type.clone(),
+            Some(id) => write!(f, "{}:{}", self.telemetry_type, id),
+            None => write!(f, "{}", self.telemetry_type.clone()),
         }
     }
 }

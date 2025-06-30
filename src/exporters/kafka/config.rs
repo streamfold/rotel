@@ -72,6 +72,33 @@ pub struct KafkaExporterConfig {
     /// Acknowledgement mode for producer
     pub acks: AcknowledgementMode,
 
+    /// Client ID for the Kafka producer
+    pub client_id: String,
+
+    /// Maximum message size in bytes
+    pub max_message_bytes: usize,
+
+    /// Linger time in milliseconds (queue.buffering.max.ms)
+    pub linger_ms: u32,
+
+    /// Number of retries (message.send.max.retries)
+    pub retries: u32,
+
+    /// Retry backoff time in milliseconds
+    pub retry_backoff_ms: u32,
+
+    /// Maximum retry backoff time in milliseconds
+    pub retry_backoff_max_ms: u32,
+
+    /// Message timeout in milliseconds
+    pub message_timeout_ms: u32,
+
+    /// Request timeout in milliseconds  
+    pub request_timeout_ms: u32,
+
+    /// Batch size in bytes
+    pub batch_size: u32,
+
     /// Producer configuration options
     pub producer_config: HashMap<String, String>,
 
@@ -101,6 +128,15 @@ impl Default for KafkaExporterConfig {
             serialization_format: SerializationFormat::default(),
             request_timeout: Duration::from_secs(30),
             acks: AcknowledgementMode::default(),
+            client_id: "rotel".to_string(),
+            max_message_bytes: 1000000,
+            linger_ms: 5,
+            retries: 2147483647,
+            retry_backoff_ms: 100,
+            retry_backoff_max_ms: 1000,
+            message_timeout_ms: 300000,
+            request_timeout_ms: 30000,
+            batch_size: 1000000,
             producer_config: HashMap::new(),
             compression: None,
             sasl_username: None,
@@ -156,6 +192,68 @@ impl KafkaExporterConfig {
         self
     }
 
+    /// Set client ID
+    pub fn with_client_id(mut self, client_id: String) -> Self {
+        self.client_id = client_id;
+        self
+    }
+
+    /// Set maximum message size in bytes
+    pub fn with_max_message_bytes(mut self, max_message_bytes: usize) -> Self {
+        self.max_message_bytes = max_message_bytes;
+        self
+    }
+
+    /// Set linger time in milliseconds
+    pub fn with_linger_ms(mut self, linger_ms: u32) -> Self {
+        self.linger_ms = linger_ms;
+        self
+    }
+
+    /// Set number of retries
+    pub fn with_retries(mut self, retries: u32) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    /// Set retry backoff time in milliseconds
+    pub fn with_retry_backoff_ms(mut self, retry_backoff_ms: u32) -> Self {
+        self.retry_backoff_ms = retry_backoff_ms;
+        self
+    }
+
+    /// Set maximum retry backoff time in milliseconds
+    pub fn with_retry_backoff_max_ms(mut self, retry_backoff_max_ms: u32) -> Self {
+        self.retry_backoff_max_ms = retry_backoff_max_ms;
+        self
+    }
+
+    /// Set message timeout in milliseconds
+    pub fn with_message_timeout_ms(mut self, message_timeout_ms: u32) -> Self {
+        self.message_timeout_ms = message_timeout_ms;
+        self
+    }
+
+    /// Set request timeout in milliseconds
+    pub fn with_request_timeout_ms(mut self, request_timeout_ms: u32) -> Self {
+        self.request_timeout_ms = request_timeout_ms;
+        self
+    }
+
+    /// Set batch size in bytes
+    pub fn with_batch_size(mut self, batch_size: u32) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    /// Set custom producer configuration parameters
+    pub fn with_custom_config(mut self, custom_config: Vec<(String, String)>) -> Self {
+        for (key, value) in custom_config {
+            self.producer_config.insert(key, value);
+        }
+        self
+    }
+
     /// Set SASL authentication
     pub fn with_sasl_auth(
         mut self,
@@ -176,6 +274,20 @@ impl KafkaExporterConfig {
         let mut config = ClientConfig::new();
 
         config.set("bootstrap.servers", &self.brokers);
+
+        // Set client ID
+        config.set("client.id", &self.client_id);
+
+        // Set maximum message size
+        config.set("message.max.bytes", &self.max_message_bytes.to_string());
+
+        // Set linger time (queue.buffering.max.ms)
+        config.set("linger.ms", &self.linger_ms.to_string());
+
+        // Set retry configuration
+        config.set("retries", &self.retries.to_string());
+        config.set("retry.backoff.ms", &self.retry_backoff_ms.to_string());
+        config.set("retry.backoff.max.ms", &self.retry_backoff_max_ms.to_string());
 
         // Set acknowledgement mode
         config.set("acks", self.acks.to_kafka_value());
@@ -203,16 +315,15 @@ impl KafkaExporterConfig {
             config.set("sasl.password", password);
         }
 
-        // Set additional producer configuration
+        // Set timeout and batch configuration
+        config.set("message.timeout.ms", &self.message_timeout_ms.to_string());
+        config.set("request.timeout.ms", &self.request_timeout_ms.to_string());
+        config.set("batch.size", &self.batch_size.to_string());
+
+        // Set custom producer configuration (overrides built-in options if conflicts exist)
         for (key, value) in &self.producer_config {
             config.set(key, value);
         }
-
-        // Set some sensible defaults
-        config.set("message.timeout.ms", "30000");
-        config.set("request.timeout.ms", "30000");
-        config.set("linger.ms", "5");
-        config.set("batch.size", "16384");
 
         config
     }

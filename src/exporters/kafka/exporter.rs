@@ -109,7 +109,7 @@ where
     send_futures: FuturesUnordered<SendFuture>,
 }
 
-impl<Resource> std::fmt::Debug for KafkaExporter<Resource>
+impl<Resource> Debug for KafkaExporter<Resource>
 where
     Resource: KafkaExportable,
 {

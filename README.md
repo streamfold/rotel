@@ -255,6 +255,16 @@ logs, and traces.
 | --kafka-exporter-compression              |               | gzip, snappy, lz4, zstd, none |
 | --kafka-exporter-request-timeout          | 30s           |                   |
 | --kafka-exporter-acks                     | one           | none, one, all    |
+| --kafka-exporter-client-id                | rotel         |                   |
+| --kafka-exporter-max-message-bytes        | 1000000       |                   |
+| --kafka-exporter-linger-ms                | 5             |                   |
+| --kafka-exporter-retries                  | 2147483647    |                   |
+| --kafka-exporter-retry-backoff-ms         | 100           |                   |
+| --kafka-exporter-retry-backoff-max-ms     | 1000          |                   |
+| --kafka-exporter-message-timeout-ms       | 300000        |                   |
+| --kafka-exporter-request-timeout-ms       | 30000         |                   |
+| --kafka-exporter-batch-size               | 1000000       |                   |
+| --kafka-exporter-custom-config            |               |                   |
 | --kafka-exporter-sasl-username            |               |                   |
 | --kafka-exporter-sasl-password            |               |                   |
 | --kafka-exporter-sasl-mechanism           |               | PLAIN, SCRAM-SHA-256, SCRAM-SHA-512 |
@@ -283,6 +293,40 @@ rotel start --exporter kafka \
   --kafka-exporter-compression "gzip" \
   --kafka-exporter-acks "all"
 ```
+
+#### Producer Performance Tuning
+
+The Kafka exporter provides several options for tuning producer performance and reliability:
+
+- `--kafka-exporter-linger-ms`: Delay in milliseconds to wait for messages to accumulate before sending. Higher values improve batching efficiency but increase latency.
+- `--kafka-exporter-retries`: How many times to retry sending a failing message. High values ensure delivery but may cause reordering.
+- `--kafka-exporter-retry-backoff-ms`: Initial backoff time before retrying a failed request.
+- `--kafka-exporter-retry-backoff-max-ms`: Maximum backoff time for exponentially backed-off retry requests.
+- `--kafka-exporter-message-timeout-ms`: Maximum time to wait for messages to be sent successfully. Messages exceeding this timeout will be dropped.
+- `--kafka-exporter-request-timeout-ms`: Timeout for individual requests to the Kafka brokers.
+- `--kafka-exporter-batch-size`: Maximum size of message batches in bytes. Larger batches improve throughput but increase memory usage.
+
+#### Advanced Configuration
+
+For advanced use cases, you can set arbitrary Kafka producer configuration parameters using the `--kafka-exporter-custom-config` option. This accepts comma-separated key=value pairs:
+
+```shell
+rotel start --exporter kafka \
+  --kafka-exporter-custom-config "enable.idempotence=true,max.in.flight.requests.per.connection=1" \
+  --kafka-exporter-brokers "broker1:9092,broker2:9092"
+```
+
+**Configuration Precedence**: Custom configuration parameters are applied *after* all built-in options, meaning they will override any conflicting built-in settings. For example:
+
+```shell
+# The custom config will override the built-in batch size setting
+rotel start --exporter kafka \
+  --kafka-exporter-batch-size 500000 \
+  --kafka-exporter-custom-config "batch.size=2000000"
+  # Final batch.size will be 2000000, not 500000
+```
+
+This allows you to configure any rdkafka producer parameter that isn't explicitly exposed through dedicated CLI options. See the [librdkafka configuration documentation](https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md) for all available parameters.
 
 The Kafka exporter uses the high-performance rdkafka library and includes built-in retry logic and error handling.
 

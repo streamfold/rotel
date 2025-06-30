@@ -217,5 +217,169 @@ mod tests {
         assert!(!format!("{:?}", client_config).is_empty());
     }
 
+    #[test]
+    fn test_kafka_config_with_client_id() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_client_id("my-custom-client".to_string());
+
+        assert_eq!(config.client_id, "my-custom-client");
+    }
+
+    #[test]
+    fn test_kafka_config_default_client_id() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.client_id, "rotel");
+    }
+
+    #[test]
+    fn test_kafka_config_with_max_message_bytes() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_max_message_bytes(2000000);
+        assert_eq!(config.max_message_bytes, 2000000);
+    }
+
+    #[test]
+    fn test_kafka_config_default_max_message_bytes() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.max_message_bytes, 1000000);
+    }
+
+    #[test]
+    fn test_kafka_config_with_linger_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_linger_ms(10);
+        assert_eq!(config.linger_ms, 10);
+    }
+
+    #[test]
+    fn test_kafka_config_default_linger_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.linger_ms, 5);
+    }
+
+
+    #[test]
+    fn test_kafka_config_with_retries() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_retries(50);
+        assert_eq!(config.retries, 50);
+    }
+
+    #[test]
+    fn test_kafka_config_default_retries() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.retries, 2147483647);
+    }
+
+    #[test]
+    fn test_kafka_config_with_retry_backoff_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_retry_backoff_ms(200);
+        assert_eq!(config.retry_backoff_ms, 200);
+    }
+
+    #[test]
+    fn test_kafka_config_default_retry_backoff_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.retry_backoff_ms, 100);
+    }
+
+    #[test]
+    fn test_kafka_config_with_retry_backoff_max_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_retry_backoff_max_ms(2000);
+        assert_eq!(config.retry_backoff_max_ms, 2000);
+    }
+
+    #[test]
+    fn test_kafka_config_default_retry_backoff_max_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.retry_backoff_max_ms, 1000);
+    }
+
+    #[test]
+    fn test_kafka_config_with_message_timeout_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_message_timeout_ms(60000);
+        assert_eq!(config.message_timeout_ms, 60000);
+    }
+
+    #[test]
+    fn test_kafka_config_default_message_timeout_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.message_timeout_ms, 300000);
+    }
+
+    #[test]
+    fn test_kafka_config_with_request_timeout_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_request_timeout_ms(10000);
+        assert_eq!(config.request_timeout_ms, 10000);
+    }
+
+    #[test]
+    fn test_kafka_config_default_request_timeout_ms() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.request_timeout_ms, 30000);
+    }
+
+    #[test]
+    fn test_kafka_config_with_batch_size() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_batch_size(2000000);
+        assert_eq!(config.batch_size, 2000000);
+    }
+
+    #[test]
+    fn test_kafka_config_default_batch_size() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.batch_size, 1000000);
+    }
+
+    #[test]
+    fn test_kafka_config_with_custom_config() {
+        let custom_config = vec![
+            ("enable.idempotence".to_string(), "true".to_string()),
+            ("max.in.flight.requests.per.connection".to_string(), "1".to_string()),
+        ];
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_custom_config(custom_config);
+        
+        assert_eq!(config.producer_config.get("enable.idempotence"), Some(&"true".to_string()));
+        assert_eq!(config.producer_config.get("max.in.flight.requests.per.connection"), Some(&"1".to_string()));
+        assert_eq!(config.producer_config.len(), 2);
+    }
+
+    #[test]
+    fn test_kafka_config_default_custom_config() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert!(config.producer_config.is_empty());
+    }
+
+    #[test]
+    fn test_custom_config_overrides_built_in_options() {
+        // Test that custom config takes precedence over built-in options
+        let custom_config = vec![
+            ("batch.size".to_string(), "2000000".to_string()),
+            ("linger.ms".to_string(), "20".to_string()),
+        ];
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_batch_size(500000)  // This should be overridden
+            .with_linger_ms(10)       // This should be overridden
+            .with_custom_config(custom_config);
+
+        let client_config = config.build_client_config();
+        
+        // Since rdkafka doesn't expose a way to read back values, we can at least
+        // verify that the method doesn't panic and produces a valid config
+        assert!(!format!("{:?}", client_config).is_empty());
+        
+        // Verify the custom config was stored in our structure
+        assert_eq!(config.producer_config.get("batch.size"), Some(&"2000000".to_string()));
+        assert_eq!(config.producer_config.get("linger.ms"), Some(&"20".to_string()));
+        assert_eq!(config.batch_size, 500000);  // Built-in value should still be stored
+        assert_eq!(config.linger_ms, 10);       // Built-in value should still be stored
+    }
+
     use opentelemetry_proto::tonic::metrics::v1::number_data_point;
 }
