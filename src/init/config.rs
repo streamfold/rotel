@@ -14,13 +14,24 @@ use crate::init::xray_exporter::XRayExporterArgs;
 use figment::{Figment, providers::Env};
 use gethostname::gethostname;
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
 use tower::BoxError;
-use tracing::error;
+use tracing::{error, info};
 
 struct ExporterMap {
     exporters: HashMap<String, ExporterArgs>,
+}
+
+impl Debug for ExporterMap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ExporterMap{{")?;
+        for (name, args) in &self.exporters {
+            write!(f, "{}={:?},", name, args)?;
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
 }
 
 impl FromStr for ExporterMap {
@@ -66,6 +77,7 @@ pub(crate) struct ExporterConfigs {
     pub(crate) traces: Option<ExporterConfig>,
 }
 
+#[derive(Debug)]
 pub(crate) enum ExporterArgs {
     Blackhole,
     Otlp(OTLPExporterBaseArgs),
@@ -247,14 +259,21 @@ pub(crate) fn get_exporters_config(
         return get_single_exporter_config(config, exporter, environment);
     }
 
-    get_multi_exporter_config(config.exporters.as_ref().unwrap().clone(), environment)
+    get_multi_exporter_config(
+        config,
+        config.exporters.as_ref().unwrap().clone(),
+        environment,
+    )
 }
 
 fn get_multi_exporter_config(
+    config: &AgentRun,
     exporters: String,
     environment: &str,
 ) -> Result<ExporterConfigs, BoxError> {
     let exporter_map = exporters.parse::<ExporterMap>()?;
+
+    info!(?exporter_map, "got the following exporters");
 
     let mut cfg = ExporterConfigs {
         metrics: None,
@@ -262,7 +281,7 @@ fn get_multi_exporter_config(
         traces: None,
     };
 
-    if let Ok(traces_exps) = std::env::var("ROTEL_EXPORTERS_TRACES") {
+    if let Some(traces_exps) = &config.exporters_traces {
         let sp: Vec<&str> = traces_exps.split(",").collect();
         if sp.len() != 1 {
             return Err(format!(
@@ -279,10 +298,13 @@ fn get_multi_exporter_config(
             }
         };
 
-        cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+        cfg.traces = Some(
+            args.try_into_config(PipelineType::Traces, environment)
+                .map_err(|err| format!("Exporter[{}]: {}", sp[0], err))?,
+        );
     }
 
-    if let Ok(metrics_exps) = std::env::var("ROTEL_EXPORTERS_METRICS") {
+    if let Some(metrics_exps) = &config.exporters_metrics {
         let sp: Vec<&str> = metrics_exps.split(",").collect();
         if sp.len() != 1 {
             return Err(format!(
@@ -301,10 +323,13 @@ fn get_multi_exporter_config(
             }
         };
 
-        cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+        cfg.metrics = Some(
+            args.try_into_config(PipelineType::Metrics, environment)
+                .map_err(|err| format!("Exporter[{}]: {}", sp[0], err))?,
+        );
     }
 
-    if let Ok(logs_exps) = std::env::var("ROTEL_EXPORTERS_LOGS") {
+    if let Some(logs_exps) = &config.exporters_logs {
         let sp: Vec<&str> = logs_exps.split(",").collect();
         if sp.len() != 1 {
             return Err(format!(
@@ -321,7 +346,17 @@ fn get_multi_exporter_config(
             }
         };
 
-        cfg.metrics = Some(args.try_into_config(PipelineType::Logs, environment)?);
+        cfg.logs = Some(
+            args.try_into_config(PipelineType::Logs, environment)
+                .map_err(|err| format!("Exporter[{}]: {}", sp[0], err))?,
+        );
+    }
+
+    if cfg.traces.is_none() && cfg.metrics.is_none() && cfg.logs.is_none() {
+        return Err(
+            "No telemetry pipeline exporters, did you set --exporters-{traces,metrics,logs}?"
+                .into(),
+        );
     }
 
     Ok(cfg)
@@ -329,7 +364,7 @@ fn get_multi_exporter_config(
 
 fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArgs, BoxError> {
     let figment = Figment::new().merge(Env::prefixed(
-        format!("ROTEL_{}_EXPORTER", prefix.to_uppercase()).as_str(),
+        format!("ROTEL_EXPORTER_{}", prefix.to_uppercase()).as_str(),
     ));
     match exporter_type {
         "blackhole" => Ok(ExporterArgs::Blackhole),
