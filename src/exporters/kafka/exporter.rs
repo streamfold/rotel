@@ -5,16 +5,44 @@ use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::kafka::errors::{KafkaExportError, Result};
 use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
 use bytes::Bytes;
+use futures::stream::FuturesUnordered;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::util::Timeout;
 use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
+use tokio::task::JoinError;
+use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
+
+const MAX_CONCURRENT_ENCODERS: usize = 20;
+const MAX_CONCURRENT_SENDS: usize = 10;
+
+type EncodingFuture =
+    Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
+type SendFuture = Pin<
+    Box<
+        dyn Future<
+                Output = std::result::Result<
+                    (i32, i64),
+                    (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage),
+                >,
+            > + Send,
+    >,
+>;
+
+/// Encoded Kafka message ready to be sent
+#[derive(Debug)]
+struct EncodedMessage {
+    key: String,
+    payload: Bytes,
+}
 
 /// Trait for telemetry resources that can be exported to Kafka
 pub trait KafkaExportable: Debug + Send + Sized + 'static {
@@ -77,6 +105,8 @@ where
     request_builder: KafkaRequestBuilder,
     rx: BoundedReceiver<Vec<Resource>>,
     topic: String,
+    encoding_futures: FuturesUnordered<EncodingFuture>,
+    send_futures: FuturesUnordered<SendFuture>,
 }
 
 impl<Resource> std::fmt::Debug for KafkaExporter<Resource>
@@ -116,6 +146,8 @@ where
             request_builder,
             rx,
             topic,
+            encoding_futures: FuturesUnordered::new(),
+            send_futures: FuturesUnordered::new(),
         })
     }
 
@@ -129,12 +161,71 @@ where
 
         loop {
             select! {
-                data = self.rx.next() => {
+                biased;
+
+                // Process completed sends
+                Some(send_result) = self.send_futures.next() => {
+                    match send_result {
+                        Ok((partition, offset)) => {
+                            debug!(
+                                "{} sent successfully to partition {} at offset {}",
+                                telemetry_type, partition, offset
+                            );
+                        }
+                        Err((e, _)) => {
+                            error!("Failed to send {}: {}", telemetry_type, e);
+                        }
+                    }
+                }
+
+                // Process encoded messages ready to send
+                Some(encoding_result) = self.encoding_futures.next(), if self.send_futures.len() < MAX_CONCURRENT_SENDS => {
+                    match encoding_result {
+                        Ok(Ok(encoded_msg)) => {
+                            let topic = self.topic.clone();
+                            let key = encoded_msg.key;
+                            let payload = encoded_msg.payload.to_vec();
+                            let producer = self.producer.clone();
+                            let timeout = self.config.request_timeout;
+
+                            let send_future = async move {
+                                let record = FutureRecord::to(&topic)
+                                    .key(&key)
+                                    .payload(&payload);
+                                producer.send(record, Timeout::After(timeout)).await
+                            };
+
+                            self.send_futures.push(Box::pin(send_future));
+                        }
+                        Ok(Err(e)) => {
+                            error!("Failed to encode {}: {}", telemetry_type, e);
+                        }
+                        Err(e) => {
+                            error!("Encoding task failed for {}: {}", telemetry_type, e);
+                        }
+                    }
+                }
+
+                // Receive new data to encode
+                data = self.rx.next(), if self.encoding_futures.len() < MAX_CONCURRENT_ENCODERS => {
                     match data {
                         Some(payload) => {
-                            if let Err(e) = self.export_data(payload).await {
-                                error!("Failed to export {}: {}", telemetry_type, e);
-                            }
+                            debug!(
+                                "Received {} {} resources to export",
+                                payload.len(),
+                                telemetry_type
+                            );
+
+                            let req_builder = self.request_builder.clone();
+                            let encoding_future = tokio::task::spawn_blocking(move || {
+                                Resource::build_kafka_message(&req_builder, &payload)
+                                    .map(|(key, payload)| EncodedMessage {
+                                        key: key.to_string(),
+                                        payload,
+                                    })
+                            });
+
+                            self.encoding_futures.push(Box::pin(encoding_future));
                         }
                         None => {
                             debug!("Kafka {} exporter receiver closed", telemetry_type);
@@ -142,12 +233,16 @@ where
                         }
                     }
                 }
+
                 _ = cancel_token.cancelled() => {
                     info!("Kafka {} exporter received cancellation signal", telemetry_type);
                     break;
                 }
             }
         }
+
+        // Drain remaining futures
+        self.drain_futures().await;
 
         // Flush any pending messages
         debug!("Flushing Kafka {} producer", telemetry_type);
@@ -156,43 +251,55 @@ where
         info!("Kafka {} exporter stopped", telemetry_type);
     }
 
-    /// Export telemetry data to Kafka
-    async fn export_data(&self, data: Vec<Resource>) -> Result<()> {
+    /// Drain remaining futures during shutdown
+    async fn drain_futures(&mut self) {
         let telemetry_type = Resource::telemetry_type();
-        debug!(
-            "Exporting {} {} resources to Kafka topic: {}",
-            data.len(),
-            telemetry_type,
-            self.topic
-        );
 
-        let (key, payload) = Resource::build_kafka_message(&self.request_builder, &data)?;
-        self.send_to_kafka(key.to_string(), payload).await
-    }
+        // First drain all encoding futures
+        while !self.encoding_futures.is_empty() {
+            if let Some(result) = self.encoding_futures.next().await {
+                match result {
+                    Ok(Ok(encoded_msg)) => {
+                        let topic = self.topic.clone();
+                        let key = encoded_msg.key;
+                        let payload = encoded_msg.payload.to_vec();
+                        let producer = self.producer.clone();
+                        let timeout = self.config.request_timeout;
 
-    /// Send data to Kafka
-    async fn send_to_kafka(&self, key: String, payload: Bytes) -> Result<()> {
-        let telemetry_type = Resource::telemetry_type();
-        let record = FutureRecord::to(&self.topic)
-            .key(&key)
-            .payload(&payload[..]);
+                        let send_future = async move {
+                            let record = FutureRecord::to(&topic).key(&key).payload(&payload);
+                            producer.send(record, Timeout::After(timeout)).await
+                        };
 
-        let delivery_result = self
-            .producer
-            .send(record, Timeout::After(self.config.request_timeout))
-            .await;
-
-        match delivery_result {
-            Ok((partition, offset)) => {
-                debug!(
-                    "{} sent successfully to partition {} at offset {}",
-                    telemetry_type, partition, offset
-                );
-                Ok(())
+                        self.send_futures.push(Box::pin(send_future));
+                    }
+                    Ok(Err(e)) => {
+                        error!("Failed to encode {} during drain: {}", telemetry_type, e);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Encoding task failed during drain for {}: {}",
+                            telemetry_type, e
+                        );
+                    }
+                }
             }
-            Err((e, _)) => {
-                error!("Failed to send {}: {}", telemetry_type, e);
-                Err(KafkaExportError::ProducerError(e))
+        }
+
+        // Then drain all send futures
+        while !self.send_futures.is_empty() {
+            if let Some(result) = self.send_futures.next().await {
+                match result {
+                    Ok((partition, offset)) => {
+                        debug!(
+                            "{} sent successfully to partition {} at offset {} during drain",
+                            telemetry_type, partition, offset
+                        );
+                    }
+                    Err((e, _)) => {
+                        error!("Failed to send {} during drain: {}", telemetry_type, e);
+                    }
+                }
             }
         }
     }

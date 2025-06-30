@@ -41,6 +41,7 @@ impl MessageKey {
 }
 
 /// Builder for creating Kafka messages from telemetry data
+#[derive(Clone)]
 pub struct KafkaRequestBuilder {
     serialization_format: SerializationFormat,
 }
