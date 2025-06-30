@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
 use tower::BoxError;
-use tracing::{error, info};
+use tracing::error;
 
 struct ExporterMap {
     exporters: HashMap<String, ExporterArgs>,
@@ -281,8 +281,6 @@ fn get_multi_exporter_config(
     environment: &str,
 ) -> Result<ExporterConfigs, BoxError> {
     let exporter_map = exporters.parse::<ExporterMap>()?;
-
-    info!(?exporter_map, "got the following exporters");
 
     let mut cfg = ExporterConfigs {
         metrics: None,
