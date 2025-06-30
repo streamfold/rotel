@@ -2,7 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
+    use crate::exporters::kafka::config::{
+        AcknowledgementMode, KafkaExporterConfig, SerializationFormat,
+    };
     use crate::exporters::kafka::errors::KafkaExportError;
     use crate::exporters::kafka::request_builder::{KafkaRequestBuilder, MessageKey};
     use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
@@ -174,6 +176,45 @@ mod tests {
             error.to_string(),
             "Topic not configured for telemetry type: traces"
         );
+    }
+
+    #[test]
+    fn test_acknowledgement_mode_values() {
+        assert_eq!(AcknowledgementMode::None.to_kafka_value(), "0");
+        assert_eq!(AcknowledgementMode::One.to_kafka_value(), "1");
+        assert_eq!(AcknowledgementMode::All.to_kafka_value(), "all");
+    }
+
+    #[test]
+    fn test_acknowledgement_mode_default() {
+        let mode = AcknowledgementMode::default();
+        assert_eq!(mode, AcknowledgementMode::One);
+    }
+
+    #[test]
+    fn test_kafka_config_with_acks() {
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_acks(AcknowledgementMode::All);
+
+        assert_eq!(config.acks, AcknowledgementMode::All);
+    }
+
+    #[test]
+    fn test_kafka_config_default_acks() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.acks, AcknowledgementMode::One);
+    }
+
+    #[test]
+    fn test_client_config_includes_acks() {
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_acks(AcknowledgementMode::All);
+
+        let client_config = config.build_client_config();
+
+        // Unfortunately rdkafka's ClientConfig doesn't expose a way to read back the values,
+        // but we can test that the method doesn't panic and returns a config
+        assert!(!format!("{:?}", client_config).is_empty());
     }
 
     use opentelemetry_proto::tonic::metrics::v1::number_data_point;

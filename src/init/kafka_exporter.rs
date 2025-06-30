@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
+use crate::exporters::kafka::config::{
+    AcknowledgementMode, KafkaExporterConfig, SerializationFormat,
+};
 use clap::{Args, ValueEnum};
 
 #[derive(Debug, Args, Clone)]
@@ -58,6 +60,15 @@ pub struct KafkaExporterArgs {
     )]
     pub kafka_exporter_request_timeout: humantime::Duration,
 
+    /// Acknowledgement mode (none, one, all)
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_ACKS",
+        default_value = "one"
+    )]
+    pub kafka_exporter_acks: KafkaAcknowledgementMode,
+
     /// SASL username for authentication
     #[arg(long, env = "ROTEL_KAFKA_EXPORTER_SASL_USERNAME")]
     pub kafka_exporter_sasl_username: Option<String>,
@@ -85,11 +96,31 @@ pub enum KafkaSerializationFormat {
     Protobuf,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+pub enum KafkaAcknowledgementMode {
+    /// No acknowledgement required (acks=0) - fastest but least durable
+    None,
+    /// Wait for leader acknowledgement only (acks=1) - balanced
+    One,
+    /// Wait for all in-sync replicas (acks=all) - slowest but most durable
+    All,
+}
+
 impl From<KafkaSerializationFormat> for SerializationFormat {
     fn from(value: KafkaSerializationFormat) -> Self {
         match value {
             KafkaSerializationFormat::Json => SerializationFormat::Json,
             KafkaSerializationFormat::Protobuf => SerializationFormat::Protobuf,
+        }
+    }
+}
+
+impl From<KafkaAcknowledgementMode> for AcknowledgementMode {
+    fn from(value: KafkaAcknowledgementMode) -> Self {
+        match value {
+            KafkaAcknowledgementMode::None => AcknowledgementMode::None,
+            KafkaAcknowledgementMode::One => AcknowledgementMode::One,
+            KafkaAcknowledgementMode::All => AcknowledgementMode::All,
         }
     }
 }
@@ -100,7 +131,8 @@ impl KafkaExporterArgs {
             .with_traces_topic(self.kafka_exporter_traces_topic.clone())
             .with_metrics_topic(self.kafka_exporter_metrics_topic.clone())
             .with_logs_topic(self.kafka_exporter_logs_topic.clone())
-            .with_serialization_format(self.kafka_exporter_format.into());
+            .with_serialization_format(self.kafka_exporter_format.into())
+            .with_acks(self.kafka_exporter_acks.into());
 
         config.request_timeout = self.kafka_exporter_request_timeout.into();
 

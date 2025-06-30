@@ -30,7 +30,7 @@ pub mod request_builder;
 #[cfg(test)]
 mod tests;
 
-pub use config::KafkaExporterConfig;
+pub use config::{AcknowledgementMode, KafkaExporterConfig};
 pub use exporter::{
     KafkaExporter, build_logs_exporter, build_metrics_exporter, build_traces_exporter,
 };

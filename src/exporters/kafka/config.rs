@@ -13,9 +13,38 @@ pub enum SerializationFormat {
     Protobuf,
 }
 
+/// Kafka acknowledgement configuration
+#[derive(Clone, Debug, PartialEq)]
+pub enum AcknowledgementMode {
+    /// No acknowledgement required (acks=0) - fastest but least durable
+    None,
+    /// Wait for leader acknowledgement only (acks=1) - middle ground
+    One,
+    /// Wait for all in-sync replicas to acknowledge (acks=all) - slowest but most durable
+    All,
+}
+
 impl Default for SerializationFormat {
     fn default() -> Self {
         SerializationFormat::Json
+    }
+}
+
+impl Default for AcknowledgementMode {
+    fn default() -> Self {
+        // Default to waiting for leader acknowledgement (acks=1) as a reasonable balance
+        AcknowledgementMode::One
+    }
+}
+
+impl AcknowledgementMode {
+    /// Convert to the string value expected by librdkafka
+    pub fn to_kafka_value(&self) -> &'static str {
+        match self {
+            AcknowledgementMode::None => "0",
+            AcknowledgementMode::One => "1",
+            AcknowledgementMode::All => "all",
+        }
     }
 }
 
@@ -39,6 +68,9 @@ pub struct KafkaExporterConfig {
 
     /// Request timeout
     pub request_timeout: Duration,
+
+    /// Acknowledgement mode for producer
+    pub acks: AcknowledgementMode,
 
     /// Producer configuration options
     pub producer_config: HashMap<String, String>,
@@ -68,6 +100,7 @@ impl Default for KafkaExporterConfig {
             logs_topic: Some("otlp_logs".to_string()),
             serialization_format: SerializationFormat::default(),
             request_timeout: Duration::from_secs(30),
+            acks: AcknowledgementMode::default(),
             producer_config: HashMap::new(),
             compression: None,
             sasl_username: None,
@@ -117,6 +150,12 @@ impl KafkaExporterConfig {
         self
     }
 
+    /// Set acknowledgement mode
+    pub fn with_acks(mut self, acks: AcknowledgementMode) -> Self {
+        self.acks = acks;
+        self
+    }
+
     /// Set SASL authentication
     pub fn with_sasl_auth(
         mut self,
@@ -137,6 +176,9 @@ impl KafkaExporterConfig {
         let mut config = ClientConfig::new();
 
         config.set("bootstrap.servers", &self.brokers);
+
+        // Set acknowledgement mode
+        config.set("acks", self.acks.to_kafka_value());
 
         // Set compression if specified
         if let Some(ref compression) = self.compression {
