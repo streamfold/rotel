@@ -117,13 +117,25 @@ pub struct AgentRun {
     #[command(flatten)]
     pub batch: BatchArgs,
 
-    /// Exporter
+    /// Single exporter (type)
     #[arg(value_enum, long, env = "ROTEL_EXPORTER")]
     pub exporter: Option<Exporter>,
 
-    /// Exporters
+    /// Multiple exporters (name:type,...)
     #[arg(value_enum, long, env = "ROTEL_EXPORTERS")]
     pub exporters: Option<String>,
+
+    /// Traces exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_TRACES")]
+    pub exporters_traces: Option<String>,
+
+    /// Metrics exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_METRICS")]
+    pub exporters_metrics: Option<String>,
+
+    /// Logs exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_LOGS")]
+    pub exporters_logs: Option<String>,
 
     #[command(flatten)]
     pub otlp_exporter: OTLPExporterArgs,
