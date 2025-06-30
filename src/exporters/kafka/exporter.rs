@@ -4,33 +4,103 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::kafka::errors::{KafkaExportError, Result};
 use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
+use bytes::Bytes;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::util::Timeout;
+use std::fmt::Debug;
 use std::time::Duration;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
-/// Kafka exporter for OpenTelemetry data
-pub struct KafkaExporter {
+/// Trait for telemetry resources that can be exported to Kafka
+pub trait KafkaExportable: Debug + Send + Sized + 'static {
+    /// Build a Kafka message from this telemetry data
+    fn build_kafka_message(
+        builder: &KafkaRequestBuilder,
+        data: &[Self],
+    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)>;
+    
+    /// Get the telemetry type name
+    fn telemetry_type() -> &'static str;
+}
+
+impl KafkaExportable for ResourceSpans {
+    fn build_kafka_message(
+        builder: &KafkaRequestBuilder,
+        spans: &[Self],
+    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
+        builder.build_trace_message(spans)
+    }
+    
+    fn telemetry_type() -> &'static str {
+        "traces"
+    }
+}
+
+impl KafkaExportable for ResourceMetrics {
+    fn build_kafka_message(
+        builder: &KafkaRequestBuilder,
+        metrics: &[Self],
+    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
+        builder.build_metrics_message(metrics)
+    }
+    
+    fn telemetry_type() -> &'static str {
+        "metrics"
+    }
+}
+
+impl KafkaExportable for ResourceLogs {
+    fn build_kafka_message(
+        builder: &KafkaRequestBuilder,
+        logs: &[Self],
+    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
+        builder.build_logs_message(logs)
+    }
+    
+    fn telemetry_type() -> &'static str {
+        "logs"
+    }
+}
+
+/// Generic Kafka exporter for OpenTelemetry data
+pub struct KafkaExporter<Resource>
+where
+    Resource: KafkaExportable,
+{
     config: KafkaExporterConfig,
     producer: FutureProducer,
     request_builder: KafkaRequestBuilder,
-    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    rx: BoundedReceiver<Vec<Resource>>,
+    topic: String,
 }
 
-impl KafkaExporter {
+impl<Resource> std::fmt::Debug for KafkaExporter<Resource>
+where
+    Resource: KafkaExportable,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaExporter")
+            .field("config", &self.config)
+            .field("topic", &self.topic)
+            .field("telemetry_type", &Resource::telemetry_type())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Resource> KafkaExporter<Resource>
+where
+    Resource: KafkaExportable,
+{
     /// Create a new Kafka exporter
     pub fn new(
         config: KafkaExporterConfig,
-        traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
-        metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
-        logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+        rx: BoundedReceiver<Vec<Resource>>,
+        topic: String,
     ) -> Result<Self> {
         // Build Kafka producer
         let client_config = config.build_client_config();
@@ -44,83 +114,68 @@ impl KafkaExporter {
             config,
             producer,
             request_builder,
-            traces_rx,
-            metrics_rx,
-            logs_rx,
+            rx,
+            topic,
         })
     }
 
     /// Start the exporter
     pub async fn start(&mut self, cancel_token: CancellationToken) {
+        let telemetry_type = Resource::telemetry_type();
         info!(
-            "Starting Kafka exporter with brokers: {}",
-            self.config.brokers
+            "Starting Kafka {} exporter with brokers: {} topic: {}",
+            telemetry_type, self.config.brokers, self.topic
         );
 
         loop {
             select! {
-                traces = self.traces_rx.next() => {
-                    match traces {
-                        Some(spans) => {
-                            if let Err(e) = self.export_traces(spans).await {
-                                error!("Failed to export traces: {}", e);
+                data = self.rx.next() => {
+                    match data {
+                        Some(payload) => {
+                            if let Err(e) = self.export_data(payload).await {
+                                error!("Failed to export {}: {}", telemetry_type, e);
                             }
                         }
-                        None => break,
-                    }
-                }
-                metrics = self.metrics_rx.next() => {
-                    match metrics {
-                        Some(metrics) => {
-                            if let Err(e) = self.export_metrics(metrics).await {
-                                error!("Failed to export metrics: {}", e);
-                            }
+                        None => {
+                            debug!("Kafka {} exporter receiver closed", telemetry_type);
+                            break;
                         }
-                        None => break,
-                    }
-                }
-                logs = self.logs_rx.next() => {
-                    match logs {
-                        Some(logs) => {
-                            if let Err(e) = self.export_logs(logs).await {
-                                error!("Failed to export logs: {}", e);
-                            }
-                        }
-                        None => break,
                     }
                 }
                 _ = cancel_token.cancelled() => {
-                    info!("Kafka exporter received cancellation signal");
+                    info!("Kafka {} exporter received cancellation signal", telemetry_type);
                     break;
                 }
             }
         }
 
         // Flush any pending messages
-        debug!("Flushing Kafka producer");
+        debug!("Flushing Kafka {} producer", telemetry_type);
         let _ = self.producer.flush(Timeout::After(Duration::from_secs(5)));
 
-        info!("Kafka exporter stopped");
+        info!("Kafka {} exporter stopped", telemetry_type);
     }
 
-    /// Export traces to Kafka
-    async fn export_traces(&self, spans: Vec<ResourceSpans>) -> Result<()> {
-        let topic = self
-            .config
-            .traces_topic
-            .as_ref()
-            .ok_or_else(|| KafkaExportError::TopicNotConfigured("traces".to_string()))?;
-
+    /// Export telemetry data to Kafka
+    async fn export_data(&self, data: Vec<Resource>) -> Result<()> {
+        let telemetry_type = Resource::telemetry_type();
         debug!(
-            "Exporting {} trace resource spans to Kafka topic: {}",
-            spans.len(),
-            topic
+            "Exporting {} {} resources to Kafka topic: {}",
+            data.len(),
+            telemetry_type,
+            self.topic
         );
 
-        let (key, payload) = self.request_builder.build_trace_message(&spans)?;
-        let key_str = key.to_string();
+        let (key, payload) = Resource::build_kafka_message(&self.request_builder, &data)?;
+        self.send_to_kafka(key.to_string(), payload).await
+    }
 
-        let record = FutureRecord::to(topic).key(&key_str).payload(&payload[..]);
+    /// Send data to Kafka
+    async fn send_to_kafka(&self, key: String, payload: Bytes) -> Result<()> {
+        let telemetry_type = Resource::telemetry_type();
+        let record = FutureRecord::to(&self.topic)
+            .key(&key)
+            .payload(&payload[..]);
 
         let delivery_result = self
             .producer
@@ -130,95 +185,58 @@ impl KafkaExporter {
         match delivery_result {
             Ok((partition, offset)) => {
                 debug!(
-                    "Traces sent successfully to partition {} at offset {}",
-                    partition, offset
+                    "{} sent successfully to partition {} at offset {}",
+                    telemetry_type, partition, offset
                 );
                 Ok(())
             }
             Err((e, _)) => {
-                error!("Failed to send traces: {}", e);
+                error!("Failed to send {}: {}", telemetry_type, e);
                 Err(KafkaExportError::ProducerError(e))
             }
         }
     }
+}
 
-    /// Export metrics to Kafka
-    async fn export_metrics(&self, metrics: Vec<ResourceMetrics>) -> Result<()> {
-        let topic = self
-            .config
-            .metrics_topic
-            .as_ref()
-            .ok_or_else(|| KafkaExportError::TopicNotConfigured("metrics".to_string()))?;
+/// Builder functions for creating specific exporter types
 
-        debug!(
-            "Exporting {} metric resource spans to Kafka topic: {}",
-            metrics.len(),
-            topic
-        );
+/// Creates a Kafka traces exporter
+pub fn build_traces_exporter(
+    config: KafkaExporterConfig,
+    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+) -> Result<KafkaExporter<ResourceSpans>> {
+    let topic = config
+        .traces_topic
+        .clone()
+        .ok_or_else(|| KafkaExportError::TopicNotConfigured("traces".to_string()))?;
 
-        let (key, payload) = self.request_builder.build_metrics_message(&metrics)?;
-        let key_str = key.to_string();
+    KafkaExporter::new(config, traces_rx, topic)
+}
 
-        let record = FutureRecord::to(topic).key(&key_str).payload(&payload[..]);
+/// Creates a Kafka metrics exporter
+pub fn build_metrics_exporter(
+    config: KafkaExporterConfig,
+    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+) -> Result<KafkaExporter<ResourceMetrics>> {
+    let topic = config
+        .metrics_topic
+        .clone()
+        .ok_or_else(|| KafkaExportError::TopicNotConfigured("metrics".to_string()))?;
 
-        let delivery_result = self
-            .producer
-            .send(record, Timeout::After(self.config.request_timeout))
-            .await;
+    KafkaExporter::new(config, metrics_rx, topic)
+}
 
-        match delivery_result {
-            Ok((partition, offset)) => {
-                debug!(
-                    "Metrics sent successfully to partition {} at offset {}",
-                    partition, offset
-                );
-                Ok(())
-            }
-            Err((e, _)) => {
-                error!("Failed to send metrics: {}", e);
-                Err(KafkaExportError::ProducerError(e))
-            }
-        }
-    }
+/// Creates a Kafka logs exporter
+pub fn build_logs_exporter(
+    config: KafkaExporterConfig,
+    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+) -> Result<KafkaExporter<ResourceLogs>> {
+    let topic = config
+        .logs_topic
+        .clone()
+        .ok_or_else(|| KafkaExportError::TopicNotConfigured("logs".to_string()))?;
 
-    /// Export logs to Kafka
-    async fn export_logs(&self, logs: Vec<ResourceLogs>) -> Result<()> {
-        let topic = self
-            .config
-            .logs_topic
-            .as_ref()
-            .ok_or_else(|| KafkaExportError::TopicNotConfigured("logs".to_string()))?;
-
-        debug!(
-            "Exporting {} log resource spans to Kafka topic: {}",
-            logs.len(),
-            topic
-        );
-
-        let (key, payload) = self.request_builder.build_logs_message(&logs)?;
-        let key_str = key.to_string();
-
-        let record = FutureRecord::to(topic).key(&key_str).payload(&payload[..]);
-
-        let delivery_result = self
-            .producer
-            .send(record, Timeout::After(self.config.request_timeout))
-            .await;
-
-        match delivery_result {
-            Ok((partition, offset)) => {
-                debug!(
-                    "Logs sent successfully to partition {} at offset {}",
-                    partition, offset
-                );
-                Ok(())
-            }
-            Err((e, _)) => {
-                error!("Failed to send logs: {}", e);
-                Err(KafkaExportError::ProducerError(e))
-            }
-        }
-    }
+    KafkaExporter::new(config, logs_rx, topic)
 }
 
 #[cfg(test)]
@@ -228,24 +246,70 @@ mod tests {
     use crate::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
 
     #[tokio::test]
-    async fn test_exporter_creation() {
-        let (traces_tx, traces_rx) = bounded(10);
-        let (metrics_tx, metrics_rx) = bounded(10);
-        let (logs_tx, logs_rx) = bounded(10);
+    async fn test_traces_exporter_creation() {
+        let (_, traces_rx) = bounded(10);
 
         let config = KafkaExporterConfig::new("localhost:9092".to_string())
+            .with_traces_topic("test_traces".to_string())
             .with_serialization_format(SerializationFormat::Json);
 
-        // This will fail if Kafka is not running, which is expected in tests
-        let result = KafkaExporter::new(config, traces_rx, metrics_rx, logs_rx);
-
-        // Drop senders to avoid warnings
-        drop(traces_tx);
-        drop(metrics_tx);
-        drop(logs_tx);
-
-        // We expect this to succeed in creating the exporter structure
-        // even if Kafka is not available
+        let result = build_traces_exporter(config, traces_rx);
         assert!(result.is_ok());
+
+        let exporter = result.unwrap();
+        assert_eq!(exporter.topic, "test_traces");
+    }
+
+    #[tokio::test]
+    async fn test_metrics_exporter_creation() {
+        let (_, metrics_rx) = bounded(10);
+
+        let config = KafkaExporterConfig::new("localhost:9092".to_string())
+            .with_metrics_topic("test_metrics".to_string())
+            .with_serialization_format(SerializationFormat::Json);
+
+        let result = build_metrics_exporter(config, metrics_rx);
+        assert!(result.is_ok());
+
+        let exporter = result.unwrap();
+        assert_eq!(exporter.topic, "test_metrics");
+    }
+
+    #[tokio::test]
+    async fn test_logs_exporter_creation() {
+        let (_, logs_rx) = bounded(10);
+
+        let config = KafkaExporterConfig::new("localhost:9092".to_string())
+            .with_logs_topic("test_logs".to_string())
+            .with_serialization_format(SerializationFormat::Json);
+
+        let result = build_logs_exporter(config, logs_rx);
+        assert!(result.is_ok());
+
+        let exporter = result.unwrap();
+        assert_eq!(exporter.topic, "test_logs");
+    }
+
+    #[tokio::test]
+    async fn test_missing_topic_error() {
+        let (_, traces_rx) = bounded(10);
+
+        let mut config = KafkaExporterConfig::new("localhost:9092".to_string());
+        // Explicitly remove traces_topic to test error case
+        config.traces_topic = None;
+
+        let result = build_traces_exporter(config, traces_rx);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            KafkaExportError::TopicNotConfigured(_)
+        ));
+    }
+
+    #[test]
+    fn test_telemetry_types() {
+        assert_eq!(ResourceSpans::telemetry_type(), "traces");
+        assert_eq!(ResourceMetrics::telemetry_type(), "metrics");
+        assert_eq!(ResourceLogs::telemetry_type(), "logs");
     }
 }

@@ -2,7 +2,6 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::bounded_channel::bounded;
     use crate::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
     use crate::exporters::kafka::errors::KafkaExportError;
     use crate::exporters::kafka::request_builder::{KafkaRequestBuilder, MessageKey};

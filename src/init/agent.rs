@@ -4,7 +4,9 @@ use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::{DatadogTraceExporterBuilder, Region};
-use crate::exporters::kafka::KafkaExporter;
+use crate::exporters::kafka::{
+    build_traces_exporter, build_metrics_exporter, build_logs_exporter
+};
 use crate::exporters::otlp;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::xray::XRayTraceExporterBuilder;
@@ -528,18 +530,44 @@ impl Agent {
             Exporter::Kafka => {
                 let kafka_config = config.kafka_exporter.build_config();
 
-                let mut kafka_exporter = KafkaExporter::new(
-                    kafka_config,
-                    trace_pipeline_out_rx,
-                    metrics_pipeline_out_rx,
-                    logs_pipeline_out_rx,
-                )?;
+                // Start traces exporter if traces are active
+                if activation.traces == TelemetryState::Active {
+                    let mut traces_exporter = build_traces_exporter(
+                        kafka_config.clone(),
+                        trace_pipeline_out_rx,
+                    )?;
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        traces_exporter.start(token).await;
+                        Ok(())
+                    });
+                }
 
-                let token = exporters_cancel.clone();
-                exporters_task_set.spawn(async move {
-                    kafka_exporter.start(token).await;
-                    Ok(())
-                });
+                // Start metrics exporter if metrics are active
+                if activation.metrics == TelemetryState::Active {
+                    let mut metrics_exporter = build_metrics_exporter(
+                        kafka_config.clone(),
+                        metrics_pipeline_out_rx,
+                    )?;
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        metrics_exporter.start(token).await;
+                        Ok(())
+                    });
+                }
+
+                // Start logs exporter if logs are active
+                if activation.logs == TelemetryState::Active {
+                    let mut logs_exporter = build_logs_exporter(
+                        kafka_config.clone(),
+                        logs_pipeline_out_rx,
+                    )?;
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        logs_exporter.start(token).await;
+                        Ok(())
+                    });
+                }
             }
         }
 

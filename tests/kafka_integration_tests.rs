@@ -16,7 +16,7 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rotel::bounded_channel::bounded;
-use rotel::exporters::kafka::KafkaExporter;
+use rotel::exporters::kafka::{build_traces_exporter, build_metrics_exporter, build_logs_exporter};
 use rotel::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
 use serde_json::Value;
 use std::time::Duration;
@@ -77,15 +77,13 @@ async fn test_kafka_exporter_traces_json() {
 
     // Create exporter
     let (traces_tx, traces_rx) = bounded(10);
-    let (metrics_tx, metrics_rx) = bounded(10);
-    let (logs_tx, logs_rx) = bounded(10);
 
     let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
         .with_traces_topic(topic.to_string())
         .with_serialization_format(SerializationFormat::Json);
 
-    let mut exporter = KafkaExporter::new(config, traces_rx, metrics_rx, logs_rx)
-        .expect("Failed to create Kafka exporter");
+    let mut exporter = build_traces_exporter(config, traces_rx)
+        .expect("Failed to create Kafka traces exporter");
 
     let cancel_token = CancellationToken::new();
     let exporter_token = cancel_token.clone();
@@ -131,10 +129,6 @@ async fn test_kafka_exporter_traces_json() {
     // Clean up
     cancel_token.cancel();
     let _ = exporter_handle.await;
-
-    // Drop senders to avoid warnings
-    drop(metrics_tx);
-    drop(logs_tx);
 }
 
 #[tokio::test]
@@ -146,16 +140,14 @@ async fn test_kafka_exporter_metrics_protobuf() {
     sleep(Duration::from_secs(2)).await;
 
     // Create exporter
-    let (traces_tx, traces_rx) = bounded(10);
     let (metrics_tx, metrics_rx) = bounded(10);
-    let (logs_tx, logs_rx) = bounded(10);
 
     let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
         .with_metrics_topic(topic.to_string())
         .with_serialization_format(SerializationFormat::Protobuf);
 
-    let mut exporter = KafkaExporter::new(config, traces_rx, metrics_rx, logs_rx)
-        .expect("Failed to create Kafka exporter");
+    let mut exporter = build_metrics_exporter(config, metrics_rx)
+        .expect("Failed to create Kafka metrics exporter");
 
     let cancel_token = CancellationToken::new();
     let exporter_token = cancel_token.clone();
@@ -191,10 +183,6 @@ async fn test_kafka_exporter_metrics_protobuf() {
     // Clean up
     cancel_token.cancel();
     let _ = exporter_handle.await;
-
-    // Drop senders to avoid warnings
-    drop(traces_tx);
-    drop(logs_tx);
 }
 
 #[tokio::test]
@@ -206,8 +194,6 @@ async fn test_kafka_exporter_logs_with_compression() {
     sleep(Duration::from_secs(2)).await;
 
     // Create exporter with compression
-    let (traces_tx, traces_rx) = bounded(10);
-    let (metrics_tx, metrics_rx) = bounded(10);
     let (logs_tx, logs_rx) = bounded(10);
 
     let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
@@ -215,8 +201,8 @@ async fn test_kafka_exporter_logs_with_compression() {
         .with_serialization_format(SerializationFormat::Json)
         .with_compression("gzip".to_string());
 
-    let mut exporter = KafkaExporter::new(config, traces_rx, metrics_rx, logs_rx)
-        .expect("Failed to create Kafka exporter");
+    let mut exporter = build_logs_exporter(config, logs_rx)
+        .expect("Failed to create Kafka logs exporter");
 
     let cancel_token = CancellationToken::new();
     let exporter_token = cancel_token.clone();
@@ -256,10 +242,6 @@ async fn test_kafka_exporter_logs_with_compression() {
     // Clean up
     cancel_token.cancel();
     let _ = exporter_handle.await;
-
-    // Drop senders to avoid warnings
-    drop(traces_tx);
-    drop(metrics_tx);
 }
 
 #[tokio::test]
@@ -271,7 +253,7 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
     // Give consumers time to connect
     sleep(Duration::from_secs(2)).await;
 
-    // Create exporter
+    // Create exporters for each telemetry type
     let (traces_tx, traces_rx) = bounded(10);
     let (metrics_tx, metrics_rx) = bounded(10);
     let (logs_tx, logs_rx) = bounded(10);
@@ -279,15 +261,35 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
     let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
         .with_serialization_format(SerializationFormat::Json);
 
-    let mut exporter = KafkaExporter::new(config, traces_rx, metrics_rx, logs_rx)
-        .expect("Failed to create Kafka exporter");
+    let mut traces_exporter = build_traces_exporter(config.clone(), traces_rx)
+        .expect("Failed to create Kafka traces exporter");
+    let mut metrics_exporter = build_metrics_exporter(config.clone(), metrics_rx)
+        .expect("Failed to create Kafka metrics exporter");
+    let mut logs_exporter = build_logs_exporter(config, logs_rx)
+        .expect("Failed to create Kafka logs exporter");
 
     let cancel_token = CancellationToken::new();
-    let exporter_token = cancel_token.clone();
-
-    // Start exporter
-    let exporter_handle = tokio::spawn(async move {
-        exporter.start(exporter_token).await;
+    
+    // Start all exporters
+    let traces_handle = tokio::spawn({
+        let token = cancel_token.clone();
+        async move {
+            traces_exporter.start(token).await;
+        }
+    });
+    
+    let metrics_handle = tokio::spawn({
+        let token = cancel_token.clone();
+        async move {
+            metrics_exporter.start(token).await;
+        }
+    });
+    
+    let logs_handle = tokio::spawn({
+        let token = cancel_token.clone();
+        async move {
+            logs_exporter.start(token).await;
+        }
     });
 
     // Send all types of telemetry data
@@ -322,7 +324,9 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
 
     // Clean up
     cancel_token.cancel();
-    let _ = exporter_handle.await;
+    let _ = traces_handle.await;
+    let _ = metrics_handle.await;
+    let _ = logs_handle.await;
 }
 
 // Helper module for UUID generation
