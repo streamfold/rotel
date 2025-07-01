@@ -424,53 +424,20 @@ fn get_single_exporter_config(
         traces: None,
     };
 
+    // We convert these into ExporterArgs so that we can use the `try_into_config` method
+    // above to DRY this out.
     match exporter {
         Exporter::Otlp => {
-            let endpoint = config.otlp_exporter.base.endpoint.as_ref();
+            // Because the single exporter configuration has custom overrides per type, we
+            // must build new args here that'll override with the custom type variations.
+            let args = ExporterArgs::Otlp(build_traces_config(config.otlp_exporter.clone()));
+            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
 
-            if endpoint.is_some() || config.otlp_exporter.base.traces_endpoint.is_some() {
-                cfg.traces = Some(ExporterConfig::Otlp({
-                    let endpoint = config
-                        .otlp_exporter
-                        .base
-                        .traces_endpoint
-                        .as_ref()
-                        .map(|e| Endpoint::Full(e.clone()))
-                        .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
-                    let traces_config = build_traces_config(config.otlp_exporter.clone());
-                    traces_config.into_exporter_config("otlp_traces", endpoint)
-                }));
-            }
-            if endpoint.is_some() || config.otlp_exporter.base.metrics_endpoint.is_some() {
-                cfg.metrics = Some(ExporterConfig::Otlp({
-                    let endpoint = config
-                        .otlp_exporter
-                        .base
-                        .metrics_endpoint
-                        .as_ref()
-                        .map(|e| Endpoint::Full(e.clone()))
-                        .unwrap_or_else(|| Endpoint::Base(endpoint.clone().unwrap().clone()));
-
-                    let metrics_config = build_metrics_config(config.otlp_exporter.clone());
-                    metrics_config
-                        .clone()
-                        .into_exporter_config("otlp_metrics", endpoint.clone())
-                }));
-            }
-            if endpoint.is_some() || config.otlp_exporter.base.logs_endpoint.is_some() {
-                cfg.logs = Some(ExporterConfig::Otlp({
-                    let endpoint = config
-                        .otlp_exporter
-                        .base
-                        .logs_endpoint
-                        .as_ref()
-                        .map(|e| Endpoint::Full(e.clone()))
-                        .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
-
-                    let logs_config = build_logs_config(config.otlp_exporter.clone());
-                    logs_config.into_exporter_config("otlp_logs", endpoint)
-                }));
-            }
+            let args = ExporterArgs::Otlp(build_metrics_config(config.otlp_exporter.clone()));
+            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+            
+            let args = ExporterArgs::Otlp(build_logs_config(config.otlp_exporter.clone()));
+            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
         }
         Exporter::Blackhole => {
             cfg.traces = Some(ExporterConfig::Blackhole {});
@@ -478,68 +445,18 @@ fn get_single_exporter_config(
             cfg.logs = Some(ExporterConfig::Blackhole {});
         }
         Exporter::Datadog => {
-            if config.datadog_exporter.api_key.is_none() {
-                // todo: is there a way to make this config required with the exporter mode?
-                return Err("must specify Datadog exporter API key".into());
-            }
-            let api_key = config.datadog_exporter.api_key.as_ref().unwrap();
-
-            let hostname = get_hostname();
-
-            let mut builder = DatadogExporterConfigBuilder::new(
-                config.datadog_exporter.region.into(),
-                config.datadog_exporter.custom_endpoint.clone(),
-                api_key.clone(),
-            )
-            .with_environment(environment.to_string());
-
-            if let Some(hostname) = hostname {
-                builder = builder.with_hostname(hostname);
-            }
-
-            cfg.traces = Some(ExporterConfig::Datadog(builder))
+            let args = ExporterArgs::Datadog(config.datadog_exporter.clone());
+            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
         }
         Exporter::Clickhouse => {
-            if config.clickhouse_exporter.endpoint.is_none() {
-                return Err("must specify a Clickhouse exporter endpoint".into());
-            }
-
-            let async_insert = parse_bool_value(&config.clickhouse_exporter.async_insert)?;
-
-            let mut cfg_builder = ClickhouseExporterConfigBuilder::new(
-                config
-                    .clickhouse_exporter
-                    .endpoint
-                    .as_ref()
-                    .unwrap()
-                    .clone(),
-                config.clickhouse_exporter.database.clone(),
-                config.clickhouse_exporter.table_prefix.clone(),
-            )
-            .with_compression(config.clickhouse_exporter.compression)
-            .with_async_insert(async_insert)
-            .with_json(config.clickhouse_exporter.enable_json)
-            .with_json_underscore(config.clickhouse_exporter.json_underscore);
-
-            if let Some(user) = &config.clickhouse_exporter.user {
-                cfg_builder = cfg_builder.with_user(user.clone());
-            }
-
-            if let Some(password) = &config.clickhouse_exporter.password {
-                cfg_builder = cfg_builder.with_password(password.clone());
-            }
-
-            cfg.traces = Some(ExporterConfig::Clickhouse(cfg_builder.clone()));
-            cfg.metrics = Some(ExporterConfig::Clickhouse(cfg_builder.clone()));
-            cfg.logs = Some(ExporterConfig::Clickhouse(cfg_builder));
+            let args = ExporterArgs::Clickhouse(config.clickhouse_exporter.clone());
+            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
         }
         Exporter::AwsXray => {
-            let builder = XRayExporterConfigBuilder::new(
-                config.aws_xray_exporter.region,
-                config.aws_xray_exporter.custom_endpoint.clone(),
-            );
-
-            cfg.traces = Some(ExporterConfig::Xray(builder))
+            let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
+            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
         }
     }
 
