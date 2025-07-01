@@ -1,5 +1,6 @@
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
+use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
@@ -21,6 +22,7 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
+    Kafka(KafkaExporterConfig),
 }
 
 pub(crate) fn get_exporters_config(
@@ -142,6 +144,12 @@ pub(crate) fn get_exporters_config(
             );
 
             cfg.traces = Some(ExporterConfig::Xray(builder))
+        }
+        Exporter::Kafka => {
+            let kafka_config = config.kafka_exporter.build_config();
+            cfg.traces = Some(ExporterConfig::Kafka(kafka_config.clone()));
+            cfg.metrics = Some(ExporterConfig::Kafka(kafka_config.clone()));
+            cfg.logs = Some(ExporterConfig::Kafka(kafka_config));
         }
     }
 
