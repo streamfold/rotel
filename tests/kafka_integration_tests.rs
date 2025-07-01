@@ -19,10 +19,16 @@ use rotel::bounded_channel::bounded;
 use rotel::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
 use rotel::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use utilities::otlp::FakeOTLP;
+use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+use opentelemetry_proto::tonic::resource::v1::Resource;
+use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
+use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs, LogRecord};
+use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics, Metric, Gauge, NumberDataPoint, metric, number_data_point};
 
 const KAFKA_BROKER: &str = "localhost:9092";
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -327,6 +333,434 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
     let _ = traces_handle.await;
     let _ = metrics_handle.await;
     let _ = logs_handle.await;
+}
+
+/// Enhanced consumer setup that captures partition information
+async fn setup_consumer_with_partition_info(topic: &str) -> StreamConsumer {
+    let consumer: StreamConsumer = ClientConfig::new()
+        .set(
+            "group.id",
+            format!("test-consumer-{}", uuid::Uuid::new_v4()),
+        )
+        .set("bootstrap.servers", KAFKA_BROKER)
+        .set("auto.offset.reset", "earliest")
+        .set("enable.auto.commit", "false")
+        .create()
+        .expect("Consumer creation failed");
+
+    consumer
+        .subscribe(&[topic])
+        .expect("Failed to subscribe to topic");
+
+    consumer
+}
+
+/// Wait for message and capture partition information
+async fn wait_for_message_with_partition(
+    consumer: &StreamConsumer,
+    timeout_duration: Duration,
+) -> Option<(String, String, i32)> {
+    let result = timeout(timeout_duration, async {
+        loop {
+            match consumer.recv().await {
+                Ok(m) => {
+                    if let Some(payload) = m.payload() {
+                        let message_content = String::from_utf8_lossy(payload).to_string();
+                        let key = m.key().map(|k| String::from_utf8_lossy(k).to_string()).unwrap_or_default();
+                        let partition = m.partition();
+                        return Some((message_content, key, partition));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error receiving message: {}", e);
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    })
+    .await;
+
+    result.unwrap_or(None)
+}
+
+/// Create test traces with specific trace IDs for partitioning tests
+fn create_test_traces_with_trace_ids(trace_ids: Vec<Vec<u8>>) -> Vec<ResourceSpans> {
+    trace_ids
+        .into_iter()
+        .map(|trace_id| ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("test-service".to_string())),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+            }),
+            scope_spans: vec![ScopeSpans {
+                scope: None,
+                spans: vec![Span {
+                    trace_id,
+                    span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                    name: "test-span".to_string(),
+                    ..Default::default()
+                }],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        })
+        .collect()
+}
+
+/// Create test logs with specific resource attributes for partitioning tests
+fn create_test_logs_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec<ResourceLogs> {
+    resource_attrs
+        .into_iter()
+        .map(|attrs| ResourceLogs {
+            resource: Some(Resource {
+                attributes: attrs,
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![ScopeLogs {
+                scope: None,
+                log_records: vec![LogRecord {
+                    body: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("test log message".to_string())),
+                    }),
+                    ..Default::default()
+                }],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        })
+        .collect()
+}
+
+/// Create test metrics with specific resource attributes for partitioning tests
+fn create_test_metrics_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec<ResourceMetrics> {
+    resource_attrs
+        .into_iter()
+        .map(|attrs| ResourceMetrics {
+            resource: Some(Resource {
+                attributes: attrs,
+                dropped_attributes_count: 0,
+            }),
+            scope_metrics: vec![ScopeMetrics {
+                scope: None,
+                metrics: vec![Metric {
+                    name: "test_metric".to_string(),
+                    description: "Test metric for partitioning".to_string(),
+                    unit: "count".to_string(),
+                    metadata: vec![],
+                    data: Some(metric::Data::Gauge(Gauge {
+                        data_points: vec![NumberDataPoint {
+                            value: Some(number_data_point::Value::AsDouble(42.0)),
+                            ..Default::default()
+                        }],
+                    })),
+                }],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn test_trace_partitioning_by_trace_id() {
+    let topic = "otlp_traces";
+    let consumer = setup_consumer_with_partition_info(topic).await;
+
+    // Give consumer time to connect
+    sleep(Duration::from_secs(2)).await;
+
+    // Create exporter with trace partitioning enabled
+    let (traces_tx, traces_rx) = bounded(10);
+
+    let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
+        .with_traces_topic(topic.to_string())
+        .with_serialization_format(SerializationFormat::Json)
+        .with_partition_traces_by_id(true);
+
+    let mut exporter =
+        build_traces_exporter(config, traces_rx).expect("Failed to create Kafka traces exporter");
+
+    let cancel_token = CancellationToken::new();
+    let exporter_token = cancel_token.clone();
+
+    // Start exporter
+    let exporter_handle = tokio::spawn(async move {
+        exporter.start(exporter_token).await;
+    });
+
+    // Create traces with same and different trace IDs
+    let same_trace_id = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    let different_trace_id = vec![16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+
+    let trace_data_1 = create_test_traces_with_trace_ids(vec![same_trace_id.clone()]);
+    let trace_data_2 = create_test_traces_with_trace_ids(vec![same_trace_id.clone()]);
+    let trace_data_3 = create_test_traces_with_trace_ids(vec![different_trace_id]);
+
+    // Send traces
+    traces_tx
+        .send(trace_data_1)
+        .await
+        .expect("Failed to send trace data 1");
+    traces_tx
+        .send(trace_data_2)
+        .await
+        .expect("Failed to send trace data 2");
+    traces_tx
+        .send(trace_data_3)
+        .await
+        .expect("Failed to send trace data 3");
+
+    // Collect messages with partition info
+    let mut messages = Vec::new();
+    for _ in 0..3 {
+        if let Some((content, key, partition)) = wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await {
+            messages.push((content, key, partition));
+        }
+    }
+
+    assert_eq!(messages.len(), 3, "Should receive exactly 3 messages");
+
+    // Group by message key
+    let mut key_to_partitions = HashMap::new();
+    for (_, key, partition) in &messages {
+        key_to_partitions.entry(key.clone()).or_insert_with(Vec::new).push(*partition);
+    }
+
+    // Verify that messages with same trace ID (same key) go to same partition
+    // Note: Empty/NULL keys are randomly partitioned with consistent_random partitioner
+    for (key, partitions) in key_to_partitions {
+        if partitions.len() > 1 && !key.is_empty() {
+            let first_partition = partitions[0];
+            for partition in partitions {
+                assert_eq!(partition, first_partition, 
+                    "Messages with same non-empty key '{}' should go to same partition", key);
+            }
+        }
+    }
+
+    // Verify we got messages with trace ID keys (non-empty)
+    // With consistent_random partitioner, messages with same non-empty keys go to same partition
+    let non_empty_keys: Vec<_> = messages.iter().filter(|(_, key, _)| !key.is_empty()).collect();
+    assert!(!non_empty_keys.is_empty(), "Should have at least one message with non-empty trace ID key");
+
+    println!("✓ Trace partitioning test passed - traces with same ID go to same partition");
+
+    // Clean up
+    cancel_token.cancel();
+    let _ = exporter_handle.await;
+}
+
+#[tokio::test]
+async fn test_logs_partitioning_by_resource_attributes() {
+    let topic = "otlp_logs";
+    let consumer = setup_consumer_with_partition_info(topic).await;
+
+    // Give consumer time to connect
+    sleep(Duration::from_secs(2)).await;
+
+    // Create exporter with logs partitioning enabled
+    let (logs_tx, logs_rx) = bounded(10);
+
+    let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
+        .with_logs_topic(topic.to_string())
+        .with_serialization_format(SerializationFormat::Json)
+        .with_partition_logs_by_resource_attributes(true);
+
+    let mut exporter =
+        build_logs_exporter(config, logs_rx).expect("Failed to create Kafka logs exporter");
+
+    let cancel_token = CancellationToken::new();
+    let exporter_token = cancel_token.clone();
+
+    // Start exporter
+    let exporter_handle = tokio::spawn(async move {
+        exporter.start(exporter_token).await;
+    });
+
+    // Create logs with same and different resource attributes
+    let same_attrs = vec![
+        KeyValue {
+            key: "service.name".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("test-service".to_string())),
+            }),
+        },
+        KeyValue {
+            key: "service.version".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("1.0.0".to_string())),
+            }),
+        },
+    ];
+
+    let different_attrs = vec![
+        KeyValue {
+            key: "service.name".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("other-service".to_string())),
+            }),
+        },
+    ];
+
+    let logs_data_1 = create_test_logs_with_resources(vec![same_attrs.clone()]);
+    let logs_data_2 = create_test_logs_with_resources(vec![same_attrs]);
+    let logs_data_3 = create_test_logs_with_resources(vec![different_attrs]);
+
+    // Send logs
+    logs_tx
+        .send(logs_data_1)
+        .await
+        .expect("Failed to send logs data 1");
+    logs_tx
+        .send(logs_data_2)
+        .await
+        .expect("Failed to send logs data 2");
+    logs_tx
+        .send(logs_data_3)
+        .await
+        .expect("Failed to send logs data 3");
+
+    // Collect messages with partition info
+    let mut messages = Vec::new();
+    for _ in 0..3 {
+        if let Some((content, key, partition)) = wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await {
+            messages.push((content, key, partition));
+        }
+    }
+
+    assert_eq!(messages.len(), 3, "Should receive exactly 3 messages");
+
+    // Group by message key
+    let mut key_to_partitions = HashMap::new();
+    for (_, key, partition) in messages {
+        key_to_partitions.entry(key).or_insert_with(Vec::new).push(partition);
+    }
+
+    // Verify that messages with same resource attributes (same key) go to same partition
+    for (key, partitions) in key_to_partitions {
+        if partitions.len() > 1 {
+            let first_partition = partitions[0];
+            for partition in partitions {
+                assert_eq!(partition, first_partition, 
+                    "Messages with same key '{}' should go to same partition", key);
+            }
+        }
+    }
+
+    println!("✓ Logs partitioning test passed - logs with same resource attributes go to same partition");
+
+    // Clean up
+    cancel_token.cancel();
+    let _ = exporter_handle.await;
+}
+
+#[tokio::test]
+async fn test_metrics_partitioning_by_resource_attributes() {
+    let topic = "otlp_metrics";
+    let consumer = setup_consumer_with_partition_info(topic).await;
+
+    // Give consumer time to connect
+    sleep(Duration::from_secs(2)).await;
+
+    // Create exporter with metrics partitioning enabled
+    let (metrics_tx, metrics_rx) = bounded(10);
+
+    let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
+        .with_metrics_topic(topic.to_string())
+        .with_serialization_format(SerializationFormat::Json)
+        .with_partition_metrics_by_resource_attributes(true);
+
+    let mut exporter =
+        build_metrics_exporter(config, metrics_rx).expect("Failed to create Kafka metrics exporter");
+
+    let cancel_token = CancellationToken::new();
+    let exporter_token = cancel_token.clone();
+
+    // Start exporter
+    let exporter_handle = tokio::spawn(async move {
+        exporter.start(exporter_token).await;
+    });
+
+    // Create metrics with same and different resource attributes
+    let same_attrs = vec![
+        KeyValue {
+            key: "service.name".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("test-service".to_string())),
+            }),
+        },
+        KeyValue {
+            key: "service.version".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("1.0.0".to_string())),
+            }),
+        },
+    ];
+
+    let different_attrs = vec![
+        KeyValue {
+            key: "service.name".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("other-service".to_string())),
+            }),
+        },
+    ];
+
+    let metrics_data_1 = create_test_metrics_with_resources(vec![same_attrs.clone()]);
+    let metrics_data_2 = create_test_metrics_with_resources(vec![same_attrs]);
+    let metrics_data_3 = create_test_metrics_with_resources(vec![different_attrs]);
+
+    // Send metrics
+    metrics_tx
+        .send(metrics_data_1)
+        .await
+        .expect("Failed to send metrics data 1");
+    metrics_tx
+        .send(metrics_data_2)
+        .await
+        .expect("Failed to send metrics data 2");
+    metrics_tx
+        .send(metrics_data_3)
+        .await
+        .expect("Failed to send metrics data 3");
+
+    // Collect messages with partition info
+    let mut messages = Vec::new();
+    for _ in 0..3 {
+        if let Some((content, key, partition)) = wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await {
+            messages.push((content, key, partition));
+        }
+    }
+
+    assert_eq!(messages.len(), 3, "Should receive exactly 3 messages");
+
+    // Group by message key
+    let mut key_to_partitions = HashMap::new();
+    for (_, key, partition) in messages {
+        key_to_partitions.entry(key).or_insert_with(Vec::new).push(partition);
+    }
+
+    // Verify that messages with same resource attributes (same key) go to same partition
+    for (key, partitions) in key_to_partitions {
+        if partitions.len() > 1 {
+            let first_partition = partitions[0];
+            for partition in partitions {
+                assert_eq!(partition, first_partition, 
+                    "Messages with same key '{}' should go to same partition", key);
+            }
+        }
+    }
+
+    println!("✓ Metrics partitioning test passed - metrics with same resource attributes go to same partition");
+
+    // Clean up
+    cancel_token.cancel();
+    let _ = exporter_handle.await;
 }
 
 // Helper module for UUID generation
