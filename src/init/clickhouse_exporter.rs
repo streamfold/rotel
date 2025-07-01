@@ -76,7 +76,7 @@ pub struct ClickhouseExporterArgs {
     pub json_underscore: bool,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, Copy, ValueEnum)]
 pub enum Compression {
     None,
     Lz4,

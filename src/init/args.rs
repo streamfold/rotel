@@ -263,7 +263,7 @@ mod test {
     }
 }
 
-pub(crate) fn parse_bool_value(val: String) -> Result<bool, BoxError> {
+pub(crate) fn parse_bool_value(val: &String) -> Result<bool, BoxError> {
     match val.to_lowercase().as_str() {
         "0" | "false" => Ok(false),
         "1" | "true" => Ok(true),

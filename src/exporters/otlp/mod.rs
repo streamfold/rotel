@@ -34,7 +34,7 @@ pub(crate) mod errors;
 mod client;
 mod grpc_codec;
 mod http_codec;
-mod signer;
+pub mod signer;
 
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use clap::ValueEnum;
