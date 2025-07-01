@@ -65,13 +65,33 @@ pub trait KafkaExportable: Debug + Send + Sized + 'static {
 
 /// Extract trace ID from the first span in the resource spans
 fn extract_trace_id_from_spans(spans: &[ResourceSpans]) -> Vec<u8> {
-    for resource_span in spans {
-        for scope_span in &resource_span.scope_spans {
+    debug!(
+        "extract_trace_id_from_spans: processing {} ResourceSpans",
+        spans.len()
+    );
+    for (rs_idx, resource_span) in spans.iter().enumerate() {
+        debug!(
+            "extract_trace_id_from_spans: ResourceSpans[{}] has {} scope_spans",
+            rs_idx,
+            resource_span.scope_spans.len()
+        );
+        for (ss_idx, scope_span) in resource_span.scope_spans.iter().enumerate() {
+            debug!(
+                "extract_trace_id_from_spans: ScopeSpans[{}] has {} spans",
+                ss_idx,
+                scope_span.spans.len()
+            );
             if let Some(first_span) = scope_span.spans.first() {
+                debug!(
+                    "extract_trace_id_from_spans: found first span with trace_id: {:?} (len={})",
+                    hex::encode(&first_span.trace_id),
+                    first_span.trace_id.len()
+                );
                 return first_span.trace_id.clone();
             }
         }
     }
+    debug!("extract_trace_id_from_spans: no spans found, returning empty Vec");
     Vec::new()
 }
 
@@ -224,8 +244,14 @@ impl KafkaExportable for ResourceSpans {
 
     /// Split traces by trace ID when partition_traces_by_id is enabled
     fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+        debug!(
+            "split_for_partitioning called with {} ResourceSpans, partition_traces_by_id={}",
+            data.len(),
+            config.partition_traces_by_id
+        );
         if config.partition_traces_by_id {
             let split_traces = split_traces_by_trace_id(&data);
+            debug!("Split into {} separate trace groups", split_traces.len());
             split_traces.into_iter().map(|trace| vec![trace]).collect()
         } else {
             vec![data]
@@ -446,7 +472,7 @@ where
                                 let encoding_future = tokio::task::spawn_blocking(move || {
                                     Resource::build_kafka_message(&req_builder, &config, &single_payload)
                                         .map(|(key, payload)| EncodedMessage {
-                                            key: key.to_string(),
+                                            key,
                                             payload,
                                         })
                                 });

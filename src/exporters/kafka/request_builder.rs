@@ -2,7 +2,11 @@
 
 use crate::exporters::kafka::config::SerializationFormat;
 use crate::exporters::kafka::errors::Result;
+use crate::topology::payload::OTLPFrom;
 use bytes::Bytes;
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -58,11 +62,8 @@ impl KafkaRequestBuilder {
 
     /// Serialize traces as protobuf
     fn serialize_protobuf_traces(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
-        // Create a TracesData message (from OTLP spec)
-        let traces_data =
-            opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest {
-                resource_spans: spans.to_vec(),
-            };
+        // Create a TracesData message (from OTLP spec) using OTLPFrom trait
+        let traces_data = ExportTraceServiceRequest::otlp_from(spans.to_vec());
 
         let mut buf = Vec::new();
         traces_data.encode(&mut buf)?;
@@ -71,11 +72,8 @@ impl KafkaRequestBuilder {
 
     /// Serialize metrics as protobuf
     fn serialize_protobuf_metrics(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
-        // Create a MetricsData message (from OTLP spec)
-        let metrics_data =
-            opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest {
-                resource_metrics: metrics.to_vec(),
-            };
+        // Create a MetricsData message (from OTLP spec) using OTLPFrom trait
+        let metrics_data = ExportMetricsServiceRequest::otlp_from(metrics.to_vec());
 
         let mut buf = Vec::new();
         metrics_data.encode(&mut buf)?;
@@ -84,10 +82,8 @@ impl KafkaRequestBuilder {
 
     /// Serialize logs as protobuf
     fn serialize_protobuf_logs(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
-        // Create a LogsData message (from OTLP spec)
-        let logs_data = opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest {
-            resource_logs: logs.to_vec(),
-        };
+        // Create a LogsData message (from OTLP spec) using OTLPFrom trait
+        let logs_data = ExportLogsServiceRequest::otlp_from(logs.to_vec());
 
         let mut buf = Vec::new();
         logs_data.encode(&mut buf)?;
