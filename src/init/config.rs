@@ -435,7 +435,7 @@ fn get_single_exporter_config(
 
             let args = ExporterArgs::Otlp(build_metrics_config(config.otlp_exporter.clone()));
             cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
-            
+
             let args = ExporterArgs::Otlp(build_logs_config(config.otlp_exporter.clone()));
             cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
         }
