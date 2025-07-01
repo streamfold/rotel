@@ -12,6 +12,13 @@
 
 #![cfg(feature = "integration-tests")]
 
+use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
+use opentelemetry_proto::tonic::metrics::v1::{
+    Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric, number_data_point,
+};
+use opentelemetry_proto::tonic::resource::v1::Resource;
+use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
@@ -24,11 +31,6 @@ use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use utilities::otlp::FakeOTLP;
-use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
-use opentelemetry_proto::tonic::resource::v1::Resource;
-use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
-use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs, LogRecord};
-use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics, Metric, Gauge, NumberDataPoint, metric, number_data_point};
 
 const KAFKA_BROKER: &str = "localhost:9092";
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -366,7 +368,10 @@ async fn wait_for_message_with_partition(
                 Ok(m) => {
                     if let Some(payload) = m.payload() {
                         let message_content = String::from_utf8_lossy(payload).to_string();
-                        let key = m.key().map(|k| String::from_utf8_lossy(k).to_string()).unwrap_or_default();
+                        let key = m
+                            .key()
+                            .map(|k| String::from_utf8_lossy(k).to_string())
+                            .unwrap_or_default();
                         let partition = m.partition();
                         return Some((message_content, key, partition));
                     }
@@ -425,7 +430,9 @@ fn create_test_logs_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec<Re
                 scope: None,
                 log_records: vec![LogRecord {
                     body: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue("test log message".to_string())),
+                        value: Some(any_value::Value::StringValue(
+                            "test log message".to_string(),
+                        )),
                     }),
                     ..Default::default()
                 }],
@@ -518,7 +525,9 @@ async fn test_trace_partitioning_by_trace_id() {
     // Collect messages with partition info
     let mut messages = Vec::new();
     for _ in 0..3 {
-        if let Some((content, key, partition)) = wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await {
+        if let Some((content, key, partition)) =
+            wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await
+        {
             messages.push((content, key, partition));
         }
     }
@@ -528,7 +537,10 @@ async fn test_trace_partitioning_by_trace_id() {
     // Group by message key
     let mut key_to_partitions = HashMap::new();
     for (_, key, partition) in &messages {
-        key_to_partitions.entry(key.clone()).or_insert_with(Vec::new).push(*partition);
+        key_to_partitions
+            .entry(key.clone())
+            .or_insert_with(Vec::new)
+            .push(*partition);
     }
 
     // Verify that messages with same trace ID (same key) go to same partition
@@ -537,16 +549,25 @@ async fn test_trace_partitioning_by_trace_id() {
         if partitions.len() > 1 && !key.is_empty() {
             let first_partition = partitions[0];
             for partition in partitions {
-                assert_eq!(partition, first_partition, 
-                    "Messages with same non-empty key '{}' should go to same partition", key);
+                assert_eq!(
+                    partition, first_partition,
+                    "Messages with same non-empty key '{}' should go to same partition",
+                    key
+                );
             }
         }
     }
 
     // Verify we got messages with trace ID keys (non-empty)
     // With consistent_random partitioner, messages with same non-empty keys go to same partition
-    let non_empty_keys: Vec<_> = messages.iter().filter(|(_, key, _)| !key.is_empty()).collect();
-    assert!(!non_empty_keys.is_empty(), "Should have at least one message with non-empty trace ID key");
+    let non_empty_keys: Vec<_> = messages
+        .iter()
+        .filter(|(_, key, _)| !key.is_empty())
+        .collect();
+    assert!(
+        !non_empty_keys.is_empty(),
+        "Should have at least one message with non-empty trace ID key"
+    );
 
     println!("✓ Trace partitioning test passed - traces with same ID go to same partition");
 
@@ -598,14 +619,12 @@ async fn test_logs_partitioning_by_resource_attributes() {
         },
     ];
 
-    let different_attrs = vec![
-        KeyValue {
-            key: "service.name".to_string(),
-            value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue("other-service".to_string())),
-            }),
-        },
-    ];
+    let different_attrs = vec![KeyValue {
+        key: "service.name".to_string(),
+        value: Some(AnyValue {
+            value: Some(any_value::Value::StringValue("other-service".to_string())),
+        }),
+    }];
 
     let logs_data_1 = create_test_logs_with_resources(vec![same_attrs.clone()]);
     let logs_data_2 = create_test_logs_with_resources(vec![same_attrs]);
@@ -628,7 +647,9 @@ async fn test_logs_partitioning_by_resource_attributes() {
     // Collect messages with partition info
     let mut messages = Vec::new();
     for _ in 0..3 {
-        if let Some((content, key, partition)) = wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await {
+        if let Some((content, key, partition)) =
+            wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await
+        {
             messages.push((content, key, partition));
         }
     }
@@ -638,7 +659,10 @@ async fn test_logs_partitioning_by_resource_attributes() {
     // Group by message key
     let mut key_to_partitions = HashMap::new();
     for (_, key, partition) in messages {
-        key_to_partitions.entry(key).or_insert_with(Vec::new).push(partition);
+        key_to_partitions
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push(partition);
     }
 
     // Verify that messages with same resource attributes (same key) go to same partition
@@ -646,13 +670,18 @@ async fn test_logs_partitioning_by_resource_attributes() {
         if partitions.len() > 1 {
             let first_partition = partitions[0];
             for partition in partitions {
-                assert_eq!(partition, first_partition, 
-                    "Messages with same key '{}' should go to same partition", key);
+                assert_eq!(
+                    partition, first_partition,
+                    "Messages with same key '{}' should go to same partition",
+                    key
+                );
             }
         }
     }
 
-    println!("✓ Logs partitioning test passed - logs with same resource attributes go to same partition");
+    println!(
+        "✓ Logs partitioning test passed - logs with same resource attributes go to same partition"
+    );
 
     // Clean up
     cancel_token.cancel();
@@ -675,8 +704,8 @@ async fn test_metrics_partitioning_by_resource_attributes() {
         .with_serialization_format(SerializationFormat::Json)
         .with_partition_metrics_by_resource_attributes(true);
 
-    let mut exporter =
-        build_metrics_exporter(config, metrics_rx).expect("Failed to create Kafka metrics exporter");
+    let mut exporter = build_metrics_exporter(config, metrics_rx)
+        .expect("Failed to create Kafka metrics exporter");
 
     let cancel_token = CancellationToken::new();
     let exporter_token = cancel_token.clone();
@@ -702,14 +731,12 @@ async fn test_metrics_partitioning_by_resource_attributes() {
         },
     ];
 
-    let different_attrs = vec![
-        KeyValue {
-            key: "service.name".to_string(),
-            value: Some(AnyValue {
-                value: Some(any_value::Value::StringValue("other-service".to_string())),
-            }),
-        },
-    ];
+    let different_attrs = vec![KeyValue {
+        key: "service.name".to_string(),
+        value: Some(AnyValue {
+            value: Some(any_value::Value::StringValue("other-service".to_string())),
+        }),
+    }];
 
     let metrics_data_1 = create_test_metrics_with_resources(vec![same_attrs.clone()]);
     let metrics_data_2 = create_test_metrics_with_resources(vec![same_attrs]);
@@ -732,7 +759,9 @@ async fn test_metrics_partitioning_by_resource_attributes() {
     // Collect messages with partition info
     let mut messages = Vec::new();
     for _ in 0..3 {
-        if let Some((content, key, partition)) = wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await {
+        if let Some((content, key, partition)) =
+            wait_for_message_with_partition(&consumer, TEST_TIMEOUT).await
+        {
             messages.push((content, key, partition));
         }
     }
@@ -742,7 +771,10 @@ async fn test_metrics_partitioning_by_resource_attributes() {
     // Group by message key
     let mut key_to_partitions = HashMap::new();
     for (_, key, partition) in messages {
-        key_to_partitions.entry(key).or_insert_with(Vec::new).push(partition);
+        key_to_partitions
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push(partition);
     }
 
     // Verify that messages with same resource attributes (same key) go to same partition
@@ -750,13 +782,18 @@ async fn test_metrics_partitioning_by_resource_attributes() {
         if partitions.len() > 1 {
             let first_partition = partitions[0];
             for partition in partitions {
-                assert_eq!(partition, first_partition, 
-                    "Messages with same key '{}' should go to same partition", key);
+                assert_eq!(
+                    partition, first_partition,
+                    "Messages with same key '{}' should go to same partition",
+                    key
+                );
             }
         }
     }
 
-    println!("✓ Metrics partitioning test passed - metrics with same resource attributes go to same partition");
+    println!(
+        "✓ Metrics partitioning test passed - metrics with same resource attributes go to same partition"
+    );
 
     // Clean up
     cancel_token.cancel();
