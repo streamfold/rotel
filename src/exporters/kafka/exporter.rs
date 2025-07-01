@@ -51,7 +51,7 @@ pub trait KafkaExportable: Debug + Send + Sized + 'static {
         builder: &KafkaRequestBuilder,
         config: &KafkaExporterConfig,
         data: &[Self],
-    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)>;
+    ) -> Result<(String, Bytes)>;
 
     /// Get the telemetry type name
     fn telemetry_type() -> &'static str;
@@ -202,20 +202,19 @@ impl KafkaExportable for ResourceSpans {
         builder: &KafkaRequestBuilder,
         config: &KafkaExporterConfig,
         spans: &[Self],
-    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
+    ) -> Result<(String, Bytes)> {
         if !config.partition_traces_by_id {
             // Default behavior: use empty message key and send all spans together
-            let key = crate::exporters::kafka::request_builder::MessageKey::new("");
-            let (_, payload) = builder.build_trace_message(spans)?;
+            let key = String::new();
+            let payload = builder.build_trace_message(spans)?;
             Ok((key, payload))
         } else {
             // When partition_traces_by_id is enabled, we expect spans to already be split by trace ID
             // Extract the trace ID from the first span and use it as the key
             let trace_id = extract_trace_id_from_spans(spans);
             let trace_id_hex = trace_id_to_hex_string(&trace_id);
-            let key = crate::exporters::kafka::request_builder::MessageKey::new(&trace_id_hex);
-            let (_, payload) = builder.build_trace_message(spans)?;
-            Ok((key, payload))
+            let payload = builder.build_trace_message(spans)?;
+            Ok((trace_id_hex, payload))
         }
     }
 
@@ -239,10 +238,10 @@ impl KafkaExportable for ResourceMetrics {
         builder: &KafkaRequestBuilder,
         config: &KafkaExporterConfig,
         metrics: &[Self],
-    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
+    ) -> Result<(String, Bytes)> {
         let key = if !config.partition_metrics_by_resource_attributes {
             // Default: empty message key
-            crate::exporters::kafka::request_builder::MessageKey::new("")
+            String::new()
         } else {
             // When partition_metrics_by_resource_attributes is enabled, use hash of resource attributes as key
             // Expect metrics to contain only one ResourceMetrics after splitting
@@ -252,10 +251,10 @@ impl KafkaExportable for ResourceMetrics {
             } else {
                 hex::encode(hash)
             };
-            crate::exporters::kafka::request_builder::MessageKey::new(&hash_hex)
+            hash_hex
         };
 
-        let (_, payload) = builder.build_metrics_message(metrics)?;
+        let payload = builder.build_metrics_message(metrics)?;
         Ok((key, payload))
     }
 
@@ -281,10 +280,10 @@ impl KafkaExportable for ResourceLogs {
         builder: &KafkaRequestBuilder,
         config: &KafkaExporterConfig,
         logs: &[Self],
-    ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
+    ) -> Result<(String, Bytes)> {
         let key = if !config.partition_logs_by_resource_attributes {
             // Default: empty message key
-            crate::exporters::kafka::request_builder::MessageKey::new("")
+            String::new()
         } else {
             // When partition_logs_by_resource_attributes is enabled, use hash of resource attributes as key
             // Expect logs to contain only one ResourceLogs after splitting
@@ -294,10 +293,10 @@ impl KafkaExportable for ResourceLogs {
             } else {
                 hex::encode(hash)
             };
-            crate::exporters::kafka::request_builder::MessageKey::new(&hash_hex)
+            hash_hex
         };
 
-        let (_, payload) = builder.build_logs_message(logs)?;
+        let payload = builder.build_logs_message(logs)?;
         Ok((key, payload))
     }
 

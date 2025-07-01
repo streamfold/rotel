@@ -8,47 +8,6 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use prost::Message;
 use serde::Serialize;
-use std::fmt::{Display, Formatter};
-
-/// Key for Kafka messages
-#[derive(Clone, Debug)]
-pub struct MessageKey {
-    pub telemetry_type: String,
-    pub resource_id: Option<String>,
-}
-
-impl MessageKey {
-    /// Create a new message key
-    pub fn new(telemetry_type: &str) -> Self {
-        Self {
-            telemetry_type: telemetry_type.to_string(),
-            resource_id: None,
-        }
-    }
-
-    /// Set the resource ID
-    pub fn with_resource_id(mut self, id: String) -> Self {
-        self.resource_id = Some(id);
-        self
-    }
-
-    // /// Convert to string representation
-    // pub fn to_string(&self) -> String {
-    //     match &self.resource_id {
-    //         Some(id) => format!("{}:{}", self.telemetry_type, id),
-    //         None => self.telemetry_type.clone(),
-    //     }
-    // }
-}
-
-impl Display for MessageKey {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match &self.resource_id {
-            Some(id) => write!(f, "{}:{}", self.telemetry_type, id),
-            None => write!(f, "{}", self.telemetry_type.clone()),
-        }
-    }
-}
 
 /// Builder for creating Kafka messages from telemetry data
 #[derive(Clone)]
@@ -65,36 +24,30 @@ impl KafkaRequestBuilder {
     }
 
     /// Build message from trace spans
-    pub fn build_trace_message(&self, spans: &[ResourceSpans]) -> Result<(MessageKey, Bytes)> {
-        let key = MessageKey::new("traces");
+    pub fn build_trace_message(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
         let payload = match self.serialization_format {
             SerializationFormat::Json => self.serialize_json(&spans)?,
             SerializationFormat::Protobuf => self.serialize_protobuf_traces(spans)?,
         };
-        Ok((key, payload))
+        Ok(payload)
     }
 
     /// Build message from metrics
-    pub fn build_metrics_message(
-        &self,
-        metrics: &[ResourceMetrics],
-    ) -> Result<(MessageKey, Bytes)> {
-        let key = MessageKey::new("metrics");
+    pub fn build_metrics_message(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
         let payload = match self.serialization_format {
             SerializationFormat::Json => self.serialize_json(&metrics)?,
             SerializationFormat::Protobuf => self.serialize_protobuf_metrics(metrics)?,
         };
-        Ok((key, payload))
+        Ok(payload)
     }
 
     /// Build message from logs
-    pub fn build_logs_message(&self, logs: &[ResourceLogs]) -> Result<(MessageKey, Bytes)> {
-        let key = MessageKey::new("logs");
+    pub fn build_logs_message(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
         let payload = match self.serialization_format {
             SerializationFormat::Json => self.serialize_json(&logs)?,
             SerializationFormat::Protobuf => self.serialize_protobuf_logs(logs)?,
         };
-        Ok((key, payload))
+        Ok(payload)
     }
 
     /// Serialize data as JSON
@@ -148,15 +101,6 @@ mod tests {
     use crate::exporters::kafka::config::SerializationFormat;
 
     #[test]
-    fn test_message_key() {
-        let key = MessageKey::new("traces");
-        assert_eq!(key.to_string(), "traces");
-
-        let key_with_id = MessageKey::new("metrics").with_resource_id("service-123".to_string());
-        assert_eq!(key_with_id.to_string(), "metrics:service-123");
-    }
-
-    #[test]
     fn test_json_serialization() {
         let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
         let spans: Vec<ResourceSpans> = vec![];
@@ -164,8 +108,7 @@ mod tests {
         let result = builder.build_trace_message(&spans);
         assert!(result.is_ok());
 
-        let (key, payload) = result.unwrap();
-        assert_eq!(key.telemetry_type, "traces");
+        let payload = result.unwrap();
         assert!(!payload.is_empty());
     }
 }

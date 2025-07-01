@@ -6,7 +6,7 @@ mod tests {
         AcknowledgementMode, KafkaExporterConfig, PartitionerType, SerializationFormat,
     };
     use crate::exporters::kafka::errors::KafkaExportError;
-    use crate::exporters::kafka::request_builder::{KafkaRequestBuilder, MessageKey};
+    use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
     use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
     use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
     use opentelemetry_proto::tonic::metrics::v1::{
@@ -48,15 +48,6 @@ mod tests {
     }
 
     #[test]
-    fn test_message_key_creation() {
-        let key = MessageKey::new("traces");
-        assert_eq!(key.to_string(), "traces");
-
-        let key_with_id = MessageKey::new("metrics").with_resource_id("service-123".to_string());
-        assert_eq!(key_with_id.to_string(), "metrics:service-123");
-    }
-
-    #[test]
     fn test_request_builder_traces_json() {
         let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
 
@@ -86,8 +77,7 @@ mod tests {
         let result = builder.build_trace_message(&resource_spans);
         assert!(result.is_ok());
 
-        let (key, payload) = result.unwrap();
-        assert_eq!(key.telemetry_type, "traces");
+        let payload = result.unwrap();
         assert!(!payload.is_empty());
     }
 
@@ -123,8 +113,7 @@ mod tests {
         let result = builder.build_metrics_message(&resource_metrics);
         assert!(result.is_ok());
 
-        let (key, payload) = result.unwrap();
-        assert_eq!(key.telemetry_type, "metrics");
+        let payload = result.unwrap();
         assert!(!payload.is_empty());
     }
 
@@ -156,8 +145,7 @@ mod tests {
         let result = builder.build_logs_message(&resource_logs);
         assert!(result.is_ok());
 
-        let (key, payload) = result.unwrap();
-        assert_eq!(key.telemetry_type, "logs");
+        let payload = result.unwrap();
         assert!(!payload.is_empty());
     }
 
