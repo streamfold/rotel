@@ -2,7 +2,6 @@
 
 use rdkafka::ClientConfig;
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// Serialization format for Kafka messages
 #[derive(Clone, Debug, PartialEq)]
@@ -48,6 +47,37 @@ impl AcknowledgementMode {
     }
 }
 
+/// Kafka partitioner type
+#[derive(Clone, Debug, PartialEq)]
+pub enum PartitionerType {
+    /// Consistent hash partitioner
+    Consistent,
+    /// Random partitioner using consistent hashing
+    ConsistentRandom,
+    /// Random partitioner using murmur2 hashing
+    Murmur2Random,
+    /// Murmur2 hash partitioner
+    Murmur2,
+    /// FNV-1a hash partitioner
+    Fnv1a,
+    /// Random partitioner using FNV-1a hashing
+    Fnv1aRandom,
+}
+
+impl PartitionerType {
+    /// Convert to the string value expected by librdkafka
+    pub fn to_kafka_value(&self) -> &'static str {
+        match self {
+            PartitionerType::Consistent => "consistent",
+            PartitionerType::ConsistentRandom => "consistent_random",
+            PartitionerType::Murmur2Random => "murmur2_random",
+            PartitionerType::Murmur2 => "murmur2",
+            PartitionerType::Fnv1a => "fnv1a",
+            PartitionerType::Fnv1aRandom => "fnv1a_random",
+        }
+    }
+}
+
 /// Configuration for the Kafka exporter
 #[derive(Clone, Debug)]
 pub struct KafkaExporterConfig {
@@ -65,9 +95,6 @@ pub struct KafkaExporterConfig {
 
     /// Serialization format
     pub serialization_format: SerializationFormat,
-
-    /// Request timeout
-    pub request_timeout: Duration,
 
     /// Acknowledgement mode for producer
     pub acks: AcknowledgementMode,
@@ -99,6 +126,18 @@ pub struct KafkaExporterConfig {
     /// Batch size in bytes
     pub batch_size: u32,
 
+    /// Partitioner type
+    pub partitioner: Option<PartitionerType>,
+
+    /// Partition traces by trace ID for better consumer parallelism
+    pub partition_traces_by_id: bool,
+
+    /// Partition metrics by resource attributes for better consumer organization
+    pub partition_metrics_by_resource_attributes: bool,
+
+    /// Partition logs by resource attributes for better consumer organization
+    pub partition_logs_by_resource_attributes: bool,
+
     /// Producer configuration options
     pub producer_config: HashMap<String, String>,
 
@@ -126,7 +165,6 @@ impl Default for KafkaExporterConfig {
             metrics_topic: Some("otlp_metrics".to_string()),
             logs_topic: Some("otlp_logs".to_string()),
             serialization_format: SerializationFormat::default(),
-            request_timeout: Duration::from_secs(30),
             acks: AcknowledgementMode::default(),
             client_id: "rotel".to_string(),
             max_message_bytes: 1000000,
@@ -137,6 +175,10 @@ impl Default for KafkaExporterConfig {
             message_timeout_ms: 300000,
             request_timeout_ms: 30000,
             batch_size: 1000000,
+            partitioner: Some(PartitionerType::ConsistentRandom),
+            partition_traces_by_id: false,
+            partition_metrics_by_resource_attributes: false,
+            partition_logs_by_resource_attributes: false,
             producer_config: HashMap::new(),
             compression: None,
             sasl_username: None,
@@ -246,6 +288,30 @@ impl KafkaExporterConfig {
         self
     }
 
+    /// Set partitioner type
+    pub fn with_partitioner(mut self, partitioner: PartitionerType) -> Self {
+        self.partitioner = Some(partitioner);
+        self
+    }
+
+    /// Enable partitioning traces by trace ID
+    pub fn with_partition_traces_by_id(mut self, enabled: bool) -> Self {
+        self.partition_traces_by_id = enabled;
+        self
+    }
+
+    /// Enable partitioning metrics by resource attributes
+    pub fn with_partition_metrics_by_resource_attributes(mut self, enabled: bool) -> Self {
+        self.partition_metrics_by_resource_attributes = enabled;
+        self
+    }
+
+    /// Enable partitioning logs by resource attributes
+    pub fn with_partition_logs_by_resource_attributes(mut self, enabled: bool) -> Self {
+        self.partition_logs_by_resource_attributes = enabled;
+        self
+    }
+
     /// Set custom producer configuration parameters
     pub fn with_custom_config(mut self, custom_config: Vec<(String, String)>) -> Self {
         for (key, value) in custom_config {
@@ -287,10 +353,18 @@ impl KafkaExporterConfig {
         // Set retry configuration
         config.set("retries", &self.retries.to_string());
         config.set("retry.backoff.ms", &self.retry_backoff_ms.to_string());
-        config.set("retry.backoff.max.ms", &self.retry_backoff_max_ms.to_string());
+        config.set(
+            "retry.backoff.max.ms",
+            &self.retry_backoff_max_ms.to_string(),
+        );
 
         // Set acknowledgement mode
         config.set("acks", self.acks.to_kafka_value());
+
+        // Set partitioner if specified
+        if let Some(ref partitioner) = self.partitioner {
+            config.set("partitioner", partitioner.to_kafka_value());
+        }
 
         // Set compression if specified
         if let Some(ref compression) = self.compression {

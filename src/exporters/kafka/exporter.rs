@@ -49,49 +49,272 @@ pub trait KafkaExportable: Debug + Send + Sized + 'static {
     /// Build a Kafka message from this telemetry data
     fn build_kafka_message(
         builder: &KafkaRequestBuilder,
+        config: &KafkaExporterConfig,
         data: &[Self],
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)>;
 
     /// Get the telemetry type name
     fn telemetry_type() -> &'static str;
+
+    /// Split data for partition-based processing if needed
+    /// Default implementation returns data unchanged
+    fn split_for_partitioning(_config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+        vec![data]
+    }
+}
+
+/// Extract trace ID from the first span in the resource spans
+fn extract_trace_id_from_spans(spans: &[ResourceSpans]) -> Vec<u8> {
+    for resource_span in spans {
+        for scope_span in &resource_span.scope_spans {
+            if let Some(first_span) = scope_span.spans.first() {
+                return first_span.trace_id.clone();
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Convert trace ID bytes to hex string, returning empty string if trace ID is empty
+fn trace_id_to_hex_string(trace_id: &[u8]) -> String {
+    if trace_id.is_empty() {
+        String::new()
+    } else {
+        hex::encode(trace_id)
+    }
+}
+
+/// Calculate a deterministic hash of resource attributes
+/// Maps with the same key/value pairs in different order produce the same hash
+fn calculate_resource_attributes_hash(
+    attributes: &[opentelemetry_proto::tonic::common::v1::KeyValue],
+) -> Vec<u8> {
+    use std::collections::BTreeMap;
+    use std::hash::{Hash, Hasher};
+
+    if attributes.is_empty() {
+        return Vec::new();
+    }
+
+    // Use BTreeMap to ensure deterministic ordering
+    let mut sorted_attrs = BTreeMap::new();
+
+    for attr in attributes {
+        let value_str = match &attr.value {
+            Some(any_value) => match &any_value.value {
+                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => {
+                    s.clone()
+                }
+                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => {
+                    b.to_string()
+                }
+                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => {
+                    i.to_string()
+                }
+                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => {
+                    d.to_string()
+                }
+                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b)) => {
+                    hex::encode(b)
+                }
+                _ => String::new(),
+            },
+            None => String::new(),
+        };
+        sorted_attrs.insert(attr.key.clone(), value_str);
+    }
+
+    // Create a deterministic hash from the sorted attributes
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (key, value) in sorted_attrs {
+        key.hash(&mut hasher);
+        value.hash(&mut hasher);
+    }
+
+    let hash_u64 = hasher.finish();
+    hash_u64.to_be_bytes().to_vec()
+}
+
+/// Extract resource attributes hash from the first ResourceLogs
+fn extract_resource_attributes_hash_from_logs(logs: &[ResourceLogs]) -> Vec<u8> {
+    for resource_log in logs {
+        if let Some(resource) = &resource_log.resource {
+            return calculate_resource_attributes_hash(&resource.attributes);
+        }
+    }
+    Vec::new()
+}
+
+/// Extract resource attributes hash from the first ResourceMetrics
+fn extract_resource_attributes_hash_from_metrics(metrics: &[ResourceMetrics]) -> Vec<u8> {
+    for resource_metric in metrics {
+        if let Some(resource) = &resource_metric.resource {
+            return calculate_resource_attributes_hash(&resource.attributes);
+        }
+    }
+    Vec::new()
+}
+
+/// Split ResourceSpans by trace ID, ensuring each resulting ResourceSpans contains spans from only one trace
+fn split_traces_by_trace_id(resource_spans: &[ResourceSpans]) -> Vec<ResourceSpans> {
+    use std::collections::HashMap;
+
+    let mut trace_groups: HashMap<
+        Vec<u8>,
+        (
+            Option<opentelemetry_proto::tonic::resource::v1::Resource>,
+            Vec<opentelemetry_proto::tonic::trace::v1::Span>,
+            String,
+        ),
+    > = HashMap::new();
+
+    // Collect all spans by trace ID across all ResourceSpans
+    for rs in resource_spans {
+        for scope_span in &rs.scope_spans {
+            for span in &scope_span.spans {
+                let entry = trace_groups
+                    .entry(span.trace_id.clone())
+                    .or_insert_with(|| (rs.resource.clone(), Vec::new(), rs.schema_url.clone()));
+                entry.1.push(span.clone());
+            }
+        }
+    }
+
+    // Create one ResourceSpans per trace ID, merging all spans from that trace
+    trace_groups
+        .into_iter()
+        .map(|(_trace_id, (resource, spans, schema_url))| {
+            ResourceSpans {
+                resource,
+                scope_spans: vec![opentelemetry_proto::tonic::trace::v1::ScopeSpans {
+                    scope: None, // We could preserve scope but for simplicity using None
+                    spans,
+                    schema_url: String::new(),
+                }],
+                schema_url,
+            }
+        })
+        .collect()
 }
 
 impl KafkaExportable for ResourceSpans {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder,
+        config: &KafkaExporterConfig,
         spans: &[Self],
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
-        builder.build_trace_message(spans)
+        if !config.partition_traces_by_id {
+            // Default behavior: use empty message key and send all spans together
+            let key = crate::exporters::kafka::request_builder::MessageKey::new("");
+            let (_, payload) = builder.build_trace_message(spans)?;
+            Ok((key, payload))
+        } else {
+            // When partition_traces_by_id is enabled, we expect spans to already be split by trace ID
+            // Extract the trace ID from the first span and use it as the key
+            let trace_id = extract_trace_id_from_spans(spans);
+            let trace_id_hex = trace_id_to_hex_string(&trace_id);
+            let key = crate::exporters::kafka::request_builder::MessageKey::new(&trace_id_hex);
+            let (_, payload) = builder.build_trace_message(spans)?;
+            Ok((key, payload))
+        }
     }
 
     fn telemetry_type() -> &'static str {
         "traces"
+    }
+
+    /// Split traces by trace ID when partition_traces_by_id is enabled
+    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+        if config.partition_traces_by_id {
+            let split_traces = split_traces_by_trace_id(&data);
+            split_traces.into_iter().map(|trace| vec![trace]).collect()
+        } else {
+            vec![data]
+        }
     }
 }
 
 impl KafkaExportable for ResourceMetrics {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder,
+        config: &KafkaExporterConfig,
         metrics: &[Self],
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
-        builder.build_metrics_message(metrics)
+        let key = if !config.partition_metrics_by_resource_attributes {
+            // Default: empty message key
+            crate::exporters::kafka::request_builder::MessageKey::new("")
+        } else {
+            // When partition_metrics_by_resource_attributes is enabled, use hash of resource attributes as key
+            // Expect metrics to contain only one ResourceMetrics after splitting
+            let hash = extract_resource_attributes_hash_from_metrics(metrics);
+            let hash_hex = if hash.is_empty() {
+                String::new()
+            } else {
+                hex::encode(hash)
+            };
+            crate::exporters::kafka::request_builder::MessageKey::new(&hash_hex)
+        };
+
+        let (_, payload) = builder.build_metrics_message(metrics)?;
+        Ok((key, payload))
     }
 
     fn telemetry_type() -> &'static str {
         "metrics"
+    }
+
+    /// Split metrics by resource attributes when partition_metrics_by_resource_attributes is enabled
+    /// Each ResourceMetrics becomes its own message, matching the Go implementation
+    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+        if config.partition_metrics_by_resource_attributes {
+            // Split each ResourceMetrics into separate groups, one per ResourceMetrics
+            // This matches the Go implementation where each resourceMetrics becomes a separate message
+            data.into_iter().map(|metric| vec![metric]).collect()
+        } else {
+            vec![data]
+        }
     }
 }
 
 impl KafkaExportable for ResourceLogs {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder,
+        config: &KafkaExporterConfig,
         logs: &[Self],
     ) -> Result<(crate::exporters::kafka::request_builder::MessageKey, Bytes)> {
-        builder.build_logs_message(logs)
+        let key = if !config.partition_logs_by_resource_attributes {
+            // Default: empty message key
+            crate::exporters::kafka::request_builder::MessageKey::new("")
+        } else {
+            // When partition_logs_by_resource_attributes is enabled, use hash of resource attributes as key
+            // Expect logs to contain only one ResourceLogs after splitting
+            let hash = extract_resource_attributes_hash_from_logs(logs);
+            let hash_hex = if hash.is_empty() {
+                String::new()
+            } else {
+                hex::encode(hash)
+            };
+            crate::exporters::kafka::request_builder::MessageKey::new(&hash_hex)
+        };
+
+        let (_, payload) = builder.build_logs_message(logs)?;
+        Ok((key, payload))
     }
 
     fn telemetry_type() -> &'static str {
         "logs"
+    }
+
+    /// Split logs by resource attributes when partition_logs_by_resource_attributes is enabled
+    /// Each ResourceLogs becomes its own message, matching the Go implementation
+    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+        if config.partition_logs_by_resource_attributes {
+            // Split each ResourceLogs into separate groups, one per ResourceLogs
+            // This matches the Go implementation where each resourceLogs becomes a separate message
+            data.into_iter().map(|log| vec![log]).collect()
+        } else {
+            vec![data]
+        }
     }
 }
 
@@ -186,15 +409,13 @@ where
                             let key = encoded_msg.key;
                             let payload = encoded_msg.payload.to_vec();
                             let producer = self.producer.clone();
-                            let timeout = self.config.request_timeout;
-
+                            let timeout = Duration::from_millis(self.config.request_timeout_ms as u64);
                             let send_future = async move {
                                 let record = FutureRecord::to(&topic)
                                     .key(&key)
                                     .payload(&payload);
                                 producer.send(record, Timeout::After(timeout)).await
                             };
-
                             self.send_futures.push(Box::pin(send_future));
                         }
                         Ok(Err(e)) => {
@@ -216,16 +437,23 @@ where
                                 telemetry_type
                             );
 
-                            let req_builder = self.request_builder.clone();
-                            let encoding_future = tokio::task::spawn_blocking(move || {
-                                Resource::build_kafka_message(&req_builder, &payload)
-                                    .map(|(key, payload)| EncodedMessage {
-                                        key: key.to_string(),
-                                        payload,
-                                    })
-                            });
+                            // Split data for partitioning if needed (e.g., traces by trace ID)
+                            let payloads_to_process = Resource::split_for_partitioning(&self.config, payload);
 
-                            self.encoding_futures.push(Box::pin(encoding_future));
+                            // Process each payload (original or split)
+                            for single_payload in payloads_to_process {
+                                let req_builder = self.request_builder.clone();
+                                let config = self.config.clone();
+                                let encoding_future = tokio::task::spawn_blocking(move || {
+                                    Resource::build_kafka_message(&req_builder, &config, &single_payload)
+                                        .map(|(key, payload)| EncodedMessage {
+                                            key: key.to_string(),
+                                            payload,
+                                        })
+                                });
+
+                                self.encoding_futures.push(Box::pin(encoding_future));
+                            }
                         }
                         None => {
                             debug!("Kafka {} exporter receiver closed", telemetry_type);
@@ -264,11 +492,16 @@ where
                         let key = encoded_msg.key;
                         let payload = encoded_msg.payload.to_vec();
                         let producer = self.producer.clone();
-                        let timeout = self.config.request_timeout;
+                        let timeout = self.config.request_timeout_ms;
 
                         let send_future = async move {
                             let record = FutureRecord::to(&topic).key(&key).payload(&payload);
-                            producer.send(record, Timeout::After(timeout)).await
+                            producer
+                                .send(
+                                    record,
+                                    Timeout::After(Duration::from_millis(timeout as u64)),
+                                )
+                                .await
                         };
 
                         self.send_futures.push(Box::pin(send_future));

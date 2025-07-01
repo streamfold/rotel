@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::kafka::config::{
-    AcknowledgementMode, KafkaExporterConfig, SerializationFormat,
+    AcknowledgementMode, KafkaExporterConfig, PartitionerType, SerializationFormat,
 };
 use crate::init::args;
 use clap::{Args, ValueEnum};
@@ -71,11 +71,7 @@ pub struct KafkaExporterArgs {
     pub kafka_exporter_acks: KafkaAcknowledgementMode,
 
     /// Client ID for the Kafka producer
-    #[arg(
-        long,
-        env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID",
-        default_value = "rotel"
-    )]
+    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID", default_value = "rotel")]
     pub kafka_exporter_client_id: String,
 
     /// Maximum message size in bytes
@@ -87,11 +83,7 @@ pub struct KafkaExporterArgs {
     pub kafka_exporter_max_message_bytes: usize,
 
     /// Linger time in milliseconds
-    #[arg(
-        long,
-        env = "ROTEL_KAFKA_EXPORTER_LINGER_MS",
-        default_value = "5"
-    )]
+    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_LINGER_MS", default_value = "5")]
     pub kafka_exporter_linger_ms: u32,
 
     /// Number of retries for message sending
@@ -142,6 +134,39 @@ pub struct KafkaExporterArgs {
     )]
     pub kafka_exporter_batch_size: u32,
 
+    /// Partitioner type
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_PARTITIONER",
+        default_value = "consistent-random"
+    )]
+    pub kafka_exporter_partitioner: KafkaPartitionerType,
+
+    /// Partition traces by trace ID for better consumer parallelism
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_PARTITION_TRACES_BY_ID",
+        default_value = "false"
+    )]
+    pub kafka_exporter_partition_traces_by_id: bool,
+
+    /// Partition metrics by resource attributes for better consumer organization
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_PARTITION_METRICS_BY_RESOURCE_ATTRIBUTES",
+        default_value = "false"
+    )]
+    pub kafka_exporter_partition_metrics_by_resource_attributes: bool,
+
+    /// Partition logs by resource attributes for better consumer organization
+    #[arg(
+        long,
+        env = "ROTEL_KAFKA_EXPORTER_PARTITION_LOGS_BY_RESOURCE_ATTRIBUTES",
+        default_value = "false"
+    )]
+    pub kafka_exporter_partition_logs_by_resource_attributes: bool,
+
     /// Custom Kafka producer configuration parameters (key=value pairs). These will override built-in options if conflicts exist.
     #[arg(
         long("kafka-exporter-custom-config"),
@@ -188,6 +213,22 @@ pub enum KafkaAcknowledgementMode {
     All,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+pub enum KafkaPartitionerType {
+    /// Consistent hash partitioner
+    Consistent,
+    /// Random partitioner using consistent hashing
+    ConsistentRandom,
+    /// Random partitioner using murmur2 hashing
+    Murmur2Random,
+    /// Murmur2 hash partitioner
+    Murmur2,
+    /// FNV-1a hash partitioner
+    Fnv1a,
+    /// Random partitioner using FNV-1a hashing
+    Fnv1aRandom,
+}
+
 impl From<KafkaSerializationFormat> for SerializationFormat {
     fn from(value: KafkaSerializationFormat) -> Self {
         match value {
@@ -203,6 +244,19 @@ impl From<KafkaAcknowledgementMode> for AcknowledgementMode {
             KafkaAcknowledgementMode::None => AcknowledgementMode::None,
             KafkaAcknowledgementMode::One => AcknowledgementMode::One,
             KafkaAcknowledgementMode::All => AcknowledgementMode::All,
+        }
+    }
+}
+
+impl From<KafkaPartitionerType> for PartitionerType {
+    fn from(value: KafkaPartitionerType) -> Self {
+        match value {
+            KafkaPartitionerType::Consistent => PartitionerType::Consistent,
+            KafkaPartitionerType::ConsistentRandom => PartitionerType::ConsistentRandom,
+            KafkaPartitionerType::Murmur2Random => PartitionerType::Murmur2Random,
+            KafkaPartitionerType::Murmur2 => PartitionerType::Murmur2,
+            KafkaPartitionerType::Fnv1a => PartitionerType::Fnv1a,
+            KafkaPartitionerType::Fnv1aRandom => PartitionerType::Fnv1aRandom,
         }
     }
 }
@@ -224,9 +278,15 @@ impl KafkaExporterArgs {
             .with_message_timeout_ms(self.kafka_exporter_message_timeout_ms)
             .with_request_timeout_ms(self.kafka_exporter_request_timeout_ms)
             .with_batch_size(self.kafka_exporter_batch_size)
+            .with_partitioner(self.kafka_exporter_partitioner.into())
+            .with_partition_traces_by_id(self.kafka_exporter_partition_traces_by_id)
+            .with_partition_metrics_by_resource_attributes(
+                self.kafka_exporter_partition_metrics_by_resource_attributes,
+            )
+            .with_partition_logs_by_resource_attributes(
+                self.kafka_exporter_partition_logs_by_resource_attributes,
+            )
             .with_custom_config(self.kafka_exporter_custom_config.clone());
-
-        config.request_timeout = self.kafka_exporter_request_timeout.into();
 
         if let Some(ref compression) = self.kafka_exporter_compression {
             config = config.with_compression(compression.clone());

@@ -264,6 +264,10 @@ logs, and traces.
 | --kafka-exporter-message-timeout-ms       | 300000        |                   |
 | --kafka-exporter-request-timeout-ms       | 30000         |                   |
 | --kafka-exporter-batch-size               | 1000000       |                   |
+| --kafka-exporter-partitioner              | consistent-random | consistent, consistent-random, murmur2-random, murmur2, fnv1a, fnv1a-random |
+| --kafka-exporter-partition-traces-by-id   | false         |                   |
+| --kafka-exporter-partition-metrics-by-resource-attributes | false | |
+| --kafka-exporter-partition-logs-by-resource-attributes | false    | |
 | --kafka-exporter-custom-config            |               |                   |
 | --kafka-exporter-sasl-username            |               |                   |
 | --kafka-exporter-sasl-password            |               |                   |
@@ -305,6 +309,17 @@ The Kafka exporter provides several options for tuning producer performance and 
 - `--kafka-exporter-message-timeout-ms`: Maximum time to wait for messages to be sent successfully. Messages exceeding this timeout will be dropped.
 - `--kafka-exporter-request-timeout-ms`: Timeout for individual requests to the Kafka brokers.
 - `--kafka-exporter-batch-size`: Maximum size of message batches in bytes. Larger batches improve throughput but increase memory usage.
+- `--kafka-exporter-partitioner`: Controls how messages are distributed across partitions. Options include consistent hashing and murmur2/fnv1a hash algorithms.
+
+#### Message Partitioning Control
+
+For improved consumer parallelism and data organization, you can enable custom partitioning based on telemetry data:
+
+- `--kafka-exporter-partition-traces-by-id`: When enabled, traces are partitioned by trace ID, ensuring all spans from the same trace go to the same partition.
+- `--kafka-exporter-partition-metrics-by-resource-attributes`: When enabled, metrics are partitioned by resource attributes (like service name), grouping related metrics together.
+- `--kafka-exporter-partition-logs-by-resource-attributes`: When enabled, logs are partitioned by resource attributes, organizing logs by service or application.
+
+These options override the global partitioner setting for specific telemetry types when enabled.
 
 #### Advanced Configuration
 

@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use crate::exporters::kafka::config::{
-        AcknowledgementMode, KafkaExporterConfig, SerializationFormat,
+        AcknowledgementMode, KafkaExporterConfig, PartitionerType, SerializationFormat,
     };
     use crate::exporters::kafka::errors::KafkaExportError;
     use crate::exporters::kafka::request_builder::{KafkaRequestBuilder, MessageKey};
@@ -233,8 +233,8 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_max_message_bytes() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_max_message_bytes(2000000);
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_max_message_bytes(2000000);
         assert_eq!(config.max_message_bytes, 2000000);
     }
 
@@ -246,8 +246,7 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_linger_ms() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_linger_ms(10);
+        let config = KafkaExporterConfig::new("broker:9092".to_string()).with_linger_ms(10);
         assert_eq!(config.linger_ms, 10);
     }
 
@@ -257,11 +256,9 @@ mod tests {
         assert_eq!(config.linger_ms, 5);
     }
 
-
     #[test]
     fn test_kafka_config_with_retries() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_retries(50);
+        let config = KafkaExporterConfig::new("broker:9092".to_string()).with_retries(50);
         assert_eq!(config.retries, 50);
     }
 
@@ -273,8 +270,7 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_retry_backoff_ms() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_retry_backoff_ms(200);
+        let config = KafkaExporterConfig::new("broker:9092".to_string()).with_retry_backoff_ms(200);
         assert_eq!(config.retry_backoff_ms, 200);
     }
 
@@ -286,8 +282,8 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_retry_backoff_max_ms() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_retry_backoff_max_ms(2000);
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_retry_backoff_max_ms(2000);
         assert_eq!(config.retry_backoff_max_ms, 2000);
     }
 
@@ -299,8 +295,8 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_message_timeout_ms() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_message_timeout_ms(60000);
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_message_timeout_ms(60000);
         assert_eq!(config.message_timeout_ms, 60000);
     }
 
@@ -312,8 +308,8 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_request_timeout_ms() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_request_timeout_ms(10000);
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_request_timeout_ms(10000);
         assert_eq!(config.request_timeout_ms, 10000);
     }
 
@@ -325,8 +321,7 @@ mod tests {
 
     #[test]
     fn test_kafka_config_with_batch_size() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_batch_size(2000000);
+        let config = KafkaExporterConfig::new("broker:9092".to_string()).with_batch_size(2000000);
         assert_eq!(config.batch_size, 2000000);
     }
 
@@ -340,13 +335,24 @@ mod tests {
     fn test_kafka_config_with_custom_config() {
         let custom_config = vec![
             ("enable.idempotence".to_string(), "true".to_string()),
-            ("max.in.flight.requests.per.connection".to_string(), "1".to_string()),
+            (
+                "max.in.flight.requests.per.connection".to_string(),
+                "1".to_string(),
+            ),
         ];
-        let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_custom_config(custom_config);
-        
-        assert_eq!(config.producer_config.get("enable.idempotence"), Some(&"true".to_string()));
-        assert_eq!(config.producer_config.get("max.in.flight.requests.per.connection"), Some(&"1".to_string()));
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_custom_config(custom_config);
+
+        assert_eq!(
+            config.producer_config.get("enable.idempotence"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            config
+                .producer_config
+                .get("max.in.flight.requests.per.connection"),
+            Some(&"1".to_string())
+        );
         assert_eq!(config.producer_config.len(), 2);
     }
 
@@ -364,22 +370,612 @@ mod tests {
             ("linger.ms".to_string(), "20".to_string()),
         ];
         let config = KafkaExporterConfig::new("broker:9092".to_string())
-            .with_batch_size(500000)  // This should be overridden
-            .with_linger_ms(10)       // This should be overridden
+            .with_batch_size(500000) // This should be overridden
+            .with_linger_ms(10) // This should be overridden
             .with_custom_config(custom_config);
 
         let client_config = config.build_client_config();
-        
+
         // Since rdkafka doesn't expose a way to read back values, we can at least
         // verify that the method doesn't panic and produces a valid config
         assert!(!format!("{:?}", client_config).is_empty());
-        
+
         // Verify the custom config was stored in our structure
-        assert_eq!(config.producer_config.get("batch.size"), Some(&"2000000".to_string()));
-        assert_eq!(config.producer_config.get("linger.ms"), Some(&"20".to_string()));
-        assert_eq!(config.batch_size, 500000);  // Built-in value should still be stored
-        assert_eq!(config.linger_ms, 10);       // Built-in value should still be stored
+        assert_eq!(
+            config.producer_config.get("batch.size"),
+            Some(&"2000000".to_string())
+        );
+        assert_eq!(
+            config.producer_config.get("linger.ms"),
+            Some(&"20".to_string())
+        );
+        assert_eq!(config.batch_size, 500000); // Built-in value should still be stored
+        assert_eq!(config.linger_ms, 10); // Built-in value should still be stored
+    }
+
+    #[test]
+    fn test_kafka_config_with_partitioner() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partitioner(PartitionerType::Murmur2);
+        assert_eq!(config.partitioner, Some(PartitionerType::Murmur2));
+    }
+
+    #[test]
+    fn test_kafka_config_default_partitioner() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.partitioner, Some(PartitionerType::ConsistentRandom));
+    }
+
+    #[test]
+    fn test_partitioner_type_kafka_values() {
+        assert_eq!(PartitionerType::Consistent.to_kafka_value(), "consistent");
+        assert_eq!(
+            PartitionerType::ConsistentRandom.to_kafka_value(),
+            "consistent_random"
+        );
+        assert_eq!(
+            PartitionerType::Murmur2Random.to_kafka_value(),
+            "murmur2_random"
+        );
+        assert_eq!(PartitionerType::Murmur2.to_kafka_value(), "murmur2");
+        assert_eq!(PartitionerType::Fnv1a.to_kafka_value(), "fnv1a");
+        assert_eq!(
+            PartitionerType::Fnv1aRandom.to_kafka_value(),
+            "fnv1a_random"
+        );
+    }
+
+    #[test]
+    fn test_kafka_config_with_partition_traces_by_id() {
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
+        assert_eq!(config.partition_traces_by_id, true);
+    }
+
+    #[test]
+    fn test_kafka_config_default_partition_traces_by_id() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.partition_traces_by_id, false);
+    }
+
+    #[test]
+    fn test_kafka_config_with_partition_metrics_by_resource_attributes() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(true);
+        assert_eq!(config.partition_metrics_by_resource_attributes, true);
+    }
+
+    #[test]
+    fn test_kafka_config_default_partition_metrics_by_resource_attributes() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.partition_metrics_by_resource_attributes, false);
+    }
+
+    #[test]
+    fn test_kafka_config_with_partition_logs_by_resource_attributes() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_logs_by_resource_attributes(true);
+        assert_eq!(config.partition_logs_by_resource_attributes, true);
+    }
+
+    #[test]
+    fn test_kafka_config_default_partition_logs_by_resource_attributes() {
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
+        assert_eq!(config.partition_logs_by_resource_attributes, false);
     }
 
     use opentelemetry_proto::tonic::metrics::v1::number_data_point;
+
+    #[test]
+    fn test_partition_traces_by_id_disabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(false);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_spans = vec![ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_spans: vec![ScopeSpans {
+                scope: None,
+                spans: vec![Span {
+                    trace_id: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                    span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                    name: "test-span".to_string(),
+                    ..Default::default()
+                }],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceSpans::build_kafka_message(&builder, &config, &resource_spans);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert_eq!(key.to_string(), ""); // Should be empty when disabled
+    }
+
+    #[test]
+    fn test_partition_traces_by_id_enabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let trace_id = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let resource_spans = vec![ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_spans: vec![ScopeSpans {
+                scope: None,
+                spans: vec![Span {
+                    trace_id: trace_id.clone(),
+                    span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                    name: "test-span".to_string(),
+                    ..Default::default()
+                }],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceSpans::build_kafka_message(&builder, &config, &resource_spans);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        let expected_hex = hex::encode(&trace_id);
+        assert_eq!(key.to_string(), expected_hex);
+    }
+
+    #[test]
+    fn test_partition_traces_by_id_empty_trace_id() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_spans = vec![ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_spans: vec![ScopeSpans {
+                scope: None,
+                spans: vec![Span {
+                    trace_id: vec![], // Empty trace ID
+                    span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                    name: "test-span".to_string(),
+                    ..Default::default()
+                }],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceSpans::build_kafka_message(&builder, &config, &resource_spans);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert_eq!(key.to_string(), ""); // Should be empty when trace ID is empty
+    }
+
+    #[test]
+    fn test_split_traces_by_trace_id() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
+
+        // Create ResourceSpans with two different trace IDs
+        let trace_id_1 = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let trace_id_2 = vec![16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+
+        let resource_spans = vec![
+            ResourceSpans {
+                resource: Some(Resource {
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                }),
+                scope_spans: vec![ScopeSpans {
+                    scope: None,
+                    spans: vec![
+                        Span {
+                            trace_id: trace_id_1.clone(),
+                            span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                            name: "span-1-trace-1".to_string(),
+                            ..Default::default()
+                        },
+                        Span {
+                            trace_id: trace_id_2.clone(),
+                            span_id: vec![2, 3, 4, 5, 6, 7, 8, 9],
+                            name: "span-1-trace-2".to_string(),
+                            ..Default::default()
+                        },
+                    ],
+                    schema_url: "".to_string(),
+                }],
+                schema_url: "".to_string(),
+            },
+            ResourceSpans {
+                resource: Some(Resource {
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                }),
+                scope_spans: vec![ScopeSpans {
+                    scope: None,
+                    spans: vec![Span {
+                        trace_id: trace_id_1.clone(),
+                        span_id: vec![3, 4, 5, 6, 7, 8, 9, 10],
+                        name: "span-2-trace-1".to_string(),
+                        ..Default::default()
+                    }],
+                    schema_url: "".to_string(),
+                }],
+                schema_url: "".to_string(),
+            },
+        ];
+
+        // Test splitting
+        let split_result = ResourceSpans::split_for_partitioning(&config, resource_spans);
+
+        // Should be split into 2 groups (one for each trace ID)
+        assert_eq!(split_result.len(), 2);
+
+        // Verify each group contains only spans from one trace
+        for group in split_result {
+            assert_eq!(group.len(), 1); // Each group should have one ResourceSpans
+            let resource_spans = &group[0];
+            let mut trace_ids = std::collections::HashSet::new();
+
+            for scope_spans in &resource_spans.scope_spans {
+                for span in &scope_spans.spans {
+                    trace_ids.insert(span.trace_id.clone());
+                }
+            }
+
+            // Each group should contain spans from only one trace ID
+            assert_eq!(trace_ids.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_split_traces_disabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config =
+            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(false);
+
+        let resource_spans = vec![ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_spans: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        // Test that splitting is disabled
+        let split_result = ResourceSpans::split_for_partitioning(&config, resource_spans.clone());
+
+        // Should return original data unchanged
+        assert_eq!(split_result.len(), 1);
+        assert_eq!(split_result[0], resource_spans);
+    }
+
+    #[test]
+    fn test_partition_logs_by_resource_attributes_disabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_logs_by_resource_attributes(false);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_logs = vec![ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("test-service".to_string())),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceLogs::build_kafka_message(&builder, &config, &resource_logs);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert_eq!(key.to_string(), ""); // Should be empty when disabled
+    }
+
+    #[test]
+    fn test_partition_logs_by_resource_attributes_enabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_logs_by_resource_attributes(true);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_logs = vec![ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("test-service".to_string())),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceLogs::build_kafka_message(&builder, &config, &resource_logs);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert!(!key.to_string().is_empty()); // Should have a hash key when enabled
+    }
+
+    #[test]
+    fn test_partition_logs_by_resource_attributes_empty_attributes() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_logs_by_resource_attributes(true);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_logs = vec![ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![], // Empty attributes
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceLogs::build_kafka_message(&builder, &config, &resource_logs);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert_eq!(key.to_string(), ""); // Should be empty when no attributes
+    }
+
+    #[test]
+    fn test_split_logs_by_resource_attributes() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_logs_by_resource_attributes(true);
+
+        let resource_logs = vec![
+            ResourceLogs {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue("service-1".to_string())),
+                        }),
+                    }],
+                    dropped_attributes_count: 0,
+                }),
+                scope_logs: vec![],
+                schema_url: "".to_string(),
+            },
+            ResourceLogs {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue("service-2".to_string())),
+                        }),
+                    }],
+                    dropped_attributes_count: 0,
+                }),
+                scope_logs: vec![],
+                schema_url: "".to_string(),
+            },
+        ];
+
+        // Test splitting
+        let split_result = ResourceLogs::split_for_partitioning(&config, resource_logs);
+
+        // Should be split into 2 groups (one for each ResourceLogs)
+        assert_eq!(split_result.len(), 2);
+
+        // Each group should contain exactly one ResourceLogs
+        for group in split_result {
+            assert_eq!(group.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_split_logs_disabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_logs_by_resource_attributes(false);
+
+        let resource_logs = vec![ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_logs: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        // Test that splitting is disabled
+        let split_result = ResourceLogs::split_for_partitioning(&config, resource_logs.clone());
+
+        // Should return original data unchanged
+        assert_eq!(split_result.len(), 1);
+        assert_eq!(split_result[0], resource_logs);
+    }
+
+    #[test]
+    fn test_partition_metrics_by_resource_attributes_disabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(false);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_metrics = vec![ResourceMetrics {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("test-service".to_string())),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+            }),
+            scope_metrics: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceMetrics::build_kafka_message(&builder, &config, &resource_metrics);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert_eq!(key.to_string(), ""); // Should be empty when disabled
+    }
+
+    #[test]
+    fn test_partition_metrics_by_resource_attributes_enabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(true);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_metrics = vec![ResourceMetrics {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("test-service".to_string())),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+            }),
+            scope_metrics: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceMetrics::build_kafka_message(&builder, &config, &resource_metrics);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert!(!key.to_string().is_empty()); // Should have a hash key when enabled
+    }
+
+    #[test]
+    fn test_partition_metrics_by_resource_attributes_empty_attributes() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(true);
+        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+
+        let resource_metrics = vec![ResourceMetrics {
+            resource: Some(Resource {
+                attributes: vec![], // Empty attributes
+                dropped_attributes_count: 0,
+            }),
+            scope_metrics: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        let result = ResourceMetrics::build_kafka_message(&builder, &config, &resource_metrics);
+        assert!(result.is_ok());
+
+        let (key, _) = result.unwrap();
+        assert_eq!(key.to_string(), ""); // Should be empty when no attributes
+    }
+
+    #[test]
+    fn test_split_metrics_by_resource_attributes() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(true);
+
+        let resource_metrics = vec![
+            ResourceMetrics {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue("service-1".to_string())),
+                        }),
+                    }],
+                    dropped_attributes_count: 0,
+                }),
+                scope_metrics: vec![],
+                schema_url: "".to_string(),
+            },
+            ResourceMetrics {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue("service-2".to_string())),
+                        }),
+                    }],
+                    dropped_attributes_count: 0,
+                }),
+                scope_metrics: vec![],
+                schema_url: "".to_string(),
+            },
+        ];
+
+        // Test splitting
+        let split_result = ResourceMetrics::split_for_partitioning(&config, resource_metrics);
+
+        // Should be split into 2 groups (one for each ResourceMetrics)
+        assert_eq!(split_result.len(), 2);
+
+        // Each group should contain exactly one ResourceMetrics
+        for group in split_result {
+            assert_eq!(group.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_split_metrics_disabled() {
+        use crate::exporters::kafka::exporter::KafkaExportable;
+
+        let config = KafkaExporterConfig::new("broker:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(false);
+
+        let resource_metrics = vec![ResourceMetrics {
+            resource: Some(Resource {
+                attributes: vec![],
+                dropped_attributes_count: 0,
+            }),
+            scope_metrics: vec![],
+            schema_url: "".to_string(),
+        }];
+
+        // Test that splitting is disabled
+        let split_result =
+            ResourceMetrics::split_for_partitioning(&config, resource_metrics.clone());
+
+        // Should return original data unchanged
+        assert_eq!(split_result.len(), 1);
+        assert_eq!(split_result[0], resource_metrics);
+    }
 }
