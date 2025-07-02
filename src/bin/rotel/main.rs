@@ -176,11 +176,11 @@ async fn run_agent(
                 break;
             },
             _ = sig_usr1.recv() => {
-                info!("SIGUSR1 received, force flushing pipelines...");
+                info!("Signal SIGUSR1 received, invoking a forced flush");
                 let flush_start = Instant::now();
                 force_flush(&mut flush_pipeline_tx, &mut flush_exporters_tx).await;
                 let duration = Instant::now().duration_since(flush_start);
-                info!(duration = ?duration, "Finished flushing pipelines");
+                info!(duration = ?duration, "Finished forced flush request");
             },
             e = wait::wait_for_any_task(&mut agent_join_set) => {
                 match e {
