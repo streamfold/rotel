@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::topology::batch::BatchConfig;
 use clap::Args;
 
@@ -9,8 +11,8 @@ pub struct BatchArgs {
     pub batch_max_size: usize,
 
     /// OTLP batch timeout - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(long, env = "ROTEL_BATCH_TIMEOUT", default_value = "200ms")]
-    pub batch_timeout: humantime::Duration,
+    #[arg(long, env = "ROTEL_BATCH_TIMEOUT", default_value = "200ms", value_parser = humantime::parse_duration)]
+    pub batch_timeout: std::time::Duration,
 
     /// OTLP traces max batch size in number of spans - Overrides batch_max_size for OTLP traces if specified.
     #[arg(long, env = "ROTEL_TRACES_BATCH_MAX_SIZE")]
@@ -25,20 +27,36 @@ pub struct BatchArgs {
     pub logs_batch_max_size: Option<usize>,
 
     /// OTLP traces batch timeout - Overrides batch_timeout for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_TRACES_BATCH_TIMEOUT")]
-    pub traces_batch_timeout: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_TRACES_BATCH_TIMEOUT", value_parser = humantime::parse_duration)]
+    pub traces_batch_timeout: Option<std::time::Duration>,
 
     /// OTLP metrics batch timeout - Overrides batch_timeout for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_METRICS_BATCH_TIMEOUT")]
-    pub metrics_batch_timeout: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_METRICS_BATCH_TIMEOUT", value_parser = humantime::parse_duration)]
+    pub metrics_batch_timeout: Option<std::time::Duration>,
 
     /// OTLP logs batch timeout - Overrides batch_timeout for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_LOGS_BATCH_TIMEOUT")]
-    pub logs_batch_timeout: Option<humantime::Duration>,
+    #[arg(long, env = "ROTEL_LOGS_BATCH_TIMEOUT", value_parser = humantime::parse_duration)]
+    pub logs_batch_timeout: Option<std::time::Duration>,
 
     /// Disable batching, incoming messages are immediately exported (not recommended)
     #[arg(long, env = "ROTEL_DISABLE_BATCHING", default_value = "false")]
     pub disable_batching: bool,
+}
+
+impl Default for BatchArgs {
+    fn default() -> Self {
+        Self {
+            batch_max_size: 8192,
+            batch_timeout: Duration::from_millis(200),
+            traces_batch_max_size: None,
+            metrics_batch_max_size: None,
+            logs_batch_max_size: None,
+            traces_batch_timeout: None,
+            metrics_batch_timeout: None,
+            logs_batch_timeout: None,
+            disable_batching: false,
+        }
+    }
 }
 
 // todo: add these as impl functions of the exporter args?
