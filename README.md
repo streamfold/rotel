@@ -13,7 +13,7 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - OTLP receiver supporting gRPC, HTTP/Protobuf, and HTTP/JSON
 - OTLP exporter supporting gRPC and HTTP/Protobuf
 - Built-in batching and retry mechanisms
-- Experimental Clickhouse and Datadog exporters
+- Experimental Clickhouse, Datadog, and Kafka exporters
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
 and a compact binary size, simplifying deployment without the need for a sidecar container.
@@ -240,7 +240,7 @@ automatically sourced from Rotel's environment on startup.
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
 
-### Kafka exporter configuration
+### Kafka exporter configuration (Experimental)
 
 The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka exporter supports metrics,
 logs, and traces.

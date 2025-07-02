@@ -29,18 +29,10 @@ use tracing::{debug, error, info};
 const MAX_CONCURRENT_ENCODERS: usize = 1000;
 const MAX_CONCURRENT_SENDS: usize = 1000;
 
-type EncodingFuture =
-    Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
-type SendFuture = Pin<
-    Box<
-        dyn Future<
-                Output = std::result::Result<
-                    (i32, i64),
-                    (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage),
-                >,
-            > + Send,
-    >,
->;
+#[rustfmt::skip]
+type EncodingFuture = Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
+#[rustfmt::skip]
+type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<(i32, i64), (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
 
 /// Encoded Kafka message ready to be sent
 #[derive(Debug)]
