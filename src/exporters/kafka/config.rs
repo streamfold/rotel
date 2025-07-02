@@ -4,7 +4,7 @@ use rdkafka::ClientConfig;
 use std::collections::HashMap;
 
 /// Serialization format for Kafka messages
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 pub enum SerializationFormat {
     /// JSON format
     Json,
@@ -13,7 +13,7 @@ pub enum SerializationFormat {
 }
 
 /// Kafka acknowledgement configuration
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 pub enum AcknowledgementMode {
     /// No acknowledgement required (acks=0) - fastest but least durable
     None,
@@ -48,7 +48,7 @@ impl AcknowledgementMode {
 }
 
 /// Kafka partitioner type
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 pub enum PartitionerType {
     /// Consistent hash partitioner
     Consistent,

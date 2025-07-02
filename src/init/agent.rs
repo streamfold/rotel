@@ -7,7 +7,7 @@ use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build
 use crate::exporters::otlp;
 use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam, Exporter};
+use crate::init::args::{AgentRun, DebugLogParam};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
@@ -110,30 +110,6 @@ impl Agent {
         let pipeline_cancel = CancellationToken::new();
         let exporters_cancel = CancellationToken::new();
 
-        let activation = TelemetryActivation::from_config(&config);
-
-        // If there are no listeners, suggest the blackhole exporter
-        if activation.traces == TelemetryState::NoListeners
-            && activation.metrics == TelemetryState::NoListeners
-            && activation.logs == TelemetryState::NoListeners
-        {
-            return Err(
-                "no exporter endpoints specified, perhaps you meant to use --exporter blackhole instead"
-                    .into(),
-            );
-        }
-
-        // If no active type exists, nothing to do. Exit here before errors later
-        if !(activation.traces == TelemetryState::Active
-            || activation.metrics == TelemetryState::Active
-            || activation.logs == TelemetryState::Active)
-        {
-            return Err(
-                "there are no active telemetry types, exiting because there is nothing to do"
-                    .into(),
-            );
-        }
-
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
             bounded::<Vec<ResourceSpans>>(max(4, num_cpus));
         let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
@@ -157,6 +133,32 @@ impl Agent {
         let (internal_metrics_pipeline_out_tx, internal_metrics_pipeline_out_rx) =
             bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
+
+        let exp_config = get_exporters_config(&config, &self.environment)?;
+
+        let activation = TelemetryActivation::from_config(&config, &exp_config);
+
+        // If there are no listeners, suggest the blackhole exporter
+        if activation.traces == TelemetryState::NoListeners
+            && activation.metrics == TelemetryState::NoListeners
+            && activation.logs == TelemetryState::NoListeners
+        {
+            return Err(
+                "no exporter endpoints specified, perhaps you meant to use --exporter blackhole instead"
+                    .into(),
+            );
+        }
+
+        // If no active type exists, nothing to do. Exit here before errors later
+        if !(activation.traces == TelemetryState::Active
+            || activation.metrics == TelemetryState::Active
+            || activation.logs == TelemetryState::Active)
+        {
+            return Err(
+                "there are no active telemetry types, exiting because there is nothing to do"
+                    .into(),
+            );
+        }
 
         let mut traces_output = None;
         let mut metrics_output = None;
@@ -216,11 +218,13 @@ impl Agent {
 
         // AWS-XRay only supports a batch size of 50 segments
         let mut trace_batch_config = build_traces_batch_config(config.batch.clone());
-        if config.exporter == Exporter::AwsXray && trace_batch_config.max_size > 50 {
-            info!(
-                "AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50"
-            );
-            trace_batch_config.max_size = 50;
+        if let Some(ExporterConfig::Xray(_)) = exp_config.traces {
+            if trace_batch_config.max_size > 50 {
+                info!(
+                    "AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50"
+                );
+                trace_batch_config.max_size = 50;
+            }
         }
 
         // Internal metrics
@@ -247,7 +251,9 @@ impl Agent {
 
         global::set_meter_provider(meter_provider);
 
-        let exp_config = get_exporters_config(&config, &self.environment)?;
+        //
+        // Build the exporters now
+        //
 
         //
         // TRACES

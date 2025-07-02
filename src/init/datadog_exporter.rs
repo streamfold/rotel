@@ -1,6 +1,8 @@
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Deserialize)]
+#[serde(default)]
 pub struct DatadogExporterArgs {
     /// Datadog Exporter Region
     #[arg(
@@ -28,7 +30,18 @@ pub struct DatadogExporterArgs {
     pub api_key: Option<String>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+impl Default for DatadogExporterArgs {
+    fn default() -> Self {
+        Self {
+            region: DatadogRegion::US1,
+            custom_endpoint: None,
+            api_key: None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum DatadogRegion {
     US1,
     US3,

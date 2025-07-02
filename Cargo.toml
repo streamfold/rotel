@@ -62,6 +62,7 @@ hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
 rdkafka = { version = "0.36", features = ["tokio", "libz", "ssl", "zstd", "cmake-build"] }
+figment = { version = "0.10.19", default-features = false, features = ["env"] }
 
 [dev-dependencies]
 tokio-test = "0.4.4"

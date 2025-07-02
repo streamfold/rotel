@@ -12,5 +12,6 @@ mod xray_exporter;
 
 mod batch;
 mod config;
+mod parse;
 #[cfg(feature = "pprof")]
 pub mod pprof;

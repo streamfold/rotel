@@ -3,10 +3,11 @@
 use crate::exporters::kafka::config::{
     AcknowledgementMode, KafkaExporterConfig, PartitionerType, SerializationFormat,
 };
-use crate::init::args;
+use crate::init::parse::parse_key_val;
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Deserialize)]
 pub struct KafkaExporterArgs {
     /// Kafka broker addresses (comma-separated)
     #[arg(
@@ -52,14 +53,6 @@ pub struct KafkaExporterArgs {
     /// Compression type (gzip, snappy, lz4, zstd, none)
     #[arg(long, env = "ROTEL_KAFKA_EXPORTER_COMPRESSION")]
     pub kafka_exporter_compression: Option<String>,
-
-    /// Request timeout
-    #[arg(
-        long,
-        env = "ROTEL_KAFKA_EXPORTER_REQUEST_TIMEOUT",
-        default_value = "30s"
-    )]
-    pub kafka_exporter_request_timeout: humantime::Duration,
 
     /// Acknowledgement mode (none, one, all)
     #[arg(
@@ -163,9 +156,10 @@ pub struct KafkaExporterArgs {
     #[arg(
         long("kafka-exporter-custom-config"),
         env = "ROTEL_KAFKA_EXPORTER_CUSTOM_CONFIG",
-        value_parser = args::parse_key_val::<String, String>,
+        value_parser = parse_key_val::<String, String>,
         value_delimiter = ','
     )]
+    #[serde(deserialize_with = "crate::init::parse::deserialize_key_value_pairs")]
     pub kafka_exporter_custom_config: Vec<(String, String)>,
 
     /// SASL username for authentication
@@ -189,13 +183,50 @@ pub struct KafkaExporterArgs {
     pub kafka_exporter_security_protocol: String,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+impl Default for KafkaExporterArgs {
+    fn default() -> Self {
+        KafkaExporterArgs {
+            kafka_exporter_brokers: "localhost:9092".to_string(),
+            kafka_exporter_traces_topic: "otlp_traces".to_string(),
+            kafka_exporter_metrics_topic: "otlp_metrics".to_string(),
+            kafka_exporter_logs_topic: "otlp_logs".to_string(),
+            kafka_exporter_format: Default::default(),
+            kafka_exporter_acks: Default::default(),
+            kafka_exporter_client_id: "rotel".to_string(),
+            kafka_exporter_max_message_bytes: 1000000,
+            kafka_exporter_linger_ms: 5,
+            kafka_exporter_retries: 2147483647,
+            kafka_exporter_retry_backoff_ms: 100,
+            kafka_exporter_retry_backoff_max_ms: 1000,
+            kafka_exporter_message_timeout_ms: 300000,
+            kafka_exporter_request_timeout_ms: 30000,
+            kafka_exporter_batch_size: 1000000,
+            kafka_exporter_partitioner: Default::default(),
+            kafka_exporter_partition_metrics_by_resource_attributes: false,
+            kafka_exporter_partition_logs_by_resource_attributes: false,
+            kafka_exporter_custom_config: vec![],
+            kafka_exporter_compression: None,
+            kafka_exporter_sasl_username: None,
+            kafka_exporter_sasl_password: None,
+            kafka_exporter_sasl_mechanism: None,
+            kafka_exporter_security_protocol: "".to_string(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum, serde::Deserialize)]
 pub enum KafkaSerializationFormat {
     Json,
     Protobuf,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+impl Default for KafkaSerializationFormat {
+    fn default() -> Self {
+        KafkaSerializationFormat::Json
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum, serde::Deserialize)]
 pub enum KafkaAcknowledgementMode {
     /// No acknowledgement required (acks=0) - fastest but least durable
     None,
@@ -205,7 +236,13 @@ pub enum KafkaAcknowledgementMode {
     All,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+impl Default for KafkaAcknowledgementMode {
+    fn default() -> Self {
+        KafkaAcknowledgementMode::One
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum, serde::Deserialize)]
 pub enum KafkaPartitionerType {
     /// Consistent hash partitioner
     Consistent,
@@ -219,6 +256,12 @@ pub enum KafkaPartitionerType {
     Fnv1a,
     /// Random partitioner using FNV-1a hashing
     Fnv1aRandom,
+}
+
+impl Default for KafkaPartitionerType {
+    fn default() -> Self {
+        KafkaPartitionerType::ConsistentRandom
+    }
 }
 
 impl From<KafkaSerializationFormat> for SerializationFormat {

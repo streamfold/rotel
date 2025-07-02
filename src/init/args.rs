@@ -4,12 +4,12 @@ use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
+use crate::init::parse;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
-use std::error::Error;
+use serde::Deserialize;
 use std::net::SocketAddr;
-use tower::BoxError;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -39,12 +39,12 @@ pub struct AgentRun {
     pub debug_log_verbosity: DebugLogVerbosity,
 
     /// OTLP gRPC endpoint
-    #[arg(long, env = "ROTEL_OTLP_GRPC_ENDPOINT", default_value = "localhost:4317", value_parser = parse_endpoint
+    #[arg(long, env = "ROTEL_OTLP_GRPC_ENDPOINT", default_value = "localhost:4317", value_parser = parse::parse_endpoint
     )]
     pub otlp_grpc_endpoint: SocketAddr,
 
     /// OTLP HTTP endpoint
-    #[arg(long, env = "ROTEL_OTLP_HTTP_ENDPOINT", default_value = "localhost:4318", value_parser = parse_endpoint
+    #[arg(long, env = "ROTEL_OTLP_HTTP_ENDPOINT", default_value = "localhost:4318", value_parser = parse::parse_endpoint
     )]
     pub otlp_http_endpoint: SocketAddr,
 
@@ -108,7 +108,7 @@ pub struct AgentRun {
     pub otlp_with_metrics_processor: Vec<String>,
 
     /// Comma-separated, key=value pairs of resource attributes to set
-    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse_key_val::<String, String>, value_delimiter = ',')]
+    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
     pub otel_resource_attributes: Vec<(String, String)>,
 
     /// Enable reporting of internal telemetry
@@ -118,9 +118,25 @@ pub struct AgentRun {
     #[command(flatten)]
     pub batch: BatchArgs,
 
-    /// Exporter
-    #[arg(value_enum, long, env = "ROTEL_EXPORTER", default_value = "otlp")]
-    pub exporter: Exporter,
+    /// Single exporter (type)
+    #[arg(value_enum, long, env = "ROTEL_EXPORTER")]
+    pub exporter: Option<Exporter>,
+
+    /// Multiple exporters (name:type,...)
+    #[arg(value_enum, long, env = "ROTEL_EXPORTERS")]
+    pub exporters: Option<String>,
+
+    /// Traces exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_TRACES")]
+    pub exporters_traces: Option<String>,
+
+    /// Metrics exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_METRICS")]
+    pub exporters_metrics: Option<String>,
+
+    /// Logs exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_LOGS")]
+    pub exporters_logs: Option<String>,
 
     #[command(flatten)]
     pub otlp_exporter: OTLPExporterArgs,
@@ -142,7 +158,49 @@ pub struct AgentRun {
     pub profile_group: ProfileGroup,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+impl Default for AgentRun {
+    fn default() -> Self {
+        AgentRun {
+            daemon: false,
+            pid_file: "/tmp/rotel-agent.pid".to_string(),
+            log_file: "/tmp/rotel-agent.log".to_string(),
+            debug_log: vec![DebugLogParam::None],
+            debug_log_verbosity: DebugLogVerbosity::Basic,
+            otlp_grpc_endpoint: "127.0.0.1:4317".parse().unwrap(),
+            otlp_http_endpoint: "127.0.0.1:4318".parse().unwrap(),
+            otlp_grpc_max_recv_msg_size_mib: 4,
+            otlp_receiver_traces_disabled: false,
+            otlp_receiver_metrics_disabled: false,
+            otlp_receiver_logs_disabled: false,
+            otlp_receiver_traces_http_path: "/v1/traces".to_string(),
+            otlp_receiver_metrics_http_path: "/v1/metrics".to_string(),
+            otlp_receiver_logs_http_path: "/v1/logs".to_string(),
+            otlp_with_trace_processor: Vec::new(),
+            otlp_with_logs_processor: Vec::new(),
+            otlp_with_metrics_processor: Vec::new(),
+            otel_resource_attributes: Vec::new(),
+            enable_internal_telemetry: false,
+            batch: BatchArgs::default(),
+            exporter: None,
+            exporters: None,
+            exporters_traces: None,
+            exporters_metrics: None,
+            exporters_logs: None,
+            otlp_exporter: OTLPExporterArgs::default(),
+            datadog_exporter: DatadogExporterArgs::default(),
+            clickhouse_exporter: ClickhouseExporterArgs::default(),
+            aws_xray_exporter: XRayExporterArgs::default(),
+            kafka_exporter: KafkaExporterArgs::default(),
+            #[cfg(feature = "pprof")]
+            profile_group: ProfileGroup {
+                pprof_flame_graph: false,
+                pprof_call_graph: false,
+            },
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum)]
 pub enum DebugLogParam {
     None,
     Traces,
@@ -150,13 +208,15 @@ pub enum DebugLogParam {
     Logs,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum OTLPExporterProtocol {
     Grpc,
     Http,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum OTLPExporterAuthenticator {
     Sigv4auth,
 }
@@ -207,66 +267,5 @@ impl From<DebugLogVerbosity> for DebugVerbosity {
             DebugLogVerbosity::Basic => DebugVerbosity::Basic,
             DebugLogVerbosity::Detailed => DebugVerbosity::Detailed,
         }
-    }
-}
-
-/// Parse a single key-value pair
-pub fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + Send + Sync + 'static,
-    U: std::str::FromStr,
-    U::Err: Error + Send + Sync + 'static,
-{
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{s}`"))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
-}
-
-/// Parse an endpoint
-pub fn parse_endpoint(s: &str) -> Result<SocketAddr, Box<dyn Error + Send + Sync + 'static>> {
-    // Use actual localhost address instead of localhost name
-    let s = if s.starts_with("localhost:") {
-        s.replace("localhost:", "127.0.0.1:")
-    } else {
-        s.to_string()
-    };
-    let sa: SocketAddr = s.parse()?;
-    Ok(sa)
-}
-
-#[cfg(test)]
-mod test {
-    use crate::init::args::parse_endpoint;
-    use tokio_test::assert_ok;
-
-    #[test]
-    fn endpoint_parse() {
-        let sa = parse_endpoint("localhost:4317");
-        assert_ok!(sa);
-        let sa = sa.unwrap();
-        assert!(sa.is_ipv4());
-        assert_eq!("127.0.0.1", sa.ip().to_string());
-        assert_eq!(4317, sa.port());
-
-        let sa = parse_endpoint("[::1]:4317");
-        assert_ok!(sa);
-        let sa = sa.unwrap();
-        assert!(sa.is_ipv6());
-        assert_eq!("::1", sa.ip().to_string());
-
-        let sa = parse_endpoint("0.0.0.0:1234");
-        assert_ok!(sa);
-        let sa = sa.unwrap();
-        assert_eq!("0.0.0.0", sa.ip().to_string());
-    }
-}
-
-pub(crate) fn parse_bool_value(val: &String) -> Result<bool, BoxError> {
-    match val.to_lowercase().as_str() {
-        "0" | "false" => Ok(false),
-        "1" | "true" => Ok(true),
-        _ => Err(format!("Unable to parse bool value: {}", val).into()),
     }
 }
