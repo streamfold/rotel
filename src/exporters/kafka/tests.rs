@@ -7,6 +7,9 @@ mod tests {
     };
     use crate::exporters::kafka::errors::KafkaExportError;
     use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
+    use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+    use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
     use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
     use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
     use opentelemetry_proto::tonic::metrics::v1::{
@@ -49,7 +52,8 @@ mod tests {
 
     #[test]
     fn test_request_builder_traces_json() {
-        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+        let builder: KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest> = 
+            KafkaRequestBuilder::new(SerializationFormat::Json);
 
         let resource_spans = vec![ResourceSpans {
             resource: Some(Resource {
@@ -74,7 +78,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_trace_message(&resource_spans);
+        let result = builder.build_message(&resource_spans);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -83,7 +87,8 @@ mod tests {
 
     #[test]
     fn test_request_builder_metrics_protobuf() {
-        let builder = KafkaRequestBuilder::new(SerializationFormat::Protobuf);
+        let builder: KafkaRequestBuilder<ResourceMetrics, ExportMetricsServiceRequest> = 
+            KafkaRequestBuilder::new(SerializationFormat::Protobuf);
 
         let resource_metrics = vec![ResourceMetrics {
             resource: Some(Resource {
@@ -110,7 +115,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_metrics_message(&resource_metrics);
+        let result = builder.build_message(&resource_metrics);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -119,7 +124,8 @@ mod tests {
 
     #[test]
     fn test_request_builder_logs_json() {
-        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+        let builder: KafkaRequestBuilder<ResourceLogs, ExportLogsServiceRequest> = 
+            KafkaRequestBuilder::new(SerializationFormat::Json);
 
         let resource_logs = vec![ResourceLogs {
             resource: Some(Resource {
@@ -142,7 +148,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_logs_message(&resource_logs);
+        let result = builder.build_message(&resource_logs);
         assert!(result.is_ok());
 
         let payload = result.unwrap();

@@ -3,16 +3,19 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::kafka::errors::{KafkaExportError, Result};
-use crate::exporters::kafka::request_builder::{
-    KafkaLogsRequestBuilder, KafkaMetricsRequestBuilder, KafkaTraceRequestBuilder,
-};
+use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
+use crate::topology::payload::OTLPFrom;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::util::Timeout;
+use serde::Serialize;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -47,18 +50,18 @@ struct EncodedMessage {
 }
 
 /// Trait for telemetry resources that can be exported to Kafka
-pub trait KafkaExportable: Debug + Send + Sized + 'static {
-    /// The specific request builder type for this telemetry type
-    type RequestBuilder: Clone + Send + Sync;
+pub trait KafkaExportable: Debug + Send + Sized + 'static + prost::Message + Serialize + Clone {
+    /// The OTLP request type for this telemetry type
+    type Request: prost::Message + OTLPFrom<Vec<Self>> + Serialize + Clone;
 
     /// Create a new request builder for this telemetry type
     fn create_request_builder(
         format: crate::exporters::kafka::config::SerializationFormat,
-    ) -> Self::RequestBuilder;
+    ) -> KafkaRequestBuilder<Self, Self::Request>;
 
     /// Build a Kafka message from this telemetry data
     fn build_kafka_message(
-        builder: &Self::RequestBuilder,
+        builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
         data: &[Self],
     ) -> Result<(String, Bytes)>;
@@ -145,22 +148,22 @@ fn extract_resource_attributes_hash_from_metrics(metrics: &[ResourceMetrics]) ->
 }
 
 impl KafkaExportable for ResourceSpans {
-    type RequestBuilder = KafkaTraceRequestBuilder;
+    type Request = ExportTraceServiceRequest;
 
     fn create_request_builder(
         format: crate::exporters::kafka::config::SerializationFormat,
-    ) -> Self::RequestBuilder {
-        KafkaTraceRequestBuilder::new(format)
+    ) -> KafkaRequestBuilder<Self, Self::Request> {
+        KafkaRequestBuilder::new(format)
     }
 
     fn build_kafka_message(
-        builder: &Self::RequestBuilder,
+        builder: &KafkaRequestBuilder<Self, Self::Request>,
         _config: &KafkaExporterConfig,
         spans: &[Self],
     ) -> Result<(String, Bytes)> {
         // Use empty message key and send all spans together
         let key = String::new();
-        let payload = builder.build_trace_message(spans)?;
+        let payload = builder.build_message(spans)?;
         Ok((key, payload))
     }
 
@@ -175,16 +178,16 @@ impl KafkaExportable for ResourceSpans {
 }
 
 impl KafkaExportable for ResourceMetrics {
-    type RequestBuilder = KafkaMetricsRequestBuilder;
+    type Request = ExportMetricsServiceRequest;
 
     fn create_request_builder(
         format: crate::exporters::kafka::config::SerializationFormat,
-    ) -> Self::RequestBuilder {
-        KafkaMetricsRequestBuilder::new(format)
+    ) -> KafkaRequestBuilder<Self, Self::Request> {
+        KafkaRequestBuilder::new(format)
     }
 
     fn build_kafka_message(
-        builder: &Self::RequestBuilder,
+        builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
         metrics: &[Self],
     ) -> Result<(String, Bytes)> {
@@ -197,7 +200,7 @@ impl KafkaExportable for ResourceMetrics {
             let hash = extract_resource_attributes_hash_from_metrics(metrics);
             hash.map_or(String::new(), hex::encode)
         };
-        let payload = builder.build_metrics_message(metrics)?;
+        let payload = builder.build_message(metrics)?;
         Ok((key, payload))
     }
 
@@ -219,16 +222,16 @@ impl KafkaExportable for ResourceMetrics {
 }
 
 impl KafkaExportable for ResourceLogs {
-    type RequestBuilder = KafkaLogsRequestBuilder;
+    type Request = ExportLogsServiceRequest;
 
     fn create_request_builder(
         format: crate::exporters::kafka::config::SerializationFormat,
-    ) -> Self::RequestBuilder {
-        KafkaLogsRequestBuilder::new(format)
+    ) -> KafkaRequestBuilder<Self, Self::Request> {
+        KafkaRequestBuilder::new(format)
     }
 
     fn build_kafka_message(
-        builder: &Self::RequestBuilder,
+        builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
         logs: &[Self],
     ) -> Result<(String, Bytes)> {
@@ -241,7 +244,7 @@ impl KafkaExportable for ResourceLogs {
             let hash = extract_resource_attributes_hash_from_logs(logs);
             hash.map_or(String::new(), hex::encode)
         };
-        let payload = builder.build_logs_message(logs)?;
+        let payload = builder.build_message(logs)?;
         Ok((key, payload))
     }
 
@@ -269,7 +272,7 @@ where
 {
     config: KafkaExporterConfig,
     producer: FutureProducer,
-    request_builder: Resource::RequestBuilder,
+    request_builder: KafkaRequestBuilder<Resource, Resource::Request>,
     rx: BoundedReceiver<Vec<Resource>>,
     topic: String,
     encoding_futures: FuturesUnordered<EncodingFuture>,

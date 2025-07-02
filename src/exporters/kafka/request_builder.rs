@@ -4,12 +4,6 @@ use crate::exporters::kafka::config::SerializationFormat;
 use crate::exporters::kafka::errors::Result;
 use crate::topology::payload::OTLPFrom;
 use bytes::Bytes;
-use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
-use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
-use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
-use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
-use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use prost::Message;
 use serde::Serialize;
 
@@ -59,45 +53,21 @@ where
     }
 }
 
-// // Type aliases for backward compatibility and convenience
-pub type KafkaTraceRequestBuilder = KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest>;
-pub type KafkaMetricsRequestBuilder =
-    KafkaRequestBuilder<ResourceMetrics, ExportMetricsServiceRequest>;
-pub type KafkaLogsRequestBuilder = KafkaRequestBuilder<ResourceLogs, ExportLogsServiceRequest>;
-
-// Convenience methods for specific telemetry types
-impl KafkaTraceRequestBuilder {
-    /// Build message from trace spans
-    pub fn build_trace_message(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
-        self.build_message(spans)
-    }
-}
-
-impl KafkaMetricsRequestBuilder {
-    /// Build message from metrics
-    pub fn build_metrics_message(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
-        self.build_message(metrics)
-    }
-}
-
-impl KafkaLogsRequestBuilder {
-    /// Build message from logs
-    pub fn build_logs_message(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
-        self.build_message(logs)
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::exporters::kafka::config::SerializationFormat;
+    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+    use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
     #[test]
     fn test_json_serialization() {
-        let builder = KafkaTraceRequestBuilder::new(SerializationFormat::Json);
+        let builder: KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest> = 
+            KafkaRequestBuilder::new(SerializationFormat::Json);
         let spans: Vec<ResourceSpans> = vec![];
 
-        let result = builder.build_trace_message(&spans);
+        let result = builder.build_message(&spans);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
