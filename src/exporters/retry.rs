@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tower::BoxError;
 use tower::retry::Policy;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct RetryConfig {
@@ -86,10 +86,11 @@ impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError> for 
         _req: &mut EncodedRequest,
         result: &mut Result<T, BoxError>,
     ) -> Option<Self::Future> {
-        // Should never happen
+        // Set the request start time. Ideally we would know the start time from the start of the
+        // execution of the request, but we don't have that data in the request yet. Instead,
+        // the actual max elasped time may include the initial timeout. TODO
         if self.request_start.is_none() {
-            warn!("Request start time not set in retry policy, refusing retry.");
-            return None;
+            self.request_start = Some(Instant::now());
         }
 
         let now = Instant::now();
@@ -143,10 +144,6 @@ impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError> for 
     }
 
     fn clone_request(&mut self, req: &EncodedRequest) -> Option<EncodedRequest> {
-        // Set the request start time
-        if self.request_start.is_none() {
-            self.request_start = Some(Instant::now());
-        }
         Some(req.clone())
     }
 }

@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tower::BoxError;
 use tower::retry::Policy;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct RetryConfig {
@@ -105,10 +105,11 @@ where
         _req: &mut Request<ReqBody>,
         result: &mut Result<Response<Resp>, BoxError>,
     ) -> Option<Self::Future> {
-        // Should never happen
+        // Set the request start time. Ideally we would know the start time from the start of the
+        // execution of the request, but we don't have that data in the request yet. Instead,
+        // the actual max elasped time may include the initial timeout. TODO
         if self.request_start.is_none() {
-            warn!("Request start time not set in retry policy, refusing retry.");
-            return None;
+            self.request_start = Some(Instant::now());
         }
 
         let now = Instant::now();
@@ -162,10 +163,224 @@ where
     }
 
     fn clone_request(&mut self, req: &Request<ReqBody>) -> Option<Request<ReqBody>> {
-        // Set the request start time
-        if self.request_start.is_none() {
-            self.request_start = Some(Instant::now());
-        }
         Some(req.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RetryConfig, RetryPolicy};
+    use crate::exporters::http::client::ConnectError;
+    use crate::exporters::http::response::Response;
+    use http::{Request, StatusCode};
+    use std::time::Duration;
+    use tokio::time::Instant;
+    use tower::BoxError;
+    use tower::retry::Policy;
+
+    // Helper function to create a test request
+    fn create_test_request() -> Request<String> {
+        Request::builder()
+            .uri("http://example.com")
+            .body("test body".to_string())
+            .unwrap()
+    }
+
+    // Helper function to create a response with status code
+    fn create_response(status: StatusCode) -> Result<Response<()>, BoxError> {
+        // Create a proper HTTP response and extract parts
+        let http_response = http::Response::builder().status(status).body(()).unwrap();
+        let (parts, _) = http_response.into_parts();
+
+        Ok(Response::from_http(parts, Some(())))
+    }
+
+    // Helper function to create a timeout error
+    fn create_timeout_error() -> Result<Response<()>, BoxError> {
+        Err(Box::new(tower::timeout::error::Elapsed::new()))
+    }
+
+    // Helper function to create a connection error
+    fn create_connection_error() -> Result<Response<()>, BoxError> {
+        Err(Box::new(ConnectError))
+    }
+
+    #[test]
+    fn test_should_retry_success_status_codes() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        // Test 200-202 should not retry
+        for status in [200, 201, 202] {
+            let response = create_response(StatusCode::from_u16(status).unwrap());
+            assert!(!policy.should_retry(Instant::now(), &response));
+        }
+    }
+
+    #[test]
+    fn test_should_retry_retryable_status_codes() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        // Test 408, 429, 500-504 should retry
+        for status in [408, 429, 500, 501, 502, 503, 504] {
+            let response = create_response(StatusCode::from_u16(status).unwrap());
+            assert!(policy.should_retry(Instant::now(), &response));
+        }
+    }
+
+    #[test]
+    fn test_should_retry_non_retryable_status_codes() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        // Test other status codes should not retry
+        for status in [400, 401, 403, 404, 410] {
+            let response = create_response(StatusCode::from_u16(status).unwrap());
+            assert!(!policy.should_retry(Instant::now(), &response));
+        }
+    }
+
+    #[test]
+    fn test_should_retry_timeout_error() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        let timeout_error = create_timeout_error();
+        assert!(policy.should_retry(Instant::now(), &timeout_error));
+    }
+
+    #[test]
+    fn test_should_retry_connection_error() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        let connection_error = create_connection_error();
+        assert!(policy.should_retry(Instant::now(), &connection_error));
+    }
+
+    #[test]
+    fn test_should_retry_max_elapsed_time_exceeded() {
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(1),
+            max_elapsed_time: Duration::from_millis(500),
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+
+        // Cloning the request should not set a start time
+        let _ = policy.clone_request(&create_test_request());
+        assert!(policy.request_start.is_none());
+
+        let start = Instant::now();
+        policy.request_start = Some(start);
+
+        // Simulate time passing beyond max_elapsed_time
+        let future_time = start + Duration::from_millis(600);
+        let response = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        assert!(!policy.should_retry(future_time, &response));
+    }
+
+    #[test]
+    fn test_should_retry_custom_retryable_function() {
+        let config = RetryConfig::default();
+        let custom_retryable = |result: &Result<Response<()>, BoxError>| {
+            match result {
+                Ok(resp) => resp.status_code() == StatusCode::BAD_REQUEST, // Custom logic: retry 400
+                Err(_) => false,                                           // Don't retry errors
+            }
+        };
+        let mut policy = RetryPolicy::new(config, Some(custom_retryable));
+        policy.request_start = Some(Instant::now());
+
+        // Test custom retryable logic
+        let bad_request = create_response(StatusCode::BAD_REQUEST);
+        assert!(policy.should_retry(Instant::now(), &bad_request));
+
+        let not_found = create_response(StatusCode::NOT_FOUND);
+        assert!(!policy.should_retry(Instant::now(), &not_found));
+
+        // Custom function is called for errors too, but timeout/connection errors
+        // are handled before the custom function, so they will still retry
+        let timeout_error = create_timeout_error();
+        assert!(policy.should_retry(Instant::now(), &timeout_error));
+    }
+
+    #[tokio::test]
+    async fn test_retry_method_returns_future_on_retryable_error() {
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(100),
+            max_elapsed_time: Duration::from_secs(10),
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(policy.request_start.is_none());
+
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+        assert!(policy.request_start.is_some());
+
+        // Test that future completes
+        if let Some(future) = future_opt {
+            future.await;
+        }
+
+        // Verify attempts were incremented
+        assert_eq!(policy.attempts, 1);
+    }
+
+    #[test]
+    fn test_retry_method_exponential_backoff() {
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_millis(1000),
+            max_elapsed_time: Duration::from_secs(10),
+        };
+        let mut policy = RetryPolicy::<()>::new(config.clone(), None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        // First retry
+        assert_eq!(policy.current_backoff, config.initial_backoff);
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+        assert_eq!(policy.current_backoff, Duration::from_millis(200)); // 2x initial
+
+        // Second retry
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+        assert_eq!(policy.current_backoff, Duration::from_millis(400)); // 2x previous
+
+        // Continue until max_backoff
+        policy.retry(&mut request, &mut result);
+        assert_eq!(policy.current_backoff, Duration::from_millis(800));
+
+        policy.retry(&mut request, &mut result);
+        assert_eq!(policy.current_backoff, Duration::from_millis(1000)); // Capped at max_backoff
+    }
+
+    #[test]
+    fn test_jitter_bounds() {
+        // This test verifies that jitter calculation doesn't panic with edge cases
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(1), // Very small backoff
+            max_backoff: Duration::from_millis(2),
+            max_elapsed_time: Duration::from_secs(10),
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Should not panic even with very small backoff values
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
     }
 }
