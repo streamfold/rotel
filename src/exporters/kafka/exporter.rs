@@ -50,7 +50,9 @@ struct EncodedMessage {
 }
 
 /// Trait for telemetry resources that can be exported to Kafka
-pub trait KafkaExportable: Debug + Send + Sized + 'static + prost::Message + Serialize + Clone {
+pub trait KafkaExportable:
+    Debug + Send + Sized + 'static + prost::Message + Serialize + Clone
+{
     /// The OTLP request type for this telemetry type
     type Request: prost::Message + OTLPFrom<Vec<Self>> + Serialize + Clone;
 

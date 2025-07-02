@@ -129,7 +129,6 @@ pub struct KafkaExporterConfig {
     /// Partitioner type
     pub partitioner: Option<PartitionerType>,
 
-
     /// Partition metrics by resource attributes for better consumer organization
     pub partition_metrics_by_resource_attributes: bool,
 
@@ -290,7 +289,6 @@ impl KafkaExporterConfig {
         self.partitioner = Some(partitioner);
         self
     }
-
 
     /// Enable partitioning metrics by resource attributes
     pub fn with_partition_metrics_by_resource_attributes(mut self, enabled: bool) -> Self {

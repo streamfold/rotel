@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_request_builder_traces_json() {
-        let builder: KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest> = 
+        let builder: KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest> =
             KafkaRequestBuilder::new(SerializationFormat::Json);
 
         let resource_spans = vec![ResourceSpans {
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_request_builder_metrics_protobuf() {
-        let builder: KafkaRequestBuilder<ResourceMetrics, ExportMetricsServiceRequest> = 
+        let builder: KafkaRequestBuilder<ResourceMetrics, ExportMetricsServiceRequest> =
             KafkaRequestBuilder::new(SerializationFormat::Protobuf);
 
         let resource_metrics = vec![ResourceMetrics {
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_request_builder_logs_json() {
-        let builder: KafkaRequestBuilder<ResourceLogs, ExportLogsServiceRequest> = 
+        let builder: KafkaRequestBuilder<ResourceLogs, ExportLogsServiceRequest> =
             KafkaRequestBuilder::new(SerializationFormat::Json);
 
         let resource_logs = vec![ResourceLogs {
@@ -419,7 +419,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn test_kafka_config_with_partition_metrics_by_resource_attributes() {
         let config = KafkaExporterConfig::new("broker:9092".to_string())
@@ -502,8 +501,6 @@ mod tests {
         assert_eq!(split_result.len(), 1);
         assert_eq!(split_result[0], resource_spans);
     }
-
-
 
     #[test]
     fn test_partition_logs_by_resource_attributes_disabled() {

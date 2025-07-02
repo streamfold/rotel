@@ -143,7 +143,6 @@ pub struct KafkaExporterArgs {
     )]
     pub kafka_exporter_partitioner: KafkaPartitionerType,
 
-
     /// Partition metrics by resource attributes for better consumer organization
     #[arg(
         long,

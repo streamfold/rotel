@@ -53,7 +53,6 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,7 +62,7 @@ mod tests {
 
     #[test]
     fn test_json_serialization() {
-        let builder: KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest> = 
+        let builder: KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest> =
             KafkaRequestBuilder::new(SerializationFormat::Json);
         let spans: Vec<ResourceSpans> = vec![];
 

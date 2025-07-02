@@ -403,7 +403,6 @@ async fn wait_for_message_with_partition(
     result.unwrap_or(None)
 }
 
-
 /// Create test logs with specific resource attributes for partitioning tests
 fn create_test_logs_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec<ResourceLogs> {
     resource_attrs
@@ -459,7 +458,6 @@ fn create_test_metrics_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec
         })
         .collect()
 }
-
 
 #[tokio::test]
 async fn test_logs_partitioning_by_resource_attributes() {
