@@ -47,7 +47,7 @@ impl Default for BatchArgs {
     fn default() -> Self {
         Self {
             batch_max_size: 8192,
-            batch_timeout: Duration::from_millis(250),
+            batch_timeout: Duration::from_millis(200),
             traces_batch_max_size: None,
             metrics_batch_max_size: None,
             logs_batch_max_size: None,
