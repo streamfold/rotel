@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::time::Instant;
+use tokio::{select, sync::broadcast::{self, Sender}, time::Instant};
 use tower::BoxError;
 use tower::retry::Policy;
 use tracing::info;
@@ -35,6 +35,7 @@ pub struct RetryPolicy<T> {
     config: RetryConfig,
     current_backoff: Duration,
     request_start: Option<Instant>,
+    retry_broadcast: Sender<bool>,
     attempts: u32,
     is_retryable: fn(&ExporterError) -> bool,
     _phantom: PhantomData<T>,
@@ -67,14 +68,23 @@ impl<T> RetryPolicy<T> {
     }
 
     pub fn new(retry_config: RetryConfig, is_retryable: fn(&ExporterError) -> bool) -> Self {
+        // We immediately drop the receiver channel and only keep receivers open for
+        // active retries
+        let (tx, _) = broadcast::channel(100);
+
         Self {
             current_backoff: retry_config.initial_backoff,
             config: retry_config,
+            retry_broadcast: tx,
             request_start: None,
             attempts: 0,
             is_retryable,
             _phantom: PhantomData,
         }
+    }
+    
+    pub fn retry_broadcast(&self) -> Sender<bool> {
+        self.retry_broadcast.clone()
     }
 }
 
@@ -128,9 +138,14 @@ impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError> for 
                     status = ?result,
                     "Exporting failed, will retry again after delay.",
                 );
-
+                
+                let mut rx = self.retry_broadcast.subscribe();
                 let fut = async move {
-                    tokio::time::sleep(sleep_duration).await;
+                    let delay_fut = tokio::time::sleep(sleep_duration);
+                    select! {
+                        _ = rx.recv() => {},
+                        _ = delay_fut => {},
+                    }
                 };
 
                 // Increase backoff for next retry, but cap at max_backoff

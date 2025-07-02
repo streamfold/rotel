@@ -9,6 +9,7 @@ use std::ops::Add;
 use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
+use tokio::sync::broadcast::Sender as BroadcastSender;
 use tokio::time::{Instant, timeout_at};
 use tokio::{pin, select};
 use tokio_util::sync::CancellationToken;
@@ -37,6 +38,7 @@ pub struct Exporter<InStr, Svc, Payload, Logger> {
     svc: Svc,
     result_logger: Logger,
     flush_receiver: Option<FlushReceiver>,
+    retry_broadcast: BroadcastSender<bool>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     _phantom: PhantomData<Payload>,
@@ -50,6 +52,7 @@ impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
         svc: Svc,
         result_logger: Logger,
         flush_receiver: Option<FlushReceiver>,
+        retry_broadcast: BroadcastSender<bool>,
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
     ) -> Self {
@@ -62,6 +65,7 @@ impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
             svc,
             result_logger,
             flush_receiver,
+            retry_broadcast,
             encode_drain_max_time,
             export_drain_max_time,
             _phantom: PhantomData,
@@ -125,7 +129,7 @@ where
                         (Some(req), listener) => {
                             debug!(?meta, request = ?req, "Received force flush in exporter");
 
-                            if let Err(res) = drain_futures(&meta, &mut input, &mut export_futures, self.encode_drain_max_time
+                            if let Err(res) = drain_futures(&meta, &mut input, &self.retry_broadcast, &mut export_futures, self.encode_drain_max_time
                                 , self.export_drain_max_time, &mut self.svc, true).await {
 
                                 warn!(?meta, result = res, "Unable to drain exporter");
@@ -149,6 +153,7 @@ where
         drain_futures(
             &meta,
             &mut input,
+            &self.retry_broadcast,
             &mut export_futures,
             self.encode_drain_max_time,
             self.export_drain_max_time,
@@ -162,6 +167,7 @@ where
 async fn drain_futures<InStr, Svc, Payload>(
     meta: &Meta,
     enc_stream: &mut Pin<&mut InStr>,
+    retry_broadcast: &BroadcastSender<bool>,
     export_futures: &mut FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
@@ -182,7 +188,13 @@ where
     if non_blocking {
         match poll!(enc_stream.next()) {
             Poll::Ready(None) => {
-                return drain_exports::<Svc, Payload>(finish_sending, export_futures, meta).await;
+                return drain_exports::<Svc, Payload>(
+                    finish_sending,
+                    retry_broadcast,
+                    export_futures,
+                    meta,
+                )
+                .await;
             }
             Poll::Ready(Some(res)) => match res {
                 Ok(req) => export_futures.push(Box::pin(svc.call(req))),
@@ -223,11 +235,12 @@ where
         }
     }
 
-    drain_exports::<Svc, Payload>(finish_sending, export_futures, meta).await
+    drain_exports::<Svc, Payload>(finish_sending, retry_broadcast, export_futures, meta).await
 }
 
 async fn drain_exports<Svc, Payload>(
     finish_sending: Instant,
+    retry_broadcast: &BroadcastSender<bool>,
     export_futures: &mut FuturesUnordered<ExportFuture<<Svc as Service<Request<Payload>>>::Future>>,
     meta: &Meta,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
@@ -235,6 +248,9 @@ where
     <Svc as Service<Request<Payload>>>::Error: Debug,
     Svc: Service<Request<Payload>>,
 {
+    // We ignore the response here, there may be no receivers and in that case it returns a SendError
+    let _ = retry_broadcast.send(true);
+
     let mut drain_errors = 0;
     loop {
         if export_futures.is_empty() {
