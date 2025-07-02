@@ -13,81 +13,77 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use prost::Message;
 use serde::Serialize;
 
-/// Builder for creating Kafka messages from telemetry data
+/// Generic builder for creating Kafka messages from telemetry data
 #[derive(Clone)]
-pub struct KafkaRequestBuilder {
+pub struct KafkaRequestBuilder<Resource, Request> {
     serialization_format: SerializationFormat,
+    _phantom: std::marker::PhantomData<(Resource, Request)>,
 }
 
-impl KafkaRequestBuilder {
+impl<Resource, Request> KafkaRequestBuilder<Resource, Request>
+where
+    Resource: Message + Serialize + Clone,
+    Request: Message + OTLPFrom<Vec<Resource>> + Serialize,
+{
     /// Create a new request builder
     pub fn new(format: SerializationFormat) -> Self {
         Self {
             serialization_format: format,
+            _phantom: std::marker::PhantomData,
         }
     }
 
-    /// Build message from trace spans
-    pub fn build_trace_message(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
+    /// Build message from telemetry resources
+    pub fn build_message(&self, resources: &[Resource]) -> Result<Bytes> {
         let payload = match self.serialization_format {
-            SerializationFormat::Json => self.serialize_json(&spans)?,
-            SerializationFormat::Protobuf => self.serialize_protobuf_traces(spans)?,
-        };
-        Ok(payload)
-    }
-
-    /// Build message from metrics
-    pub fn build_metrics_message(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
-        let payload = match self.serialization_format {
-            SerializationFormat::Json => self.serialize_json(&metrics)?,
-            SerializationFormat::Protobuf => self.serialize_protobuf_metrics(metrics)?,
-        };
-        Ok(payload)
-    }
-
-    /// Build message from logs
-    pub fn build_logs_message(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
-        let payload = match self.serialization_format {
-            SerializationFormat::Json => self.serialize_json(&logs)?,
-            SerializationFormat::Protobuf => self.serialize_protobuf_logs(logs)?,
+            SerializationFormat::Json => self.serialize_json(resources)?,
+            SerializationFormat::Protobuf => self.serialize_protobuf(resources)?,
         };
         Ok(payload)
     }
 
     /// Serialize data as JSON
-    fn serialize_json<T: Serialize>(&self, data: &T) -> Result<Bytes> {
+    fn serialize_json(&self, data: &[Resource]) -> Result<Bytes> {
         let json = serde_json::to_vec(data)?;
         Ok(Bytes::from(json))
     }
 
-    /// Serialize traces as protobuf
-    fn serialize_protobuf_traces(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
-        // Create a TracesData message (from OTLP spec) using OTLPFrom trait
-        let traces_data = ExportTraceServiceRequest::otlp_from(spans.to_vec());
+    /// Serialize resources as protobuf using OTLP service request format
+    fn serialize_protobuf(&self, resources: &[Resource]) -> Result<Bytes> {
+        // Create OTLP service request using OTLPFrom trait
+        let request = Request::otlp_from(resources.to_vec());
 
         let mut buf = Vec::new();
-        traces_data.encode(&mut buf)?;
+        request.encode(&mut buf)?;
         Ok(Bytes::from(buf))
     }
+}
 
-    /// Serialize metrics as protobuf
-    fn serialize_protobuf_metrics(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
-        // Create a MetricsData message (from OTLP spec) using OTLPFrom trait
-        let metrics_data = ExportMetricsServiceRequest::otlp_from(metrics.to_vec());
+// // Type aliases for backward compatibility and convenience
+pub type KafkaTraceRequestBuilder = KafkaRequestBuilder<ResourceSpans, ExportTraceServiceRequest>;
+pub type KafkaMetricsRequestBuilder =
+    KafkaRequestBuilder<ResourceMetrics, ExportMetricsServiceRequest>;
+pub type KafkaLogsRequestBuilder = KafkaRequestBuilder<ResourceLogs, ExportLogsServiceRequest>;
 
-        let mut buf = Vec::new();
-        metrics_data.encode(&mut buf)?;
-        Ok(Bytes::from(buf))
+// Convenience methods for specific telemetry types
+impl KafkaTraceRequestBuilder {
+    /// Build message from trace spans
+    pub fn build_trace_message(&self, spans: &[ResourceSpans]) -> Result<Bytes> {
+        self.build_message(spans)
     }
+}
 
-    /// Serialize logs as protobuf
-    fn serialize_protobuf_logs(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
-        // Create a LogsData message (from OTLP spec) using OTLPFrom trait
-        let logs_data = ExportLogsServiceRequest::otlp_from(logs.to_vec());
+impl KafkaMetricsRequestBuilder {
+    /// Build message from metrics
+    pub fn build_metrics_message(&self, metrics: &[ResourceMetrics]) -> Result<Bytes> {
+        self.build_message(metrics)
+    }
+}
 
-        let mut buf = Vec::new();
-        logs_data.encode(&mut buf)?;
-        Ok(Bytes::from(buf))
+impl KafkaLogsRequestBuilder {
+    /// Build message from logs
+    pub fn build_logs_message(&self, logs: &[ResourceLogs]) -> Result<Bytes> {
+        self.build_message(logs)
     }
 }
 
@@ -98,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_json_serialization() {
-        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
+        let builder = KafkaTraceRequestBuilder::new(SerializationFormat::Json);
         let spans: Vec<ResourceSpans> = vec![];
 
         let result = builder.build_trace_message(&spans);

@@ -265,7 +265,6 @@ logs, and traces.
 | --kafka-exporter-request-timeout-ms       | 30000         |                   |
 | --kafka-exporter-batch-size               | 1000000       |                   |
 | --kafka-exporter-partitioner              | consistent-random | consistent, consistent-random, murmur2-random, murmur2, fnv1a, fnv1a-random |
-| --kafka-exporter-partition-traces-by-id   | false         |                   |
 | --kafka-exporter-partition-metrics-by-resource-attributes | false | |
 | --kafka-exporter-partition-logs-by-resource-attributes | false    | |
 | --kafka-exporter-custom-config            |               |                   |
@@ -315,7 +314,6 @@ The Kafka exporter provides several options for tuning producer performance and 
 
 For improved consumer parallelism and data organization, you can enable custom partitioning based on telemetry data:
 
-- `--kafka-exporter-partition-traces-by-id`: When enabled, traces are partitioned by trace ID, ensuring all spans from the same trace go to the same partition.
 - `--kafka-exporter-partition-metrics-by-resource-attributes`: When enabled, metrics are partitioned by resource attributes (like service name), grouping related metrics together.
 - `--kafka-exporter-partition-logs-by-resource-attributes`: When enabled, logs are partitioned by resource attributes, organizing logs by service or application.
 

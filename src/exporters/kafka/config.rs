@@ -129,8 +129,6 @@ pub struct KafkaExporterConfig {
     /// Partitioner type
     pub partitioner: Option<PartitionerType>,
 
-    /// Partition traces by trace ID for better consumer parallelism
-    pub partition_traces_by_id: bool,
 
     /// Partition metrics by resource attributes for better consumer organization
     pub partition_metrics_by_resource_attributes: bool,
@@ -176,7 +174,6 @@ impl Default for KafkaExporterConfig {
             request_timeout_ms: 30000,
             batch_size: 1000000,
             partitioner: Some(PartitionerType::ConsistentRandom),
-            partition_traces_by_id: false,
             partition_metrics_by_resource_attributes: false,
             partition_logs_by_resource_attributes: false,
             producer_config: HashMap::new(),
@@ -294,11 +291,6 @@ impl KafkaExporterConfig {
         self
     }
 
-    /// Enable partitioning traces by trace ID
-    pub fn with_partition_traces_by_id(mut self, enabled: bool) -> Self {
-        self.partition_traces_by_id = enabled;
-        self
-    }
 
     /// Enable partitioning metrics by resource attributes
     pub fn with_partition_metrics_by_resource_attributes(mut self, enabled: bool) -> Self {

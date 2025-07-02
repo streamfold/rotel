@@ -413,18 +413,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_kafka_config_with_partition_traces_by_id() {
-        let config =
-            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
-        assert_eq!(config.partition_traces_by_id, true);
-    }
-
-    #[test]
-    fn test_kafka_config_default_partition_traces_by_id() {
-        let config = KafkaExporterConfig::new("broker:9092".to_string());
-        assert_eq!(config.partition_traces_by_id, false);
-    }
 
     #[test]
     fn test_kafka_config_with_partition_metrics_by_resource_attributes() {
@@ -455,11 +443,10 @@ mod tests {
     use opentelemetry_proto::tonic::metrics::v1::number_data_point;
 
     #[test]
-    fn test_partition_traces_by_id_disabled() {
+    fn test_traces_not_partitioned() {
         use crate::exporters::kafka::exporter::KafkaExportable;
 
-        let config =
-            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(false);
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
         let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
 
         let resource_spans = vec![ResourceSpans {
@@ -484,162 +471,14 @@ mod tests {
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
-        assert_eq!(key.to_string(), ""); // Should be empty when disabled
+        assert_eq!(key.to_string(), ""); // Should always be empty
     }
 
     #[test]
-    fn test_partition_traces_by_id_enabled() {
+    fn test_traces_not_split() {
         use crate::exporters::kafka::exporter::KafkaExportable;
 
-        let config =
-            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
-        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
-
-        let trace_id = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        let resource_spans = vec![ResourceSpans {
-            resource: Some(Resource {
-                attributes: vec![],
-                dropped_attributes_count: 0,
-            }),
-            scope_spans: vec![ScopeSpans {
-                scope: None,
-                spans: vec![Span {
-                    trace_id: trace_id.clone(),
-                    span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
-                    name: "test-span".to_string(),
-                    ..Default::default()
-                }],
-                schema_url: "".to_string(),
-            }],
-            schema_url: "".to_string(),
-        }];
-
-        let result = ResourceSpans::build_kafka_message(&builder, &config, &resource_spans);
-        assert!(result.is_ok());
-
-        let (key, _) = result.unwrap();
-        let expected_hex = hex::encode(&trace_id);
-        assert_eq!(key.to_string(), expected_hex);
-    }
-
-    #[test]
-    fn test_partition_traces_by_id_empty_trace_id() {
-        use crate::exporters::kafka::exporter::KafkaExportable;
-
-        let config =
-            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
-        let builder = KafkaRequestBuilder::new(SerializationFormat::Json);
-
-        let resource_spans = vec![ResourceSpans {
-            resource: Some(Resource {
-                attributes: vec![],
-                dropped_attributes_count: 0,
-            }),
-            scope_spans: vec![ScopeSpans {
-                scope: None,
-                spans: vec![Span {
-                    trace_id: vec![], // Empty trace ID
-                    span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
-                    name: "test-span".to_string(),
-                    ..Default::default()
-                }],
-                schema_url: "".to_string(),
-            }],
-            schema_url: "".to_string(),
-        }];
-
-        let result = ResourceSpans::build_kafka_message(&builder, &config, &resource_spans);
-        assert!(result.is_ok());
-
-        let (key, _) = result.unwrap();
-        assert_eq!(key.to_string(), ""); // Should be empty when trace ID is empty
-    }
-
-    #[test]
-    fn test_split_traces_by_trace_id() {
-        use crate::exporters::kafka::exporter::KafkaExportable;
-
-        let config =
-            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(true);
-
-        // Create ResourceSpans with two different trace IDs
-        let trace_id_1 = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        let trace_id_2 = vec![16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
-
-        let resource_spans = vec![
-            ResourceSpans {
-                resource: Some(Resource {
-                    attributes: vec![],
-                    dropped_attributes_count: 0,
-                }),
-                scope_spans: vec![ScopeSpans {
-                    scope: None,
-                    spans: vec![
-                        Span {
-                            trace_id: trace_id_1.clone(),
-                            span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
-                            name: "span-1-trace-1".to_string(),
-                            ..Default::default()
-                        },
-                        Span {
-                            trace_id: trace_id_2.clone(),
-                            span_id: vec![2, 3, 4, 5, 6, 7, 8, 9],
-                            name: "span-1-trace-2".to_string(),
-                            ..Default::default()
-                        },
-                    ],
-                    schema_url: "".to_string(),
-                }],
-                schema_url: "".to_string(),
-            },
-            ResourceSpans {
-                resource: Some(Resource {
-                    attributes: vec![],
-                    dropped_attributes_count: 0,
-                }),
-                scope_spans: vec![ScopeSpans {
-                    scope: None,
-                    spans: vec![Span {
-                        trace_id: trace_id_1.clone(),
-                        span_id: vec![3, 4, 5, 6, 7, 8, 9, 10],
-                        name: "span-2-trace-1".to_string(),
-                        ..Default::default()
-                    }],
-                    schema_url: "".to_string(),
-                }],
-                schema_url: "".to_string(),
-            },
-        ];
-
-        // Test splitting
-        let split_result = ResourceSpans::split_for_partitioning(&config, resource_spans);
-
-        // Should be split into 2 groups (one for each trace ID)
-        assert_eq!(split_result.len(), 2);
-
-        // Verify each group contains only spans from one trace
-        for group in split_result {
-            assert_eq!(group.len(), 1); // Each group should have one ResourceSpans
-            let resource_spans = &group[0];
-            let mut trace_ids = std::collections::HashSet::new();
-
-            for scope_spans in &resource_spans.scope_spans {
-                for span in &scope_spans.spans {
-                    trace_ids.insert(span.trace_id.clone());
-                }
-            }
-
-            // Each group should contain spans from only one trace ID
-            assert_eq!(trace_ids.len(), 1);
-        }
-    }
-
-    #[test]
-    fn test_split_traces_disabled() {
-        use crate::exporters::kafka::exporter::KafkaExportable;
-
-        let config =
-            KafkaExporterConfig::new("broker:9092".to_string()).with_partition_traces_by_id(false);
+        let config = KafkaExporterConfig::new("broker:9092".to_string());
 
         let resource_spans = vec![ResourceSpans {
             resource: Some(Resource {
@@ -657,6 +496,8 @@ mod tests {
         assert_eq!(split_result.len(), 1);
         assert_eq!(split_result[0], resource_spans);
     }
+
+
 
     #[test]
     fn test_partition_logs_by_resource_attributes_disabled() {

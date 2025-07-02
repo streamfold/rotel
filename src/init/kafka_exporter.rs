@@ -143,13 +143,6 @@ pub struct KafkaExporterArgs {
     )]
     pub kafka_exporter_partitioner: KafkaPartitionerType,
 
-    /// Partition traces by trace ID for better consumer parallelism
-    #[arg(
-        long,
-        env = "ROTEL_KAFKA_EXPORTER_PARTITION_TRACES_BY_ID",
-        default_value = "false"
-    )]
-    pub kafka_exporter_partition_traces_by_id: bool,
 
     /// Partition metrics by resource attributes for better consumer organization
     #[arg(
@@ -279,7 +272,6 @@ impl KafkaExporterArgs {
             .with_request_timeout_ms(self.kafka_exporter_request_timeout_ms)
             .with_batch_size(self.kafka_exporter_batch_size)
             .with_partitioner(self.kafka_exporter_partitioner.into())
-            .with_partition_traces_by_id(self.kafka_exporter_partition_traces_by_id)
             .with_partition_metrics_by_resource_attributes(
                 self.kafka_exporter_partition_metrics_by_resource_attributes,
             )
