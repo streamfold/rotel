@@ -117,7 +117,7 @@ pub async fn run_file_exporter(
     token: CancellationToken,
 ) -> Result<()> {
     let format = config.format;
-    let path = config.path;
+    let path = config.output_dir;
     let flush_interval = config.flush_interval;
 
     // Create output directories if they don't exist
