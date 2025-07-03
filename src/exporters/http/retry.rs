@@ -8,7 +8,11 @@ use std::future::Future;
 use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::time::Instant;
+use tokio::{
+    select,
+    sync::broadcast::{self, Sender},
+    time::Instant,
+};
 use tower::BoxError;
 use tower::retry::Policy;
 use tracing::info;
@@ -37,6 +41,7 @@ pub struct RetryPolicy<Resp> {
     config: RetryConfig,
     current_backoff: Duration,
     request_start: Option<Instant>,
+    retry_broadcast: Sender<bool>,
     attempts: u32,
     is_retryable: Option<RetryableFn<Resp>>,
 }
@@ -83,13 +88,22 @@ impl<Resp> RetryPolicy<Resp> {
     }
 
     pub fn new(retry_config: RetryConfig, is_retryable: Option<RetryableFn<Resp>>) -> Self {
+        // We immediately drop the receiver channel and only keep receivers open for
+        // active retries. Size mostly needs to be >0.
+        let (tx, _) = broadcast::channel(16);
+
         Self {
             current_backoff: retry_config.initial_backoff,
             config: retry_config,
+            retry_broadcast: tx,
             request_start: None,
             attempts: 0,
             is_retryable,
         }
+    }
+
+    pub fn retry_broadcast(&self) -> Sender<bool> {
+        self.retry_broadcast.clone()
     }
 }
 
@@ -148,8 +162,13 @@ where
                     "Exporting failed, will retry again after delay.",
                 );
 
+                let mut rx = self.retry_broadcast.subscribe();
                 let fut = async move {
-                    tokio::time::sleep(sleep_duration).await;
+                    let delay_fut = tokio::time::sleep(sleep_duration);
+                    select! {
+                        _ = rx.recv() => {},
+                        _ = delay_fut => {},
+                    }
                 };
 
                 // Increase backoff for next retry, but cap at max_backoff
@@ -174,7 +193,7 @@ mod tests {
     use crate::exporters::http::response::Response;
     use http::{Request, StatusCode};
     use std::time::Duration;
-    use tokio::time::Instant;
+    use tokio::time::{Instant, timeout};
     use tower::BoxError;
     use tower::retry::Policy;
 
@@ -335,6 +354,41 @@ mod tests {
 
         // Verify attempts were incremented
         assert_eq!(policy.attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn test_retry_method_returns_immediately_on_broadcast() {
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(500),
+            max_backoff: Duration::from_millis(1_000),
+            max_elapsed_time: Duration::from_secs(5),
+        };
+        let mut policy = RetryPolicy::<()>::new(config.clone(), None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+
+        // This will timeout
+        let res = timeout(Duration::from_millis(2), future_opt.unwrap()).await;
+        assert!(res.is_err());
+
+        // Try again with broadcast
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let retry_broadcast = policy.retry_broadcast();
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+
+        let res = retry_broadcast.send(true);
+        assert!(res.is_ok());
+
+        // Should be ok
+        let res = timeout(Duration::from_millis(2), future_opt.unwrap()).await;
+        assert!(res.is_ok());
     }
 
     #[test]

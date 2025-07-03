@@ -43,6 +43,7 @@ use std::ops::Add;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::select;
+use tokio::sync::broadcast::Sender;
 use tokio::task::JoinError;
 use tokio::time::{Instant, timeout_at};
 use tokio_stream::StreamExt;
@@ -104,6 +105,7 @@ pub fn build_traces_exporter(
         traces_config.retry_config.clone(),
         errors::is_retryable_error,
     );
+    let retry_broadcast = retry_policy.retry_broadcast();
 
     let signer = get_signer_builder(&traces_config);
     let req_builder = request::build_traces(&traces_config, send_failed, signer)?;
@@ -120,6 +122,7 @@ pub fn build_traces_exporter(
         traces_config.encode_drain_max_time,
         traces_config.export_drain_max_time,
         flush_receiver,
+        retry_broadcast,
     ))
 }
 
@@ -136,7 +139,7 @@ fn get_signer_builder(cfg: &OTLPExporterTracesConfig) -> Option<AwsSigv4RequestS
 /// Creates a configured OTLP metrics exporter
 ///
 /// # Arguments
-/// * `metrics_config` - Configuration for the metrics exporter  
+/// * `metrics_config` - Configuration for the metrics exporter
 /// * `metrics_rx` - Channel receiver for incoming metrics data
 ///
 /// # Returns
@@ -178,7 +181,7 @@ pub fn build_metrics_exporter(
 /// Creates a configured OTLP logs exporter
 ///
 /// # Arguments
-/// * `logs_config` - Configuration for the logs exporter  
+/// * `logs_config` - Configuration for the logs exporter
 /// * `logs_rx` - Channel receiver for incoming logs data
 ///
 /// # Returns
@@ -217,6 +220,7 @@ pub fn build_logs_exporter(
     )?;
     let retry_policy =
         RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
+    let retry_broadcast = retry_policy.retry_broadcast();
 
     let signer_builder = get_signer_builder(&logs_config);
     let req_builder = request::build_logs(&logs_config, send_failed, signer_builder)?;
@@ -233,6 +237,7 @@ pub fn build_logs_exporter(
         logs_config.encode_drain_max_time,
         logs_config.export_drain_max_time,
         flush_receiver,
+        retry_broadcast,
     ))
 }
 
@@ -294,6 +299,7 @@ fn _build_metrics_exporter(
         metrics_config.retry_config.clone(),
         errors::is_retryable_error,
     );
+    let retry_broadcast = retry_policy.retry_broadcast();
 
     let signer_builder = get_signer_builder(&metrics_config);
     let req_builder = request::build_metrics(&metrics_config, send_failed, signer_builder)?;
@@ -310,6 +316,7 @@ fn _build_metrics_exporter(
         metrics_config.encode_drain_max_time,
         metrics_config.export_drain_max_time,
         flush_receiver,
+        retry_broadcast,
     ))
 }
 
@@ -335,6 +342,7 @@ where
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     flush_receiver: Option<FlushReceiver>,
+    retry_broadcast: Sender<bool>,
 }
 
 impl<Resource, Request, Signer, Response> Exporter<Resource, Request, Signer, Response>
@@ -360,6 +368,7 @@ where
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
         flush_receiver: Option<FlushReceiver>,
+        retry_broadcast: Sender<bool>,
     ) -> Self {
         Self {
             type_name,
@@ -371,6 +380,7 @@ where
             encode_drain_max_time,
             export_drain_max_time,
             flush_receiver,
+            retry_broadcast,
         }
     }
 
@@ -532,6 +542,9 @@ where
                 },
             }
         }
+
+        // We ignore the error, since there may be no listeners
+        let _ = self.retry_broadcast.send(true);
 
         let mut drain_errors = 0;
         loop {

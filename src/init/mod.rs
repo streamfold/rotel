@@ -2,6 +2,7 @@ pub mod activation;
 pub mod agent;
 pub mod args;
 pub mod misc;
+pub mod parse;
 pub mod wait;
 
 mod clickhouse_exporter;
@@ -12,6 +13,5 @@ mod xray_exporter;
 
 mod batch;
 mod config;
-mod parse;
 #[cfg(feature = "pprof")]
 pub mod pprof;

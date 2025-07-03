@@ -206,6 +206,7 @@ impl ClickhouseExporterBuilder {
         let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 
         let retry_layer = RetryPolicy::new(self.retry_config.clone(), None);
+        let retry_broadcast = retry_layer.retry_broadcast();
 
         let svc = ServiceBuilder::new()
             .retry(retry_layer)
@@ -224,6 +225,7 @@ impl ClickhouseExporterBuilder {
                 telemetry_type: telemetry_type.to_string(),
             },
             flush_receiver,
+            retry_broadcast,
             Duration::from_secs(1),
             Duration::from_secs(2),
         );

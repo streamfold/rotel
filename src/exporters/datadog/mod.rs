@@ -158,6 +158,7 @@ impl DatadogExporterBuilder {
         )?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
+        let retry_broadcast = retry_layer.retry_broadcast();
 
         let svc = ServiceBuilder::new()
             .retry(retry_layer)
@@ -176,6 +177,7 @@ impl DatadogExporterBuilder {
                 telemetry_type: "traces".to_string(),
             },
             flush_receiver,
+            retry_broadcast,
             Duration::from_secs(1),
             Duration::from_secs(2),
         );
