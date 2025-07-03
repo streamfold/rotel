@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use http::StatusCode;
+use http::response::Parts;
 use std::error::Error;
 use std::fmt;
 use tonic::Status;
+use tower::BoxError;
 
 /// ExporterError is the result of exporting a trace msg
 #[derive(Clone, Debug)]
@@ -15,7 +16,7 @@ pub enum ExporterError {
     Connect,
 
     /// HTTP error resulting in invalid status code
-    Http(StatusCode, Option<String>),
+    Http(Parts, Option<String>),
 
     /// GRPC Error status, from tonic
     Grpc(Status),
@@ -27,8 +28,8 @@ impl fmt::Display for ExporterError {
             ExporterError::Generic(msg) => write!(f, "Generic error: {}", msg),
             ExporterError::Connect => write!(f, "Failed to connect"),
             ExporterError::Http(status, resp) => match resp {
-                None => write!(f, "HTTP error: {}", status),
-                Some(text) => write!(f, "HTTP error: {}:{}", status, text),
+                None => write!(f, "HTTP error: {}", status.status),
+                Some(text) => write!(f, "HTTP error: {}:{}", status.status, text),
             },
             ExporterError::Grpc(status) => write!(f, "GRPC error: {}", status),
         }
@@ -38,22 +39,22 @@ impl fmt::Display for ExporterError {
 impl Error for ExporterError {}
 
 /// Determine if an error is retryable
-pub fn is_retryable_error(status: &ExporterError) -> bool {
-    match status {
-        ExporterError::Generic(_) => false, // todo: further classify errors here
-        ExporterError::Connect => true,
-        ExporterError::Http(status, _) => match status.as_u16() {
-            200..=202 => false,
-            408 | 429 => true,
-            500..=504 => true,
-            _ => false,
-        },
-        ExporterError::Grpc(status) => matches!(
-            status.code(),
-            tonic::Code::Unavailable |     // Service temporarily unavailable
-                tonic::Code::Internal |        // Internal server error
-                tonic::Code::DeadlineExceeded| // Request timeout
-                tonic::Code::ResourceExhausted // Server overloaded
-        ),
+pub fn is_retryable_error<Resp>(result: &Result<Resp, BoxError>) -> Option<bool> {
+    if result.is_ok() {
+        return None;
+    }
+
+    let err = result.as_ref().err().unwrap();
+
+    let downcast_err = err.downcast_ref::<ExporterError>();
+    if downcast_err.is_none() {
+        return Some(false);
+    }
+
+    // Http and Grpc errors are converted into Ok() responses and checked
+    // higher up, only check the remaining error conditions here
+    match downcast_err.unwrap() {
+        ExporterError::Connect => Some(true),
+        _ => Some(false),
     }
 }

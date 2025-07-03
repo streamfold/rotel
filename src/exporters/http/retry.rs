@@ -2,7 +2,6 @@
 
 use crate::exporters::http::client::ConnectError;
 use crate::exporters::http::response::Response;
-use http::Request;
 use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Sub;
@@ -34,7 +33,11 @@ impl Default for RetryConfig {
     }
 }
 
-type RetryableFn<Resp> = fn(&Result<Response<Resp>, BoxError>) -> bool;
+// Custom function for determining if a request should be retried.
+// Returns:
+//   Some(cond): Should or should not be retried based on cond
+//   None: Fall back to status code checks
+type RetryableFn<Resp> = fn(&Result<Response<Resp>, BoxError>) -> Option<bool>;
 
 #[derive(Clone)]
 pub struct RetryPolicy<Resp> {
@@ -70,17 +73,33 @@ impl<Resp> RetryPolicy<Resp> {
         }
 
         if let Some(is_retryable) = self.is_retryable {
-            return (is_retryable)(result);
+            match (is_retryable)(result) {
+                Some(res) => return res,
+                None => {}
+            }
         }
 
-        // Fall back to HTTP status
+        // Fall back to the HTTP/GRPC status
         if let Ok(resp) = result {
-            return match resp.status_code().as_u16() {
-                // No need to retry success
-                200..=202 => false,
-                408 | 429 => true,
-                500..=504 => true,
-                _ => false,
+            return match resp {
+                Response::Http(parts, _) => {
+                    match parts.status.as_u16() {
+                        // No need to retry success
+                        200..=202 => false,
+                        408 | 429 => true,
+                        500..=504 => true,
+                        _ => false,
+                    }
+                }
+                Response::Grpc(status, _) => {
+                    matches!(
+                        status.code(),
+                        tonic::Code::Unavailable |     // Service temporarily unavailable
+                            tonic::Code::Internal |        // Internal server error
+                            tonic::Code::DeadlineExceeded| // Request timeout
+                            tonic::Code::ResourceExhausted // Server overloaded
+                    )
+                }
             };
         }
 
@@ -107,16 +126,16 @@ impl<Resp> RetryPolicy<Resp> {
     }
 }
 
-impl<ReqBody, Resp> Policy<Request<ReqBody>, Response<Resp>, BoxError> for RetryPolicy<Resp>
+impl<Req, Resp> Policy<Req, Response<Resp>, BoxError> for RetryPolicy<Resp>
 where
+    Req: Clone,
     Resp: Debug,
-    ReqBody: Clone,
 {
     type Future = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     fn retry(
         &mut self,
-        _req: &mut Request<ReqBody>,
+        _req: &mut Req,
         result: &mut Result<Response<Resp>, BoxError>,
     ) -> Option<Self::Future> {
         // Set the request start time. Ideally we would know the start time from the start of the
@@ -181,7 +200,7 @@ where
         }
     }
 
-    fn clone_request(&mut self, req: &Request<ReqBody>) -> Option<Request<ReqBody>> {
+    fn clone_request(&mut self, req: &Req) -> Option<Req> {
         Some(req.clone())
     }
 }
@@ -191,6 +210,7 @@ mod tests {
     use super::{RetryConfig, RetryPolicy};
     use crate::exporters::http::client::ConnectError;
     use crate::exporters::http::response::Response;
+    use crate::exporters::otlp::errors::{ExporterError, is_retryable_error};
     use http::{Request, StatusCode};
     use std::time::Duration;
     use tokio::time::{Instant, timeout};
@@ -311,8 +331,8 @@ mod tests {
         let config = RetryConfig::default();
         let custom_retryable = |result: &Result<Response<()>, BoxError>| {
             match result {
-                Ok(resp) => resp.status_code() == StatusCode::BAD_REQUEST, // Custom logic: retry 400
-                Err(_) => false,                                           // Don't retry errors
+                Ok(resp) => Some(resp.status_code() == StatusCode::BAD_REQUEST), // Custom logic: retry 400
+                Err(_) => Some(false), // Don't retry errors
             }
         };
         let mut policy = RetryPolicy::new(config, Some(custom_retryable));
@@ -329,6 +349,36 @@ mod tests {
         // are handled before the custom function, so they will still retry
         let timeout_error = create_timeout_error();
         assert!(policy.should_retry(Instant::now(), &timeout_error));
+    }
+
+    #[test]
+    fn test_fallback_to_status_on_none() {
+        let config = RetryConfig::default();
+        let custom_retryable = |result: &Result<Response<()>, BoxError>| {
+            match result {
+                Ok(resp) => {
+                    if resp.status_code() == StatusCode::BAD_REQUEST {
+                        Some(true)
+                    } else {
+                        None // Should fallback to status code check
+                    }
+                }
+                Err(_) => Some(false), // Don't retry errors
+            }
+        };
+        let mut policy = RetryPolicy::new(config, Some(custom_retryable));
+        policy.request_start = Some(Instant::now());
+
+        // Test custom retryable logic
+        let bad_request = create_response(StatusCode::BAD_REQUEST);
+        assert!(policy.should_retry(Instant::now(), &bad_request));
+
+        // Next two fall back to status code check
+        let not_found = create_response(StatusCode::NOT_FOUND);
+        assert!(!policy.should_retry(Instant::now(), &not_found));
+
+        let too_many = create_response(StatusCode::TOO_MANY_REQUESTS);
+        assert!(policy.should_retry(Instant::now(), &too_many));
     }
 
     #[tokio::test]
@@ -436,5 +486,26 @@ mod tests {
         // Should not panic even with very small backoff values
         let future_opt = policy.retry(&mut request, &mut result);
         assert!(future_opt.is_some());
+    }
+
+    fn create_exporter_error(err: ExporterError) -> Result<Response<()>, BoxError> {
+        Err(err.into())
+    }
+
+    // Since we use this from OTLP Exporter, verify the custom error function
+    #[test]
+    fn exporter_errors_retried() {
+        let config = RetryConfig::default();
+
+        let mut policy = RetryPolicy::new(config, Some(is_retryable_error));
+        policy.request_start = Some(Instant::now());
+
+        // Test connect error, should be retried
+        let conn_error = create_exporter_error(ExporterError::Connect);
+        assert!(policy.should_retry(Instant::now(), &conn_error));
+
+        // Generic errors are not
+        let conn_error = create_exporter_error(ExporterError::Generic("unknown".to_string()));
+        assert!(!policy.should_retry(Instant::now(), &conn_error));
     }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
 /// A client implementation for OTLP (OpenTelemetry Protocol) exports that supports both gRPC and HTTP protocols.
 /// The client handles TLS configuration, request processing, and response decoding.
@@ -50,7 +51,7 @@ impl<T> Service<EncodedRequest> for OTLPClient<T>
 where
     T: prost::Message + Default + Clone + Send + 'static,
 {
-    type Response = T;
+    type Response = HttpResponse<T>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -65,8 +66,21 @@ where
         Box::pin(async move {
             let result = this.perform_request(req.clone()).await;
             match result {
-                Ok(response) => Ok(response),
-                Err(error) => Err(error.into()),
+                Ok(response) => {
+                    // Simulate a successful grpc response here for non-error requests,
+                    // later we'll push the response generation further up the stack
+                    let http_resp = HttpResponse::from_grpc(Status::ok("OK"), Some(response));
+                    Ok(http_resp)
+                }
+                Err(error) => {
+                    // Map http/grpc errors back into response types to handle them generically,
+                    // all remaining errors are converted to BoxError types
+                    match error {
+                        ExporterError::Http(parts, _) => Ok(HttpResponse::from_http(parts, None)),
+                        ExporterError::Grpc(status) => Ok(HttpResponse::from_grpc(status, None)),
+                        _ => Err(error.into()),
+                    }
+                }
             }
         })
     }
@@ -244,7 +258,7 @@ async fn process_head(
                 KeyValue::new("value", head.status.to_string()),
             ],
         );
-        return Err(ExporterError::Http(head.status, resp));
+        return Err(ExporterError::Http(head, resp));
     }
 
     // grpc responses encode the compression within the payload, for HTTP responses
