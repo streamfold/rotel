@@ -150,7 +150,7 @@ pub struct KafkaExporterArgs {
 
     /// Partition metrics by resource attributes for better consumer organization
     #[arg(
-        long("partition-metrics-by-resource-attributes"),
+        long("kafka-exporter-partition-metrics-by-resource-attributes"),
         env = "ROTEL_KAFKA_EXPORTER_PARTITION_METRICS_BY_RESOURCE_ATTRIBUTES",
         default_value = "false"
     )]
@@ -158,7 +158,7 @@ pub struct KafkaExporterArgs {
 
     /// Partition logs by resource attributes for better consumer organization
     #[arg(
-        long("partition-logs-by-resource-attributes"),
+        long("kafka-exporter-partition-logs-by-resource-attributes"),
         env = "ROTEL_KAFKA_EXPORTER_PARTITION_LOGS_BY_RESOURCE_ATTRIBUTES",
         default_value = "false"
     )]

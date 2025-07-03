@@ -1,12 +1,13 @@
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
-use crate::exporters::kafka::config::KafkaExporterConfig;
+use crate::exporters::kafka::KafkaExporterConfig;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::{
     OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
 };
@@ -85,7 +86,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
-    Kafka(KafkaExporterConfig),
+    Kafka(KafkaExporterArgs),
 }
 
 #[derive(PartialEq)]
@@ -250,6 +251,12 @@ impl TryIntoConfig for ExporterArgs {
 
                 Ok(ExporterConfig::Xray(builder))
             }
+            ExporterArgs::Kafka(k) => {
+                if k.brokers.is_empty() {
+                    return Err("must specify a Kafka broker address".into());
+                }
+                Ok(ExporterConfig::Kafka(k.build_config()))
+            }
         }
     }
 }
@@ -411,6 +418,13 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
             };
 
             Ok(ExporterArgs::Xray(args))
+        }
+        "kafka" => {
+            let args: KafkaExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => return Err(format!("failed to parse Kafka config {}", e).into()),
+            };
+            Ok(ExporterArgs::Kafka(args))
         }
         _ => Err(format!("unknown exporter type: {}", exporter_type).into()),
     }
