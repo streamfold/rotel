@@ -87,39 +87,92 @@ fn calculate_resource_attributes_hash(
     let mut sorted_attrs = BTreeMap::new();
 
     for attr in attributes {
-        let value_str = match &attr.value {
-            Some(any_value) => match &any_value.value {
-                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => {
-                    s.clone()
-                }
-                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => {
-                    b.to_string()
-                }
-                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => {
-                    i.to_string()
-                }
-                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => {
-                    d.to_string()
-                }
-                Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b)) => {
-                    hex::encode(b)
-                }
-                _ => String::new(),
-            },
-            None => String::new(),
-        };
-        sorted_attrs.insert(attr.key.clone(), value_str);
+        // For each attribute, create a hash of its value
+        let mut value_hasher = std::collections::hash_map::DefaultHasher::new();
+        hash_any_value(&mut value_hasher, &attr.value);
+        let value_hash = value_hasher.finish();
+
+        // Store with key -> value_hash to handle potential duplicate keys
+        // (though they shouldn't exist per OTLP spec)
+        sorted_attrs.insert(attr.key.clone(), value_hash);
     }
 
-    // Create a deterministic hash from the sorted attributes
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (key, value) in sorted_attrs {
-        key.hash(&mut hasher);
-        value.hash(&mut hasher);
+    // Now hash the sorted map
+    let mut final_hasher = std::collections::hash_map::DefaultHasher::new();
+    for (key, value_hash) in sorted_attrs {
+        key.hash(&mut final_hasher);
+        value_hash.hash(&mut final_hasher);
     }
 
-    let hash_u64 = hasher.finish();
+    let hash_u64 = final_hasher.finish();
     hash_u64.to_be_bytes().to_vec()
+}
+
+/// Hash an AnyValue recursively
+fn hash_any_value<H: std::hash::Hasher>(
+    hasher: &mut H,
+    value: &Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
+) {
+    use std::collections::BTreeMap;
+    use std::hash::{Hash, Hasher};
+
+    match value {
+        Some(any_value) => match &any_value.value {
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => {
+                "string".hash(hasher);
+                s.hash(hasher);
+            }
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => {
+                "bool".hash(hasher);
+                b.hash(hasher);
+            }
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => {
+                "int".hash(hasher);
+                i.hash(hasher);
+            }
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => {
+                "double".hash(hasher);
+                d.to_bits().hash(hasher); // Use to_bits for deterministic hashing of floats
+            }
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b)) => {
+                "bytes".hash(hasher);
+                b.hash(hasher);
+            }
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(arr)) => {
+                "array".hash(hasher);
+                arr.values.len().hash(hasher);
+                // Hash each value in the array (order matters for arrays)
+                for v in &arr.values {
+                    hash_any_value(hasher, &Some(v.clone()));
+                }
+            }
+            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(kvlist)) => {
+                "kvlist".hash(hasher);
+
+                // Use BTreeMap for deterministic ordering of nested key-value pairs
+                let mut sorted_kvs = BTreeMap::new();
+                for kv in &kvlist.values {
+                    let mut value_hasher = std::collections::hash_map::DefaultHasher::new();
+                    hash_any_value(&mut value_hasher, &kv.value);
+                    let value_hash = value_hasher.finish();
+                    sorted_kvs.insert(kv.key.clone(), value_hash);
+                }
+
+                // Hash the sorted map
+                sorted_kvs.len().hash(hasher);
+                for (key, value_hash) in sorted_kvs {
+                    key.hash(hasher);
+                    value_hash.hash(hasher);
+                }
+            }
+            None => {
+                "empty".hash(hasher);
+            }
+        },
+        None => {
+            "empty".hash(hasher);
+        }
+    }
 }
 
 /// Extract resource attributes hash from the first ResourceLogs
@@ -478,7 +531,7 @@ where
     }
 }
 
-/// Builder functions for creating specific exporter types
+// Builder functions for creating specific exporter types
 
 /// Creates a Kafka traces exporter
 pub fn build_traces_exporter(
@@ -591,5 +644,484 @@ mod tests {
         assert_eq!(ResourceSpans::telemetry_type(), "traces");
         assert_eq!(ResourceMetrics::telemetry_type(), "metrics");
         assert_eq!(ResourceLogs::telemetry_type(), "logs");
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_empty() {
+        let attrs = vec![];
+        let hash = calculate_resource_attributes_hash(&attrs);
+        assert!(hash.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_all_value_types() {
+        use opentelemetry_proto::tonic::common::v1::{
+            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+        };
+
+        // Create a comprehensive set of attributes with all value types
+        let attrs = vec![
+            KeyValue {
+                key: "string_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "bool_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::BoolValue(true)),
+                }),
+            },
+            KeyValue {
+                key: "int_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::IntValue(42)),
+                }),
+            },
+            KeyValue {
+                key: "double_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::DoubleValue(3.14159)),
+                }),
+            },
+            KeyValue {
+                key: "bytes_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::BytesValue(vec![0xDE, 0xAD, 0xBE, 0xEF])),
+                }),
+            },
+            KeyValue {
+                key: "array_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::ArrayValue(ArrayValue {
+                        values: vec![
+                            AnyValue {
+                                value: Some(any_value::Value::StringValue("item1".to_string())),
+                            },
+                            AnyValue {
+                                value: Some(any_value::Value::IntValue(100)),
+                            },
+                            AnyValue {
+                                value: Some(any_value::Value::BoolValue(false)),
+                            },
+                        ],
+                    })),
+                }),
+            },
+            KeyValue {
+                key: "kvlist_attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::KvlistValue(KeyValueList {
+                        values: vec![
+                            KeyValue {
+                                key: "nested_key1".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(any_value::Value::StringValue(
+                                        "nested_value1".to_string(),
+                                    )),
+                                }),
+                            },
+                            KeyValue {
+                                key: "nested_key2".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(any_value::Value::IntValue(200)),
+                                }),
+                            },
+                        ],
+                    })),
+                }),
+            },
+            KeyValue {
+                key: "null_attr".to_string(),
+                value: Some(AnyValue { value: None }),
+            },
+            KeyValue {
+                key: "missing_value_attr".to_string(),
+                value: None,
+            },
+        ];
+
+        let hash = calculate_resource_attributes_hash(&attrs);
+        assert_eq!(hash.len(), 8); // u64 as bytes
+
+        // Verify hash is non-zero
+        assert_ne!(hash, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_order_independence() {
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+
+        // Create attributes in one order
+        let attrs_order1 = vec![
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("my-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "service.version".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("1.2.3".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "host.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("host-123".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "environment".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("production".to_string())),
+                }),
+            },
+        ];
+
+        // Same attributes in different order
+        let attrs_order2 = vec![
+            attrs_order1[2].clone(), // host.name
+            attrs_order1[0].clone(), // service.name
+            attrs_order1[3].clone(), // environment
+            attrs_order1[1].clone(), // service.version
+        ];
+
+        // Reverse order
+        let mut attrs_order3 = attrs_order1.clone();
+        attrs_order3.reverse();
+
+        let hash1 = calculate_resource_attributes_hash(&attrs_order1);
+        let hash2 = calculate_resource_attributes_hash(&attrs_order2);
+        let hash3 = calculate_resource_attributes_hash(&attrs_order3);
+
+        // All hashes should be identical
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_deep_recursion() {
+        use opentelemetry_proto::tonic::common::v1::{
+            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+        };
+
+        // Create deeply nested structure with arrays containing kvlists containing arrays
+        let attrs = vec![KeyValue {
+            key: "deeply_nested".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::ArrayValue(ArrayValue {
+                    values: vec![
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("top_level_string".to_string())),
+                        },
+                        AnyValue {
+                            value: Some(any_value::Value::KvlistValue(KeyValueList {
+                                values: vec![
+                                    KeyValue {
+                                        key: "mid_level_key".to_string(),
+                                        value: Some(AnyValue {
+                                            value: Some(any_value::Value::ArrayValue(ArrayValue {
+                                                values: vec![
+                                                    AnyValue {
+                                                        value: Some(any_value::Value::IntValue(42)),
+                                                    },
+                                                    AnyValue {
+                                                        value: Some(any_value::Value::KvlistValue(KeyValueList {
+                                                            values: vec![
+                                                                KeyValue {
+                                                                    key: "deep_key1".to_string(),
+                                                                    value: Some(AnyValue {
+                                                                        value: Some(any_value::Value::StringValue("deep_value1".to_string())),
+                                                                    }),
+                                                                },
+                                                                KeyValue {
+                                                                    key: "deep_key2".to_string(),
+                                                                    value: Some(AnyValue {
+                                                                        value: Some(any_value::Value::ArrayValue(ArrayValue {
+                                                                            values: vec![
+                                                                                AnyValue {
+                                                                                    value: Some(any_value::Value::BoolValue(true)),
+                                                                                },
+                                                                                AnyValue {
+                                                                                    value: Some(any_value::Value::DoubleValue(2.718)),
+                                                                                },
+                                                                            ],
+                                                                        })),
+                                                                    }),
+                                                                },
+                                                            ],
+                                                        })),
+                                                    },
+                                                ],
+                                            })),
+                                        }),
+                                    },
+                                    KeyValue {
+                                        key: "another_mid_key".to_string(),
+                                        value: Some(AnyValue {
+                                            value: Some(any_value::Value::BytesValue(vec![1, 2, 3])),
+                                        }),
+                                    },
+                                ],
+                            })),
+                        },
+                        AnyValue {
+                            value: Some(any_value::Value::IntValue(999)),
+                        },
+                    ],
+                })),
+            }),
+        }];
+
+        let hash = calculate_resource_attributes_hash(&attrs);
+        assert_eq!(hash.len(), 8);
+
+        // Ensure it doesn't crash and produces a valid hash
+        assert_ne!(hash, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_kvlist_order_independence() {
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, KeyValueList, any_value};
+
+        // KvList with keys in one order
+        let attrs1 = vec![KeyValue {
+            key: "metadata".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::KvlistValue(KeyValueList {
+                    values: vec![
+                        KeyValue {
+                            key: "region".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue("us-west-2".to_string())),
+                            }),
+                        },
+                        KeyValue {
+                            key: "zone".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue(
+                                    "us-west-2a".to_string(),
+                                )),
+                            }),
+                        },
+                        KeyValue {
+                            key: "instance_type".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue("t2.micro".to_string())),
+                            }),
+                        },
+                    ],
+                })),
+            }),
+        }];
+
+        // Same KvList with keys in different order
+        let attrs2 = vec![KeyValue {
+            key: "metadata".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::KvlistValue(KeyValueList {
+                    values: vec![
+                        KeyValue {
+                            key: "instance_type".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue("t2.micro".to_string())),
+                            }),
+                        },
+                        KeyValue {
+                            key: "region".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue("us-west-2".to_string())),
+                            }),
+                        },
+                        KeyValue {
+                            key: "zone".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue(
+                                    "us-west-2a".to_string(),
+                                )),
+                            }),
+                        },
+                    ],
+                })),
+            }),
+        }];
+
+        let hash1 = calculate_resource_attributes_hash(&attrs1);
+        let hash2 = calculate_resource_attributes_hash(&attrs2);
+
+        // Hashes should be identical (KvList is unordered)
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_array_order_dependence() {
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, any_value};
+
+        // Array with elements in one order
+        let attrs1 = vec![KeyValue {
+            key: "tags".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::ArrayValue(ArrayValue {
+                    values: vec![
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("production".to_string())),
+                        },
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("critical".to_string())),
+                        },
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("monitored".to_string())),
+                        },
+                    ],
+                })),
+            }),
+        }];
+
+        // Same array with elements in different order
+        let attrs2 = vec![KeyValue {
+            key: "tags".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::ArrayValue(ArrayValue {
+                    values: vec![
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("critical".to_string())),
+                        },
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("monitored".to_string())),
+                        },
+                        AnyValue {
+                            value: Some(any_value::Value::StringValue("production".to_string())),
+                        },
+                    ],
+                })),
+            }),
+        }];
+
+        let hash1 = calculate_resource_attributes_hash(&attrs1);
+        let hash2 = calculate_resource_attributes_hash(&attrs2);
+
+        // Hashes should be different (arrays are ordered)
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_slight_key_difference() {
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+
+        // First set of attributes
+        let attrs1 = vec![
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("my-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "service.version".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("1.2.3".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "deployment.environment".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("production".to_string())),
+                }),
+            },
+        ];
+
+        // Almost identical, but one key is slightly different
+        let attrs2 = vec![
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("my-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "service.version".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("1.2.3".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "deployment.env".to_string(), // Changed from deployment.environment
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("production".to_string())),
+                }),
+            },
+        ];
+
+        let hash1 = calculate_resource_attributes_hash(&attrs1);
+        let hash2 = calculate_resource_attributes_hash(&attrs2);
+
+        // Hashes should be different due to different key
+        assert_ne!(hash1, hash2);
+
+        // Also test with slight value difference
+        let attrs3 = vec![
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("my-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "service.version".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("1.2.4".to_string())), // Changed version
+                }),
+            },
+            KeyValue {
+                key: "deployment.environment".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("production".to_string())),
+                }),
+            },
+        ];
+
+        let hash3 = calculate_resource_attributes_hash(&attrs3);
+
+        // Should be different from attrs1 due to different value
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_calculate_resource_attributes_hash_type_differences() {
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+
+        // Same key and "value" but different types
+        let attrs_string = vec![KeyValue {
+            key: "port".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue("8080".to_string())),
+            }),
+        }];
+
+        let attrs_int = vec![KeyValue {
+            key: "port".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::IntValue(8080)),
+            }),
+        }];
+
+        let attrs_double = vec![KeyValue {
+            key: "port".to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::DoubleValue(8080.0)),
+            }),
+        }];
+
+        let hash_string = calculate_resource_attributes_hash(&attrs_string);
+        let hash_int = calculate_resource_attributes_hash(&attrs_int);
+        let hash_double = calculate_resource_attributes_hash(&attrs_double);
+
+        // All should be different because types are different
+        assert_ne!(hash_string, hash_int);
+        assert_ne!(hash_string, hash_double);
+        assert_ne!(hash_int, hash_double);
     }
 }
