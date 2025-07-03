@@ -89,8 +89,8 @@ impl<Resp> RetryPolicy<Resp> {
 
     pub fn new(retry_config: RetryConfig, is_retryable: Option<RetryableFn<Resp>>) -> Self {
         // We immediately drop the receiver channel and only keep receivers open for
-        // active retries
-        let (tx, _) = broadcast::channel(100);
+        // active retries. Size mostly needs to be >0.
+        let (tx, _) = broadcast::channel(16);
 
         Self {
             current_backoff: retry_config.initial_backoff,
