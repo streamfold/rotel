@@ -8,149 +8,161 @@ use clap::{Args, ValueEnum};
 use serde::Deserialize;
 
 #[derive(Debug, Args, Clone, Deserialize)]
+#[serde(default)]
 pub struct KafkaExporterArgs {
     /// Kafka broker addresses (comma-separated)
     #[arg(
-        long,
+        long("kafka-exporter-brokers"),
         env = "ROTEL_KAFKA_EXPORTER_BROKERS",
         default_value = "localhost:9092"
     )]
-    pub kafka_exporter_brokers: String,
+    pub brokers: String,
 
     /// Topic name for traces
     #[arg(
-        long,
+        long("kafka-exporter-traces-topic"),
         env = "ROTEL_KAFKA_EXPORTER_TRACES_TOPIC",
         default_value = "otlp_traces"
     )]
-    pub kafka_exporter_traces_topic: String,
+    pub traces_topic: String,
 
     /// Topic name for metrics
     #[arg(
-        long,
+        long("kafka-exporter-metrics-topic"),
         env = "ROTEL_KAFKA_EXPORTER_METRICS_TOPIC",
         default_value = "otlp_metrics"
     )]
-    pub kafka_exporter_metrics_topic: String,
+    pub metrics_topic: String,
 
     /// Topic name for logs
     #[arg(
-        long,
+        long("kafka-exporter-logs-topic"),
         env = "ROTEL_KAFKA_EXPORTER_LOGS_TOPIC",
         default_value = "otlp_logs"
     )]
-    pub kafka_exporter_logs_topic: String,
+    pub logs_topic: String,
 
     /// Serialization format
     #[arg(
         value_enum,
-        long,
+        long("kafka-exporter-format"),
         env = "ROTEL_KAFKA_EXPORTER_FORMAT",
-        default_value = "json"
+        default_value = "protobuf"
     )]
-    pub kafka_exporter_format: KafkaSerializationFormat,
+    pub format: KafkaSerializationFormat,
 
     /// Compression type (gzip, snappy, lz4, zstd, none)
-    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_COMPRESSION")]
-    pub kafka_exporter_compression: Option<String>,
+    #[arg(
+        long("kafka-exporter-compression"),
+        env = "ROTEL_KAFKA_EXPORTER_COMPRESSION"
+    )]
+    pub compression: Option<String>,
 
     /// Acknowledgement mode (none, one, all)
     #[arg(
         value_enum,
-        long,
+        long("kafka-exporter-acks"),
         env = "ROTEL_KAFKA_EXPORTER_ACKS",
         default_value = "one"
     )]
-    pub kafka_exporter_acks: KafkaAcknowledgementMode,
+    pub acks: KafkaAcknowledgementMode,
 
     /// Client ID for the Kafka producer
-    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID", default_value = "rotel")]
-    pub kafka_exporter_client_id: String,
+    #[arg(
+        long("kafka-exporter-client-id"),
+        env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID",
+        default_value = "rotel"
+    )]
+    pub client_id: String,
 
     /// Maximum message size in bytes
     #[arg(
-        long,
+        long("kafka-exporter-max-message-bytes"),
         env = "ROTEL_KAFKA_EXPORTER_MAX_MESSAGE_BYTES",
         default_value = "1000000"
     )]
-    pub kafka_exporter_max_message_bytes: usize,
+    pub max_message_bytes: usize,
 
     /// Linger time in milliseconds
-    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_LINGER_MS", default_value = "5")]
-    pub kafka_exporter_linger_ms: u32,
+    #[arg(
+        long("kafka-exporter-linger-ms"),
+        env = "ROTEL_KAFKA_EXPORTER_LINGER_MS",
+        default_value = "5"
+    )]
+    pub linger_ms: u32,
 
     /// Number of retries for message sending
     #[arg(
-        long,
+        long("kafka-exporter-retries"),
         env = "ROTEL_KAFKA_EXPORTER_RETRIES",
         default_value = "2147483647"
     )]
-    pub kafka_exporter_retries: u32,
+    pub retries: u32,
 
     /// Retry backoff time in milliseconds
     #[arg(
-        long,
+        long("kafka-exporter-retry-backoff-ms"),
         env = "ROTEL_KAFKA_EXPORTER_RETRY_BACKOFF_MS",
         default_value = "100"
     )]
-    pub kafka_exporter_retry_backoff_ms: u32,
+    pub retry_backoff_ms: u32,
 
     /// Maximum retry backoff time in milliseconds
     #[arg(
-        long,
+        long("kafka-exporter-retry-backoff-max-ms"),
         env = "ROTEL_KAFKA_EXPORTER_RETRY_BACKOFF_MAX_MS",
         default_value = "1000"
     )]
-    pub kafka_exporter_retry_backoff_max_ms: u32,
+    pub retry_backoff_max_ms: u32,
 
     /// Message timeout in milliseconds
     #[arg(
-        long,
+        long("kafka-exporter-message-timeout-ms"),
         env = "ROTEL_KAFKA_EXPORTER_MESSAGE_TIMEOUT_MS",
         default_value = "300000"
     )]
-    pub kafka_exporter_message_timeout_ms: u32,
+    pub message_timeout_ms: u32,
 
     /// Request timeout in milliseconds
     #[arg(
-        long,
+        long("kafka-exporter-request-timeout-ms"),
         env = "ROTEL_KAFKA_EXPORTER_REQUEST_TIMEOUT_MS",
         default_value = "30000"
     )]
-    pub kafka_exporter_request_timeout_ms: u32,
+    pub request_timeout_ms: u32,
 
     /// Batch size in bytes
     #[arg(
-        long,
+        long("kafka-exporter-batch-size"),
         env = "ROTEL_KAFKA_EXPORTER_BATCH_SIZE",
         default_value = "1000000"
     )]
-    pub kafka_exporter_batch_size: u32,
+    pub batch_size: u32,
 
     /// Partitioner type
     #[arg(
         value_enum,
-        long,
+        long("kafka-exporter-partitioner"),
         env = "ROTEL_KAFKA_EXPORTER_PARTITIONER",
         default_value = "consistent-random"
     )]
-    pub kafka_exporter_partitioner: KafkaPartitionerType,
+    pub partitioner: KafkaPartitionerType,
 
     /// Partition metrics by resource attributes for better consumer organization
     #[arg(
-        long,
+        long("partition-metrics-by-resource-attributes"),
         env = "ROTEL_KAFKA_EXPORTER_PARTITION_METRICS_BY_RESOURCE_ATTRIBUTES",
         default_value = "false"
     )]
-    pub kafka_exporter_partition_metrics_by_resource_attributes: bool,
+    pub partition_metrics_by_resource_attributes: bool,
 
     /// Partition logs by resource attributes for better consumer organization
     #[arg(
-        long,
+        long("partition-logs-by-resource-attributes"),
         env = "ROTEL_KAFKA_EXPORTER_PARTITION_LOGS_BY_RESOURCE_ATTRIBUTES",
         default_value = "false"
     )]
-    pub kafka_exporter_partition_logs_by_resource_attributes: bool,
+    pub partition_logs_by_resource_attributes: bool,
 
     /// Custom Kafka producer configuration parameters (key=value pairs). These will override built-in options if conflicts exist.
     #[arg(
@@ -160,56 +172,65 @@ pub struct KafkaExporterArgs {
         value_delimiter = ','
     )]
     #[serde(deserialize_with = "crate::init::parse::deserialize_key_value_pairs")]
-    pub kafka_exporter_custom_config: Vec<(String, String)>,
+    pub custom_config: Vec<(String, String)>,
 
     /// SASL username for authentication
-    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_SASL_USERNAME")]
-    pub kafka_exporter_sasl_username: Option<String>,
+    #[arg(
+        long("kafka-exporter-sasl-username"),
+        env = "ROTEL_KAFKA_EXPORTER_SASL_USERNAME"
+    )]
+    pub sasl_username: Option<String>,
 
     /// SASL password for authentication
-    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_SASL_PASSWORD")]
-    pub kafka_exporter_sasl_password: Option<String>,
+    #[arg(
+        long("kafka-exporter-sasl-password"),
+        env = "ROTEL_KAFKA_EXPORTER_SASL_PASSWORD"
+    )]
+    pub sasl_password: Option<String>,
 
     /// SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
-    #[arg(long, env = "ROTEL_KAFKA_EXPORTER_SASL_MECHANISM")]
-    pub kafka_exporter_sasl_mechanism: Option<String>,
+    #[arg(
+        long("kafka-exporter-sasl-mechanism"),
+        env = "ROTEL_KAFKA_EXPORTER_SASL_MECHANISM"
+    )]
+    pub sasl_mechanism: Option<String>,
 
     /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
     #[arg(
-        long,
+        long("kafka-exporter-security-protocol"),
         env = "ROTEL_KAFKA_EXPORTER_SECURITY_PROTOCOL",
         default_value = "PLAINTEXT"
     )]
-    pub kafka_exporter_security_protocol: String,
+    pub security_protocol: String,
 }
 
 impl Default for KafkaExporterArgs {
     fn default() -> Self {
         KafkaExporterArgs {
-            kafka_exporter_brokers: "localhost:9092".to_string(),
-            kafka_exporter_traces_topic: "otlp_traces".to_string(),
-            kafka_exporter_metrics_topic: "otlp_metrics".to_string(),
-            kafka_exporter_logs_topic: "otlp_logs".to_string(),
-            kafka_exporter_format: Default::default(),
-            kafka_exporter_acks: Default::default(),
-            kafka_exporter_client_id: "rotel".to_string(),
-            kafka_exporter_max_message_bytes: 1000000,
-            kafka_exporter_linger_ms: 5,
-            kafka_exporter_retries: 2147483647,
-            kafka_exporter_retry_backoff_ms: 100,
-            kafka_exporter_retry_backoff_max_ms: 1000,
-            kafka_exporter_message_timeout_ms: 300000,
-            kafka_exporter_request_timeout_ms: 30000,
-            kafka_exporter_batch_size: 1000000,
-            kafka_exporter_partitioner: Default::default(),
-            kafka_exporter_partition_metrics_by_resource_attributes: false,
-            kafka_exporter_partition_logs_by_resource_attributes: false,
-            kafka_exporter_custom_config: vec![],
-            kafka_exporter_compression: None,
-            kafka_exporter_sasl_username: None,
-            kafka_exporter_sasl_password: None,
-            kafka_exporter_sasl_mechanism: None,
-            kafka_exporter_security_protocol: "".to_string(),
+            brokers: "localhost:9092".to_string(),
+            traces_topic: "otlp_traces".to_string(),
+            metrics_topic: "otlp_metrics".to_string(),
+            logs_topic: "otlp_logs".to_string(),
+            format: Default::default(),
+            acks: Default::default(),
+            client_id: "rotel".to_string(),
+            max_message_bytes: 1000000,
+            linger_ms: 5,
+            retries: 2147483647,
+            retry_backoff_ms: 100,
+            retry_backoff_max_ms: 1000,
+            message_timeout_ms: 300000,
+            request_timeout_ms: 30000,
+            batch_size: 1000000,
+            partitioner: Default::default(),
+            partition_metrics_by_resource_attributes: false,
+            partition_logs_by_resource_attributes: false,
+            custom_config: vec![],
+            compression: None,
+            sasl_username: None,
+            sasl_password: None,
+            sasl_mechanism: None,
+            security_protocol: "".to_string(),
         }
     }
 }
@@ -222,7 +243,7 @@ pub enum KafkaSerializationFormat {
 
 impl Default for KafkaSerializationFormat {
     fn default() -> Self {
-        KafkaSerializationFormat::Json
+        KafkaSerializationFormat::Protobuf
     }
 }
 
@@ -298,48 +319,46 @@ impl From<KafkaPartitionerType> for PartitionerType {
 
 impl KafkaExporterArgs {
     pub fn build_config(&self) -> KafkaExporterConfig {
-        let mut config = KafkaExporterConfig::new(self.kafka_exporter_brokers.clone())
-            .with_traces_topic(self.kafka_exporter_traces_topic.clone())
-            .with_metrics_topic(self.kafka_exporter_metrics_topic.clone())
-            .with_logs_topic(self.kafka_exporter_logs_topic.clone())
-            .with_serialization_format(self.kafka_exporter_format.into())
-            .with_acks(self.kafka_exporter_acks.into())
-            .with_client_id(self.kafka_exporter_client_id.clone())
-            .with_max_message_bytes(self.kafka_exporter_max_message_bytes)
-            .with_linger_ms(self.kafka_exporter_linger_ms)
-            .with_retries(self.kafka_exporter_retries)
-            .with_retry_backoff_ms(self.kafka_exporter_retry_backoff_ms)
-            .with_retry_backoff_max_ms(self.kafka_exporter_retry_backoff_max_ms)
-            .with_message_timeout_ms(self.kafka_exporter_message_timeout_ms)
-            .with_request_timeout_ms(self.kafka_exporter_request_timeout_ms)
-            .with_batch_size(self.kafka_exporter_batch_size)
-            .with_partitioner(self.kafka_exporter_partitioner.into())
+        let mut config = KafkaExporterConfig::new(self.brokers.clone())
+            .with_traces_topic(self.traces_topic.clone())
+            .with_metrics_topic(self.metrics_topic.clone())
+            .with_logs_topic(self.logs_topic.clone())
+            .with_serialization_format(self.format.into())
+            .with_acks(self.acks.into())
+            .with_client_id(self.client_id.clone())
+            .with_max_message_bytes(self.max_message_bytes)
+            .with_linger_ms(self.linger_ms)
+            .with_retries(self.retries)
+            .with_retry_backoff_ms(self.retry_backoff_ms)
+            .with_retry_backoff_max_ms(self.retry_backoff_max_ms)
+            .with_message_timeout_ms(self.message_timeout_ms)
+            .with_request_timeout_ms(self.request_timeout_ms)
+            .with_batch_size(self.batch_size)
+            .with_partitioner(self.partitioner.into())
             .with_partition_metrics_by_resource_attributes(
-                self.kafka_exporter_partition_metrics_by_resource_attributes,
+                self.partition_metrics_by_resource_attributes,
             )
-            .with_partition_logs_by_resource_attributes(
-                self.kafka_exporter_partition_logs_by_resource_attributes,
-            )
-            .with_custom_config(self.kafka_exporter_custom_config.clone());
+            .with_partition_logs_by_resource_attributes(self.partition_logs_by_resource_attributes)
+            .with_custom_config(self.custom_config.clone());
 
-        if let Some(ref compression) = self.kafka_exporter_compression {
+        if let Some(ref compression) = self.compression {
             config = config.with_compression(compression.clone());
         }
 
         // Configure SASL if credentials are provided
         if let (Some(username), Some(password), Some(mechanism)) = (
-            &self.kafka_exporter_sasl_username,
-            &self.kafka_exporter_sasl_password,
-            &self.kafka_exporter_sasl_mechanism,
+            &self.sasl_username,
+            &self.sasl_password,
+            &self.sasl_mechanism,
         ) {
             config = config.with_sasl_auth(
                 username.clone(),
                 password.clone(),
                 mechanism.clone(),
-                self.kafka_exporter_security_protocol.clone(),
+                self.security_protocol.clone(),
             );
         } else {
-            config.security_protocol = Some(self.kafka_exporter_security_protocol.clone());
+            config.security_protocol = Some(self.security_protocol.clone());
         }
 
         config

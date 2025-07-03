@@ -7,6 +7,7 @@ use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
 use crate::topology::payload::OTLPFrom;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
+use futures_util::stream::FuturesOrdered;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -269,7 +270,7 @@ where
     request_builder: KafkaRequestBuilder<Resource, Resource::Request>,
     rx: BoundedReceiver<Vec<Resource>>,
     topic: String,
-    encoding_futures: FuturesUnordered<EncodingFuture>,
+    encoding_futures: FuturesOrdered<EncodingFuture>,
     send_futures: FuturesUnordered<SendFuture>,
 }
 
@@ -310,7 +311,7 @@ where
             request_builder,
             rx,
             topic,
-            encoding_futures: FuturesUnordered::new(),
+            encoding_futures: FuturesOrdered::new(),
             send_futures: FuturesUnordered::new(),
         })
     }
@@ -393,7 +394,7 @@ where
                                             payload,
                                         })
                                 });
-                                self.encoding_futures.push(Box::pin(encoding_future));
+                                self.encoding_futures.push_back(Box::pin(encoding_future));
                             }
                         }
                         None => {

@@ -25,7 +25,7 @@ pub enum AcknowledgementMode {
 
 impl Default for SerializationFormat {
     fn default() -> Self {
-        SerializationFormat::Json
+        SerializationFormat::Protobuf
     }
 }
 
