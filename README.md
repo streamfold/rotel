@@ -253,7 +253,7 @@ logs, and traces.
 | --kafka-exporter-traces-topic                             | otlp_traces       |                                                                             |
 | --kafka-exporter-metrics-topic                            | otlp_metrics      |                                                                             |
 | --kafka-exporter-logs-topic                               | otlp_logs         |                                                                             |
-| --kafka-exporter-format                                   | json              | json, protobuf                                                              |
+| --kafka-exporter-format                                   | protobuf          | json, protobuf                                                              |
 | --kafka-exporter-compression                              | none              | gzip, snappy, lz4, zstd, none                                               |
 | --kafka-exporter-request-timeout                          | 30s               |                                                                             |
 | --kafka-exporter-acks                                     | one               | none, one, all                                                              |
