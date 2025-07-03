@@ -3,6 +3,7 @@
 use crate::listener::Listener;
 use clap::{Parser, ValueEnum};
 use rotel::listener;
+use rotel::topology::flush_control::{FlushBroadcast, FlushSender};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -14,11 +15,12 @@ use std::time::Duration;
 use tokio::select;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
+use tokio::time::{Instant, timeout};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tracing::log::warn;
 use tracing::metadata::LevelFilter;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -33,6 +35,9 @@ use rotel::init::wait;
 static WORKDING_DIR: &str = "/"; // TODO
 
 const SENDING_QUEUE_SIZE: usize = 1_000;
+
+const FLUSH_PIPELINE_TIMEOUT_MILLIS: u64 = 500;
+const FLUSH_EXPORTERS_TIMEOUT_MILLIS: u64 = 3_000;
 
 #[derive(Debug, clap::Subcommand)]
 enum Commands {
@@ -145,29 +150,46 @@ async fn run_agent(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut agent_join_set = JoinSet::new();
 
+    let (mut flush_pipeline_tx, flush_pipeline_sub) = FlushBroadcast::new().into_parts();
+    let (mut flush_exporters_tx, flush_exporters_sub) = FlushBroadcast::new().into_parts();
+
     let cancel_token = CancellationToken::new();
     {
         let token = cancel_token.clone();
         let env = env.clone();
         let agent_fut = async move {
-            let agent = Agent::new(agent_args, port_map, SENDING_QUEUE_SIZE, env);
+            let agent = Agent::new(agent_args, port_map, SENDING_QUEUE_SIZE, env)
+                .with_pipeline_flush(flush_pipeline_sub)
+                .with_exporters_flush(flush_exporters_sub);
             agent.run(token).await
         };
 
         agent_join_set.spawn(agent_fut);
     };
 
-    select! {
-        _ = signal_wait() => {
-            info!("Shutdown signal received.");
-            cancel_token.cancel();
-        },
-        e = wait::wait_for_any_task(&mut agent_join_set) => {
-            match e {
-                Ok(()) => warn!("Unexpected early exit of agent."),
-                Err(e) => return Err(e),
-            }
-        },
+    let mut sig_usr1 = sig(SignalKind::user_defined1());
+    loop {
+        select! {
+            _ = signal_wait() => {
+                info!("Shutdown signal received.");
+                cancel_token.cancel();
+                break;
+            },
+            _ = sig_usr1.recv() => {
+                info!("Signal SIGUSR1 received, invoking a forced flush");
+                let flush_start = Instant::now();
+                force_flush(&mut flush_pipeline_tx, &mut flush_exporters_tx).await;
+                let duration = Instant::now().duration_since(flush_start);
+                info!(duration = ?duration, "Finished forced flush request");
+            },
+            e = wait::wait_for_any_task(&mut agent_join_set) => {
+                match e {
+                    Ok(()) => warn!("Unexpected early exit of agent."),
+                    Err(e) => return Err(e),
+                }
+                break;
+            },
+        }
     }
 
     // Wait for tasks to complete, we use a large timeout here because the agent
@@ -312,4 +334,46 @@ async fn signal_wait() {
 
 fn sig(kind: SignalKind) -> tokio::signal::unix::Signal {
     signal(kind).unwrap()
+}
+
+async fn force_flush(pipeline_tx: &mut FlushSender, exporters_tx: &mut FlushSender) {
+    let start = Instant::now();
+    match timeout(
+        Duration::from_millis(FLUSH_PIPELINE_TIMEOUT_MILLIS),
+        pipeline_tx.broadcast(),
+    )
+    .await
+    {
+        Err(_) => {
+            warn!("timeout waiting to flush pipelines");
+            return;
+        }
+        Ok(Err(e)) => {
+            warn!("failed to flush pipelines: {}", e);
+            return;
+        }
+        _ => {}
+    }
+    let duration = Instant::now().duration_since(start);
+    debug!(?duration, "finished flushing pipeline");
+
+    let start = Instant::now();
+    match timeout(
+        Duration::from_millis(FLUSH_EXPORTERS_TIMEOUT_MILLIS),
+        exporters_tx.broadcast(),
+    )
+    .await
+    {
+        Err(_) => {
+            warn!("timeout waiting to flush exporters");
+            return;
+        }
+        Ok(Err(e)) => {
+            warn!("failed to flush exporters: {}", e);
+            return;
+        }
+        _ => {}
+    }
+    let duration = Instant::now().duration_since(start);
+    debug!(?duration, "finished flushing exporters");
 }
