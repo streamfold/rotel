@@ -359,6 +359,34 @@ impl Agent {
                         Ok(())
                     });
                 }
+                Some(ExporterConfig::File(config)) => {
+                    let format = config.format;
+                    let flush_interval = config.flush_interval;
+                    let traces_dir = config.path.join("spans");
+                    
+                    std::fs::create_dir_all(&traces_dir).map_err(|e| format!("Failed to create traces directory: {}", e))?;
+                    
+                    let token = exporters_cancel.clone();
+                    match format {
+                        crate::init::file_exporter::FileExporterFormat::Parquet => {
+                            let compression = config.parquet_compression.to_parquet_compression();
+                            let exporter = std::sync::Arc::new(crate::exporters::file::parquet::ParquetExporter::with_compression(compression));
+                            exporters_task_set.spawn(async move {
+                                crate::exporters::file::task::run_traces_loop(
+                                    exporter, traces_dir, trace_pipeline_out_rx, flush_interval, token
+                                ).await.map_err(|e| e.into())
+                            });
+                        }
+                        crate::init::file_exporter::FileExporterFormat::Json => {
+                            let exporter = std::sync::Arc::new(crate::exporters::file::json::JsonExporter::new());
+                            exporters_task_set.spawn(async move {
+                                crate::exporters::file::task::run_traces_loop(
+                                    exporter, traces_dir, trace_pipeline_out_rx, flush_interval, token
+                                ).await.map_err(|e| e.into())
+                            });
+                        }
+                    }
+                }
                 None => {}
             }
         }
@@ -439,6 +467,34 @@ impl Agent {
                         Ok(())
                     });
                 }
+                Some(ExporterConfig::File(config)) => {
+                    let format = config.format;
+                    let flush_interval = config.flush_interval;
+                    let metrics_dir = config.path.join("metrics");
+                    
+                    std::fs::create_dir_all(&metrics_dir).map_err(|e| format!("Failed to create metrics directory: {}", e))?;
+                    
+                    let token = exporters_cancel.clone();
+                    match format {
+                        crate::init::file_exporter::FileExporterFormat::Parquet => {
+                            let compression = config.parquet_compression.to_parquet_compression();
+                            let exporter = std::sync::Arc::new(crate::exporters::file::parquet::ParquetExporter::with_compression(compression));
+                            exporters_task_set.spawn(async move {
+                                crate::exporters::file::task::run_metrics_loop(
+                                    exporter, metrics_dir, metrics_pipeline_out_rx, flush_interval, token
+                                ).await.map_err(|e| e.into())
+                            });
+                        }
+                        crate::init::file_exporter::FileExporterFormat::Json => {
+                            let exporter = std::sync::Arc::new(crate::exporters::file::json::JsonExporter::new());
+                            exporters_task_set.spawn(async move {
+                                crate::exporters::file::task::run_metrics_loop(
+                                    exporter, metrics_dir, metrics_pipeline_out_rx, flush_interval, token
+                                ).await.map_err(|e| e.into())
+                            });
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -502,6 +558,34 @@ impl Agent {
                         logs_exporter.start(token).await;
                         Ok(())
                     });
+                }
+                Some(ExporterConfig::File(config)) => {
+                    let format = config.format;
+                    let flush_interval = config.flush_interval;
+                    let logs_dir = config.path.join("logs");
+                    
+                    std::fs::create_dir_all(&logs_dir).map_err(|e| format!("Failed to create logs directory: {}", e))?;
+                    
+                    let token = exporters_cancel.clone();
+                    match format {
+                        crate::init::file_exporter::FileExporterFormat::Parquet => {
+                            let compression = config.parquet_compression.to_parquet_compression();
+                            let exporter = std::sync::Arc::new(crate::exporters::file::parquet::ParquetExporter::with_compression(compression));
+                            exporters_task_set.spawn(async move {
+                                crate::exporters::file::task::run_logs_loop(
+                                    exporter, logs_dir, logs_pipeline_out_rx, flush_interval, token
+                                ).await.map_err(|e| e.into())
+                            });
+                        }
+                        crate::init::file_exporter::FileExporterFormat::Json => {
+                            let exporter = std::sync::Arc::new(crate::exporters::file::json::JsonExporter::new());
+                            exporters_task_set.spawn(async move {
+                                crate::exporters::file::task::run_logs_loop(
+                                    exporter, logs_dir, logs_pipeline_out_rx, flush_interval, token
+                                ).await.map_err(|e| e.into())
+                            });
+                        }
+                    }
                 }
                 _ => {}
             }

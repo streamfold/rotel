@@ -2,6 +2,7 @@ use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
@@ -152,6 +153,9 @@ pub struct AgentRun {
     pub aws_xray_exporter: XRayExporterArgs,
 
     #[command(flatten)]
+    pub file_exporter: FileExporterArgs,
+
+    #[command(flatten)]
     #[cfg(feature = "rdkafka")]
     pub kafka_exporter: KafkaExporterArgs,
 
@@ -192,6 +196,7 @@ impl Default for AgentRun {
             datadog_exporter: DatadogExporterArgs::default(),
             clickhouse_exporter: ClickhouseExporterArgs::default(),
             aws_xray_exporter: XRayExporterArgs::default(),
+            file_exporter: FileExporterArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_exporter: KafkaExporterArgs::default(),
             #[cfg(feature = "pprof")]
@@ -246,15 +251,11 @@ pub struct ProfileGroup {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]
 pub enum Exporter {
     Otlp,
-
     Blackhole,
-
     Datadog,
-
     Clickhouse,
-
     AwsXray,
-
+    File,
     #[cfg(feature = "rdkafka")]
     Kafka,
 }
