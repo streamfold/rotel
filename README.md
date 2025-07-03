@@ -383,6 +383,8 @@ See [KAFKA_INTEGRATION_TESTS.md](KAFKA_INTEGRATION_TESTS.md) for detailed testin
 
 ### File exporter configuration
 
+**WARNING**: The Parquet and JSON file format is evolving and subject to breaking changes between releases. There is consolidation planned with official Arrow schemas from the OpenTelemetry Arrow project.
+
 The File exporter can be selected with `--exporter file`. It writes telemetry
 out as periodic files on the local filesystem. Currently **Parquet** and
 **JSON** formats are supported.
@@ -396,7 +398,7 @@ out as periodic files on the local filesystem. Currently **Parquet** and
 
 Each flush creates a file named `<telemetry-type>-<timestamp>.<ext>` inside the
 specified directory. For example, with default settings Rotel will emit files
-such as `traces-20250614-120000.parquet` every five seconds.
+such as `traces-20250614-120000.parquet` every five seconds. Files are saved into the `traces`, `logs`, and `metrics` subdirectories.
 
 _The File exporter is useful for local debugging, offline analysis, and for
 feeding telemetry into batch-processing systems._
