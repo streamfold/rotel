@@ -63,6 +63,7 @@ impl OTLPInto<Vec<ResourceLogs>> for ExportLogsServiceRequest {
 pub enum OTLPPayload {
     Traces(Vec<ResourceSpans>),
     Metrics(Vec<ResourceMetrics>),
+    Logs(Vec<ResourceLogs>),
 }
 
 impl From<Vec<ResourceMetrics>> for OTLPPayload {
@@ -77,44 +78,92 @@ impl From<Vec<ResourceSpans>> for OTLPPayload {
     }
 }
 
-// Wondering if this could bite someone later, might be better to do a try_from?
-impl From<OTLPPayload> for Vec<ResourceSpans> {
-    fn from(value: OTLPPayload) -> Self {
+impl From<Vec<ResourceLogs>> for OTLPPayload {
+    fn from(value: Vec<ResourceLogs>) -> Self {
+        OTLPPayload::Logs(value)
+    }
+}
+
+impl TryFrom<OTLPPayload> for Vec<ResourceSpans> {
+    type Error = &'static str;
+
+    fn try_from(value: OTLPPayload) -> Result<Self, Self::Error> {
         match value {
-            OTLPPayload::Metrics(_) => vec![],
-            OTLPPayload::Traces(v) => v,
+            OTLPPayload::Traces(v) => Ok(v),
+            OTLPPayload::Metrics(_) => Err("Cannot convert metrics payload to traces"),
+            OTLPPayload::Logs(_) => Err("Cannot convert logs payload to traces"),
         }
     }
 }
 
-impl From<OTLPPayload> for Vec<ResourceMetrics> {
-    fn from(value: OTLPPayload) -> Self {
+impl TryFrom<OTLPPayload> for Vec<ResourceMetrics> {
+    type Error = &'static str;
+
+    fn try_from(value: OTLPPayload) -> Result<Self, Self::Error> {
         match value {
-            OTLPPayload::Metrics(v) => v,
-            OTLPPayload::Traces(_) => vec![],
+            OTLPPayload::Metrics(v) => Ok(v),
+            OTLPPayload::Traces(_) => Err("Cannot convert traces payload to metrics"),
+            OTLPPayload::Logs(_) => Err("Cannot convert logs payload to metrics"),
         }
     }
 }
 
-// Wondering if this could bite someone later, might be better to do a try_from?
-impl From<OTLPPayload> for ExportTraceServiceRequest {
-    fn from(value: OTLPPayload) -> Self {
+impl TryFrom<OTLPPayload> for Vec<ResourceLogs> {
+    type Error = &'static str;
+
+    fn try_from(value: OTLPPayload) -> Result<Self, Self::Error> {
         match value {
-            OTLPPayload::Metrics(_) => ExportTraceServiceRequest::default(),
-            OTLPPayload::Traces(spans) => ExportTraceServiceRequest {
+            OTLPPayload::Logs(v) => Ok(v),
+            OTLPPayload::Traces(_) => Err("Cannot convert traces payload to logs"),
+            OTLPPayload::Metrics(_) => Err("Cannot convert metrics payload to logs"),
+        }
+    }
+}
+
+impl TryFrom<OTLPPayload> for ExportTraceServiceRequest {
+    type Error = &'static str;
+
+    fn try_from(value: OTLPPayload) -> Result<Self, Self::Error> {
+        match value {
+            OTLPPayload::Traces(spans) => Ok(ExportTraceServiceRequest {
                 resource_spans: spans,
-            },
+            }),
+            OTLPPayload::Metrics(_) => {
+                Err("Cannot convert metrics payload to trace service request")
+            }
+            OTLPPayload::Logs(_) => Err("Cannot convert logs payload to trace service request"),
         }
     }
 }
 
-impl From<OTLPPayload> for ExportMetricsServiceRequest {
-    fn from(value: OTLPPayload) -> Self {
+impl TryFrom<OTLPPayload> for ExportMetricsServiceRequest {
+    type Error = &'static str;
+
+    fn try_from(value: OTLPPayload) -> Result<Self, Self::Error> {
         match value {
-            OTLPPayload::Metrics(metrics) => ExportMetricsServiceRequest {
+            OTLPPayload::Metrics(metrics) => Ok(ExportMetricsServiceRequest {
                 resource_metrics: metrics,
-            },
-            OTLPPayload::Traces(_) => ExportMetricsServiceRequest::default(),
+            }),
+            OTLPPayload::Traces(_) => {
+                Err("Cannot convert traces payload to metrics service request")
+            }
+            OTLPPayload::Logs(_) => Err("Cannot convert logs payload to metrics service request"),
+        }
+    }
+}
+
+impl TryFrom<OTLPPayload> for ExportLogsServiceRequest {
+    type Error = &'static str;
+
+    fn try_from(value: OTLPPayload) -> Result<Self, Self::Error> {
+        match value {
+            OTLPPayload::Logs(logs) => Ok(ExportLogsServiceRequest {
+                resource_logs: logs,
+            }),
+            OTLPPayload::Traces(_) => Err("Cannot convert traces payload to logs service request"),
+            OTLPPayload::Metrics(_) => {
+                Err("Cannot convert metrics payload to logs service request")
+            }
         }
     }
 }

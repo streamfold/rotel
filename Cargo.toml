@@ -61,7 +61,8 @@ indexmap = "2.9.0"
 hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
-figment = {  version = "0.10.19", default-features = false, features = ["env"] }
+rdkafka = { version = "0.36", features = ["tokio", "libz", "ssl", "zstd", "cmake-build"] }
+figment = { version = "0.10.19", default-features = false, features = ["env"] }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
@@ -70,6 +71,7 @@ httpmock = "0.7.0"
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tracing-test = "0.2.5"
 tempfile = "3.19.1"
+rdkafka = { version = "0.36", features = ["tokio", "libz", "ssl", "zstd", "cmake-build"] }
 
 [build-dependencies]
 prost-build = "0.13.4"
@@ -77,6 +79,7 @@ prost-build = "0.13.4"
 [features]
 pprof = ["dep:pprof"]
 pyo3 = ["dep:pyo3", "dep:rotel_python_processor_sdk"]
+integration-tests = []
 
 
 [[bench]]

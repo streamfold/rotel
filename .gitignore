@@ -6,4 +6,5 @@ rotel_python_processor_sdk/.env/
 rotel_python_processor_sdk/rotel_sdk/*.so
 rotel_python_processor_sdk/.idea
 rotel_python_processor_sdk/processors/__pycache__
+CLAUDE.md
 
