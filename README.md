@@ -244,6 +244,9 @@ For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com
 
 ### Kafka exporter configuration (Experimental)
 
+In order to run the Kafka exporter you will need to build with the `--features rdkafka` option. i.e. `cargo build
+--release --features rdkafka`
+
 The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka exporter supports metrics,
 logs, and traces.
 

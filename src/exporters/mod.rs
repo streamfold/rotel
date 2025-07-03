@@ -3,6 +3,7 @@
 pub mod blackhole;
 pub mod clickhouse;
 pub mod datadog;
+#[cfg(feature = "rdkafka")]
 pub mod kafka;
 pub mod otlp;
 pub mod xray;

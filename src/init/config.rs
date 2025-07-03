@@ -1,5 +1,6 @@
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
+#[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::KafkaExporterConfig;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
@@ -7,6 +8,7 @@ use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+#[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::{
     OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
@@ -86,6 +88,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
+    #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterArgs),
 }
 
@@ -120,6 +123,7 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
+    #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
 }
 
@@ -251,10 +255,12 @@ impl TryIntoConfig for ExporterArgs {
 
                 Ok(ExporterConfig::Xray(builder))
             }
+            #[cfg(feature = "rdkafka")]
             ExporterArgs::Kafka(k) => {
                 if k.brokers.is_empty() {
                     return Err("must specify a Kafka broker address".into());
                 }
+                #[cfg(feature = "rdkafka")]
                 Ok(ExporterConfig::Kafka(k.build_config()))
             }
         }
@@ -419,6 +425,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 
             Ok(ExporterArgs::Xray(args))
         }
+        #[cfg(feature = "rdkafka")]
         "kafka" => {
             let args: KafkaExporterArgs = match figment.extract() {
                 Ok(args) => args,
@@ -475,6 +482,7 @@ fn get_single_exporter_config(
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
             cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
         }
+        #[cfg(feature = "rdkafka")]
         Exporter::Kafka => {
             let kafka_config = config.kafka_exporter.build_config();
             cfg.traces = Some(ExporterConfig::Kafka(kafka_config.clone()));
