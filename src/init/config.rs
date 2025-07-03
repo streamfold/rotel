@@ -1,18 +1,18 @@
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
 use crate::exporters::kafka::config::KafkaExporterConfig;
-use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
+use crate::exporters::otlp::Endpoint;
 use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::otlp_exporter::{
-    OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
+    build_logs_config, build_metrics_config, build_traces_config, OTLPExporterBaseArgs,
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
-use figment::{Figment, providers::Env};
+use figment::{providers::Env, Figment};
 use gethostname::gethostname;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -85,6 +85,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
+    Kafka(KafkaExporterConfig),
 }
 
 #[derive(PartialEq)]
