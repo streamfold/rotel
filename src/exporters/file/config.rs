@@ -30,7 +30,7 @@ pub struct FileExporterConfig {
     pub format: FileExporterFormat,
 
     /// The directory where files will be written
-    pub path: PathBuf,
+    pub output_dir: PathBuf,
 
     /// How often to flush data to disk (e.g., "5s")
     pub flush_interval: Duration,
@@ -49,7 +49,7 @@ impl FileExporterConfig {
     ) -> Self {
         Self {
             format,
-            path,
+            output_dir: path,
             flush_interval,
             parquet_compression,
         }
@@ -69,18 +69,18 @@ impl FileExporterConfig {
         // Format validation is now handled by the enum type itself, no need to validate
 
         // Validate path
-        if !self.path.exists() {
+        if !self.output_dir.exists() {
             // Recovery: Suggest creating the directory
             return Err(ConfigError::InvalidPath(format!(
                 "Path does not exist: {}. Create the directory or set a valid path.",
-                self.path.display()
+                self.output_dir.display()
             )));
         }
 
-        if !self.path.is_dir() {
+        if !self.output_dir.is_dir() {
             return Err(ConfigError::InvalidPath(format!(
                 "Path is not a directory: {}",
-                self.path.display()
+                self.output_dir.display()
             )));
         }
 
@@ -106,7 +106,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let config = FileExporterConfig {
             format: FileExporterFormat::Parquet,
-            path: temp_dir.path().to_path_buf(),
+            output_dir: temp_dir.path().to_path_buf(),
             flush_interval: Duration::from_secs(5),
             parquet_compression: ParquetCompression::Snappy,
         };
@@ -121,7 +121,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let config = FileExporterConfig {
             format: FileExporterFormat::Parquet,
-            path: temp_dir.path().to_path_buf(),
+            output_dir: temp_dir.path().to_path_buf(),
             flush_interval: Duration::from_secs(0),
             parquet_compression: ParquetCompression::Snappy,
         };
