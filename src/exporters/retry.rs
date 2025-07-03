@@ -8,7 +8,11 @@ use std::marker::PhantomData;
 use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::{select, sync::broadcast::{self, Sender}, time::Instant};
+use tokio::{
+    select,
+    sync::broadcast::{self, Sender},
+    time::Instant,
+};
 use tower::BoxError;
 use tower::retry::Policy;
 use tracing::info;
@@ -82,7 +86,7 @@ impl<T> RetryPolicy<T> {
             _phantom: PhantomData,
         }
     }
-    
+
     pub fn retry_broadcast(&self) -> Sender<bool> {
         self.retry_broadcast.clone()
     }
@@ -138,7 +142,7 @@ impl<T: Debug + Clone + Send + 'static> Policy<EncodedRequest, T, BoxError> for 
                     status = ?result,
                     "Exporting failed, will retry again after delay.",
                 );
-                
+
                 let mut rx = self.retry_broadcast.subscribe();
                 let fut = async move {
                     let delay_fut = tokio::time::sleep(sleep_duration);
