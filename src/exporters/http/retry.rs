@@ -8,7 +8,11 @@ use std::future::Future;
 use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
-use tokio::{select, sync::broadcast::{self, Sender}, time::Instant};
+use tokio::{
+    select,
+    sync::broadcast::{self, Sender},
+    time::Instant,
+};
 use tower::BoxError;
 use tower::retry::Policy;
 use tracing::info;
@@ -189,7 +193,7 @@ mod tests {
     use crate::exporters::http::response::Response;
     use http::{Request, StatusCode};
     use std::time::Duration;
-    use tokio::time::Instant;
+    use tokio::time::{Instant, timeout};
     use tower::BoxError;
     use tower::retry::Policy;
 
@@ -350,6 +354,41 @@ mod tests {
 
         // Verify attempts were incremented
         assert_eq!(policy.attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn test_retry_method_returns_immediately_on_broadcast() {
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(500),
+            max_backoff: Duration::from_millis(1_000),
+            max_elapsed_time: Duration::from_secs(5),
+        };
+        let mut policy = RetryPolicy::<()>::new(config.clone(), None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+
+        // This will timeout
+        let res = timeout(Duration::from_millis(2), future_opt.unwrap()).await;
+        assert!(res.is_err());
+
+        // Try again with broadcast
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let retry_broadcast = policy.retry_broadcast();
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(future_opt.is_some());
+
+        let res = retry_broadcast.send(true);
+        assert!(res.is_ok());
+
+        // Should be ok
+        let res = timeout(Duration::from_millis(2), future_opt.unwrap()).await;
+        assert!(res.is_ok());
     }
 
     #[test]
