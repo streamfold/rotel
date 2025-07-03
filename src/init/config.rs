@@ -6,6 +6,7 @@ use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+use crate::init::file_exporter::FileExporterArgs;
 use crate::init::otlp_exporter::{
     OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
 };
@@ -84,6 +85,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
+    File(FileExporterArgs),
 }
 
 #[derive(PartialEq)]
@@ -117,6 +119,7 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
+    File(crate::exporters::file::config::FileExporterConfig),
 }
 
 impl TryIntoConfig for ExporterArgs {
@@ -246,6 +249,15 @@ impl TryIntoConfig for ExporterArgs {
                     XRayExporterConfigBuilder::new(xray.region, xray.custom_endpoint.clone());
 
                 Ok(ExporterConfig::Xray(builder))
+            }
+            ExporterArgs::File(file) => {
+                let config = crate::exporters::file::config::FileExporterConfig::new(
+                    file.file_exporter_format,
+                    file.file_exporter_output_dir.clone(),
+                    file.file_exporter_flush_interval,
+                    file.file_exporter_parquet_compression,
+                );
+                Ok(ExporterConfig::File(config))
             }
         }
     }
@@ -457,6 +469,12 @@ fn get_single_exporter_config(
         Exporter::AwsXray => {
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
             cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+        }
+        Exporter::File => {
+            let args = ExporterArgs::File(config.file_exporter.clone());
+            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
         }
     }
 

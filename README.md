@@ -84,7 +84,7 @@ Any option above that does not contain a default is considered false or unset by
 | --otlp-grpc-endpoint              | localhost:4317       |                                                |
 | --otlp-http-endpoint              | localhost:4318       |                                                |
 | --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                |
-| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray |
+| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray, file |
 | --otlp-receiver-traces-disabled   |                      |                                                |
 | --otlp-receiver-metrics-disabled  |                      |                                                |
 | --otlp-receiver-logs-disabled     |                      |                                                |
@@ -241,6 +241,30 @@ automatically sourced from Rotel's environment on startup.
 | --xray-exporter-custom-endpoint |           |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
+
+### File exporter configuration
+
+The File exporter can be selected with `--exporter file`.  It writes telemetry
+out as periodic files on the local filesystem.  Currently **Parquet** and
+**JSON** formats are supported.
+
+| Option                                    | Default       | Description                                   |
+|-------------------------------------------|---------------|-----------------------------------------------|
+| --file-exporter-format                   | parquet       | `parquet` or `json`                           |
+| --file-exporter-output-dir               | /tmp/rotel    | Directory to place output files               |
+| --file-exporter-flush-interval           | 5s            | How often to flush accumulated telemetry to a
+                                                              new file (accepts Go-style durations like
+                                                              `30s`, `2m`, `1h`) |
+| --file-exporter-parquet-compression      | snappy        | Compression for Parquet files: `uncompressed`,
+                                                              `snappy`, `gzip`, `lz4`, `zstd`
+                                                              (only applies when format is parquet) |
+
+Each flush creates a file named `<telemetry-type>-<timestamp>.<ext>` inside the
+specified directory.  For example, with default settings Rotel will emit files
+such as `traces-20250614-120000.parquet` every five seconds.
+
+_The File exporter is useful for local debugging, offline analysis, and for
+feeding telemetry into batch-processing systems._
 
 ### Batch configuration
 

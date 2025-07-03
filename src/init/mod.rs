@@ -6,6 +6,7 @@ pub mod wait;
 
 mod clickhouse_exporter;
 mod datadog_exporter;
+pub mod file_exporter;
 mod otlp_exporter;
 mod xray_exporter;
 
