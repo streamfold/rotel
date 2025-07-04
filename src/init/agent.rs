@@ -3,6 +3,7 @@ use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
+#[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
 use crate::exporters::otlp;
 use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
@@ -348,6 +349,7 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "rdkafka")]
                 Some(ExporterConfig::Kafka(kafka_config)) => {
                     let mut traces_exporter =
                         build_traces_exporter(kafka_config, trace_pipeline_out_rx)?;
@@ -427,6 +429,7 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "rdkafka")]
                 Some(ExporterConfig::Kafka(kafka_config)) => {
                     let mut metrics_exporter =
                         build_metrics_exporter(kafka_config, metrics_pipeline_out_rx)?;
@@ -490,6 +493,7 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "rdkafka")]
                 Some(ExporterConfig::Kafka(kafka_config)) => {
                     let mut logs_exporter =
                         build_logs_exporter(kafka_config, logs_pipeline_out_rx)?;
