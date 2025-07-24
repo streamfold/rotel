@@ -51,7 +51,7 @@ pub(crate) fn get_metrics_ddl(
                     ("MAP_INDICES", map_indices),
                     (
                         "TTL_EXPR",
-                        build_ttl_string(ttl, "toDateTime(TimeUnix)").as_str(),
+                        build_ttl_string(ttl, "TimeUnix").as_str(),
                     ),
                     ("JSON_SETTING", json_setting),
                 ]),

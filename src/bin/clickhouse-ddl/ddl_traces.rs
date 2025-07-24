@@ -35,7 +35,7 @@ pub(crate) fn get_traces_ddl(
             ("MAP_INDICES", map_indices),
             (
                 "TTL_EXPR",
-                build_ttl_string(ttl, "toDateTime(Timestamp)").as_str(),
+                build_ttl_string(ttl, "Timestamp").as_str(),
             ),
             ("JSON_SETTING", json_setting),
         ]),
@@ -52,7 +52,7 @@ pub(crate) fn get_traces_ddl(
             ("ENGINE", engine),
             (
                 "TTL_EXPR",
-                build_ttl_string(ttl, "toDateTime(Start)").as_str(),
+                build_ttl_string(ttl, "Start").as_str(),
             ),
         ]),
     );
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 	INDEX idx_duration Duration TYPE minmax GRANULARITY 1
 ) ENGINE = %%ENGINE%%
 PARTITION BY toDate(Timestamp)
-ORDER BY (ServiceName, SpanName, toDateTime(Timestamp))
+ORDER BY (ServiceName, SpanName, Timestamp)
 %%TTL_EXPR%%
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
 ;
@@ -130,8 +130,8 @@ const TRACES_TABLE_MAP_INDICES_SQL: &str = r#"
 const TRACES_TABLE_ID_TS_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
      TraceId String CODEC(ZSTD(1)),
-     Start DateTime CODEC(Delta, ZSTD(1)),
-     End DateTime CODEC(Delta, ZSTD(1)),
+     Start DateTime64(9) CODEC(Delta, ZSTD(1)),
+     End DateTime64(9) CODEC(Delta, ZSTD(1)),
      INDEX idx_trace_id TraceId TYPE bloom_filter(0.01) GRANULARITY 1
 ) ENGINE = %%ENGINE%%
 PARTITION BY toDate(Start)
