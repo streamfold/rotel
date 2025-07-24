@@ -53,6 +53,7 @@ pub struct KafkaExporterArgs {
 
     /// Compression type (gzip, snappy, lz4, zstd, none)
     #[arg(
+        id("KAFKA_EXPORTER_COMPRESSION"),
         long("kafka-exporter-compression"),
         env = "ROTEL_KAFKA_EXPORTER_COMPRESSION"
     )]
