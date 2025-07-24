@@ -143,6 +143,11 @@ SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 const TRACES_TABLE_ID_TS_MV_SQL: &str = r#"
 CREATE MATERIALIZED VIEW IF NOT EXISTS %%TABLE%% %%CLUSTER%%
 TO %%TABLE_ID_TS%%
+(
+	TraceId String,
+	Start DateTime64(9),
+	End DateTime64(9)
+)
 AS SELECT
 	TraceId,
 	min(Timestamp) as Start,
