@@ -4,7 +4,7 @@ use rdkafka::ClientConfig;
 use std::collections::HashMap;
 
 /// Serialization format for Kafka messages
-#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SerializationFormat {
     /// JSON format
     Json,
@@ -13,7 +13,7 @@ pub enum SerializationFormat {
 }
 
 /// Kafka acknowledgement configuration
-#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AcknowledgementMode {
     /// No acknowledgement required (acks=0) - fastest but least durable
     None,
@@ -21,6 +21,30 @@ pub enum AcknowledgementMode {
     One,
     /// Wait for all in-sync replicas to acknowledge (acks=all) - slowest but most durable
     All,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Compression {
+    None,
+    Gzip,
+    Snappy,
+    Lz4,
+    Zstd,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SaslMechanism {
+    Plain,
+    ScramSha256,
+    ScramSha512,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SecurityProtocol {
+    Plaintext,
+    Ssl,
+    SaslPlaintext,
+    SaslSsl,
 }
 
 impl Default for SerializationFormat {
@@ -36,6 +60,12 @@ impl Default for AcknowledgementMode {
     }
 }
 
+impl Default for Compression {
+    fn default() -> Self {
+        Compression::None
+    }
+}
+
 impl AcknowledgementMode {
     /// Convert to the string value expected by librdkafka
     pub fn to_kafka_value(&self) -> &'static str {
@@ -47,8 +77,44 @@ impl AcknowledgementMode {
     }
 }
 
+impl Compression {
+    /// Convert to the string value expected by librdkafka
+    pub fn to_kafka_value(&self) -> &'static str {
+        match self {
+            Compression::None => "none",
+            Compression::Gzip => "gzip",
+            Compression::Snappy => "snappy",
+            Compression::Lz4 => "lz4",
+            Compression::Zstd => "zstd",
+        }
+    }
+}
+
+impl SecurityProtocol {
+    /// Convert to the string value expected by librdkafka
+    pub fn to_kafka_value(&self) -> &'static str {
+        match self {
+            SecurityProtocol::Plaintext => "plaintext",
+            SecurityProtocol::SaslPlaintext => "sasl_plaintext",
+            SecurityProtocol::Ssl => "ssl",
+            SecurityProtocol::SaslSsl => "sasl_ssl",
+        }
+    }
+}
+
+impl SaslMechanism {
+    /// Convert to the string value expected by librdkafka
+    pub fn to_kafka_value(&self) -> &'static str {
+        match self {
+            SaslMechanism::Plain => "PLAIN",
+            SaslMechanism::ScramSha256 => "SCRAM-SHA-256",
+            SaslMechanism::ScramSha512 => "SCRAM-SHA-512",
+        }
+    }
+}
+
 /// Kafka partitioner type
-#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PartitionerType {
     /// Consistent hash partitioner
     Consistent,
@@ -139,7 +205,7 @@ pub struct KafkaExporterConfig {
     pub producer_config: HashMap<String, String>,
 
     /// Enable compression
-    pub compression: Option<String>,
+    pub compression: Compression,
 
     /// SASL username for authentication
     pub sasl_username: Option<String>,
@@ -148,10 +214,10 @@ pub struct KafkaExporterConfig {
     pub sasl_password: Option<String>,
 
     /// SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
-    pub sasl_mechanism: Option<String>,
+    pub sasl_mechanism: Option<SaslMechanism>,
 
     /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
-    pub security_protocol: Option<String>,
+    pub security_protocol: Option<SecurityProtocol>,
 }
 
 impl Default for KafkaExporterConfig {
@@ -176,7 +242,7 @@ impl Default for KafkaExporterConfig {
             partition_metrics_by_resource_attributes: false,
             partition_logs_by_resource_attributes: false,
             producer_config: HashMap::new(),
-            compression: None,
+            compression: Default::default(),
             sasl_username: None,
             sasl_password: None,
             sasl_mechanism: None,
@@ -219,8 +285,8 @@ impl KafkaExporterConfig {
     }
 
     /// Set compression type
-    pub fn with_compression(mut self, compression: String) -> Self {
-        self.compression = Some(compression);
+    pub fn with_compression(mut self, compression: Compression) -> Self {
+        self.compression = compression;
         self
     }
 
@@ -315,8 +381,8 @@ impl KafkaExporterConfig {
         mut self,
         username: String,
         password: String,
-        mechanism: String,
-        security_protocol: String,
+        mechanism: SaslMechanism,
+        security_protocol: SecurityProtocol,
     ) -> Self {
         self.sasl_username = Some(username);
         self.sasl_password = Some(password);
@@ -357,18 +423,18 @@ impl KafkaExporterConfig {
         }
 
         // Set compression if specified
-        if let Some(ref compression) = self.compression {
-            config.set("compression.type", compression);
+        if self.compression != Compression::None {
+            config.set("compression.type", self.compression.to_kafka_value());
         }
 
         // Set security configuration
         if let Some(ref protocol) = self.security_protocol {
-            config.set("security.protocol", protocol);
+            config.set("security.protocol", protocol.to_kafka_value());
         }
 
         // Set SASL configuration
         if let Some(ref mechanism) = self.sasl_mechanism {
-            config.set("sasl.mechanism", mechanism);
+            config.set("sasl.mechanism", mechanism.to_kafka_value());
         }
 
         if let Some(ref username) = self.sasl_username {

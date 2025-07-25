@@ -272,8 +272,8 @@ logs, and traces.
 | --kafka-exporter-custom-config                            |                   |                                                                             |
 | --kafka-exporter-sasl-username                            |                   |                                                                             |
 | --kafka-exporter-sasl-password                            |                   |                                                                             |
-| --kafka-exporter-sasl-mechanism                           |                   | PLAIN, SCRAM-SHA-256, SCRAM-SHA-512                                         |
-| --kafka-exporter-security-protocol                        | PLAINTEXT         | PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL                                    |
+| --kafka-exporter-sasl-mechanism                           |                   | plain, scram-sha256, scram-sha512                                           |
+| --kafka-exporter-security-protocol                        | plaintext         | plaintext, ssl, sasl-plaintext, sasl-ssl                                    |
 
 The Kafka broker addresses must be specified (comma-separated for multiple brokers). The exporter will create separate
 topics for traces, metrics, and logs. Data can be serialized as JSON or Protobuf format.

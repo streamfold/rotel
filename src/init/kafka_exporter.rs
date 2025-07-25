@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::kafka::config::{
-    AcknowledgementMode, KafkaExporterConfig, PartitionerType, SerializationFormat,
+    AcknowledgementMode, Compression, KafkaExporterConfig, PartitionerType, SaslMechanism,
+    SecurityProtocol, SerializationFormat,
 };
 use crate::init::parse::parse_key_val;
 use clap::{Args, ValueEnum};
@@ -51,15 +52,15 @@ pub struct KafkaExporterArgs {
     )]
     pub format: KafkaSerializationFormat,
 
-    /// Compression type (gzip, snappy, lz4, zstd, none)
+    /// Compression type
     #[arg(
         id("KAFKA_EXPORTER_COMPRESSION"),
         long("kafka-exporter-compression"),
         env = "ROTEL_KAFKA_EXPORTER_COMPRESSION"
     )]
-    pub compression: Option<String>,
+    pub compression: KafkaCompression,
 
-    /// Acknowledgement mode (none, one, all)
+    /// Acknowledgement mode
     #[arg(
         value_enum,
         long("kafka-exporter-acks"),
@@ -189,20 +190,20 @@ pub struct KafkaExporterArgs {
     )]
     pub sasl_password: Option<String>,
 
-    /// SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
+    /// SASL mechanism
     #[arg(
         long("kafka-exporter-sasl-mechanism"),
         env = "ROTEL_KAFKA_EXPORTER_SASL_MECHANISM"
     )]
-    pub sasl_mechanism: Option<String>,
+    pub sasl_mechanism: Option<KafkaSaslMechanism>,
 
-    /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+    /// Security protocol
     #[arg(
         long("kafka-exporter-security-protocol"),
         env = "ROTEL_KAFKA_EXPORTER_SECURITY_PROTOCOL",
         default_value = "PLAINTEXT"
     )]
-    pub security_protocol: String,
+    pub security_protocol: KafkaSecurityProtocol,
 }
 
 impl Default for KafkaExporterArgs {
@@ -227,16 +228,17 @@ impl Default for KafkaExporterArgs {
             partition_metrics_by_resource_attributes: false,
             partition_logs_by_resource_attributes: false,
             custom_config: vec![],
-            compression: None,
+            compression: Default::default(),
             sasl_username: None,
             sasl_password: None,
             sasl_mechanism: None,
-            security_protocol: "".to_string(),
+            security_protocol: Default::default(),
         }
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum, serde::Deserialize)]
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum KafkaSerializationFormat {
     Json,
     Protobuf,
@@ -248,7 +250,24 @@ impl Default for KafkaSerializationFormat {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum, serde::Deserialize)]
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KafkaCompression {
+    None,
+    Gzip,
+    Snappy,
+    Lz4,
+    Zstd,
+}
+
+impl Default for KafkaCompression {
+    fn default() -> Self {
+        KafkaCompression::None
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum KafkaAcknowledgementMode {
     /// No acknowledgement required (acks=0) - fastest but least durable
     None,
@@ -264,7 +283,44 @@ impl Default for KafkaAcknowledgementMode {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KafkaSaslMechanism {
+    /// SASL/PLAIN mechanism
+    Plain,
+    /// SASL/SCRAM-SHA-256 mechanism
+    ScramSha256,
+    /// SASL/SCRAM-SHA-512 mechanism
+    ScramSha512,
+}
+
+impl Default for KafkaSaslMechanism {
+    fn default() -> Self {
+        KafkaSaslMechanism::Plain
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KafkaSecurityProtocol {
+    /// Plaintext protocol
+    Plaintext,
+    /// SSL/TLS protocol
+    Ssl,
+    /// SASL/PLAINTEXT protocol
+    SaslPlaintext,
+    /// SASL/SSL protocol
+    SaslSsl,
+}
+
+impl Default for KafkaSecurityProtocol {
+    fn default() -> Self {
+        KafkaSecurityProtocol::Plaintext
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum KafkaPartitionerType {
     /// Consistent hash partitioner
     Consistent,
@@ -283,6 +339,39 @@ pub enum KafkaPartitionerType {
 impl Default for KafkaPartitionerType {
     fn default() -> Self {
         KafkaPartitionerType::ConsistentRandom
+    }
+}
+
+impl From<KafkaCompression> for Compression {
+    fn from(value: KafkaCompression) -> Self {
+        match value {
+            KafkaCompression::None => Compression::None,
+            KafkaCompression::Gzip => Compression::Gzip,
+            KafkaCompression::Snappy => Compression::Snappy,
+            KafkaCompression::Lz4 => Compression::Lz4,
+            KafkaCompression::Zstd => Compression::Zstd,
+        }
+    }
+}
+
+impl From<KafkaSaslMechanism> for SaslMechanism {
+    fn from(value: KafkaSaslMechanism) -> Self {
+        match value {
+            KafkaSaslMechanism::Plain => SaslMechanism::Plain,
+            KafkaSaslMechanism::ScramSha256 => SaslMechanism::ScramSha256,
+            KafkaSaslMechanism::ScramSha512 => SaslMechanism::ScramSha512,
+        }
+    }
+}
+
+impl From<KafkaSecurityProtocol> for SecurityProtocol {
+    fn from(value: KafkaSecurityProtocol) -> Self {
+        match value {
+            KafkaSecurityProtocol::Plaintext => SecurityProtocol::Plaintext,
+            KafkaSecurityProtocol::Ssl => SecurityProtocol::Ssl,
+            KafkaSecurityProtocol::SaslPlaintext => SecurityProtocol::SaslPlaintext,
+            KafkaSecurityProtocol::SaslSsl => SecurityProtocol::SaslSsl,
+        }
     }
 }
 
@@ -327,6 +416,7 @@ impl KafkaExporterArgs {
             .with_serialization_format(self.format.into())
             .with_acks(self.acks.into())
             .with_client_id(self.client_id.clone())
+            .with_compression(self.compression.into())
             .with_max_message_bytes(self.max_message_bytes)
             .with_linger_ms(self.linger_ms)
             .with_retries(self.retries)
@@ -342,26 +432,63 @@ impl KafkaExporterArgs {
             .with_partition_logs_by_resource_attributes(self.partition_logs_by_resource_attributes)
             .with_custom_config(self.custom_config.clone());
 
-        if let Some(ref compression) = self.compression {
-            config = config.with_compression(compression.clone());
-        }
-
         // Configure SASL if credentials are provided
         if let (Some(username), Some(password), Some(mechanism)) = (
             &self.sasl_username,
             &self.sasl_password,
-            &self.sasl_mechanism,
+            self.sasl_mechanism,
         ) {
             config = config.with_sasl_auth(
                 username.clone(),
                 password.clone(),
-                mechanism.clone(),
-                self.security_protocol.clone(),
+                mechanism.into(),
+                self.security_protocol.into(),
             );
         } else {
-            config.security_protocol = Some(self.security_protocol.clone());
+            config.security_protocol = Some(self.security_protocol.into());
         }
 
         config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kafka_sasl_mechanism_deserialization() {
+        let plain = serde_json::from_str::<KafkaSaslMechanism>("\"plain\"").unwrap();
+        assert_eq!(plain, KafkaSaslMechanism::Plain);
+
+        let scram_sha_256 = serde_json::from_str::<KafkaSaslMechanism>("\"scram-sha256\"").unwrap();
+        assert_eq!(scram_sha_256, KafkaSaslMechanism::ScramSha256);
+
+        let scram_sha_512 = serde_json::from_str::<KafkaSaslMechanism>("\"scram-sha512\"").unwrap();
+        assert_eq!(scram_sha_512, KafkaSaslMechanism::ScramSha512);
+    }
+
+    #[test]
+    fn test_kafka_partitioner_type_deserialization() {
+        let consistent = serde_json::from_str::<KafkaPartitionerType>("\"consistent\"").unwrap();
+        assert_eq!(consistent, KafkaPartitionerType::Consistent);
+
+        let consistent_random =
+            serde_json::from_str::<KafkaPartitionerType>("\"consistent-random\"").unwrap();
+        assert_eq!(consistent_random, KafkaPartitionerType::ConsistentRandom);
+
+        let murmur2_random =
+            serde_json::from_str::<KafkaPartitionerType>("\"murmur2-random\"").unwrap();
+        assert_eq!(murmur2_random, KafkaPartitionerType::Murmur2Random);
+
+        let murmur2 = serde_json::from_str::<KafkaPartitionerType>("\"murmur2\"").unwrap();
+        assert_eq!(murmur2, KafkaPartitionerType::Murmur2);
+
+        let fnv1a = serde_json::from_str::<KafkaPartitionerType>("\"fnv1a\"").unwrap();
+        assert_eq!(fnv1a, KafkaPartitionerType::Fnv1a);
+
+        let fnv1a_random =
+            serde_json::from_str::<KafkaPartitionerType>("\"fnv1a-random\"").unwrap();
+        assert_eq!(fnv1a_random, KafkaPartitionerType::Fnv1aRandom);
     }
 }
