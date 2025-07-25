@@ -3,7 +3,8 @@
 #[cfg(test)]
 mod tests {
     use crate::exporters::kafka::config::{
-        AcknowledgementMode, KafkaExporterConfig, PartitionerType, SerializationFormat,
+        AcknowledgementMode, Compression, KafkaExporterConfig, PartitionerType, SaslMechanism,
+        SecurityProtocol, SerializationFormat,
     };
     use crate::exporters::kafka::errors::KafkaExportError;
     use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
@@ -25,14 +26,14 @@ mod tests {
             .with_metrics_topic("my_metrics".to_string())
             .with_logs_topic("my_logs".to_string())
             .with_serialization_format(SerializationFormat::Protobuf)
-            .with_compression("gzip".to_string());
+            .with_compression(Compression::Gzip);
 
         assert_eq!(config.brokers, "broker1:9092,broker2:9092");
         assert_eq!(config.traces_topic, Some("my_traces".to_string()));
         assert_eq!(config.metrics_topic, Some("my_metrics".to_string()));
         assert_eq!(config.logs_topic, Some("my_logs".to_string()));
         assert_eq!(config.serialization_format, SerializationFormat::Protobuf);
-        assert_eq!(config.compression, Some("gzip".to_string()));
+        assert_eq!(config.compression, Compression::Gzip);
     }
 
     #[test]
@@ -40,14 +41,14 @@ mod tests {
         let config = KafkaExporterConfig::new("broker:9092".to_string()).with_sasl_auth(
             "username".to_string(),
             "password".to_string(),
-            "PLAIN".to_string(),
-            "SASL_SSL".to_string(),
+            SaslMechanism::Plain,
+            SecurityProtocol::SaslSsl,
         );
 
         assert_eq!(config.sasl_username, Some("username".to_string()));
         assert_eq!(config.sasl_password, Some("password".to_string()));
-        assert_eq!(config.sasl_mechanism, Some("PLAIN".to_string()));
-        assert_eq!(config.security_protocol, Some("SASL_SSL".to_string()));
+        assert_eq!(config.sasl_mechanism, Some(SaslMechanism::Plain));
+        assert_eq!(config.security_protocol, Some(SecurityProtocol::SaslSsl));
     }
 
     #[test]
