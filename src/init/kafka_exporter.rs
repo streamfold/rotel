@@ -57,7 +57,7 @@ pub struct KafkaExporterArgs {
         id("KAFKA_EXPORTER_COMPRESSION"),
         long("kafka-exporter-compression"),
         env = "ROTEL_KAFKA_EXPORTER_COMPRESSION",
-        default_value = "none",
+        default_value = "none"
     )]
     pub compression: KafkaCompression,
 
