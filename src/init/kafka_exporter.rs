@@ -56,7 +56,8 @@ pub struct KafkaExporterArgs {
     #[arg(
         id("KAFKA_EXPORTER_COMPRESSION"),
         long("kafka-exporter-compression"),
-        env = "ROTEL_KAFKA_EXPORTER_COMPRESSION"
+        env = "ROTEL_KAFKA_EXPORTER_COMPRESSION",
+        default_value = "none"
     )]
     pub compression: KafkaCompression,
 
@@ -201,7 +202,7 @@ pub struct KafkaExporterArgs {
     #[arg(
         long("kafka-exporter-security-protocol"),
         env = "ROTEL_KAFKA_EXPORTER_SECURITY_PROTOCOL",
-        default_value = "PLAINTEXT"
+        default_value = "plaintext"
     )]
     pub security_protocol: KafkaSecurityProtocol,
 }
