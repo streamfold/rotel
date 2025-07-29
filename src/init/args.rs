@@ -99,13 +99,13 @@ pub struct AgentRun {
     )]
     pub otlp_receiver_logs_http_path: String,
 
-    #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append)]
+    #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
     pub otlp_with_trace_processor: Vec<String>,
 
-    #[arg(long, env = "ROTEL_OTLP_WITH_LOGS_PROCESSOR", action = clap::ArgAction::Append)]
+    #[arg(long, env = "ROTEL_OTLP_WITH_LOGS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
     pub otlp_with_logs_processor: Vec<String>,
 
-    #[arg(long, env = "ROTEL_OTLP_WITH_METRICS_PROCESSOR", action = clap::ArgAction::Append)]
+    #[arg(long, env = "ROTEL_OTLP_WITH_METRICS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
     pub otlp_with_metrics_processor: Vec<String>,
 
     /// Comma-separated, key=value pairs of resource attributes to set
