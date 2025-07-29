@@ -16,7 +16,7 @@ RUN add-apt-repository ppa:deadsnakes/ppa && \
     apt update
 
 # Install Python 3.13 and pip
-RUN apt install -y python3.13 python3.13-venv python3.13-distutils python3.13-dev && \
+RUN apt install -y python3.13 python3.13-venv && \
     apt clean && \
     rm -rf /var/lib/apt/lists/*
 
