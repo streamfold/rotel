@@ -15,10 +15,10 @@ See attributes_processor_test.py for complete usage examples. Basic usage:
             # Hash sensitive data
             ActionKeyValue(key="user.id", action=Action.HASH),
             # Delete attributes matching pattern
-            ActionKeyValue(key="", action=Action.DELETE, regex_pattern=r".*\.secret$"),
+            ActionKeyValue(key="", action=Action.DELETE, regex_pattern=r".*\\.secret$"),
             # Extract values using regex
             ActionKeyValue(key="raw_data", action=Action.EXTRACT,
-                         regex_pattern=r"id:(?P<extracted_id>\d+)"),
+                         regex_pattern=r"id:(?P<extracted_id>\\d+)"),
             # Convert attribute types
             ActionKeyValue(key="temp_str_int", action=Action.CONVERT, converted_type="int"),
         ]
