@@ -2,6 +2,9 @@ FROM ubuntu:22.04
 
 ARG TARGETARCH
 
+# Set environment variables for non-interactive apt operations
+ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y ca-certificates && apt-get install -y software-properties-common && apt-get clean
 
 # Set environment variables to prevent Python from writing .pyc files and to unbuffer stdout/stderr
@@ -12,15 +15,13 @@ ENV PYTHONUNBUFFERED 1
 RUN add-apt-repository ppa:deadsnakes/ppa && \
     apt update
 
-# Install Python 3.13 and its associated pip
-RUN apt install -y python3.13 python3.13-venv python3.13-dev
+# Install Python 3.13 and pip
+RUN apt install -y python3.13 python3.13-venv python3.13-distutils python3.13-dev && \
+    apt clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# (Optional) Set Python 3.13 as the default 'python3' executable
-# This uses update-alternatives to manage different Python versions
+# Set Python 3.13 as the default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
-
-# (Optional) Install pip for Python 3.13
-RUN python3.13 -m ensurepip --default-pip
 
 COPY target/${TARGETARCH}/rotel /rotel
 RUN chmod 0755 /rotel
