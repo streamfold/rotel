@@ -1,8 +1,12 @@
 name: processor-release
 
 on:
-  release:
-    types: [ created ]
+  push:
+    branches:
+      - 'docker-processor-test/*' # Matches any branch starting with 'feature/'
+#on:
+#  release:
+#    types: [ created ]
 
 jobs:
   release:
@@ -125,11 +129,17 @@ jobs:
         run: $CARGO_BIN test --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
       - name: build
         run: $CARGO_BIN build --release --features pyo3 --locked --target ${{ matrix.target }}
-      - name: tar
-        run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
-      - name: upload
-        run: |
-          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
-          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload build
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotel-processor-build-${{ matrix.target }}
+          path: target/
+#      - name: tar
+#        run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
+#      - name: upload
+#        run: |
+#          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
+#          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
