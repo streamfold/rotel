@@ -23,7 +23,7 @@ and a compact binary size, simplifying deployment without the need for a sidecar
 - **Python:** [streamfold/pyrotel](https://github.com/streamfold/pyrotel)
 - **Node.js:** [streamfold/rotel-nodejs](https://github.com/streamfold/rotel-nodejs)
 
-We also have a custom AWS Lambda Extension layer that embeds the Rotel collector to provide an OpenTelemetry collection
+We also have a custom AWS Lambda Extension layer that embeds the Rotel collector to provide OpenTelemetry collection
 with minimal coldstart latency:
 
 - **Rotel Lambda Extension**: [streamfold/rotel-lambda-extension](https://github.com/streamfold/rotel-lambda-extension)
