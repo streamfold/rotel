@@ -612,6 +612,23 @@ tags:
 
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
 
+Rotel releases with built-in Python Processor support and Python 3.13 are also available
+on [Dockerhub](https://hub.docker.com/repository/docker/streamfold/rotel-python-processors/general)
+with the following tags:
+
+* `streamfold/rotel-python-processors:<release name>`
+* `streamfold/rotel-python-processors:latest`
+* `streamfold/rotel-python-processors:sha-<sha>`
+
+When running an image, you can mount directories from your local filesystem as volumes to provide processor code
+to the container with `-v` flag, for example: `-v ~/my_processor_directory:/processors`. You can then start rotel and
+pass in processors like the example below.
+
+```
+docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors streamfold/rotel-python-processors:latest 
+--exporter blackhole --debug-log traces --debug-log-verbosity detailed --otlp-with-trace-processor /processors/my_processor.py`
+```
+
 ## Community
 
 Want to chat about this project, share feedback, or suggest improvements? Join
