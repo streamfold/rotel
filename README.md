@@ -603,7 +603,8 @@ may include logging from third-party crates used in Rotel.
 
 ## Docker images
 
-On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following
+On release, the base Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the
+following
 tags:
 
 * `streamfold/rotel:<release name>`
@@ -611,6 +612,21 @@ tags:
 * `streamfold/rotel:sha-<sha>`
 
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
+
+Rotel releases with built-in Python Processor support and Python 3.13 are also available
+on [Dockerhub](https://hub.docker.com/repository/docker/streamfold/rotel-python-processors/general)
+with the following tags:
+
+* `streamfold/rotel-python-processors:<release name>`
+* `streamfold/rotel-python-processors:latest`
+* `streamfold/rotel-python-processors:sha-<sha>`
+
+When running an image, you can mount directories in your local filesystem as volumes to provide processor code
+to the container with `-v` flag, for example: `-v ~/my_processor_directory:/processors` and then start the rotel like
+so.
+
+`docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors streamfold/rotel-python-processors:latest 
+--exporter blackhole --debug-log traces --debug-log-verbosity detailed --otlp-with-trace-processor /processors/my_processor.py`
 
 ## Community
 
