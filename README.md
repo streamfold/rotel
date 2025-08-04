@@ -603,8 +603,7 @@ may include logging from third-party crates used in Rotel.
 
 ## Docker images
 
-On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the
-following
+On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following
 tags:
 
 * `streamfold/rotel:<release name>`
