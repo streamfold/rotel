@@ -1,6 +1,13 @@
 # Developing
 
-Rotel depends on the latest Rust toolchain, we recommend [rustup](https://rustup.rs/). You will also need to have `cmake` installed.
+Rotel depends on the latest Rust toolchain, we recommend [rustup](https://rustup.rs/). 
+
+# Additional Dependencies
+* gcc or another compiler with linker for libc
+* cmake
+* openssl
+* protoc
+* libzstd-dev
 
 ## Building and running
 
