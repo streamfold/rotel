@@ -8,11 +8,10 @@ use std::fmt::{Display, Formatter};
 
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
-use crate::exporters::http::exporter::{Exporter, ResultLogger};
+use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
-use crate::exporters::http::response::Response;
 use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
@@ -26,7 +25,8 @@ use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
-use tracing::error;
+
+use super::http::finalizer::SuccessStatusFinalizer;
 
 mod request_builder;
 mod transformer;
@@ -47,7 +47,7 @@ type ExporterType<'a, Resource> = Exporter<
     >,
     SvcType,
     Full<Bytes>,
-    XRayResultLogger,
+    SuccessStatusFinalizer,
 >;
 
 #[derive(Copy, Clone, Debug, Deserialize)]
@@ -247,9 +247,7 @@ impl XRayExporterBuilder {
             "traces",
             enc_stream,
             svc,
-            XRayResultLogger {
-                telemetry_type: "traces".to_string(),
-            },
+            SuccessStatusFinalizer::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -269,22 +267,6 @@ impl ResponseDecode<()> for XRayTraceDecoder {
     }
 }
 
-pub struct XRayResultLogger {
-    telemetry_type: String,
-}
-
-impl ResultLogger<Response<()>> for XRayResultLogger {
-    fn handle(&self, resp: Response<()>) {
-        match resp.status_code().as_u16() {
-            200..=202 => {}
-            _ => error!(
-                telemetry_type = self.telemetry_type,
-                "Failed to export to X-Ray: {:?}", resp
-            ),
-        };
-    }
-}
-
 #[cfg(test)]
 mod tests {
     extern crate utilities;
@@ -298,7 +280,7 @@ mod tests {
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
     use tokio::join;
-    use tokio_test::assert_ok;
+    use tokio_test::{assert_err, assert_ok};
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
@@ -349,13 +331,13 @@ mod tests {
         let cancellation_token = CancellationToken::new();
 
         let cancel_clone = cancellation_token.clone();
-        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let traces = FakeOTLP::trace_service_request();
         btx.send(traces.resource_spans).await.unwrap();
         drop(btx);
         let res = join!(jh);
-        assert_ok!(res.0);
+        assert_err!(res.0.unwrap()); // failed to drain
 
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }

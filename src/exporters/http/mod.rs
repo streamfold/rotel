@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod exporter;
+pub mod finalizer;
 pub mod grpc_client;
 pub mod http_client;
 pub mod request;
