@@ -1,5 +1,5 @@
 use super::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
-use crate::exporters::file::{FileExporter, FileExporterError, Result};
+use crate::exporters::file::{FileExporterError, Result};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -67,23 +67,11 @@ impl ParquetExporter {
             .map_err(|e| FileExporterError::Export(format!("Failed to close writer: {}", e)))?;
         Ok(())
     }
-}
 
-// The FileExporter trait is still implemented for legacy/JSON compatibility, but
-// the new API is preferred for typed row export.
-impl FileExporter for ParquetExporter {
-    /// Exports raw JSON data after basic validation. While Parquet export is
-    /// primarily intended for typed Arrow `RecordBatch` input, a minimal JSON
-    /// compatibility layer is retained to satisfy legacy unit-tests.
-    fn export(&self, data: &[u8], path: &Path) -> Result<()> {
-        // Re-use `validate` to ensure the data is acceptable.
-        self.validate(data)?;
-        std::fs::write(path, data).map_err(FileExporterError::Io)
-    }
-
-    /// Performs lightweight validation ensuring the payload is a **non-empty**
-    /// JSON array (e.g. `[{...}, {...}]`).
-    fn validate(&self, data: &[u8]) -> Result<()> {
+    /// Validates JSON data for legacy compatibility - performs lightweight validation 
+    /// ensuring the payload is a **non-empty** JSON array (e.g. `[{...}, {...}]`).
+    /// This is kept for testing purposes.
+    pub fn validate_json(&self, data: &[u8]) -> Result<()> {
         let value: Value = serde_json::from_slice(data)
             .map_err(|e| FileExporterError::InvalidData(format!("Failed to parse JSON: {}", e)))?;
 
@@ -99,10 +87,6 @@ impl FileExporter for ParquetExporter {
 
         Ok(())
     }
-
-    fn get_supported_formats(&self) -> Vec<String> {
-        vec!["parquet".to_string()]
-    }
 }
 
 impl Default for ParquetExporter {
@@ -114,14 +98,6 @@ impl Default for ParquetExporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_get_supported_formats() {
-        let exporter = ParquetExporter::new();
-        let formats = exporter.get_supported_formats();
-        assert_eq!(formats, vec!["parquet"]);
-    }
 
     #[test]
     fn test_validate_valid_json() {
@@ -131,7 +107,7 @@ mod tests {
             {"id": 2, "name": "test2"}
         ]"#
         .as_bytes();
-        let result = exporter.validate(data);
+        let result = exporter.validate_json(data);
         assert!(result.is_ok());
     }
 
@@ -139,7 +115,7 @@ mod tests {
     fn test_validate_invalid_json() {
         let exporter = ParquetExporter::new();
         let data = r#"invalid json"#.as_bytes();
-        let result = exporter.validate(data);
+        let result = exporter.validate_json(data);
         assert!(result.is_err());
     }
 
@@ -147,24 +123,8 @@ mod tests {
     fn test_validate_empty_array() {
         let exporter = ParquetExporter::new();
         let data = r#"[]"#.as_bytes();
-        let result = exporter.validate(data);
+        let result = exporter.validate_json(data);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_export_valid_data() {
-        let exporter = ParquetExporter::new();
-        let data = r#"[
-            {"id": 1, "name": "test1"},
-            {"id": 2, "name": "test2"}
-        ]"#
-        .as_bytes();
-        let path = PathBuf::from("test.parquet");
-        let result = exporter.export(data, &path);
-        assert!(result.is_ok());
-
-        // Clean up
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -179,11 +139,8 @@ mod tests {
 
         // Just verify they can be created without error
         // In a real test, we'd check that the compression is actually applied to the output files
-        assert_eq!(gzip_exporter.get_supported_formats(), vec!["parquet"]);
-        assert_eq!(lz4_exporter.get_supported_formats(), vec!["parquet"]);
-        assert_eq!(
-            uncompressed_exporter.get_supported_formats(),
-            vec!["parquet"]
-        );
+        let _ = gzip_exporter;
+        let _ = lz4_exporter;
+        let _ = uncompressed_exporter;
     }
 }

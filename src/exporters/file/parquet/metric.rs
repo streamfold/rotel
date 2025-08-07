@@ -9,7 +9,6 @@ use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 
 use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
-// No longer using the macros since we consume data directly
 
 // Static schema created once and reused for all metric record batches
 static METRIC_SCHEMA: std::sync::LazyLock<Arc<Schema>> = std::sync::LazyLock::new(|| {

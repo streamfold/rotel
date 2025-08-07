@@ -26,40 +26,8 @@ pub trait ToRecordBatch {
 }
 
 // ---------------------------------------------------------------------------
-// Helper macros & functions to reduce boiler-plate when creating Arrow arrays
+// Helper functions to reduce boiler-plate when creating Arrow arrays
 // ---------------------------------------------------------------------------
-
-/// Build a `StringArray` from a field on every row.
-#[macro_export]
-macro_rules! build_string_array {
-    ($rows:expr, $field:ident) => {
-        arrow::array::StringArray::from($rows.into_iter().map(|r| r.$field).collect::<Vec<_>>())
-    };
-}
-
-/// Build a `UInt64Array` from an integer field.
-#[macro_export]
-macro_rules! build_u64_array {
-    ($rows:expr, $field:ident) => {
-        arrow::array::UInt64Array::from($rows.into_iter().map(|r| r.$field).collect::<Vec<_>>())
-    };
-}
-
-/// Build a `Int64Array` from an integer field.
-#[macro_export]
-macro_rules! build_i64_array {
-    ($rows:expr, $field:ident) => {
-        arrow::array::Int64Array::from($rows.into_iter().map(|r| r.$field).collect::<Vec<_>>())
-    };
-}
-
-/// Build a `UInt8Array` from a `u8` field.
-#[macro_export]
-macro_rules! build_u8_array {
-    ($rows:expr, $field:ident) => {
-        arrow::array::UInt8Array::from($rows.into_iter().map(|r| r.$field).collect::<Vec<_>>())
-    };
-}
 
 /// Convert `MapOrJson` to its serialized string representation.
 pub(crate) fn map_or_json_to_string(m: &MapOrJson) -> String {

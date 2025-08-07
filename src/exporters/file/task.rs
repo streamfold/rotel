@@ -1,9 +1,7 @@
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::file::config::FileExporterConfig;
 use crate::exporters::file::json::JsonExporter;
 use crate::exporters::file::parquet::{LogRecordRow, MetricRow, ParquetExporter, SpanRow};
-use crate::exporters::file::{FileExporterError, Result};
-use crate::init::file_exporter::FileExporterFormat;
+use crate::exporters::file::Result;
 use chrono::Utc;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -109,133 +107,6 @@ impl TypedFileExporter for JsonExporter {
     }
 }
 
-pub async fn run_file_exporter(
-    config: FileExporterConfig,
-    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
-    token: CancellationToken,
-) -> Result<()> {
-    let format = config.format;
-    let path = config.output_dir;
-    let flush_interval = config.flush_interval;
-
-    // Create output directories if they don't exist
-    let traces_dir = path.join("spans");
-    let metrics_dir = path.join("metrics");
-    let logs_dir = path.join("logs");
-
-    std::fs::create_dir_all(&traces_dir).map_err(FileExporterError::Io)?;
-    std::fs::create_dir_all(&metrics_dir).map_err(FileExporterError::Io)?;
-    std::fs::create_dir_all(&logs_dir).map_err(FileExporterError::Io)?;
-
-    info!(
-        "File exporter started, writing {} data to {}",
-        format,
-        path.display()
-    );
-
-    match format {
-        FileExporterFormat::Parquet => {
-            let compression = config.parquet_compression.to_parquet_compression();
-            let exporter = std::sync::Arc::new(ParquetExporter::with_compression(compression));
-            run_exporter_tasks(
-                exporter,
-                traces_dir,
-                metrics_dir,
-                logs_dir,
-                traces_rx,
-                metrics_rx,
-                logs_rx,
-                flush_interval,
-                token,
-            )
-            .await
-        }
-        FileExporterFormat::Json => {
-            let exporter = std::sync::Arc::new(JsonExporter::new());
-            run_exporter_tasks(
-                exporter,
-                traces_dir,
-                metrics_dir,
-                logs_dir,
-                traces_rx,
-                metrics_rx,
-                logs_rx,
-                flush_interval,
-                token,
-            )
-            .await
-        }
-    }
-}
-
-/// Helper function to spawn and join exporter tasks for traces, metrics, and logs
-async fn run_exporter_tasks<E>(
-    exporter: std::sync::Arc<E>,
-    traces_dir: std::path::PathBuf,
-    metrics_dir: std::path::PathBuf,
-    logs_dir: std::path::PathBuf,
-    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
-    flush_interval: std::time::Duration,
-    token: CancellationToken,
-) -> Result<()>
-where
-    E: TypedFileExporter + Send + Sync + 'static,
-{
-    let traces_task = {
-        let exporter = exporter.clone();
-        let traces_dir = traces_dir.clone();
-        let token = token.clone();
-        tokio::spawn(async move {
-            run_traces_loop(exporter, traces_dir, traces_rx, flush_interval, token).await
-        })
-    };
-
-    let metrics_task = {
-        let exporter = exporter.clone();
-        let metrics_dir = metrics_dir.clone();
-        let token = token.clone();
-        tokio::spawn(async move {
-            run_metrics_loop(exporter, metrics_dir, metrics_rx, flush_interval, token).await
-        })
-    };
-
-    let logs_task = {
-        let exporter = exporter.clone();
-        let logs_dir = logs_dir.clone();
-        let token = token.clone();
-        tokio::spawn(async move {
-            run_logs_loop(exporter, logs_dir, logs_rx, flush_interval, token).await
-        })
-    };
-
-    let (traces_result, metrics_result, logs_result) =
-        tokio::join!(traces_task, metrics_task, logs_task);
-
-    if let Err(e) = traces_result {
-        return Err(FileExporterError::Export(format!(
-            "Traces task failed: {}",
-            e
-        )));
-    }
-    if let Err(e) = metrics_result {
-        return Err(FileExporterError::Export(format!(
-            "Metrics task failed: {}",
-            e
-        )));
-    }
-    if let Err(e) = logs_result {
-        return Err(FileExporterError::Export(format!(
-            "Logs task failed: {}",
-            e
-        )));
-    }
-
-    Ok(())
-}
 
 /// Event loop for processing trace data
 pub async fn run_traces_loop<E>(

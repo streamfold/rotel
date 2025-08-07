@@ -15,7 +15,6 @@ use crate::exporters::file::FileExporterError;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json;
-// No longer using the macros since we consume data directly
 
 // Static schema created once and reused for all span record batches
 static SPAN_SCHEMA: std::sync::LazyLock<Arc<Schema>> = std::sync::LazyLock::new(|| {

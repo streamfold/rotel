@@ -1,4 +1,3 @@
-use std::path::Path;
 use thiserror::Error;
 
 /// Errors that can occur during file export operations.
@@ -29,30 +28,6 @@ pub enum FileExporterError {
 /// Result type for file exporter operations.
 pub type Result<T> = std::result::Result<T, FileExporterError>;
 
-/// Trait defining the core functionality for file exporters.
-///
-/// All methods return a `Result` with detailed error context. Implementations should provide
-/// actionable error messages and propagate context for easier debugging and recovery.
-pub trait FileExporter: Send + Sync {
-    /// Export data to a file at the specified path.
-    ///
-    /// # Errors
-    ///
-    /// Returns `FileExporterError::Io` for file system errors,
-    /// `FileExporterError::InvalidData` for malformed data,
-    /// or `FileExporterError::Export` for Parquet/Arrow failures.
-    fn export(&self, data: &[u8], path: &Path) -> Result<()>;
-
-    /// Validate the data before export.
-    ///
-    /// # Errors
-    ///
-    /// Returns `FileExporterError::InvalidData` if the data is not valid for export.
-    fn validate(&self, data: &[u8]) -> Result<()>;
-
-    /// Get list of supported file formats.
-    fn get_supported_formats(&self) -> Vec<String>;
-}
 
 pub mod config;
 pub mod json;
