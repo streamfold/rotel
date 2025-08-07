@@ -16,10 +16,10 @@ pub async fn run_traces_loop<E>(
     token: CancellationToken,
 ) -> Result<()>
 where
-    E: TypedFileExporter + Send + Sync,
+    E: TypedFileExporter<ResourceSpans> + Send + Sync,
 {
     let file_ext = exporter.file_extension();
-    let mut span_buffer: Vec<E::SpanData> = Vec::new();
+    let mut span_buffer: Vec<E::Data> = Vec::new();
     let mut flush_timer = tokio::time::interval(flush_interval);
 
     loop {
@@ -29,7 +29,7 @@ where
                     Some(traces) => {
                         // Process incoming traces
                         for resource_spans in traces {
-                            let mut converted_spans = exporter.convert_spans(&resource_spans)?;
+                            let mut converted_spans = exporter.convert(&resource_spans)?;
                             span_buffer.append(&mut converted_spans);
                         }
                     }
@@ -63,10 +63,10 @@ pub async fn run_metrics_loop<E>(
     token: CancellationToken,
 ) -> Result<()>
 where
-    E: TypedFileExporter + Send + Sync,
+    E: TypedFileExporter<ResourceMetrics> + Send + Sync,
 {
     let file_ext = exporter.file_extension();
-    let mut metric_buffer: Vec<E::MetricData> = Vec::new();
+    let mut metric_buffer: Vec<E::Data> = Vec::new();
     let mut flush_timer = tokio::time::interval(flush_interval);
 
     loop {
@@ -76,7 +76,7 @@ where
                     Some(metrics) => {
                         // Process incoming metrics
                         for resource_metrics in metrics {
-                            let mut converted_metrics = exporter.convert_metrics(&resource_metrics)?;
+                            let mut converted_metrics = exporter.convert(&resource_metrics)?;
                             metric_buffer.append(&mut converted_metrics);
                         }
                     }
@@ -110,10 +110,10 @@ pub async fn run_logs_loop<E>(
     token: CancellationToken,
 ) -> Result<()>
 where
-    E: TypedFileExporter + Send + Sync,
+    E: TypedFileExporter<ResourceLogs> + Send + Sync,
 {
     let file_ext = exporter.file_extension();
-    let mut log_buffer: Vec<E::LogData> = Vec::new();
+    let mut log_buffer: Vec<E::Data> = Vec::new();
     let mut flush_timer = tokio::time::interval(flush_interval);
 
     loop {
@@ -123,7 +123,7 @@ where
                     Some(logs) => {
                         // Process incoming logs
                         for resource_logs in logs {
-                            let mut converted_logs = exporter.convert_logs(&resource_logs)?;
+                            let mut converted_logs = exporter.convert(&resource_logs)?;
                             log_buffer.append(&mut converted_logs);
                         }
                     }
@@ -151,18 +151,18 @@ where
 /// Helper function to flush span data to disk
 fn flush_spans<E>(
     exporter: &E,
-    span_buffer: &mut Vec<E::SpanData>,
+    span_buffer: &mut Vec<E::Data>,
     traces_dir: &std::path::Path,
     file_ext: &str,
 ) -> Result<()>
 where
-    E: TypedFileExporter,
+    E: TypedFileExporter<ResourceSpans>,
 {
     if !span_buffer.is_empty() {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let rows = span_buffer.len();
         let file_path = traces_dir.join(format!("spans_{}{}", timestamp, file_ext));
-        exporter.export_spans(span_buffer, &file_path)?;
+        exporter.export(span_buffer, &file_path)?;
         debug!(rows, path=%file_path.display(), "Flushed spans file");
         span_buffer.clear();
     }
@@ -172,18 +172,18 @@ where
 /// Helper function to flush metrics data to disk
 fn flush_metrics<E>(
     exporter: &E,
-    metric_buffer: &mut Vec<E::MetricData>,
+    metric_buffer: &mut Vec<E::Data>,
     metrics_dir: &std::path::Path,
     file_ext: &str,
 ) -> Result<()>
 where
-    E: TypedFileExporter,
+    E: TypedFileExporter<ResourceMetrics>,
 {
     if !metric_buffer.is_empty() {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let rows = metric_buffer.len();
         let file_path = metrics_dir.join(format!("metrics_{}{}", timestamp, file_ext));
-        exporter.export_metrics(metric_buffer, &file_path)?;
+        exporter.export(metric_buffer, &file_path)?;
         debug!(rows, path=%file_path.display(), "Flushed metrics file");
         metric_buffer.clear();
     }
@@ -193,18 +193,18 @@ where
 /// Helper function to flush logs data to disk
 fn flush_logs<E>(
     exporter: &E,
-    log_buffer: &mut Vec<E::LogData>,
+    log_buffer: &mut Vec<E::Data>,
     logs_dir: &std::path::Path,
     file_ext: &str,
 ) -> Result<()>
 where
-    E: TypedFileExporter,
+    E: TypedFileExporter<ResourceLogs>,
 {
     if !log_buffer.is_empty() {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let rows = log_buffer.len();
         let file_path = logs_dir.join(format!("logs_{}{}", timestamp, file_ext));
-        exporter.export_logs(log_buffer, &file_path)?;
+        exporter.export(log_buffer, &file_path)?;
         debug!(rows, path=%file_path.display(), "Flushed logs file");
         log_buffer.clear();
     }

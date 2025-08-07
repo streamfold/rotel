@@ -43,32 +43,46 @@ impl JsonExporter {
     }
 }
 
-impl TypedFileExporter for JsonExporter {
-    type SpanData = ResourceSpans;
-    type MetricData = ResourceMetrics;
-    type LogData = ResourceLogs;
+impl TypedFileExporter<ResourceSpans> for JsonExporter {
+    type Data = ResourceSpans;
 
-    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
+    fn convert(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::Data>> {
         Ok(vec![resource_spans.clone()])
     }
 
-    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
-        Ok(vec![resource_metrics.clone()])
-    }
-
-    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
-        Ok(vec![resource_logs.clone()])
-    }
-
-    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()> {
+    fn export(&self, data: &[Self::Data], path: &Path) -> Result<()> {
         self.export_traces(data, path)
     }
 
-    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()> {
+    fn file_extension(&self) -> &'static str {
+        ".json"
+    }
+}
+
+impl TypedFileExporter<ResourceMetrics> for JsonExporter {
+    type Data = ResourceMetrics;
+
+    fn convert(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::Data>> {
+        Ok(vec![resource_metrics.clone()])
+    }
+
+    fn export(&self, data: &[Self::Data], path: &Path) -> Result<()> {
         self.export_metrics(data, path)
     }
 
-    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()> {
+    fn file_extension(&self) -> &'static str {
+        ".json"
+    }
+}
+
+impl TypedFileExporter<ResourceLogs> for JsonExporter {
+    type Data = ResourceLogs;
+
+    fn convert(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::Data>> {
+        Ok(vec![resource_logs.clone()])
+    }
+
+    fn export(&self, data: &[Self::Data], path: &Path) -> Result<()> {
         self.export_logs(data, path)
     }
 

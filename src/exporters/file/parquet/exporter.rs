@@ -92,32 +92,46 @@ impl ParquetExporter {
     }
 }
 
-impl TypedFileExporter for ParquetExporter {
-    type SpanData = SpanRow;
-    type MetricData = MetricRow;
-    type LogData = LogRecordRow;
+impl TypedFileExporter<ResourceSpans> for ParquetExporter {
+    type Data = SpanRow;
 
-    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
+    fn convert(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::Data>> {
         SpanRow::from_resource_spans(resource_spans)
     }
 
-    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
-        MetricRow::from_resource_metrics(resource_metrics)
-    }
-
-    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
-        LogRecordRow::from_resource_logs(resource_logs)
-    }
-
-    fn export_spans(&self, data: &[Self::SpanData], path: &std::path::Path) -> Result<()> {
+    fn export(&self, data: &[Self::Data], path: &std::path::Path) -> Result<()> {
         self.export_span_rows(data, path)
     }
 
-    fn export_metrics(&self, data: &[Self::MetricData], path: &std::path::Path) -> Result<()> {
+    fn file_extension(&self) -> &'static str {
+        ".parquet"
+    }
+}
+
+impl TypedFileExporter<ResourceMetrics> for ParquetExporter {
+    type Data = MetricRow;
+
+    fn convert(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::Data>> {
+        MetricRow::from_resource_metrics(resource_metrics)
+    }
+
+    fn export(&self, data: &[Self::Data], path: &std::path::Path) -> Result<()> {
         self.export_metric_rows(data, path)
     }
 
-    fn export_logs(&self, data: &[Self::LogData], path: &std::path::Path) -> Result<()> {
+    fn file_extension(&self) -> &'static str {
+        ".parquet"
+    }
+}
+
+impl TypedFileExporter<ResourceLogs> for ParquetExporter {
+    type Data = LogRecordRow;
+
+    fn convert(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::Data>> {
+        LogRecordRow::from_resource_logs(resource_logs)
+    }
+
+    fn export(&self, data: &[Self::Data], path: &std::path::Path) -> Result<()> {
         self.export_log_record_rows(data, path)
     }
 
