@@ -28,6 +28,38 @@ pub enum FileExporterError {
 /// Result type for file exporter operations.
 pub type Result<T> = std::result::Result<T, FileExporterError>;
 
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::path::Path;
+
+/// Generic trait for file exporters that can handle different data formats
+pub trait TypedFileExporter {
+    /// The type used to represent span data in this exporter
+    type SpanData: Clone + Send;
+    /// The type used to represent metric data in this exporter
+    type MetricData: Clone + Send;
+    /// The type used to represent log data in this exporter
+    type LogData: Clone + Send;
+
+    /// Convert ResourceSpans to the exporter's span data format
+    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>>;
+    /// Convert ResourceMetrics to the exporter's metric data format
+    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>>;
+    /// Convert ResourceLogs to the exporter's log data format
+    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>>;
+
+    /// Export span data to a file
+    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()>;
+    /// Export metric data to a file
+    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()>;
+    /// Export log data to a file
+    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()>;
+
+    /// Get the file extension for this exporter
+    fn file_extension(&self) -> &'static str;
+}
+
 
 pub mod config;
 pub mod json;

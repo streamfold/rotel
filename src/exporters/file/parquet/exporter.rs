@@ -1,5 +1,8 @@
 use super::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
-use crate::exporters::file::{FileExporterError, Result};
+use crate::exporters::file::{FileExporterError, Result, TypedFileExporter};
+use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -86,6 +89,40 @@ impl ParquetExporter {
         }
 
         Ok(())
+    }
+}
+
+impl TypedFileExporter for ParquetExporter {
+    type SpanData = SpanRow;
+    type MetricData = MetricRow;
+    type LogData = LogRecordRow;
+
+    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
+        SpanRow::from_resource_spans(resource_spans)
+    }
+
+    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
+        MetricRow::from_resource_metrics(resource_metrics)
+    }
+
+    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
+        LogRecordRow::from_resource_logs(resource_logs)
+    }
+
+    fn export_spans(&self, data: &[Self::SpanData], path: &std::path::Path) -> Result<()> {
+        self.export_span_rows(data, path)
+    }
+
+    fn export_metrics(&self, data: &[Self::MetricData], path: &std::path::Path) -> Result<()> {
+        self.export_metric_rows(data, path)
+    }
+
+    fn export_logs(&self, data: &[Self::LogData], path: &std::path::Path) -> Result<()> {
+        self.export_log_record_rows(data, path)
+    }
+
+    fn file_extension(&self) -> &'static str {
+        ".parquet"
     }
 }
 

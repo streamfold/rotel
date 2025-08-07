@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::exporters::file::{FileExporterError, Result};
+use crate::exporters::file::{FileExporterError, Result, TypedFileExporter};
 
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -40,6 +40,40 @@ impl JsonExporter {
     /// Export logs (`Vec<ResourceLogs>`) as JSON.
     pub fn export_logs(&self, logs: &[ResourceLogs], path: &Path) -> Result<()> {
         self.export_payload(logs, path)
+    }
+}
+
+impl TypedFileExporter for JsonExporter {
+    type SpanData = ResourceSpans;
+    type MetricData = ResourceMetrics;
+    type LogData = ResourceLogs;
+
+    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
+        Ok(vec![resource_spans.clone()])
+    }
+
+    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
+        Ok(vec![resource_metrics.clone()])
+    }
+
+    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
+        Ok(vec![resource_logs.clone()])
+    }
+
+    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()> {
+        self.export_traces(data, path)
+    }
+
+    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()> {
+        self.export_metrics(data, path)
+    }
+
+    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()> {
+        self.export_logs(data, path)
+    }
+
+    fn file_extension(&self) -> &'static str {
+        ".json"
     }
 }
 

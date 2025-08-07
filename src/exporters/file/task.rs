@@ -1,112 +1,11 @@
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::file::json::JsonExporter;
-use crate::exporters::file::parquet::{LogRecordRow, MetricRow, ParquetExporter, SpanRow};
-use crate::exporters::file::Result;
+use crate::exporters::file::{Result, TypedFileExporter};
 use chrono::Utc;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use std::path::Path;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
-
-/// Generic trait for file exporters that can handle different data formats
-pub trait TypedFileExporter {
-    /// The type used to represent span data in this exporter
-    type SpanData: Clone + Send;
-    /// The type used to represent metric data in this exporter
-    type MetricData: Clone + Send;
-    /// The type used to represent log data in this exporter
-    type LogData: Clone + Send;
-
-    /// Convert ResourceSpans to the exporter's span data format
-    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>>;
-    /// Convert ResourceMetrics to the exporter's metric data format
-    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>>;
-    /// Convert ResourceLogs to the exporter's log data format
-    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>>;
-
-    /// Export span data to a file
-    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()>;
-    /// Export metric data to a file
-    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()>;
-    /// Export log data to a file
-    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()>;
-
-    /// Get the file extension for this exporter
-    fn file_extension(&self) -> &'static str;
-}
-
-/// Implementation of TypedFileExporter for ParquetExporter
-impl TypedFileExporter for ParquetExporter {
-    type SpanData = SpanRow;
-    type MetricData = MetricRow;
-    type LogData = LogRecordRow;
-
-    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
-        SpanRow::from_resource_spans(resource_spans)
-    }
-
-    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
-        MetricRow::from_resource_metrics(resource_metrics)
-    }
-
-    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
-        LogRecordRow::from_resource_logs(resource_logs)
-    }
-
-    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()> {
-        self.export_span_rows(data, path)
-    }
-
-    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()> {
-        self.export_metric_rows(data, path)
-    }
-
-    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()> {
-        self.export_log_record_rows(data, path)
-    }
-
-    fn file_extension(&self) -> &'static str {
-        ".parquet"
-    }
-}
-
-/// Implementation of TypedFileExporter for JsonExporter
-impl TypedFileExporter for JsonExporter {
-    type SpanData = ResourceSpans;
-    type MetricData = ResourceMetrics;
-    type LogData = ResourceLogs;
-
-    fn convert_spans(&self, resource_spans: &ResourceSpans) -> Result<Vec<Self::SpanData>> {
-        Ok(vec![resource_spans.clone()])
-    }
-
-    fn convert_metrics(&self, resource_metrics: &ResourceMetrics) -> Result<Vec<Self::MetricData>> {
-        Ok(vec![resource_metrics.clone()])
-    }
-
-    fn convert_logs(&self, resource_logs: &ResourceLogs) -> Result<Vec<Self::LogData>> {
-        Ok(vec![resource_logs.clone()])
-    }
-
-    fn export_spans(&self, data: &[Self::SpanData], path: &Path) -> Result<()> {
-        self.export_traces(data, path)
-    }
-
-    fn export_metrics(&self, data: &[Self::MetricData], path: &Path) -> Result<()> {
-        self.export_metrics(data, path)
-    }
-
-    fn export_logs(&self, data: &[Self::LogData], path: &Path) -> Result<()> {
-        self.export_logs(data, path)
-    }
-
-    fn file_extension(&self) -> &'static str {
-        ".json"
-    }
-}
-
 
 /// Event loop for processing trace data
 pub async fn run_traces_loop<E>(
