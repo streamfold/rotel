@@ -360,51 +360,23 @@ impl Agent {
                     });
                 }
                 Some(ExporterConfig::File(config)) => {
-                    let format = config.format;
-                    let flush_interval = config.flush_interval;
-                    let traces_dir = config.output_dir.join("spans");
-
-                    std::fs::create_dir_all(&traces_dir)
-                        .map_err(|e| format!("Failed to create traces directory: {}", e))?;
+                    let exporter = crate::exporters::file::FileExporterBuilder::build_traces_exporter(
+                        &config,
+                        trace_pipeline_out_rx,
+                    )?;
 
                     let token = exporters_cancel.clone();
-                    match format {
-                        crate::init::file_exporter::FileExporterFormat::Parquet => {
-                            let compression = config.parquet_compression.to_parquet_compression();
-                            let exporter = std::sync::Arc::new(
-                                crate::exporters::file::parquet::ParquetExporter::with_compression(
-                                    compression,
-                                ),
+                    exporters_task_set.spawn(async move {
+                        let res = exporter.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = %e,
+                                exporter_type = "file_traces",
+                                "File exporter returned from run loop with error."
                             );
-                            exporters_task_set.spawn(async move {
-                                crate::exporters::file::task::run_traces_loop(
-                                    exporter,
-                                    traces_dir,
-                                    trace_pipeline_out_rx,
-                                    flush_interval,
-                                    token,
-                                )
-                                .await
-                                .map_err(|e| e.into())
-                            });
                         }
-                        crate::init::file_exporter::FileExporterFormat::Json => {
-                            let exporter = std::sync::Arc::new(
-                                crate::exporters::file::json::JsonExporter::new(),
-                            );
-                            exporters_task_set.spawn(async move {
-                                crate::exporters::file::task::run_traces_loop(
-                                    exporter,
-                                    traces_dir,
-                                    trace_pipeline_out_rx,
-                                    flush_interval,
-                                    token,
-                                )
-                                .await
-                                .map_err(|e| e.into())
-                            });
-                        }
-                    }
+                        Ok(())
+                    });
                 }
                 None => {}
             }
@@ -487,51 +459,23 @@ impl Agent {
                     });
                 }
                 Some(ExporterConfig::File(config)) => {
-                    let format = config.format;
-                    let flush_interval = config.flush_interval;
-                    let metrics_dir = config.output_dir.join("metrics");
-
-                    std::fs::create_dir_all(&metrics_dir)
-                        .map_err(|e| format!("Failed to create metrics directory: {}", e))?;
+                    let exporter = crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
+                        &config,
+                        metrics_pipeline_out_rx,
+                    )?;
 
                     let token = exporters_cancel.clone();
-                    match format {
-                        crate::init::file_exporter::FileExporterFormat::Parquet => {
-                            let compression = config.parquet_compression.to_parquet_compression();
-                            let exporter = std::sync::Arc::new(
-                                crate::exporters::file::parquet::ParquetExporter::with_compression(
-                                    compression,
-                                ),
+                    exporters_task_set.spawn(async move {
+                        let res = exporter.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = %e,
+                                exporter_type = "file_metrics",
+                                "File exporter returned from run loop with error."
                             );
-                            exporters_task_set.spawn(async move {
-                                crate::exporters::file::task::run_metrics_loop(
-                                    exporter,
-                                    metrics_dir,
-                                    metrics_pipeline_out_rx,
-                                    flush_interval,
-                                    token,
-                                )
-                                .await
-                                .map_err(|e| e.into())
-                            });
                         }
-                        crate::init::file_exporter::FileExporterFormat::Json => {
-                            let exporter = std::sync::Arc::new(
-                                crate::exporters::file::json::JsonExporter::new(),
-                            );
-                            exporters_task_set.spawn(async move {
-                                crate::exporters::file::task::run_metrics_loop(
-                                    exporter,
-                                    metrics_dir,
-                                    metrics_pipeline_out_rx,
-                                    flush_interval,
-                                    token,
-                                )
-                                .await
-                                .map_err(|e| e.into())
-                            });
-                        }
-                    }
+                        Ok(())
+                    });
                 }
                 _ => {}
             }
@@ -598,51 +542,23 @@ impl Agent {
                     });
                 }
                 Some(ExporterConfig::File(config)) => {
-                    let format = config.format;
-                    let flush_interval = config.flush_interval;
-                    let logs_dir = config.output_dir.join("logs");
-
-                    std::fs::create_dir_all(&logs_dir)
-                        .map_err(|e| format!("Failed to create logs directory: {}", e))?;
+                    let exporter = crate::exporters::file::FileExporterBuilder::build_logs_exporter(
+                        &config,
+                        logs_pipeline_out_rx,
+                    )?;
 
                     let token = exporters_cancel.clone();
-                    match format {
-                        crate::init::file_exporter::FileExporterFormat::Parquet => {
-                            let compression = config.parquet_compression.to_parquet_compression();
-                            let exporter = std::sync::Arc::new(
-                                crate::exporters::file::parquet::ParquetExporter::with_compression(
-                                    compression,
-                                ),
+                    exporters_task_set.spawn(async move {
+                        let res = exporter.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = %e,
+                                exporter_type = "file_logs",
+                                "File exporter returned from run loop with error."
                             );
-                            exporters_task_set.spawn(async move {
-                                crate::exporters::file::task::run_logs_loop(
-                                    exporter,
-                                    logs_dir,
-                                    logs_pipeline_out_rx,
-                                    flush_interval,
-                                    token,
-                                )
-                                .await
-                                .map_err(|e| e.into())
-                            });
                         }
-                        crate::init::file_exporter::FileExporterFormat::Json => {
-                            let exporter = std::sync::Arc::new(
-                                crate::exporters::file::json::JsonExporter::new(),
-                            );
-                            exporters_task_set.spawn(async move {
-                                crate::exporters::file::task::run_logs_loop(
-                                    exporter,
-                                    logs_dir,
-                                    logs_pipeline_out_rx,
-                                    flush_interval,
-                                    token,
-                                )
-                                .await
-                                .map_err(|e| e.into())
-                            });
-                        }
-                    }
+                        Ok(())
+                    });
                 }
                 _ => {}
             }
