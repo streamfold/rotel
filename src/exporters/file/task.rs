@@ -67,7 +67,15 @@ pub async fn run_traces_loop<E>(
 where
     E: TypedFileExporter<ResourceSpans> + Send + Sync,
 {
-    run_generic_loop(exporter, traces_dir, traces_rx, flush_interval, token, "Traces").await
+    run_generic_loop(
+        exporter,
+        traces_dir,
+        traces_rx,
+        flush_interval,
+        token,
+        "Traces",
+    )
+    .await
 }
 
 /// Event loop for processing metrics data
@@ -81,7 +89,15 @@ pub async fn run_metrics_loop<E>(
 where
     E: TypedFileExporter<ResourceMetrics> + Send + Sync,
 {
-    run_generic_loop(exporter, metrics_dir, metrics_rx, flush_interval, token, "Metrics").await
+    run_generic_loop(
+        exporter,
+        metrics_dir,
+        metrics_rx,
+        flush_interval,
+        token,
+        "Metrics",
+    )
+    .await
 }
 
 /// Event loop for processing logs data
@@ -112,7 +128,12 @@ where
     if !buffer.is_empty() {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let rows = buffer.len();
-        let file_name = format!("{}_{}{}", telemetry_type.to_lowercase(), timestamp, file_ext);
+        let file_name = format!(
+            "{}_{}{}",
+            telemetry_type.to_lowercase(),
+            timestamp,
+            file_ext
+        );
         let file_path = output_dir.join(file_name);
         exporter.export(buffer, &file_path)?;
         debug!(rows, path=%file_path.display(), "Flushed {} file", telemetry_type.to_lowercase());
@@ -120,4 +141,3 @@ where
     }
     Ok(())
 }
-

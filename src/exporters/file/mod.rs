@@ -45,7 +45,6 @@ pub trait TypedFileExporter<Resource> {
     fn file_extension(&self) -> &'static str;
 }
 
-
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::file::config::FileExporterConfig;
 use crate::init::file_exporter::FileExporterFormat;
@@ -66,7 +65,10 @@ pub struct TracesFileExporter {
 }
 
 impl TracesFileExporter {
-    pub async fn start(self, cancel_token: CancellationToken) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn start(
+        self,
+        cancel_token: CancellationToken,
+    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
                 let compression = self.parquet_compression.to_parquet_compression();
@@ -109,7 +111,10 @@ pub struct MetricsFileExporter {
 }
 
 impl MetricsFileExporter {
-    pub async fn start(self, cancel_token: CancellationToken) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn start(
+        self,
+        cancel_token: CancellationToken,
+    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
                 let compression = self.parquet_compression.to_parquet_compression();
@@ -152,7 +157,10 @@ pub struct LogsFileExporter {
 }
 
 impl LogsFileExporter {
-    pub async fn start(self, cancel_token: CancellationToken) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn start(
+        self,
+        cancel_token: CancellationToken,
+    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
                 let compression = self.parquet_compression.to_parquet_compression();

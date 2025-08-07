@@ -1,9 +1,9 @@
 use super::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
 use crate::exporters::file::{FileExporterError, Result, TypedFileExporter};
+use arrow::record_batch::RecordBatch;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
@@ -71,7 +71,7 @@ impl ParquetExporter {
         Ok(())
     }
 
-    /// Validates JSON data for legacy compatibility - performs lightweight validation 
+    /// Validates JSON data for legacy compatibility - performs lightweight validation
     /// ensuring the payload is a **non-empty** JSON array (e.g. `[{...}, {...}]`).
     /// This is kept for testing purposes.
     pub fn validate_json(&self, data: &[u8]) -> Result<()> {

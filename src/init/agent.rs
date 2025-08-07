@@ -360,10 +360,11 @@ impl Agent {
                     });
                 }
                 Some(ExporterConfig::File(config)) => {
-                    let exporter = crate::exporters::file::FileExporterBuilder::build_traces_exporter(
-                        &config,
-                        trace_pipeline_out_rx,
-                    )?;
+                    let exporter =
+                        crate::exporters::file::FileExporterBuilder::build_traces_exporter(
+                            &config,
+                            trace_pipeline_out_rx,
+                        )?;
 
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
@@ -459,10 +460,11 @@ impl Agent {
                     });
                 }
                 Some(ExporterConfig::File(config)) => {
-                    let exporter = crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
-                        &config,
-                        metrics_pipeline_out_rx,
-                    )?;
+                    let exporter =
+                        crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
+                            &config,
+                            metrics_pipeline_out_rx,
+                        )?;
 
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
@@ -542,10 +544,11 @@ impl Agent {
                     });
                 }
                 Some(ExporterConfig::File(config)) => {
-                    let exporter = crate::exporters::file::FileExporterBuilder::build_logs_exporter(
-                        &config,
-                        logs_pipeline_out_rx,
-                    )?;
+                    let exporter =
+                        crate::exporters::file::FileExporterBuilder::build_logs_exporter(
+                            &config,
+                            logs_pipeline_out_rx,
+                        )?;
 
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
