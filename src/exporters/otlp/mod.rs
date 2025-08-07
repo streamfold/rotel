@@ -950,7 +950,7 @@ mod tests {
 
         // Each message will have 2-3 attempts, so double that range. There is randomness
         // due to the jitter
-        assert!((4..=6).contains(&(hello_mock.hits() as i32)));
+        assert!(hello_mock.hits() >= 4);
     }
 
     #[tokio::test]

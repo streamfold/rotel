@@ -10,6 +10,8 @@ use crate::aws_api::config::AwsConfig;
 /// - Support for both metrics and traces telemetry
 ///
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::http::response::Response as HttpResponse;
+use crate::exporters::http::retry::RetryPolicy;
 use crate::exporters::otlp::client::OTLPClient;
 use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
@@ -19,7 +21,6 @@ use crate::exporters::otlp::signer::{
     AwsSigv4RequestSigner, AwsSigv4RequestSignerBuilder, RequestSigner,
 };
 use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
-use crate::exporters::retry::RetryPolicy;
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
@@ -103,7 +104,7 @@ pub fn build_traces_exporter(
     )?;
     let retry_policy = RetryPolicy::new(
         traces_config.retry_config.clone(),
-        errors::is_retryable_error,
+        Some(errors::is_retryable_error),
     );
     let retry_broadcast = retry_policy.retry_broadcast();
 
@@ -218,8 +219,11 @@ pub fn build_logs_exporter(
         sent,
         send_failed.clone(),
     )?;
-    let retry_policy =
-        RetryPolicy::new(logs_config.retry_config.clone(), errors::is_retryable_error);
+
+    let retry_policy = RetryPolicy::new(
+        logs_config.retry_config.clone(),
+        Some(errors::is_retryable_error),
+    );
     let retry_broadcast = retry_policy.retry_broadcast();
 
     let signer_builder = get_signer_builder(&logs_config);
@@ -297,7 +301,7 @@ fn _build_metrics_exporter(
     )?;
     let retry_policy = RetryPolicy::new(
         metrics_config.retry_config.clone(),
-        errors::is_retryable_error,
+        Some(errors::is_retryable_error),
     );
     let retry_broadcast = retry_policy.retry_broadcast();
 
@@ -337,7 +341,7 @@ where
     rx: BoundedReceiver<Vec<Resource>>,
     req_builder: RequestBuilder<Request, Signer>,
     encoding_futures: FuturesUnordered<EncodingFuture>,
-    export_futures: FuturesUnordered<ExportFuture<Response>>,
+    export_futures: FuturesUnordered<ExportFuture<HttpResponse<Response>>>,
     svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
@@ -404,17 +408,7 @@ where
                 biased;
 
                 Some(resp) = self.export_futures.next() => {
-                    match resp {
-                        Err(e) => {
-                            error!(error = ?e, exporter_type = type_name, "Exporting failed, dropping data.")
-                        },
-                        Ok(rs) => {
-                            debug!(exporter_type = type_name,
-                                rs = ?rs,
-                                futures_size = self.export_futures.len(),
-                                "OTLPExporter sent response.");
-                        }
-                    }
+                    self.log_if_failed(resp);
                 },
 
                 Some(v) = self.encoding_futures.next(), if self.export_futures.len() < MAX_CONCURRENT_REQUESTS => {
@@ -567,12 +561,7 @@ where
                         break;
                     }
                     Some(r) => {
-                        if let Err(e) = r {
-                            error!(type_name,
-                                error = ?e,
-                                "OTLPExporter error from endpoint."
-                            );
-
+                        if self.log_if_failed(r) {
                             drain_errors += 1;
                         }
                     }
@@ -588,6 +577,43 @@ where
             .into())
         } else {
             Ok(())
+        }
+    }
+
+    // Log if the request failed and return true, otherwise return false
+    fn log_if_failed(&self, res: Result<HttpResponse<Response>, BoxError>) -> bool {
+        let type_name = self.type_name.to_string();
+
+        match res {
+            Ok(r) => match r {
+                HttpResponse::Http(parts, _) => match parts.status.as_u16() {
+                    200..=202 => return false,
+                    _ => {
+                        error!(
+                            type_name,
+                            status = parts.status.as_u16(),
+                            "OTLPExporter failed HTTP status code from endpoint."
+                        );
+                        return true;
+                    }
+                },
+                HttpResponse::Grpc(status, _) => {
+                    if status.code() == tonic::Code::Ok {
+                        return false;
+                    }
+                    error!(type_name,
+                        status = ?status.code(),
+                        "OTLPExporter failed gRPC status code from endpoint.");
+                    return true;
+                }
+            },
+            Err(e) => {
+                error!(type_name,
+                    error = ?e,
+                    "OTLPExporter error from endpoint."
+                );
+                return true;
+            }
         }
     }
 }

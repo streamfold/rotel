@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::http::retry::RetryConfig;
 use crate::exporters::http::tls::{Config, ConfigBuilder};
 use crate::exporters::otlp::{
     Authenticator, CompressionEncoding, DEFAULT_REQUEST_TIMEOUT, Endpoint, Protocol,
 };
-use crate::exporters::retry::RetryConfig;
 use std::time::Duration;
 
 // We expect these configs might diverge, for now they are type references to the same underlying type.
