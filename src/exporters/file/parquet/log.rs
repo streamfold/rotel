@@ -6,7 +6,7 @@ use arrow::record_batch::RecordBatch;
 
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 
-use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string, attrs_to_map};
+use super::common::{MapOrJson, ToRecordBatch, attrs_to_map, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
 
 // Static schema created once and reused for all log record batches

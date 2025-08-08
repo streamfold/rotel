@@ -7,7 +7,7 @@ use arrow::record_batch::RecordBatch;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 
-use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string, attrs_to_map};
+use super::common::{MapOrJson, ToRecordBatch, attrs_to_map, map_or_json_to_string};
 use crate::exporters::file::FileExporterError;
 
 // Static schema created once and reused for all metric record batches
@@ -146,7 +146,6 @@ impl MetricRow {
     pub fn from_resource_metrics(
         resource_metrics: &ResourceMetrics,
     ) -> Result<Vec<MetricRow>, FileExporterError> {
-
         // Resource-level attributes ----------------------------
         let resource_attrs = resource_metrics
             .resource

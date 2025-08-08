@@ -8,8 +8,8 @@ use arrow::record_batch::RecordBatch;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 use super::common::{
-    MapOrJson, ToRecordBatch, map_or_json_to_string, vec_maporjson_to_list_array,
-    vec_string_to_list_array, vec_u64_to_list_array, attrs_to_map,
+    MapOrJson, ToRecordBatch, attrs_to_map, map_or_json_to_string, vec_maporjson_to_list_array,
+    vec_string_to_list_array, vec_u64_to_list_array,
 };
 use crate::exporters::file::FileExporterError;
 
@@ -223,7 +223,6 @@ impl SpanRow {
         } else {
             "unknown".to_string()
         };
-
 
         // Helper to convert span kind to string ----------------------------------
         fn span_kind_to_string(kind: i32) -> String {

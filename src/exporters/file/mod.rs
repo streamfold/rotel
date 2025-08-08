@@ -72,9 +72,9 @@ impl TracesFileExporter {
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
-                let exporter = Arc::new(
-                    ParquetExporter::with_compression(self.parquet_compression.into()),
-                );
+                let exporter = Arc::new(ParquetExporter::with_compression(
+                    self.parquet_compression.into(),
+                ));
                 crate::exporters::file::task::run_traces_loop(
                     exporter,
                     self.output_dir,
@@ -117,9 +117,9 @@ impl MetricsFileExporter {
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
-                let exporter = Arc::new(
-                    ParquetExporter::with_compression(self.parquet_compression.into()),
-                );
+                let exporter = Arc::new(ParquetExporter::with_compression(
+                    self.parquet_compression.into(),
+                ));
                 crate::exporters::file::task::run_metrics_loop(
                     exporter,
                     self.output_dir,
@@ -162,9 +162,9 @@ impl LogsFileExporter {
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
-                let exporter = Arc::new(
-                    ParquetExporter::with_compression(self.parquet_compression.into()),
-                );
+                let exporter = Arc::new(ParquetExporter::with_compression(
+                    self.parquet_compression.into(),
+                ));
                 crate::exporters::file::task::run_logs_loop(
                     exporter,
                     self.output_dir,
