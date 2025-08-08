@@ -1,5 +1,6 @@
 use super::{LogRecordRow, MetricRow, SpanRow, ToRecordBatch};
 use crate::exporters::file::{FileExporterError, Result, TypedFileExporter};
+use crate::init::file_exporter::ParquetCompression;
 use arrow::record_batch::RecordBatch;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -7,7 +8,6 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
-use serde_json::Value;
 use std::path::Path;
 
 /// A Parquet file exporter implementation
@@ -17,9 +17,9 @@ pub struct ParquetExporter {
 }
 
 impl ParquetExporter {
-    /// Creates a new ParquetExporter with default settings (SNAPPY compression)
+    /// Creates a new ParquetExporter with default settings
     pub fn new() -> Self {
-        Self::with_compression(Compression::SNAPPY)
+        Self::with_compression(ParquetCompression::default().into())
     }
 
     /// Creates a new ParquetExporter with specified compression
@@ -68,26 +68,6 @@ impl ParquetExporter {
         writer
             .close()
             .map_err(|e| FileExporterError::Export(format!("Failed to close writer: {}", e)))?;
-        Ok(())
-    }
-
-    /// Validates JSON data for legacy compatibility - performs lightweight validation
-    /// ensuring the payload is a **non-empty** JSON array (e.g. `[{...}, {...}]`).
-    /// This is kept for testing purposes.
-    pub fn validate_json(&self, data: &[u8]) -> Result<()> {
-        let value: Value = serde_json::from_slice(data)
-            .map_err(|e| FileExporterError::InvalidData(format!("Failed to parse JSON: {}", e)))?;
-
-        let arr = value.as_array().ok_or_else(|| {
-            FileExporterError::InvalidData("Expected JSON array of objects".to_string())
-        })?;
-
-        if arr.is_empty() {
-            return Err(FileExporterError::InvalidData(
-                "JSON array cannot be empty".to_string(),
-            ));
-        }
-
         Ok(())
     }
 }
@@ -149,34 +129,6 @@ impl Default for ParquetExporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_validate_valid_json() {
-        let exporter = ParquetExporter::new();
-        let data = r#"[
-            {"id": 1, "name": "test1"},
-            {"id": 2, "name": "test2"}
-        ]"#
-        .as_bytes();
-        let result = exporter.validate_json(data);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_invalid_json() {
-        let exporter = ParquetExporter::new();
-        let data = r#"invalid json"#.as_bytes();
-        let result = exporter.validate_json(data);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_empty_array() {
-        let exporter = ParquetExporter::new();
-        let data = r#"[]"#.as_bytes();
-        let result = exporter.validate_json(data);
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_with_compression() {
