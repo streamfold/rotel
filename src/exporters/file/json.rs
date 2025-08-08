@@ -12,14 +12,10 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 /// A JSON file exporter for native OTLP protobuf structures (ResourceSpans,
 /// ResourceMetrics, ResourceLogs).  Each exported file contains a JSON array of
 /// the received resources, matching the official OTLP/HTTP JSON encoding.
+#[derive(Default)]
 pub struct JsonExporter;
 
 impl JsonExporter {
-    /// Creates a new `JsonExporter` instance.
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Serialize and write any `Serialize` payload to the given path.
     fn export_payload<T: Serialize + ?Sized>(&self, payload: &T, path: &Path) -> Result<()> {
         let file = File::create(path).map_err(FileExporterError::Io)?;
@@ -88,12 +84,6 @@ impl TypedFileExporter<ResourceLogs> for JsonExporter {
 
     fn file_extension(&self) -> &'static str {
         ".json"
-    }
-}
-
-impl Default for JsonExporter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

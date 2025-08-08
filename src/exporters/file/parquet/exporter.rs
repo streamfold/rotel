@@ -125,25 +125,3 @@ impl Default for ParquetExporter {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_with_compression() {
-        use parquet::basic::Compression;
-
-        // Test different compression types
-        let gzip_exporter =
-            ParquetExporter::with_compression(Compression::GZIP(Default::default()));
-        let lz4_exporter = ParquetExporter::with_compression(Compression::LZ4);
-        let uncompressed_exporter = ParquetExporter::with_compression(Compression::UNCOMPRESSED);
-
-        // Just verify they can be created without error
-        // In a real test, we'd check that the compression is actually applied to the output files
-        let _ = gzip_exporter;
-        let _ = lz4_exporter;
-        let _ = uncompressed_exporter;
-    }
-}

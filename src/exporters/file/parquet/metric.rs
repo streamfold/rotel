@@ -235,6 +235,8 @@ impl MetricRow {
                                 type_: "histogram".to_string(),
                                 service_name: service_name.clone(),
                                 value_int: None,
+                                // TODO: I don't know if we can have a single metric row type for all metric types,
+                                // not sure `sum` is a good representation here.
                                 value_double: Some(dp.sum.unwrap_or(0.0)), // Store histogram sum as the main value
                                 value_type: "histogram".to_string(),
                                 attributes: attrs_to_map(&dp.attributes),

@@ -36,6 +36,13 @@ pub trait TypedFileExporter<Resource> {
     /// The type used to represent data in this exporter for the given Resource type
     type Data: Clone + Send;
 
+    // TODO:
+    // Do we need to convert to an intermediary data type in the batch or should we just
+    // hold onto the underlying Resource type until we are ready to export? I think
+    // only if the intermediary type was a smaller representation, but I think we actually
+    // expand the data size here.
+    //
+
     /// Convert a Resource to the exporter's data format
     fn convert(&self, resource: &Resource) -> Result<Vec<Self::Data>>;
 

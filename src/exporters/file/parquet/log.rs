@@ -175,6 +175,7 @@ impl LogRecordRow {
                         Some(AnyValue::BoolValue(b)) => b.to_string(),
                         Some(AnyValue::IntValue(i)) => i.to_string(),
                         Some(AnyValue::DoubleValue(d)) => d.to_string(),
+                        // TODO: Handle Array, KV and Bytes
                         _ => "".to_string(),
                     },
                 };
