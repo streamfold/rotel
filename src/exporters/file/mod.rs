@@ -93,7 +93,7 @@ impl TracesFileExporter {
                 .map_err(|e| e.into())
             }
             FileExporterFormat::Json => {
-                let exporter = Arc::new(crate::exporters::file::json::JsonExporter::new());
+                let exporter = Arc::new(crate::exporters::file::json::JsonExporter::default());
                 crate::exporters::file::task::run_traces_loop(
                     exporter,
                     self.output_dir,
@@ -138,7 +138,7 @@ impl MetricsFileExporter {
                 .map_err(|e| e.into())
             }
             FileExporterFormat::Json => {
-                let exporter = Arc::new(crate::exporters::file::json::JsonExporter::new());
+                let exporter = Arc::new(crate::exporters::file::json::JsonExporter::default());
                 crate::exporters::file::task::run_metrics_loop(
                     exporter,
                     self.output_dir,
@@ -183,7 +183,7 @@ impl LogsFileExporter {
                 .map_err(|e| e.into())
             }
             FileExporterFormat::Json => {
-                let exporter = Arc::new(crate::exporters::file::json::JsonExporter::new());
+                let exporter = Arc::new(crate::exporters::file::json::JsonExporter::default());
                 crate::exporters::file::task::run_logs_loop(
                     exporter,
                     self.output_dir,
