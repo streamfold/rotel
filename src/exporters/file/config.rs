@@ -43,13 +43,13 @@ impl FileExporterConfig {
     /// Creates a new configuration with the required fields
     pub fn new(
         format: FileExporterFormat,
-        path: PathBuf,
+        output_dir: PathBuf,
         flush_interval: Duration,
         parquet_compression: ParquetCompression,
     ) -> Self {
         Self {
             format,
-            output_dir: path,
+            output_dir,
             flush_interval,
             parquet_compression,
         }
@@ -66,8 +66,6 @@ impl FileExporterConfig {
     /// - Create the output directory if it does not exist.
     /// - Set a non-zero flush interval.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Format validation is now handled by the enum type itself, no need to validate
-
         // Validate path
         if !self.output_dir.exists() {
             // Recovery: Suggest creating the directory
@@ -113,8 +111,6 @@ mod tests {
 
         assert!(config.validate().is_ok());
     }
-
-    // Note: Format validation test removed since enum prevents invalid formats at compile time
 
     #[test]
     fn test_invalid_flush_interval() {
