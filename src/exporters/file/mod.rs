@@ -1,3 +1,4 @@
+use parquet::ParquetExporter;
 use thiserror::Error;
 
 /// Errors that can occur during file export operations.
@@ -71,9 +72,8 @@ impl TracesFileExporter {
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
-                let compression = self.parquet_compression.to_parquet_compression();
                 let exporter = Arc::new(
-                    crate::exporters::file::parquet::ParquetExporter::with_compression(compression),
+                    ParquetExporter::with_compression(self.parquet_compression.into()),
                 );
                 crate::exporters::file::task::run_traces_loop(
                     exporter,
@@ -117,9 +117,8 @@ impl MetricsFileExporter {
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
-                let compression = self.parquet_compression.to_parquet_compression();
                 let exporter = Arc::new(
-                    crate::exporters::file::parquet::ParquetExporter::with_compression(compression),
+                    ParquetExporter::with_compression(self.parquet_compression.into()),
                 );
                 crate::exporters::file::task::run_metrics_loop(
                     exporter,
@@ -163,9 +162,8 @@ impl LogsFileExporter {
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         match self.format {
             FileExporterFormat::Parquet => {
-                let compression = self.parquet_compression.to_parquet_compression();
                 let exporter = Arc::new(
-                    crate::exporters::file::parquet::ParquetExporter::with_compression(compression),
+                    ParquetExporter::with_compression(self.parquet_compression.into()),
                 );
                 crate::exporters::file::task::run_logs_loop(
                     exporter,

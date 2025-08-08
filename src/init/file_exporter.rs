@@ -39,10 +39,9 @@ impl FileExporterFormat {
     }
 }
 
-impl ParquetCompression {
-    /// Convert to parquet::basic::Compression
-    pub fn to_parquet_compression(&self) -> parquet::basic::Compression {
-        match self {
+impl From<ParquetCompression> for parquet::basic::Compression {
+    fn from(compression: ParquetCompression) -> Self {
+        match compression {
             ParquetCompression::None => parquet::basic::Compression::UNCOMPRESSED,
             ParquetCompression::Snappy => parquet::basic::Compression::SNAPPY,
             ParquetCompression::Gzip => parquet::basic::Compression::GZIP(Default::default()),
@@ -50,7 +49,9 @@ impl ParquetCompression {
             ParquetCompression::Zstd => parquet::basic::Compression::ZSTD(Default::default()),
         }
     }
+}
 
+impl ParquetCompression {
     /// Convert to lowercase string for display
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -97,9 +98,9 @@ pub struct FileExporterArgs {
 
     /// How often to flush data to disk (e.g., "5s")
     #[arg(
-        long("file-exporter-flush-interval"), 
-        env = "ROTEL_FILE_EXPORTER_FLUSH_INTERVAL", 
-        default_value = "5s", 
+        long("file-exporter-flush-interval"),
+        env = "ROTEL_FILE_EXPORTER_FLUSH_INTERVAL",
+        default_value = "5s",
         value_parser = humantime::parse_duration
     )]
     pub flush_interval: Duration,
@@ -133,25 +134,22 @@ mod tests {
     fn test_parquet_compression_conversion() {
         use parquet::basic::Compression;
 
-        // Test all compression type conversions
+        // Test all compression type conversions using From trait
         assert!(matches!(
-            ParquetCompression::None.to_parquet_compression(),
+            ParquetCompression::None.into(),
             Compression::UNCOMPRESSED
         ));
         assert!(matches!(
-            ParquetCompression::Snappy.to_parquet_compression(),
+            ParquetCompression::Snappy.into(),
             Compression::SNAPPY
         ));
         assert!(matches!(
-            ParquetCompression::Gzip.to_parquet_compression(),
+            ParquetCompression::Gzip.into(),
             Compression::GZIP(_)
         ));
+        assert!(matches!(ParquetCompression::Lz4.into(), Compression::LZ4));
         assert!(matches!(
-            ParquetCompression::Lz4.to_parquet_compression(),
-            Compression::LZ4
-        ));
-        assert!(matches!(
-            ParquetCompression::Zstd.to_parquet_compression(),
+            ParquetCompression::Zstd.into(),
             Compression::ZSTD(_)
         ));
     }
