@@ -1,8 +1,10 @@
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, ValueEnum)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FileExporterFormat {
     #[default]
     /// Parquet format
@@ -11,10 +13,11 @@ pub enum FileExporterFormat {
     Json,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, ValueEnum)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ParquetCompression {
     /// No compression
-    Uncompressed,
+    None,
     #[default]
     /// Snappy compression
     Snappy,
@@ -40,7 +43,7 @@ impl ParquetCompression {
     /// Convert to parquet::basic::Compression
     pub fn to_parquet_compression(&self) -> parquet::basic::Compression {
         match self {
-            ParquetCompression::Uncompressed => parquet::basic::Compression::UNCOMPRESSED,
+            ParquetCompression::None => parquet::basic::Compression::UNCOMPRESSED,
             ParquetCompression::Snappy => parquet::basic::Compression::SNAPPY,
             ParquetCompression::Gzip => parquet::basic::Compression::GZIP(Default::default()),
             ParquetCompression::Lz4 => parquet::basic::Compression::LZ4,
@@ -51,7 +54,7 @@ impl ParquetCompression {
     /// Convert to lowercase string for display
     pub fn as_str(&self) -> &'static str {
         match self {
-            ParquetCompression::Uncompressed => "uncompressed",
+            ParquetCompression::None => "none",
             ParquetCompression::Snappy => "snappy",
             ParquetCompression::Gzip => "gzip",
             ParquetCompression::Lz4 => "lz4",
@@ -72,7 +75,8 @@ impl std::fmt::Display for ParquetCompression {
     }
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Deserialize)]
+#[serde(default)]
 pub struct FileExporterArgs {
     /// File format for export
     #[arg(
@@ -131,7 +135,7 @@ mod tests {
 
         // Test all compression type conversions
         assert!(matches!(
-            ParquetCompression::Uncompressed.to_parquet_compression(),
+            ParquetCompression::None.to_parquet_compression(),
             Compression::UNCOMPRESSED
         ));
         assert!(matches!(
@@ -154,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_parquet_compression_display() {
-        assert_eq!(ParquetCompression::Uncompressed.as_str(), "uncompressed");
+        assert_eq!(ParquetCompression::None.as_str(), "none");
         assert_eq!(ParquetCompression::Snappy.as_str(), "snappy");
         assert_eq!(ParquetCompression::Gzip.as_str(), "gzip");
         assert_eq!(ParquetCompression::Lz4.as_str(), "lz4");

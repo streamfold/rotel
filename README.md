@@ -394,7 +394,7 @@ out as periodic files on the local filesystem. Currently **Parquet** and
 | --file-exporter-format              | parquet    | `parquet` or `json`                                                                                                  |
 | --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                                      |
 | --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)           |
-| --file-exporter-parquet-compression | snappy     | Compression for Parquet files: `uncompressed`, `snappy`, `gzip`, `lz4`, `zstd` (only applies when format is parquet) |
+| --file-exporter-parquet-compression | snappy     | Compression for Parquet files: `none`, `snappy`, `gzip`, `lz4`, `zstd` (only applies when format is parquet) |
 
 Each flush creates a file named `<telemetry-type>-<timestamp>.<ext>` inside the
 specified directory. For example, with default settings Rotel will emit files
