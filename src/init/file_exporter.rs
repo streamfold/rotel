@@ -2,18 +2,20 @@ use clap::{Args, ValueEnum};
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum FileExporterFormat {
+    #[default]
     /// Parquet format
     Parquet,
     /// JSON format
     Json,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum ParquetCompression {
     /// No compression
     Uncompressed,
+    #[default]
     /// Snappy compression
     Snappy,
     /// Gzip compression
@@ -75,41 +77,46 @@ pub struct FileExporterArgs {
     /// File format for export
     #[arg(
         value_enum,
-        long,
+        long("file-exporter-format"),
         env = "ROTEL_FILE_EXPORTER_FORMAT",
         default_value = "parquet"
     )]
-    pub file_exporter_format: FileExporterFormat,
+    pub file_format: FileExporterFormat,
 
     /// Directory where files will be written
     #[arg(
-        long,
+        long("file-exporter-output-dir"),
         env = "ROTEL_FILE_EXPORTER_OUTPUT_DIR",
         default_value = "/tmp/rotel"
     )]
-    pub file_exporter_output_dir: PathBuf,
+    pub output_dir: PathBuf,
 
     /// How often to flush data to disk (e.g., "5s")
-    #[arg(long, env = "ROTEL_FILE_EXPORTER_FLUSH_INTERVAL", default_value = "5s", value_parser = humantime::parse_duration)]
-    pub file_exporter_flush_interval: Duration,
+    #[arg(
+        long("file-exporter-flush-interval"), 
+        env = "ROTEL_FILE_EXPORTER_FLUSH_INTERVAL", 
+        default_value = "5s", 
+        value_parser = humantime::parse_duration
+    )]
+    pub flush_interval: Duration,
 
     /// Compression type for Parquet files (only applies when format is parquet)
     #[arg(
         value_enum,
-        long,
+        long("file-exporter-parquet-compression"),
         env = "ROTEL_FILE_EXPORTER_PARQUET_COMPRESSION",
         default_value = "snappy"
     )]
-    pub file_exporter_parquet_compression: ParquetCompression,
+    pub parquet_compression: ParquetCompression,
 }
 
 impl Default for FileExporterArgs {
     fn default() -> Self {
         FileExporterArgs {
-            file_exporter_format: FileExporterFormat::Parquet,
-            file_exporter_output_dir: PathBuf::from("/tmp/rotel"),
-            file_exporter_flush_interval: Duration::from_secs(5),
-            file_exporter_parquet_compression: ParquetCompression::Snappy,
+            file_format: Default::default(),
+            output_dir: PathBuf::from("/tmp/rotel"),
+            flush_interval: Duration::from_secs(5),
+            parquet_compression: Default::default(),
         }
     }
 }

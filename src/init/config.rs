@@ -260,10 +260,10 @@ impl TryIntoConfig for ExporterArgs {
             }
             ExporterArgs::File(file) => {
                 let config = crate::exporters::file::config::FileExporterConfig::new(
-                    file.file_exporter_format,
-                    file.file_exporter_output_dir.clone(),
-                    file.file_exporter_flush_interval,
-                    file.file_exporter_parquet_compression,
+                    file.file_format,
+                    file.output_dir.clone(),
+                    file.flush_interval,
+                    file.parquet_compression,
                 );
                 Ok(ExporterConfig::File(config))
             }
