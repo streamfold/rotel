@@ -6,6 +6,8 @@ use arrow::array::{ListArray, StringArray};
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 
 use crate::exporters::file::FileExporterError;
 
@@ -76,4 +78,35 @@ pub(crate) fn vec_maporjson_to_list_array(data: Vec<Vec<MapOrJson>>) -> ListArra
         Arc::new(values),
         None,
     )
+}
+
+/// Convert OpenTelemetry attributes to a MapOrJson representation.
+/// This function handles all OpenTelemetry AnyValue types:
+/// - String, Bool, Int, Double: converted to string representation
+/// - ArrayValue: serialized as JSON array
+/// - KvlistValue: serialized as JSON object
+/// - BytesValue: encoded as base64 string
+pub(crate) fn attrs_to_map(
+    attrs: &[opentelemetry_proto::tonic::common::v1::KeyValue],
+) -> MapOrJson {
+    use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValue;
+
+    let mut map = HashMap::new();
+    for attr in attrs {
+        if let Some(any_value) = &attr.value {
+            let value_str = match &any_value.value {
+                Some(AnyValue::StringValue(s)) => s.clone(),
+                Some(AnyValue::BoolValue(b)) => b.to_string(),
+                Some(AnyValue::IntValue(i)) => i.to_string(),
+                Some(AnyValue::DoubleValue(d)) => d.to_string(),
+                // Array and Kvlist are simply converted to JSON for now
+                Some(AnyValue::ArrayValue(arr)) => serde_json::to_string(arr).unwrap(),
+                Some(AnyValue::KvlistValue(kvlist)) => serde_json::to_string(kvlist).unwrap(),
+                Some(AnyValue::BytesValue(bytes)) => BASE64_STANDARD.encode(bytes),
+                None => "".to_string(),
+            };
+            map.insert(attr.key.clone(), value_str);
+        }
+    }
+    MapOrJson::Map(map)
 }

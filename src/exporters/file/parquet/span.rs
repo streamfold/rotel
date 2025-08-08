@@ -9,12 +9,9 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 use super::common::{
     MapOrJson, ToRecordBatch, map_or_json_to_string, vec_maporjson_to_list_array,
-    vec_string_to_list_array, vec_u64_to_list_array,
+    vec_string_to_list_array, vec_u64_to_list_array, attrs_to_map,
 };
 use crate::exporters::file::FileExporterError;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use serde_json;
 
 // Static schema created once and reused for all span record batches
 static SPAN_SCHEMA: std::sync::LazyLock<Arc<Schema>> = std::sync::LazyLock::new(|| {
@@ -212,45 +209,11 @@ impl SpanRow {
         let mut rows = Vec::new();
 
         // Convert resource attributes into a map ---------------------------------
-        let resource_attributes: MapOrJson = {
-            let mut map = HashMap::new();
-            if let Some(resource) = &resource_spans.resource {
-                for attr in &resource.attributes {
-                    if let Some(any_value) = &attr.value {
-                        let value_str = match &any_value.value {
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => s.clone(),
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => b.to_string(),
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => i.to_string(),
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => d.to_string(),
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(arr)) => serde_json::to_string(&arr.values).unwrap_or_else(|_| "[]".to_string()),
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(kvlist)) => {
-                                let map: std::collections::HashMap<_, _> = kvlist.values.iter().map(|kv| {
-                                    let v = match &kv.value {
-                                        Some(val) => match &val.value {
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => serde_json::json!(s),
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => serde_json::json!(b),
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => serde_json::json!(i),
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => serde_json::json!(d),
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(arr)) => serde_json::json!(arr.values.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>()),
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(_)) => serde_json::json!("{}"), // Nested kvlist: skip or flatten recursively if needed
-                                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(bytes)) => serde_json::json!(BASE64_STANDARD.encode(bytes)),
-                                            None => serde_json::json!(null),
-                                        },
-                                        None => serde_json::json!(null),
-                                    };
-                                    (kv.key.clone(), v)
-                                }).collect();
-                                serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-                            }
-                            Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(bytes)) => BASE64_STANDARD.encode(bytes),
-                            None => "".to_string(),
-                        };
-                        map.insert(attr.key.clone(), value_str);
-                    }
-                }
-            }
-            MapOrJson::Map(map)
-        };
+        let resource_attributes: MapOrJson = resource_spans
+            .resource
+            .as_ref()
+            .map(|r| attrs_to_map(&r.attributes))
+            .unwrap_or(MapOrJson::Map(HashMap::new()));
 
         // Extract service.name from resource attributes, default to "unknown" ---
         let service_name = if let MapOrJson::Map(map) = &resource_attributes {
@@ -261,72 +224,6 @@ impl SpanRow {
             "unknown".to_string()
         };
 
-        // Helper to convert attribute list to MapOrJson --------------------------
-        fn attrs_to_map(
-            attrs: &Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
-        ) -> MapOrJson {
-            let mut map = HashMap::new();
-            for attr in attrs {
-                if let Some(any_value) = &attr.value {
-                    let value_str = match &any_value.value {
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
-                                s,
-                            ),
-                        ) => s.clone(),
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b),
-                        ) => b.to_string(),
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i),
-                        ) => i.to_string(),
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(
-                                d,
-                            ),
-                        ) => d.to_string(),
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(
-                                arr,
-                            ),
-                        ) => {
-                            serde_json::to_string(&arr.values).unwrap_or_else(|_| "[]".to_string())
-                        }
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(
-                                kvlist,
-                            ),
-                        ) => {
-                            let map: std::collections::HashMap<_, _> = kvlist.values.iter().map(|kv| {
-                                let v = match &kv.value {
-                                    Some(val) => match &val.value {
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s)) => serde_json::json!(s),
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BoolValue(b)) => serde_json::json!(b),
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(i)) => serde_json::json!(i),
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::DoubleValue(d)) => serde_json::json!(d),
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::ArrayValue(arr)) => serde_json::json!(arr.values.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>()),
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::KvlistValue(_)) => serde_json::json!("{}"), // Nested kvlist: skip or flatten recursively if needed
-                                        Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(bytes)) => serde_json::json!(BASE64_STANDARD.encode(bytes)),
-                                        None => serde_json::json!(null),
-                                    },
-                                    None => serde_json::json!(null),
-                                };
-                                (kv.key.clone(), v)
-                            }).collect();
-                            serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-                        }
-                        Some(
-                            opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(
-                                bytes,
-                            ),
-                        ) => BASE64_STANDARD.encode(bytes),
-                        None => "".to_string(),
-                    };
-                    map.insert(attr.key.clone(), value_str);
-                }
-            }
-            MapOrJson::Map(map)
-        }
 
         // Helper to convert span kind to string ----------------------------------
         fn span_kind_to_string(kind: i32) -> String {

@@ -7,7 +7,7 @@ use arrow::record_batch::RecordBatch;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 
-use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string};
+use super::common::{MapOrJson, ToRecordBatch, map_or_json_to_string, attrs_to_map};
 use crate::exporters::file::FileExporterError;
 
 // Static schema created once and reused for all metric record batches
@@ -146,25 +146,6 @@ impl MetricRow {
     pub fn from_resource_metrics(
         resource_metrics: &ResourceMetrics,
     ) -> Result<Vec<MetricRow>, FileExporterError> {
-        // retain core imports only
-        use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValue;
-
-        fn attrs_to_map(attrs: &[opentelemetry_proto::tonic::common::v1::KeyValue]) -> MapOrJson {
-            let mut map = std::collections::HashMap::new();
-            for attr in attrs {
-                if let Some(any_value) = &attr.value {
-                    let value_str = match &any_value.value {
-                        Some(AnyValue::StringValue(s)) => s.clone(),
-                        Some(AnyValue::BoolValue(b)) => b.to_string(),
-                        Some(AnyValue::IntValue(i)) => i.to_string(),
-                        Some(AnyValue::DoubleValue(d)) => d.to_string(),
-                        _ => "".to_string(),
-                    };
-                    map.insert(attr.key.clone(), value_str);
-                }
-            }
-            MapOrJson::Map(map)
-        }
 
         // Resource-level attributes ----------------------------
         let resource_attrs = resource_metrics
