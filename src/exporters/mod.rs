@@ -3,6 +3,8 @@
 pub mod blackhole;
 pub mod clickhouse;
 pub mod datadog;
+#[cfg(feature = "file_exporter")]
+pub mod file;
 #[cfg(feature = "rdkafka")]
 pub mod kafka;
 pub mod otlp;
