@@ -7,6 +7,7 @@ pub mod wait;
 
 mod clickhouse_exporter;
 mod datadog_exporter;
+#[cfg(feature = "file_exporter")]
 pub mod file_exporter;
 #[cfg(feature = "rdkafka")]
 mod kafka_exporter;

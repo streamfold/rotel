@@ -383,6 +383,12 @@ See [KAFKA_INTEGRATION_TESTS.md](KAFKA_INTEGRATION_TESTS.md) for detailed testin
 
 ### File exporter configuration
 
+**NOTE**: The file exporter at the moment is experimental and not enabled by default. It must be enabled by building with the feature flag
+`--features file_exporter`, like:
+```shell
+cargo build --features file_exporter
+```
+
 **WARNING**: The Parquet and JSON file format is evolving and subject to breaking changes between releases. There is consolidation planned with official Arrow schemas from the OpenTelemetry Arrow project.
 
 The File exporter can be selected with `--exporter file`. It writes telemetry

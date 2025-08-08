@@ -8,6 +8,7 @@ use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+#[cfg(feature = "file_exporter")]
 use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
@@ -89,6 +90,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
+    #[cfg(feature = "file_exporter")]
     File(FileExporterArgs),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterArgs),
@@ -125,6 +127,7 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
+    #[cfg(feature = "file_exporter")]
     File(crate::exporters::file::config::FileExporterConfig),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
@@ -258,6 +261,7 @@ impl TryIntoConfig for ExporterArgs {
 
                 Ok(ExporterConfig::Xray(builder))
             }
+            #[cfg(feature = "file_exporter")]
             ExporterArgs::File(file) => {
                 let config = crate::exporters::file::config::FileExporterConfig::new(
                     file.file_format,
@@ -493,6 +497,7 @@ fn get_single_exporter_config(
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
             cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
         }
+        #[cfg(feature = "file_exporter")]
         Exporter::File => {
             let args = ExporterArgs::File(config.file_exporter.clone());
             cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);

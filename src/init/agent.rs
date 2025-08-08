@@ -359,6 +359,7 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "file_exporter")]
                 Some(ExporterConfig::File(config)) => {
                     let exporter =
                         crate::exporters::file::FileExporterBuilder::build_traces_exporter(
@@ -459,6 +460,7 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "file_exporter")]
                 Some(ExporterConfig::File(config)) => {
                     let exporter =
                         crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
@@ -543,6 +545,7 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "file_exporter")]
                 Some(ExporterConfig::File(config)) => {
                     let exporter =
                         crate::exporters::file::FileExporterBuilder::build_logs_exporter(

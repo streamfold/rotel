@@ -2,6 +2,7 @@ use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+#[cfg(feature = "file_exporter")]
 use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
@@ -153,6 +154,7 @@ pub struct AgentRun {
     pub aws_xray_exporter: XRayExporterArgs,
 
     #[command(flatten)]
+    #[cfg(feature = "file_exporter")]
     pub file_exporter: FileExporterArgs,
 
     #[command(flatten)]
@@ -196,6 +198,7 @@ impl Default for AgentRun {
             datadog_exporter: DatadogExporterArgs::default(),
             clickhouse_exporter: ClickhouseExporterArgs::default(),
             aws_xray_exporter: XRayExporterArgs::default(),
+            #[cfg(feature = "file_exporter")]
             file_exporter: FileExporterArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_exporter: KafkaExporterArgs::default(),
@@ -255,6 +258,7 @@ pub enum Exporter {
     Datadog,
     Clickhouse,
     AwsXray,
+    #[cfg(feature = "file_exporter")]
     File,
     #[cfg(feature = "rdkafka")]
     Kafka,
