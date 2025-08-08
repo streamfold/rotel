@@ -38,18 +38,18 @@ where
                     None => {
                         // Channel closed, flush and shutdown gracefully
                         debug!("{} channel closed, flushing final data", telemetry_type);
-                        flush_generic(&*exporter, &mut buffer, &output_dir, file_ext, telemetry_type)?;
+                        flush_generic(exporter.clone(), &mut buffer, &output_dir, file_ext, telemetry_type)?;
                         info!("{} exporter shutting down gracefully", telemetry_type);
                         return Ok(());
                     }
                 }
             }
             _ = flush_timer.tick() => {
-                flush_generic(&*exporter, &mut buffer, &output_dir, file_ext, telemetry_type)?;
+                flush_generic(exporter.clone(), &mut buffer, &output_dir, file_ext, telemetry_type)?;
             }
             _ = token.cancelled() => {
                 info!("{} exporter received shutdown signal", telemetry_type);
-                flush_generic(&*exporter, &mut buffer, &output_dir, file_ext, telemetry_type)?;
+                flush_generic(exporter.clone(), &mut buffer, &output_dir, file_ext, telemetry_type)?;
                 return Ok(());
             }
         }
@@ -116,7 +116,7 @@ where
 
 /// Generic helper function to flush telemetry data to disk
 fn flush_generic<E, Resource>(
-    exporter: &E,
+    exporter: std::sync::Arc<E>,
     buffer: &mut Vec<E::Data>,
     output_dir: &std::path::Path,
     file_ext: &str,
