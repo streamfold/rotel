@@ -37,9 +37,7 @@ where
                     }
                     None => {
                         // Channel closed, flush and shutdown gracefully
-                        debug!("{} channel closed, flushing final data", telemetry_type);
                         flush_generic(exporter.clone(), &mut buffer, &output_dir, file_ext, telemetry_type)?;
-                        info!("{} exporter shutting down gracefully", telemetry_type);
                         return Ok(());
                     }
                 }
