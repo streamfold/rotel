@@ -17,11 +17,9 @@ use tower::BoxError;
 use tower::Service;
 use tracing::{debug, error, info, warn};
 
-pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 10;
+use super::finalizer::ResultFinalizer;
 
-pub trait ResultLogger<Response> {
-    fn handle(&self, resp: Response);
-}
+pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 10;
 
 type ExportFuture<Future> = Pin<Box<Future>>;
 
@@ -32,11 +30,11 @@ struct Meta {
     telemetry_type: String,
 }
 
-pub struct Exporter<InStr, Svc, Payload, Logger> {
+pub struct Exporter<InStr, Svc, Payload, Finalizer> {
     meta: Meta,
     input: Pin<Box<InStr>>,
     svc: Svc,
-    result_logger: Logger,
+    result_finalizer: Finalizer,
     flush_receiver: Option<FlushReceiver>,
     retry_broadcast: BroadcastSender<bool>,
     encode_drain_max_time: Duration,
@@ -44,13 +42,13 @@ pub struct Exporter<InStr, Svc, Payload, Logger> {
     _phantom: PhantomData<Payload>,
 }
 
-impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
+impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer> {
     pub fn new(
         exporter_name: &'static str,
         telemetry_type: &'static str,
         input: InStr,
         svc: Svc,
-        result_logger: Logger,
+        result_finalizer: Finalizer,
         flush_receiver: Option<FlushReceiver>,
         retry_broadcast: BroadcastSender<bool>,
         encode_drain_max_time: Duration,
@@ -63,7 +61,7 @@ impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
             },
             input: Box::pin(input),
             svc,
-            result_logger,
+            result_finalizer,
             flush_receiver,
             retry_broadcast,
             encode_drain_max_time,
@@ -73,13 +71,18 @@ impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger> {
     }
 }
 
-impl<InStr, Svc, Payload, Logger> Exporter<InStr, Svc, Payload, Logger>
+impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer>
 where
     InStr: Stream<Item = Result<Request<Payload>, BoxError>>,
     Svc: Service<Request<Payload>>,
     <Svc as Service<Request<Payload>>>::Error: Debug,
     <Svc as Service<Request<Payload>>>::Response: Debug,
-    Logger: ResultLogger<<Svc as Service<Request<Payload>>>::Response>,
+    Finalizer: ResultFinalizer<
+        Result<
+            <Svc as Service<Request<Payload>>>::Response,
+            <Svc as Service<Request<Payload>>>::Error,
+        >,
+    >,
     Payload: Clone,
 {
     pub async fn start(mut self, token: CancellationToken) -> Result<(), BoxError> {
@@ -94,14 +97,12 @@ where
                 biased;
 
                 Some(resp) = export_futures.next() => {
-                  match resp {
+                  match self.result_finalizer.finalize(resp) {
                         Err(e) => {
                             error!(error = ?e, ?meta, "Exporting failed, dropping data.")
                         },
                         Ok(rs) => {
                             debug!(rs = ?rs, futures_size = export_futures.len(), ?meta, "Exporter sent response");
-
-                            self.result_logger.handle(rs);
                         }
                     }
                 },
@@ -243,7 +244,7 @@ where
                         break;
                     }
                     Some(r) => {
-                        if let Err(e) = r {
+                        if let Err(e) = self.result_finalizer.finalize(r) {
                             error!(meta = ?self.meta,
                                 error = ?e,
                                 "Error from exporter endpoint."
