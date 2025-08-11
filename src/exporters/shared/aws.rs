@@ -2,7 +2,6 @@ use std::fmt::{Display, Formatter};
 
 use serde::Deserialize;
 
-
 #[derive(Copy, Clone, Debug, Deserialize)]
 #[serde(from = "String")]
 pub enum Region {

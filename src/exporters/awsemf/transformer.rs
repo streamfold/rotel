@@ -7,7 +7,11 @@ use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_NAMESPA
 use serde_json::Error as JsonError;
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{collections::HashMap, io, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    io,
+    sync::{Arc, Mutex},
+};
 use thiserror::Error;
 
 // Only value supported at the moment
@@ -216,8 +220,9 @@ impl MetricTransformer {
                 }
             }
             Some(Data::Sum(sum_data)) => {
-                let is_cumulative = sum_data.aggregation_temporality 
-                    == opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative as i32;
+                let is_cumulative = sum_data.aggregation_temporality
+                    == opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative
+                        as i32;
                 for data_point in &sum_data.data_points {
                     self.add_data_point_to_group(
                         &metric.name,
@@ -291,20 +296,20 @@ impl MetricTransformer {
                 });
             }
         };
-        
+
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
         let final_value = if is_cumulative {
             let metric_key = MetricKey::new(metric_name, &namespace, &labels, metric_type);
             let timestamp = UNIX_EPOCH + std::time::Duration::from_nanos(data_point.time_unix_nano);
-            
+
             let (delta_value, retained) = self.delta_calculator.calculate_delta(
                 &metric_key,
                 raw_value,
                 timestamp,
                 self.config.retain_initial_value_of_delta_metric,
             );
-            
+
             if !retained {
                 return Ok(()); // Skip this data point
             }
@@ -314,9 +319,9 @@ impl MetricTransformer {
         };
 
         let metric_value = match &data_point.value {
-            Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(_)) => {
-                MetricValue::Double(final_value)
-            }
+            Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(
+                _,
+            )) => MetricValue::Double(final_value),
             Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(_)) => {
                 // Convert back to int if original was int, but keep as double if delta calculation was performed
                 if is_cumulative {
@@ -334,7 +339,7 @@ impl MetricTransformer {
             value: metric_value,
             unit: self.translate_unit(unit),
         };
-        
+
         // Get or create grouped metric
         let grouped_metric = grouped_metrics
             .entry(group_key)
@@ -378,19 +383,19 @@ impl MetricTransformer {
             min: data_point.min.unwrap_or(0.0),
             max: data_point.max.unwrap_or(0.0),
         };
-        
+
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
-        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Histogram);
+        let group_key =
+            self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Histogram);
 
         let metric_info = MetricInfo {
             value: metric_value,
             unit: self.translate_unit(unit),
         };
-        
+
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
         let grouped_metric = grouped_metrics
-
             .entry(group_key)
             .or_insert_with(|| GroupedMetric {
                 labels: labels.clone(),
@@ -425,13 +430,13 @@ impl MetricTransformer {
             .iter()
             .map(|qv| (qv.quantile, qv.value))
             .collect();
-        
+
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
         let (final_sum, final_count) = if is_cumulative {
             let metric_key = MetricKey::new(metric_name, &namespace, &labels, MetricType::Summary);
             let timestamp = UNIX_EPOCH + std::time::Duration::from_nanos(data_point.time_unix_nano);
-            
+
             let (delta_entry, retained) = self.summary_calculator.calculate_summary_delta(
                 &metric_key,
                 data_point.sum,
@@ -439,11 +444,11 @@ impl MetricTransformer {
                 timestamp,
                 self.config.retain_initial_value_of_delta_metric,
             );
-            
+
             if !retained {
                 return Ok(()); // Skip this data point
             }
-            
+
             let delta = delta_entry.unwrap();
             (delta.sum, delta.count)
         } else {
@@ -456,7 +461,8 @@ impl MetricTransformer {
             _quantiles: quantiles,
         };
 
-        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Summary);
+        let group_key =
+            self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Summary);
 
         let metric_info = MetricInfo {
             value: metric_value,
@@ -481,7 +487,13 @@ impl MetricTransformer {
         Ok(())
     }
 
-    fn create_group_key(&self, namespace: &str, labels: &HashMap<String, String>, timestamp_ms: i64, metric_type: MetricType) -> GroupKey {
+    fn create_group_key(
+        &self,
+        namespace: &str,
+        labels: &HashMap<String, String>,
+        timestamp_ms: i64,
+        metric_type: MetricType,
+    ) -> GroupKey {
         let mut sorted_labels: Vec<(String, String)> =
             labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         sorted_labels.sort_by(|a, b| a.0.cmp(&b.0));
@@ -701,24 +713,24 @@ impl MetricTransformer {
 fn get_namespace(resource_attrs: &HashMap<String, String>, namespace: &Option<String>) -> String {
     let svc_name_space_key = resource_attrs.get(SERVICE_NAMESPACE);
     let svc_name_key = resource_attrs.get(SERVICE_NAME);
-    
+
     if let Some(namespace) = namespace {
-        return namespace.clone()
+        return namespace.clone();
     }
-    
+
     if svc_name_key.is_some() && svc_name_space_key.is_some() {
         return format!("{}/{}", svc_name_space_key.unwrap(), svc_name_key.unwrap());
     }
-    
+
     if let Some(svc_name) = svc_name_key {
-        return svc_name.clone()
+        return svc_name.clone();
     }
-    
+
     if let Some(svc_name_space) = svc_name_space_key {
-        return svc_name_space.clone()
+        return svc_name_space.clone();
     }
-    
-    return DEFAULT_NAMESPACE.to_string()
+
+    return DEFAULT_NAMESPACE.to_string();
 }
 
 fn extract_resource_attributes(resource_metrics: &ResourceMetrics) -> HashMap<String, String> {
@@ -765,7 +777,7 @@ impl DeltaCalculator {
         retain_initial_value: bool,
     ) -> (Option<f64>, bool) {
         let mut cache = self.cache.lock().unwrap();
-        
+
         // Clean up expired entries (older than 5 minutes)
         let now = SystemTime::now();
         cache.retain(|_, entry| {
@@ -777,11 +789,8 @@ impl DeltaCalculator {
         if let Some(prev_entry) = cache.get(metric_key) {
             let delta = value - prev_entry.value;
             // Update cache with new value
-            cache.insert(metric_key.clone(), MetricCacheEntry {
-                value,
-                timestamp,
-            });
-            
+            cache.insert(metric_key.clone(), MetricCacheEntry { value, timestamp });
+
             // Only return positive deltas (handle metric resets)
             if delta >= 0.0 {
                 (Some(delta), true)
@@ -791,11 +800,8 @@ impl DeltaCalculator {
             }
         } else {
             // First time seeing this metric
-            cache.insert(metric_key.clone(), MetricCacheEntry {
-                value,
-                timestamp,
-            });
-            
+            cache.insert(metric_key.clone(), MetricCacheEntry { value, timestamp });
+
             if retain_initial_value {
                 (Some(value), true)
             } else {
@@ -821,7 +827,7 @@ impl SummaryDeltaCalculator {
         retain_initial_value: bool,
     ) -> (Option<SummaryMetricEntry>, bool) {
         let mut cache = self.cache.lock().unwrap();
-        
+
         // Clean up expired entries (older than 5 minutes)
         let now = SystemTime::now();
         cache.retain(|_, entry| {
@@ -833,26 +839,35 @@ impl SummaryDeltaCalculator {
         if let Some(prev_entry) = cache.get(metric_key) {
             let delta_sum = sum - prev_entry.sum;
             let delta_count = count - prev_entry.count;
-            
+
             // Update cache with new value
-            cache.insert(metric_key.clone(), SummaryCacheEntry {
-                sum,
-                count,
-                timestamp,
-            });
-            
-            (Some(SummaryMetricEntry {
-                sum: delta_sum,
-                count: delta_count,
-            }), true)
+            cache.insert(
+                metric_key.clone(),
+                SummaryCacheEntry {
+                    sum,
+                    count,
+                    timestamp,
+                },
+            );
+
+            (
+                Some(SummaryMetricEntry {
+                    sum: delta_sum,
+                    count: delta_count,
+                }),
+                true,
+            )
         } else {
             // First time seeing this metric
-            cache.insert(metric_key.clone(), SummaryCacheEntry {
-                sum,
-                count,
-                timestamp,
-            });
-            
+            cache.insert(
+                metric_key.clone(),
+                SummaryCacheEntry {
+                    sum,
+                    count,
+                    timestamp,
+                },
+            );
+
             if retain_initial_value {
                 (Some(SummaryMetricEntry { sum, count }), true)
             } else {
@@ -863,11 +878,14 @@ impl SummaryDeltaCalculator {
 }
 
 impl MetricKey {
-    pub fn new(metric_name: &str, namespace: &str, labels: &HashMap<String, String>, metric_type: MetricType) -> Self {
-        let mut sorted_labels: Vec<(String, String)> = labels
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+    pub fn new(
+        metric_name: &str,
+        namespace: &str,
+        labels: &HashMap<String, String>,
+        metric_type: MetricType,
+    ) -> Self {
+        let mut sorted_labels: Vec<(String, String)> =
+            labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         sorted_labels.sort_by(|a, b| a.0.cmp(&b.0));
 
         Self {
@@ -1674,16 +1692,23 @@ mod tests {
     fn test_delta_calculation_for_cumulative_sum() {
         // Test the delta calculator directly first
         let calculator = DeltaCalculator::new();
-        let metric_key = MetricKey::new("test_counter", "TestNamespace", &HashMap::new(), MetricType::Sum);
+        let metric_key = MetricKey::new(
+            "test_counter",
+            "TestNamespace",
+            &HashMap::new(),
+            MetricType::Sum,
+        );
         let timestamp1 = SystemTime::now();
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
         // First value
-        let (_result1, retained1) = calculator.calculate_delta(&metric_key, 100.0, timestamp1, false);
+        let (_result1, retained1) =
+            calculator.calculate_delta(&metric_key, 100.0, timestamp1, false);
         assert!(!retained1); // First value not retained
 
         // Second value (should calculate delta)
-        let (result2, retained2) = calculator.calculate_delta(&metric_key, 150.0, timestamp2, false);
+        let (result2, retained2) =
+            calculator.calculate_delta(&metric_key, 150.0, timestamp2, false);
         assert!(retained2);
         assert_eq!(result2.unwrap(), 50.0); // Delta = 150 - 100
 
@@ -1708,13 +1733,16 @@ mod tests {
                     exemplars: vec![],
                     flags: 0,
                 }],
-                aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative as i32,
+                aggregation_temporality:
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative
+                        as i32,
                 is_monotonic: true,
             })),
         };
 
         // First data point - should be skipped (no previous value, retain_initial_value_of_delta_metric=false)
-        let result = transformer.add_to_grouped_metrics(&metric, &resource_attrs, &mut grouped_metrics1);
+        let result =
+            transformer.add_to_grouped_metrics(&metric, &resource_attrs, &mut grouped_metrics1);
         assert!(result.is_ok());
         // Should be empty since first point is not retained
         assert_eq!(grouped_metrics1.len(), 0);
@@ -1734,12 +1762,15 @@ mod tests {
                     exemplars: vec![],
                     flags: 0,
                 }],
-                aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative as i32,
+                aggregation_temporality:
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative
+                        as i32,
                 is_monotonic: true,
             })),
         };
 
-        let result2 = transformer.add_to_grouped_metrics(&metric2, &resource_attrs, &mut grouped_metrics2);
+        let result2 =
+            transformer.add_to_grouped_metrics(&metric2, &resource_attrs, &mut grouped_metrics2);
         assert!(result2.is_ok());
         assert_eq!(grouped_metrics2.len(), 1);
 
@@ -1776,12 +1807,15 @@ mod tests {
                     exemplars: vec![],
                     flags: 0,
                 }],
-                aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative as i32,
+                aggregation_temporality:
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Cumulative
+                        as i32,
                 is_monotonic: true,
             })),
         };
 
-        let result = transformer.add_to_grouped_metrics(&metric, &resource_attrs, &mut grouped_metrics);
+        let result =
+            transformer.add_to_grouped_metrics(&metric, &resource_attrs, &mut grouped_metrics);
         assert!(result.is_ok());
         // Should retain the first point
         assert_eq!(grouped_metrics.len(), 1);
@@ -1817,12 +1851,14 @@ mod tests {
                     exemplars: vec![],
                     flags: 0,
                 }],
-                aggregation_temporality: opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Delta as i32,
+                aggregation_temporality:
+                    opentelemetry_proto::tonic::metrics::v1::AggregationTemporality::Delta as i32,
                 is_monotonic: true,
             })),
         };
 
-        let result = transformer.add_to_grouped_metrics(&metric, &resource_attrs, &mut grouped_metrics);
+        let result =
+            transformer.add_to_grouped_metrics(&metric, &resource_attrs, &mut grouped_metrics);
         assert!(result.is_ok());
         assert_eq!(grouped_metrics.len(), 1);
 
@@ -1840,17 +1876,24 @@ mod tests {
     #[test]
     fn test_delta_calculator_metric_reset() {
         let calculator = DeltaCalculator::new();
-        let metric_key = MetricKey::new("test_metric", "TestNamespace", &HashMap::new(), MetricType::Sum);
+        let metric_key = MetricKey::new(
+            "test_metric",
+            "TestNamespace",
+            &HashMap::new(),
+            MetricType::Sum,
+        );
         let timestamp1 = SystemTime::now();
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
         // First value
-        let (result1, retained1) = calculator.calculate_delta(&metric_key, 100.0, timestamp1, false);
+        let (result1, retained1) =
+            calculator.calculate_delta(&metric_key, 100.0, timestamp1, false);
         assert!(!retained1); // First value not retained
         assert!(result1.is_none());
 
         // Second value (normal increase)
-        let (result2, retained2) = calculator.calculate_delta(&metric_key, 150.0, timestamp2, false);
+        let (result2, retained2) =
+            calculator.calculate_delta(&metric_key, 150.0, timestamp2, false);
         assert!(retained2);
         assert_eq!(result2.unwrap(), 50.0); // Delta = 150 - 100
 
@@ -1864,12 +1907,18 @@ mod tests {
     #[test]
     fn test_summary_delta_calculator() {
         let calculator = SummaryDeltaCalculator::new();
-        let metric_key = MetricKey::new("test_summary", "TestNamespace", &HashMap::new(), MetricType::Summary);
+        let metric_key = MetricKey::new(
+            "test_summary",
+            "TestNamespace",
+            &HashMap::new(),
+            MetricType::Summary,
+        );
         let timestamp1 = SystemTime::now();
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
         // First value
-        let (result1, retained1) = calculator.calculate_summary_delta(&metric_key, 100.0, 10, timestamp1, false);
+        let (result1, retained1) =
+            calculator.calculate_summary_delta(&metric_key, 100.0, 10, timestamp1, false);
         assert!(!retained1);
         assert!(result1.is_some());
         let entry1 = result1.unwrap();
@@ -1877,7 +1926,8 @@ mod tests {
         assert_eq!(entry1.count, 10);
 
         // Second value - should calculate deltas
-        let (result2, retained2) = calculator.calculate_summary_delta(&metric_key, 175.0, 17, timestamp2, false);
+        let (result2, retained2) =
+            calculator.calculate_summary_delta(&metric_key, 175.0, 17, timestamp2, false);
         assert!(retained2);
         let entry2 = result2.unwrap();
         assert_eq!(entry2.sum, 75.0); // 175 - 100
@@ -1906,9 +1956,14 @@ mod tests {
 
         let key3 = MetricKey::new("test_metric", "TestNamespace", &labels3, MetricType::Sum);
         assert_ne!(key1, key3);
-        
+
         // Different type
-        let key4 = MetricKey::new("test_metric", "TestNamespace", &labels3, MetricType::Summary);
+        let key4 = MetricKey::new(
+            "test_metric",
+            "TestNamespace",
+            &labels3,
+            MetricType::Summary,
+        );
         assert_ne!(key3, key4);
     }
 
@@ -1919,7 +1974,7 @@ mod tests {
         let mut config = create_test_transformer().config;
         config.retain_initial_value_of_delta_metric = true;
         let transformer = MetricTransformer::new(config);
-        
+
         let mut grouped_metrics = HashMap::new();
         let resource_attrs = HashMap::new();
 
@@ -1943,7 +1998,8 @@ mod tests {
         };
 
         // First data point - should be retained (retain_initial_value_of_delta_metric=true)
-        let result1 = transformer.add_to_grouped_metrics(&metric1, &resource_attrs, &mut grouped_metrics);
+        let result1 =
+            transformer.add_to_grouped_metrics(&metric1, &resource_attrs, &mut grouped_metrics);
         assert!(result1.is_ok());
         assert_eq!(grouped_metrics.len(), 1);
 
@@ -1958,10 +2014,8 @@ mod tests {
             _ => panic!("Expected Summary value"),
         }
 
-        // Note: Delta calculation test for the second data point is complex due to 
-        // MetricKey equality issues in the test environment. The core implementation 
+        // Note: Delta calculation test for the second data point is complex due to
+        // MetricKey equality issues in the test environment. The core implementation
         // works correctly as verified by the SummaryDeltaCalculator unit test.
     }
 }
-
-

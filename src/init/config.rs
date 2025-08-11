@@ -278,7 +278,7 @@ impl TryIntoConfig for ExporterArgs {
                 if let Some(namespace) = &awsemf.namespace {
                     builder = builder.with_namespace(namespace.clone());
                 }
-                
+
                 if let Some(custom_endpoint) = &awsemf.custom_endpoint {
                     builder = builder.with_custom_endpoint(custom_endpoint.clone());
                 }
@@ -286,7 +286,7 @@ impl TryIntoConfig for ExporterArgs {
                 if let Some(log_stream_name) = &awsemf.log_stream_name {
                     builder = builder.with_log_stream_name(log_stream_name.clone());
                 }
-                
+
                 Ok(ExporterConfig::Awsemf(builder))
             }
             #[cfg(feature = "rdkafka")]
@@ -526,7 +526,7 @@ fn get_single_exporter_config(
             let args = ExporterArgs::Awsemf(config.aws_emf_exporter.clone());
             cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
         }
-        
+
         #[cfg(feature = "rdkafka")]
         Exporter::Kafka => {
             let kafka_config = config.kafka_exporter.build_config();

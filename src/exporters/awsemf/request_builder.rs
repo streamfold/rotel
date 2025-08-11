@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::http::request_builder_mapper::BuildRequest;
 use crate::exporters::awsemf::AwsEmfExporterConfig;
-use crate::exporters::awsemf::transformer::ExportError;
 use crate::exporters::awsemf::emf_request::AwsEmfRequestBuilder;
+use crate::exporters::awsemf::transformer::ExportError;
+use crate::exporters::http::request_builder_mapper::BuildRequest;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
@@ -40,14 +40,14 @@ where
         } else {
             format!("https://logs.{}.amazonaws.com", config.region)
         };
-        
+
         let api_req_builder = AwsEmfRequestBuilder::new(
             endpoint,
             aws_config,
             config.log_group_name.clone(),
             config.log_stream_name.clone(),
         )?;
-        
+
         Ok(Self {
             transformer,
             api_req_builder,

@@ -260,7 +260,7 @@ pub enum Exporter {
     Clickhouse,
 
     AwsXray,
-    
+
     AwsEmf,
 
     #[cfg(feature = "rdkafka")]

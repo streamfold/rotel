@@ -52,9 +52,8 @@ impl AwsEmfRequestBuilder {
             AwsRequestSigner::new("logs", config.region.clone().as_str(), config, SystemClock);
 
         // Generate default log stream name if not provided
-        let log_stream_name = log_stream_name.unwrap_or_else(|| {
-            format!("rotel-{}", uuid::Uuid::new_v4().simple())
-        });
+        let log_stream_name =
+            log_stream_name.unwrap_or_else(|| format!("rotel-{}", uuid::Uuid::new_v4().simple()));
 
         let s = Self {
             uri,
@@ -70,22 +69,21 @@ impl AwsEmfRequestBuilder {
         let mut log_events = Vec::new();
 
         println!("AWS_EMF: {}", json!(payload).to_string());
-        
+
         for emf_log in payload {
             log_events.push(json!({
                 "timestamp": chrono::Utc::now().timestamp_millis(),
                 "message": emf_log.to_string()
             }));
         }
-        
+
         let data = json!({
             "logGroupName": self.log_group_name,
             "logStreamName": self.log_stream_name,
             "logEvents": log_events
         })
         .to_string();
-        
-        
+
         let data = Bytes::from(data.into_bytes());
 
         let signed_request = self.signer.sign(
@@ -94,7 +92,7 @@ impl AwsEmfRequestBuilder {
             self.base_headers.clone(),
             data,
         );
-        
+
         match signed_request {
             Ok(r) => Ok(vec![r]),
             Err(e) => Err(Box::new(e)),
