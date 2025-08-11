@@ -1,5 +1,5 @@
 use crate::exporters::awsemf::{Region};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -15,7 +15,7 @@ pub struct AwsEmfExporterArgs {
         default_value = "us-east-1"
     )]
     pub region: Region,
-
+    
     /// AWS EMF Exporter custom endpoint override
     #[arg(
         id("AWS_EMF_CUSTOM_ENDPOINT"),
@@ -81,15 +81,6 @@ pub struct AwsEmfExporterArgs {
     )]
     pub parse_json_encoded_attr_values: Vec<String>,
 
-    /// Output destination (cloudwatch or stdout)
-    #[arg(
-        long("awsemf-exporter-output-destination"),
-        env = "ROTEL_AWSEMF_EXPORTER_OUTPUT_DESTINATION",
-        default_value = "cloudwatch",
-        help = "Output destination: cloudwatch or stdout"
-    )]
-    pub output_destination: String,
-
     /// Enable EKS Fargate Container Insights formatting
     #[arg(
         long("awsemf-exporter-eks-fargate-container-insights-enabled"),
@@ -152,7 +143,6 @@ impl Default for AwsEmfExporterArgs {
             log_retention: 0,
             tags: None,
             parse_json_encoded_attr_values: Vec::new(),
-            output_destination: "cloudwatch".to_string(),
             eks_fargate_container_insights_enabled: false,
             resource_to_telemetry_conversion_enabled: false,
             detailed_metrics: false,
@@ -246,7 +236,6 @@ mod tests {
         assert_eq!(args.region, Region::UsEast1);
         assert_eq!(args.log_group_name, "/rotel/metrics");
         assert_eq!(args.namespace, "Rotel/Metrics");
-        assert_eq!(args.output_destination, "cloudwatch");
         assert!(!args.retain_initial_value_of_delta_metric);
         assert!(!args.detailed_metrics);
         assert_eq!(args.version, "1");
