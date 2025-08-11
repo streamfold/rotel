@@ -359,6 +359,9 @@ impl Agent {
                         Ok(())
                     });
                 }
+                Some(ExporterConfig::Awsemf(_)) => {
+                    // AWS EMF exporter only supports metrics, not traces
+                }
                 None => {}
             }
         }
@@ -439,6 +442,29 @@ impl Agent {
                         Ok(())
                     });
                 }
+                Some(ExporterConfig::Awsemf(cfg_builder)) => {
+                    let config = AwsConfig::from_env();
+                    let builder = cfg_builder.build();
+                    let exp = builder.build(
+                        metrics_pipeline_out_rx,
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        "production".to_string(),
+                        config,
+                    )?;
+
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = exp.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = e,
+                                "AWS EMF exporter returned from run loop with error."
+                            );
+                        }
+
+                        Ok(())
+                    });
+                }
                 _ => {}
             }
         }
@@ -502,6 +528,9 @@ impl Agent {
                         logs_exporter.start(token).await;
                         Ok(())
                     });
+                }
+                Some(ExporterConfig::Awsemf(_)) => {
+                    // AWS EMF exporter only supports metrics, not logs
                 }
                 _ => {}
             }

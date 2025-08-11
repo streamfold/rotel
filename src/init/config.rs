@@ -1,3 +1,4 @@
+use crate::exporters::awsemf::AwsEmfExporterConfigBuilder;
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
 #[cfg(feature = "rdkafka")]
@@ -6,6 +7,7 @@ use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter};
+use crate::init::awsemf_exporter::AwsEmfExporterArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "rdkafka")]
@@ -88,6 +90,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
+    Awsemf(AwsEmfExporterArgs),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterArgs),
 }
@@ -123,6 +126,7 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
+    Awsemf(AwsEmfExporterConfigBuilder),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
 }
@@ -254,6 +258,33 @@ impl TryIntoConfig for ExporterArgs {
                     XRayExporterConfigBuilder::new(xray.region, xray.custom_endpoint.clone());
 
                 Ok(ExporterConfig::Xray(builder))
+            }
+            ExporterArgs::Awsemf(awsemf) => {
+                if pipeline_type != PipelineType::Metrics {
+                    return Err(format!(
+                        "AWS EMF exporter only supports metrics, not {}",
+                        pipeline_type
+                    )
+                    .into());
+                }
+
+                let mut builder = AwsEmfExporterConfigBuilder::new()
+                    .with_region(awsemf.region)
+                    .with_log_group_name(awsemf.log_group_name.clone())
+                    .with_namespace(awsemf.namespace.clone())
+                    .with_retain_initial_value_of_delta_metric(
+                        awsemf.retain_initial_value_of_delta_metric,
+                    );
+
+                if let Some(custom_endpoint) = &awsemf.custom_endpoint {
+                    builder = builder.with_custom_endpoint(custom_endpoint.clone());
+                }
+
+                if let Some(log_stream_name) = &awsemf.log_stream_name {
+                    builder = builder.with_log_stream_name(log_stream_name.clone());
+                }
+
+                Ok(ExporterConfig::Awsemf(builder))
             }
             #[cfg(feature = "rdkafka")]
             ExporterArgs::Kafka(k) => {
@@ -423,6 +454,13 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
             };
 
             Ok(ExporterArgs::Xray(args))
+        }
+        "awsemf" => {
+            let args: AwsEmfExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => return Err(format!("failed to parse AWS EMF config: {}", e).into()),
+            };
+            Ok(ExporterArgs::Awsemf(args))
         }
         #[cfg(feature = "rdkafka")]
         "kafka" => {

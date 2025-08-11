@@ -124,8 +124,6 @@ pub enum MetricValue {
 pub struct MetricMetadata {
     pub namespace: String,
     pub timestamp_ms: i64,
-    pub log_group: String,
-    pub log_stream: Option<String>,
 }
 
 impl MetricTransformer {
@@ -240,8 +238,6 @@ impl MetricTransformer {
                 metadata: MetricMetadata {
                     namespace: self.config.namespace.clone(),
                     timestamp_ms,
-                    log_group: self.config.log_group_name.clone(),
-                    log_stream: self.config.log_stream_name.clone(),
                 },
             });
 
@@ -292,8 +288,6 @@ impl MetricTransformer {
                 metadata: MetricMetadata {
                     namespace: self.config.namespace.clone(),
                     timestamp_ms,
-                    log_group: self.config.log_group_name.clone(),
-                    log_stream: self.config.log_stream_name.clone(),
                 },
             });
 
@@ -342,8 +336,6 @@ impl MetricTransformer {
                 metadata: MetricMetadata {
                     namespace: self.config.namespace.clone(),
                     timestamp_ms,
-                    log_group: self.config.log_group_name.clone(),
-                    log_stream: self.config.log_stream_name.clone(),
                 },
             });
 
