@@ -92,6 +92,15 @@ pub struct GroupKey {
     pub namespace: String,
     pub labels: Vec<(String, String)>, // Sorted key-value pairs for consistent hashing
     pub timestamp_ms: i64,
+    pub metric_type: MetricType,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum MetricType {
+    Gauge,
+    Sum,
+    Histogram,
+    Summary,
 }
 
 // Grouped metric containing multiple metrics with the same dimensions
@@ -152,6 +161,7 @@ pub struct MetricKey {
     pub metric_name: String,
     pub namespace: String,
     pub labels: Vec<(String, String)>, // Sorted key-value pairs
+    pub metric_type: MetricType,
 }
 
 // Cache entry for regular metrics
@@ -202,7 +212,7 @@ impl MetricTransformer {
                         data_point,
                         resource_attrs,
                         grouped_metrics,
-                        "gauge",
+                        MetricType::Gauge,
                         false, // Gauges are never cumulative
                     )?;
                 }
@@ -217,7 +227,7 @@ impl MetricTransformer {
                         data_point,
                         resource_attrs,
                         grouped_metrics,
-                        "counter",
+                        MetricType::Sum,
                         is_cumulative,
                     )?;
                 }
@@ -264,7 +274,7 @@ impl MetricTransformer {
         data_point: &opentelemetry_proto::tonic::metrics::v1::NumberDataPoint,
         resource_attrs: &HashMap<String, String>,
         grouped_metrics: &mut HashMap<GroupKey, GroupedMetric>,
-        _metric_type: &str,
+        metric_type: MetricType,
         is_cumulative: bool,
     ) -> Result<(), ExportError> {
         let labels = self.extract_dimensions_from_number_data_point(data_point, resource_attrs)?;
@@ -287,7 +297,7 @@ impl MetricTransformer {
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
         let final_value = if is_cumulative {
-            let metric_key = MetricKey::new(metric_name, &namespace, &labels);
+            let metric_key = MetricKey::new(metric_name, &namespace, &labels, metric_type);
             let timestamp = UNIX_EPOCH + std::time::Duration::from_nanos(data_point.time_unix_nano);
             
             let (delta_value, retained) = self.delta_calculator.calculate_delta(
@@ -320,7 +330,7 @@ impl MetricTransformer {
             None => unreachable!(), // Already handled above
         };
 
-        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms);
+        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms, metric_type);
 
         let metric_info = MetricInfo {
             value: metric_value,
@@ -373,7 +383,7 @@ impl MetricTransformer {
         
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
-        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms);
+        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Histogram);
 
         let metric_info = MetricInfo {
             value: metric_value,
@@ -421,7 +431,7 @@ impl MetricTransformer {
         let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
         let (final_sum, final_count) = if is_cumulative {
-            let metric_key = MetricKey::new(metric_name, &namespace, &labels);
+            let metric_key = MetricKey::new(metric_name, &namespace, &labels, MetricType::Summary);
             let timestamp = UNIX_EPOCH + std::time::Duration::from_nanos(data_point.time_unix_nano);
             
             let (delta_entry, retained) = self.summary_calculator.calculate_summary_delta(
@@ -448,7 +458,7 @@ impl MetricTransformer {
             quantiles,
         };
 
-        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms);
+        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Summary);
 
         let metric_info = MetricInfo {
             value: metric_value,
@@ -473,7 +483,7 @@ impl MetricTransformer {
         Ok(())
     }
 
-    fn create_group_key(&self, namespace: &str, labels: &HashMap<String, String>, timestamp_ms: i64) -> GroupKey {
+    fn create_group_key(&self, namespace: &str, labels: &HashMap<String, String>, timestamp_ms: i64, metric_type: MetricType) -> GroupKey {
         let mut sorted_labels: Vec<(String, String)> =
             labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         sorted_labels.sort_by(|a, b| a.0.cmp(&b.0));
@@ -482,6 +492,7 @@ impl MetricTransformer {
             namespace: namespace.to_string(),
             labels: sorted_labels,
             timestamp_ms,
+            metric_type,
         }
     }
 
@@ -854,7 +865,7 @@ impl SummaryDeltaCalculator {
 }
 
 impl MetricKey {
-    pub fn new(metric_name: &str, namespace: &str, labels: &HashMap<String, String>) -> Self {
+    pub fn new(metric_name: &str, namespace: &str, labels: &HashMap<String, String>, metric_type: MetricType) -> Self {
         let mut sorted_labels: Vec<(String, String)> = labels
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -865,6 +876,7 @@ impl MetricKey {
             metric_name: metric_name.to_string(),
             namespace: namespace.to_string(),
             labels: sorted_labels,
+            metric_type,
         }
     }
 }
@@ -1664,7 +1676,7 @@ mod tests {
     fn test_delta_calculation_for_cumulative_sum() {
         // Test the delta calculator directly first
         let calculator = DeltaCalculator::new();
-        let metric_key = MetricKey::new("test_counter", "TestNamespace", &HashMap::new());
+        let metric_key = MetricKey::new("test_counter", "TestNamespace", &HashMap::new(), MetricType::Sum);
         let timestamp1 = SystemTime::now();
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
@@ -1830,7 +1842,7 @@ mod tests {
     #[test]
     fn test_delta_calculator_metric_reset() {
         let calculator = DeltaCalculator::new();
-        let metric_key = MetricKey::new("test_metric", "TestNamespace", &HashMap::new());
+        let metric_key = MetricKey::new("test_metric", "TestNamespace", &HashMap::new(), MetricType::Sum);
         let timestamp1 = SystemTime::now();
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
@@ -1854,7 +1866,7 @@ mod tests {
     #[test]
     fn test_summary_delta_calculator() {
         let calculator = SummaryDeltaCalculator::new();
-        let metric_key = MetricKey::new("test_summary", "TestNamespace", &HashMap::new());
+        let metric_key = MetricKey::new("test_summary", "TestNamespace", &HashMap::new(), MetricType::Summary);
         let timestamp1 = SystemTime::now();
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
@@ -1884,8 +1896,8 @@ mod tests {
         labels2.insert("version".to_string(), "1.0".to_string());
         labels2.insert("service".to_string(), "api".to_string()); // Different order
 
-        let key1 = MetricKey::new("test_metric", "TestNamespace", &labels1);
-        let key2 = MetricKey::new("test_metric", "TestNamespace", &labels2);
+        let key1 = MetricKey::new("test_metric", "TestNamespace", &labels1, MetricType::Sum);
+        let key2 = MetricKey::new("test_metric", "TestNamespace", &labels2, MetricType::Sum);
 
         // Should be equal despite different insertion order
         assert_eq!(key1, key2);
@@ -1894,8 +1906,12 @@ mod tests {
         labels3.insert("service".to_string(), "web".to_string()); // Different value
         labels3.insert("version".to_string(), "1.0".to_string());
 
-        let key3 = MetricKey::new("test_metric", "TestNamespace", &labels3);
+        let key3 = MetricKey::new("test_metric", "TestNamespace", &labels3, MetricType::Sum);
         assert_ne!(key1, key3);
+        
+        // Different type
+        let key4 = MetricKey::new("test_metric", "TestNamespace", &labels3, MetricType::Summary);
+        assert_ne!(key3, key4);
     }
 
     #[test]
