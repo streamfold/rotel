@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod awsemf;
 pub mod blackhole;
 pub mod clickhouse;
 pub mod datadog;

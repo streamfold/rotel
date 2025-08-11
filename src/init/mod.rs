@@ -5,6 +5,7 @@ pub mod misc;
 pub mod parse;
 pub mod wait;
 
+mod awsemf_exporter;
 mod clickhouse_exporter;
 mod datadog_exporter;
 #[cfg(feature = "rdkafka")]
