@@ -271,7 +271,6 @@ impl TryIntoConfig for ExporterArgs {
                 let mut builder = AwsEmfExporterConfigBuilder::new()
                     .with_region(awsemf.region)
                     .with_log_group_name(awsemf.log_group_name.clone())
-                    .with_log_retention(awsemf.log_retention)
                     .with_retain_initial_value_of_delta_metric(
                         awsemf.retain_initial_value_of_delta_metric,
                     );

@@ -173,7 +173,6 @@ pub struct AwsEmfExporterConfig {
     pub region: Region,
     pub log_group_name: String,
     pub log_stream_name: Option<String>,
-    pub log_retention: i32,
     pub namespace: Option<String>,
     pub custom_endpoint: Option<String>,
     pub retain_initial_value_of_delta_metric: bool,
@@ -186,7 +185,6 @@ impl Default for AwsEmfExporterConfig {
             region: Region::UsEast1,
             log_group_name: "/rotel/metrics".to_string(),
             log_stream_name: None,
-            log_retention: 0,
             namespace: None,
             custom_endpoint: None,
             retain_initial_value_of_delta_metric: false,
@@ -224,11 +222,6 @@ impl AwsEmfExporterConfigBuilder {
 
     pub fn with_log_stream_name<S: Into<String>>(mut self, log_stream_name: S) -> Self {
         self.config.log_stream_name = Some(log_stream_name.into());
-        self
-    }
-
-    pub fn with_log_retention(mut self, log_retention: i32) -> Self {
-        self.config.log_retention = log_retention;
         self
     }
 

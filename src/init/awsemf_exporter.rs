@@ -56,14 +56,6 @@ pub struct AwsEmfExporterArgs {
     )]
     pub retain_initial_value_of_delta_metric: bool,
 
-    /// Log retention in days (0 for never expire)
-    #[arg(
-        long("awsemf-exporter-log-retention"),
-        env = "ROTEL_AWSEMF_EXPORTER_LOG_RETENTION",
-        default_value = "0"
-    )]
-    pub log_retention: i32,
-
     /// CloudWatch Log Group tags (key=value pairs, comma-separated)
     #[arg(
         long("awsemf-exporter-tags"),
@@ -84,7 +76,6 @@ impl Default for AwsEmfExporterArgs {
             log_stream_name: None,
             namespace: None,
             retain_initial_value_of_delta_metric: false,
-            log_retention: 0,
             tags: None,
         }
     }
