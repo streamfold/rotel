@@ -1,5 +1,5 @@
 use crate::exporters::awsemf::Region;
-use clap::{Args, ValueEnum};
+use clap::Args;
 use serde::Deserialize;
 use std::collections::HashMap;
 

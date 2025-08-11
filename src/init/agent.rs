@@ -448,7 +448,6 @@ impl Agent {
                     let exp = builder.build(
                         metrics_pipeline_out_rx,
                         self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                        "production".to_string(),
                         config,
                     )?;
 

@@ -874,7 +874,7 @@ mod tests {
         let mut env_manager = EnvManager::new();
         env_manager.set_var("ROTEL_EXPORTER_TEST_REGION", "us-west-1");
 
-        let result = args_from_env_prefix("xray", "test");
+        let result = args_from_env_prefix("aws-xray", "test");
 
         assert!(result.is_ok());
         match result.unwrap() {

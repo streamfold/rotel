@@ -17,14 +17,12 @@ const DEFAULT_NAMESPACE: &str = "Rotel/Metrics";
 
 #[derive(Clone)]
 pub struct Transformer {
-    config: AwsEmfExporterConfig,
     metric_transformer: MetricTransformer,
 }
 
 impl Transformer {
-    pub fn new(_environment: String, config: AwsEmfExporterConfig) -> Self {
+    pub fn new(config: AwsEmfExporterConfig) -> Self {
         Self {
-            config: config.clone(),
             metric_transformer: MetricTransformer::new(config),
         }
     }
@@ -132,7 +130,7 @@ pub enum MetricValue {
     Summary {
         count: u64,
         sum: f64,
-        quantiles: Vec<(f64, f64)>, // (quantile, value) pairs
+        _quantiles: Vec<(f64, f64)>, // (quantile, value) pairs (TODO for detailed reporting)
     },
 }
 
@@ -455,7 +453,7 @@ impl MetricTransformer {
         let metric_value = MetricValue::Summary {
             count: final_count,
             sum: final_sum,
-            quantiles,
+            _quantiles: quantiles,
         };
 
         let group_key = self.create_group_key(&namespace, &labels, timestamp_ms, MetricType::Summary);
@@ -563,7 +561,7 @@ impl MetricTransformer {
                 MetricValue::Summary {
                     count,
                     sum,
-                    quantiles: _,
+                    _quantiles,
                 } => {
                     // For summaries, emit count and sum (quantiles handled separately if detailed metrics enabled)
                     emf_obj.insert(format!("{}_count", metric_name), json!(count));
@@ -1179,13 +1177,13 @@ mod tests {
             MetricValue::Summary {
                 count,
                 sum,
-                quantiles,
+                _quantiles,
             } => {
                 assert_eq!(*count, 100);
                 assert_eq!(*sum, 1500.0);
-                assert_eq!(quantiles.len(), 2);
-                assert_eq!(quantiles[0], (0.5, 10.0));
-                assert_eq!(quantiles[1], (0.95, 25.0));
+                assert_eq!(_quantiles.len(), 2);
+                assert_eq!(_quantiles[0], (0.5, 10.0));
+                assert_eq!(_quantiles[1], (0.95, 25.0));
             }
             _ => panic!("Expected Summary value"),
         }
@@ -1227,11 +1225,11 @@ mod tests {
             MetricValue::Summary {
                 count,
                 sum,
-                quantiles,
+                _quantiles,
             } => {
                 assert_eq!(*count, 0);
                 assert_eq!(*sum, 0.0);
-                assert!(quantiles.is_empty());
+                assert!(_quantiles.is_empty());
             }
             _ => panic!("Expected Summary value"),
         }
@@ -1681,7 +1679,7 @@ mod tests {
         let timestamp2 = timestamp1 + std::time::Duration::from_secs(10);
 
         // First value
-        let (result1, retained1) = calculator.calculate_delta(&metric_key, 100.0, timestamp1, false);
+        let (_result1, retained1) = calculator.calculate_delta(&metric_key, 100.0, timestamp1, false);
         assert!(!retained1); // First value not retained
 
         // Second value (should calculate delta)

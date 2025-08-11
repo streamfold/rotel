@@ -273,11 +273,10 @@ impl AwsEmfExporterBuilder {
         self,
         rx: BoundedReceiver<Vec<ResourceMetrics>>,
         flush_receiver: Option<FlushReceiver>,
-        environment: String,
         aws_config: AwsConfig,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
-        let transformer = Transformer::new(environment, self.config.clone());
+        let transformer = Transformer::new(self.config.clone());
 
         let req_builder = RequestBuilder::new(transformer, aws_config, self.config.clone())?;
 
