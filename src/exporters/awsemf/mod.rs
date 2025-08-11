@@ -4,7 +4,6 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::awsemf::request_builder::RequestBuilder;
 use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
-use std::collections::HashMap;
 
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
@@ -110,11 +109,6 @@ impl AwsEmfExporterConfigBuilder {
     pub fn with_namespace<S: Into<String>>(mut self, namespace: S) -> Self {
         self.config.namespace = Some(namespace.into());
         self
-    }
-
-    pub fn with_tags(mut self, tags: HashMap<String, String>) -> Self {
-        //        self.config.tags = tags;
-        todo!()
     }
 
     pub fn with_custom_endpoint<S: Into<String>>(mut self, endpoint: S) -> Self {

@@ -287,10 +287,6 @@ impl TryIntoConfig for ExporterArgs {
                     builder = builder.with_log_stream_name(log_stream_name.clone());
                 }
                 
-                if let Some(tags) = &awsemf.tags {
-                    builder = builder.with_tags(tags.clone());
-                }
-
                 Ok(ExporterConfig::Awsemf(builder))
             }
             #[cfg(feature = "rdkafka")]

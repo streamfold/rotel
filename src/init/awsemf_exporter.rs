@@ -1,10 +1,7 @@
 use clap::Args;
 use serde::Deserialize;
-use std::collections::HashMap;
 
 use crate::exporters::shared::aws::Region;
-
-use super::parse;
 
 #[derive(Debug, Clone, Args, Deserialize)]
 #[serde(default)]
@@ -56,16 +53,6 @@ pub struct AwsEmfExporterArgs {
         action = clap::ArgAction::SetTrue
     )]
     pub retain_initial_value_of_delta_metric: bool,
-
-    /// CloudWatch Log Group tags (key=value pairs, comma-separated)
-    #[arg(
-        long("awsemf-exporter-tags"),
-        env = "ROTEL_AWSEMF_EXPORTER_TAGS",
-        value_parser = parse::parse_key_val::<String, String>,
-        value_delimiter = ',',
-        help = "CloudWatch Log Group tags in key=value format, comma-separated"
-    )]
-    pub tags: Option<HashMap<String, String>>,
 }
 
 impl Default for AwsEmfExporterArgs {
@@ -77,7 +64,6 @@ impl Default for AwsEmfExporterArgs {
             log_stream_name: None,
             namespace: None,
             retain_initial_value_of_delta_metric: false,
-            tags: None,
         }
     }
 }
