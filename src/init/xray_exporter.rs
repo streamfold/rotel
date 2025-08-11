@@ -1,6 +1,7 @@
-use crate::exporters::xray::Region;
 use clap::Args;
 use serde::Deserialize;
+
+use crate::exporters::shared::aws::Region;
 
 #[derive(Debug, Clone, Args, Deserialize)]
 #[serde(default)]

@@ -1,7 +1,8 @@
-use crate::exporters::awsemf::Region;
 use clap::Args;
 use serde::Deserialize;
 use std::collections::HashMap;
+
+use crate::exporters::shared::aws::Region;
 
 use super::parse;
 
