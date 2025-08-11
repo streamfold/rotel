@@ -68,6 +68,8 @@ impl AwsEmfRequestBuilder {
 
     pub fn build(&self, payload: Vec<Value>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
         let mut log_events = Vec::new();
+
+        println!("AWS_EMF: {}", json!(payload).to_string());
         
         for emf_log in payload {
             log_events.push(json!({
@@ -75,13 +77,14 @@ impl AwsEmfRequestBuilder {
                 "message": emf_log.to_string()
             }));
         }
-
+        
         let data = json!({
             "logGroupName": self.log_group_name,
             "logStreamName": self.log_stream_name,
             "logEvents": log_events
         })
         .to_string();
+        
         
         let data = Bytes::from(data.into_bytes());
 

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::awsemf::request_builder::RequestBuilder;
 use crate::exporters::awsemf::transformer::Transformer;
+use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
 use crate::aws_api::config::AwsConfig;
@@ -28,9 +29,9 @@ use tower::{BoxError, ServiceBuilder};
 
 use super::http::finalizer::SuccessStatusFinalizer;
 
+mod emf_request;
 mod request_builder;
 mod transformer;
-mod emf_request;
 
 type SvcType = TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), AwsEmfDecoder>>>;
 
@@ -172,29 +173,11 @@ pub struct AwsEmfExporterConfig {
     pub region: Region,
     pub log_group_name: String,
     pub log_stream_name: Option<String>,
-    pub namespace: String,
+    pub log_retention: i32,
+    pub namespace: Option<String>,
     pub custom_endpoint: Option<String>,
     pub retain_initial_value_of_delta_metric: bool,
     pub retry_config: RetryConfig,
-}
-
-#[derive(Copy, Clone, Debug, Deserialize, clap::ValueEnum, PartialEq, Eq)]
-#[serde(from = "String")]
-pub enum DimensionRollupOption {
-    ZeroAndSingleDimensionRollup,
-    SingleDimensionRollupOnly,
-    NoDimensionRollup,
-}
-
-impl From<String> for DimensionRollupOption {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "ZeroAndSingleDimensionRollup" => DimensionRollupOption::ZeroAndSingleDimensionRollup,
-            "SingleDimensionRollupOnly" => DimensionRollupOption::SingleDimensionRollupOnly,
-            "NoDimensionRollup" => DimensionRollupOption::NoDimensionRollup,
-            _ => DimensionRollupOption::ZeroAndSingleDimensionRollup, // default
-        }
-    }
 }
 
 impl Default for AwsEmfExporterConfig {
@@ -203,7 +186,8 @@ impl Default for AwsEmfExporterConfig {
             region: Region::UsEast1,
             log_group_name: "/rotel/metrics".to_string(),
             log_stream_name: None,
-            namespace: "Rotel/Metrics".to_string(),
+            log_retention: 0,
+            namespace: None,
             custom_endpoint: None,
             retain_initial_value_of_delta_metric: false,
             retry_config: Default::default(),
@@ -243,9 +227,19 @@ impl AwsEmfExporterConfigBuilder {
         self
     }
 
-    pub fn with_namespace<S: Into<String>>(mut self, namespace: S) -> Self {
-        self.config.namespace = namespace.into();
+    pub fn with_log_retention(mut self, log_retention: i32) -> Self {
+        self.config.log_retention = log_retention;
         self
+    }
+
+    pub fn with_namespace<S: Into<String>>(mut self, namespace: S) -> Self {
+        self.config.namespace = Some(namespace.into());
+        self
+    }
+
+    pub fn with_tags(mut self, tags: HashMap<String, String>) -> Self {
+        //        self.config.tags = tags;
+        todo!()
     }
 
     pub fn with_custom_endpoint<S: Into<String>>(mut self, endpoint: S) -> Self {
@@ -285,11 +279,7 @@ impl AwsEmfExporterBuilder {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
         let transformer = Transformer::new(environment, self.config.clone());
 
-        let req_builder = RequestBuilder::new(
-            transformer,
-            aws_config,
-            self.config.clone(),
-        )?;
+        let req_builder = RequestBuilder::new(transformer, aws_config, self.config.clone())?;
 
         let retry_layer = RetryPolicy::new(self.config.retry_config, None);
         let retry_broadcast = retry_layer.retry_broadcast();

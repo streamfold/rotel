@@ -3,6 +3,7 @@
 use crate::exporters::awsemf::AwsEmfExporterConfig;
 use crate::exporters::awsemf::request_builder::TransformPayload;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_NAMESPACE};
 use serde_json::Error as JsonError;
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,6 +12,8 @@ use thiserror::Error;
 
 // Only value supported at the moment
 const STORAGE_RESOLUTION: usize = 60;
+
+const DEFAULT_NAMESPACE: &str = "Rotel/Metrics";
 
 #[derive(Clone)]
 pub struct Transformer {
@@ -280,9 +283,11 @@ impl MetricTransformer {
                 });
             }
         };
+        
+        let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
         let final_value = if is_cumulative {
-            let metric_key = MetricKey::new(metric_name, &self.config.namespace, &labels);
+            let metric_key = MetricKey::new(metric_name, &namespace, &labels);
             let timestamp = UNIX_EPOCH + std::time::Duration::from_nanos(data_point.time_unix_nano);
             
             let (delta_value, retained) = self.delta_calculator.calculate_delta(
@@ -315,13 +320,13 @@ impl MetricTransformer {
             None => unreachable!(), // Already handled above
         };
 
-        let group_key = self.create_group_key(&labels, timestamp_ms);
+        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms);
 
         let metric_info = MetricInfo {
             value: metric_value,
             unit: self.translate_unit(unit),
         };
-
+        
         // Get or create grouped metric
         let grouped_metric = grouped_metrics
             .entry(group_key)
@@ -329,7 +334,7 @@ impl MetricTransformer {
                 labels: labels.clone(),
                 metrics: HashMap::new(),
                 metadata: MetricMetadata {
-                    namespace: self.config.namespace.clone(),
+                    namespace,
                     timestamp_ms,
                 },
             });
@@ -365,21 +370,25 @@ impl MetricTransformer {
             min: data_point.min.unwrap_or(0.0),
             max: data_point.max.unwrap_or(0.0),
         };
+        
+        let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
-        let group_key = self.create_group_key(&labels, timestamp_ms);
+        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms);
 
         let metric_info = MetricInfo {
             value: metric_value,
             unit: self.translate_unit(unit),
         };
-
+        
+        let namespace = get_namespace(resource_attrs, &self.config.namespace);
         let grouped_metric = grouped_metrics
+
             .entry(group_key)
             .or_insert_with(|| GroupedMetric {
                 labels: labels.clone(),
                 metrics: HashMap::new(),
                 metadata: MetricMetadata {
-                    namespace: self.config.namespace.clone(),
+                    namespace,
                     timestamp_ms,
                 },
             });
@@ -408,9 +417,11 @@ impl MetricTransformer {
             .iter()
             .map(|qv| (qv.quantile, qv.value))
             .collect();
+        
+        let namespace = get_namespace(resource_attrs, &self.config.namespace);
 
         let (final_sum, final_count) = if is_cumulative {
-            let metric_key = MetricKey::new(metric_name, &self.config.namespace, &labels);
+            let metric_key = MetricKey::new(metric_name, &namespace, &labels);
             let timestamp = UNIX_EPOCH + std::time::Duration::from_nanos(data_point.time_unix_nano);
             
             let (delta_entry, retained) = self.summary_calculator.calculate_summary_delta(
@@ -437,7 +448,7 @@ impl MetricTransformer {
             quantiles,
         };
 
-        let group_key = self.create_group_key(&labels, timestamp_ms);
+        let group_key = self.create_group_key(&namespace, &labels, timestamp_ms);
 
         let metric_info = MetricInfo {
             value: metric_value,
@@ -450,7 +461,7 @@ impl MetricTransformer {
                 labels: labels.clone(),
                 metrics: HashMap::new(),
                 metadata: MetricMetadata {
-                    namespace: self.config.namespace.clone(),
+                    namespace,
                     timestamp_ms,
                 },
             });
@@ -462,13 +473,13 @@ impl MetricTransformer {
         Ok(())
     }
 
-    fn create_group_key(&self, labels: &HashMap<String, String>, timestamp_ms: i64) -> GroupKey {
+    fn create_group_key(&self, namespace: &str, labels: &HashMap<String, String>, timestamp_ms: i64) -> GroupKey {
         let mut sorted_labels: Vec<(String, String)> =
             labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         sorted_labels.sort_by(|a, b| a.0.cmp(&b.0));
 
         GroupKey {
-            namespace: self.config.namespace.clone(),
+            namespace: namespace.to_string(),
             labels: sorted_labels,
             timestamp_ms,
         }
@@ -676,6 +687,29 @@ impl MetricTransformer {
             _ => unit.to_string(),
         }
     }
+}
+
+fn get_namespace(resource_attrs: &HashMap<String, String>, namespace: &Option<String>) -> String {
+    let svc_name_space_key = resource_attrs.get(SERVICE_NAMESPACE);
+    let svc_name_key = resource_attrs.get(SERVICE_NAME);
+    
+    if let Some(namespace) = namespace {
+        return namespace.clone()
+    }
+    
+    if svc_name_key.is_some() && svc_name_space_key.is_some() {
+        return format!("{}/{}", svc_name_space_key.unwrap(), svc_name_key.unwrap());
+    }
+    
+    if let Some(svc_name) = svc_name_key {
+        return svc_name.clone()
+    }
+    
+    if let Some(svc_name_space) = svc_name_space_key {
+        return svc_name_space.clone()
+    }
+    
+    return DEFAULT_NAMESPACE.to_string()
 }
 
 fn extract_resource_attributes(resource_metrics: &ResourceMetrics) -> HashMap<String, String> {
@@ -1915,3 +1949,5 @@ mod tests {
         // works correctly as verified by the SummaryDeltaCalculator unit test.
     }
 }
+
+
