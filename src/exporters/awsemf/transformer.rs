@@ -9,6 +9,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, io, sync::{Arc, Mutex}};
 use thiserror::Error;
 
+// Only value supported at the moment
+const STORAGE_RESOLUTION: usize = 60;
+
 #[derive(Clone)]
 pub struct Transformer {
     config: AwsEmfExporterConfig,
@@ -485,7 +488,8 @@ impl MetricTransformer {
         for (metric_name, metric_info) in &grouped_metric.metrics {
             cw_metrics.push(json!({
                 "Name": metric_name,
-                "Unit": if metric_info.unit.is_empty() { "Count" } else { &metric_info.unit }
+                "Unit": if metric_info.unit.is_empty() { "Count" } else { &metric_info.unit },
+                "StorageResolution": STORAGE_RESOLUTION,
             }));
         }
 
