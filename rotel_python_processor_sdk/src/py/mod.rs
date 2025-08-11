@@ -164,6 +164,7 @@ mod tests {
     use crate::py::metrics::ResourceMetrics;
     use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    use opentelemetry_proto::tonic::metrics::v1::metric::Data;
     use opentelemetry_proto::tonic::trace::v1;
     use pyo3::ffi::c_str;
     use std::collections::HashMap;
@@ -2025,6 +2026,70 @@ mod tests {
             .collect();
 
         verify_attrs(attrs_to_verify);
+
+        let mut metrics_request = FakeOTLP::metrics_service_request();
+
+        let data = metrics_request.resource_metrics[0].scope_metrics[0].metrics[0]
+            .data
+            .clone();
+        let dw = data.unwrap();
+        match dw {
+            Data::Gauge(mut g) => {
+                g.data_points[0].attributes = attrs.clone();
+                metrics_request.resource_metrics[0].scope_metrics[0].metrics[0].data =
+                    Some(Data::Gauge(g));
+            }
+            Data::Sum(_) => {}
+            Data::Histogram(_) => {}
+            Data::ExponentialHistogram(_) => {}
+            Data::Summary(_) => {}
+        }
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_metrics = crate::model::otel_transform::transform_resource_metrics(
+            metrics_request.resource_metrics[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceMetrics object
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+        };
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "attributes_processor_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_metrics_vec = Arc::into_inner(r_resource_metrics.scope_metrics)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_metrics = crate::model::py_transform::transform_metrics(scope_metrics_vec);
+
+        let mut metric = scope_metrics.pop().unwrap().metrics.pop().unwrap();
+        let data = metric.data.take().unwrap();
+        match data {
+            Data::Gauge(g) => {
+                let kv_map: HashMap<
+                    String,
+                    Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
+                > = g.data_points[0]
+                    .clone()
+                    .attributes
+                    .into_iter()
+                    .map(|kv| (kv.key.clone(), kv.value.clone()))
+                    .collect();
+                verify_attrs(kv_map);
+            }
+            _ => panic!("unexpected data type"),
+        }
     }
     #[test]
     fn redaction_processor_restrictive_test() {
@@ -2116,7 +2181,7 @@ mod tests {
                 }),
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
-                key: "unallowed_span_key".to_string(),
+                key: "unallowed_key".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("should_be_deleted".to_string())),
                 }),
@@ -2174,7 +2239,7 @@ mod tests {
                 .map(|kv| (kv.key.clone(), kv.value.clone()))
                 .collect();
 
-        let expected_attributes = HashMap::from([
+        let expected_resource_attributes = HashMap::from([
             ("host.arch", "amd64"),
             ("os.type", "linux"),
             ("region", "us-east-1"),
@@ -2217,7 +2282,7 @@ mod tests {
                 }
             };
 
-        validate(kv_map, expected_attributes);
+        validate(kv_map, expected_resource_attributes.clone());
 
         let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
             .unwrap()
@@ -2226,7 +2291,6 @@ mod tests {
         let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
 
         let span = scope_spans.pop().unwrap().spans.pop().unwrap();
-        println!("span is {:?}", span);
         assert_eq!(7, span.attributes.len());
 
         let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
@@ -2235,17 +2299,110 @@ mod tests {
                 .map(|kv| (kv.key.clone(), kv.value.clone()))
                 .collect();
 
-        let expected_attributes = HashMap::from([
+        let expected_span_attributes = HashMap::from([
             ("operation", "get_data"),
             ("safe_attribute", "this should remain"),
             ("redaction.span.redacted_keys.count", "7"),
             ("redaction.span.allowed_keys.names", "operation"),
             ("redaction.span.allowed_keys.count", "1"),
-            ("redaction.span.redacted_keys.names", "api_key_header,db.statement,http.url,my_company_email,some_token,unallowed_span_key,user.email"),
+            ("redaction.span.redacted_keys.names", "api_key_header,db.statement,http.url,my_company_email,some_token,unallowed_key,user.email"),
             ("redaction.span.ignored_keys.count", "1"),
         ]);
 
-        validate(kv_map, expected_attributes)
+        validate(kv_map, expected_span_attributes);
+
+        let mut metrics_request = FakeOTLP::metrics_service_request();
+        metrics_request.resource_metrics[0].resource =
+            Some(opentelemetry_proto::tonic::resource::v1::Resource {
+                attributes: resource_attrs.clone(),
+                dropped_attributes_count: 0,
+            });
+        let data = metrics_request.resource_metrics[0].scope_metrics[0].metrics[0]
+            .data
+            .clone();
+        let dw = data.unwrap();
+        match dw {
+            Data::Gauge(mut g) => {
+                g.data_points[0].attributes = span_attrs.clone();
+                metrics_request.resource_metrics[0].scope_metrics[0].metrics[0].data =
+                    Some(Data::Gauge(g));
+            }
+            Data::Sum(_) => {}
+            Data::Histogram(_) => {}
+            Data::ExponentialHistogram(_) => {}
+            Data::Summary(_) => {}
+        }
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_metrics = crate::model::otel_transform::transform_resource_metrics(
+            metrics_request.resource_metrics[0].clone(),
+        );
+
+        // Create the Python-exposed ResourceMetrics object
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+        };
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "redaction_processor_restrictive_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        let resource = Arc::into_inner(r_resource_metrics.resource)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        let resource = py_transform::transform_resource(resource).unwrap();
+        assert_eq!(9, resource.attributes.len());
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            resource
+                .attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+        validate(kv_map, expected_resource_attributes.clone());
+
+        let scope_metrics_vec = Arc::into_inner(r_resource_metrics.scope_metrics)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_metrics = crate::model::py_transform::transform_metrics(scope_metrics_vec);
+
+        let mut metric = scope_metrics.pop().unwrap().metrics.pop().unwrap();
+        let data = metric.data.take().unwrap();
+        match data {
+            Data::Gauge(g) => {
+                let kv_map: HashMap<
+                    String,
+                    Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
+                > = g.data_points[0]
+                    .clone()
+                    .attributes
+                    .into_iter()
+                    .map(|kv| (kv.key.clone(), kv.value.clone()))
+                    .collect();
+                assert_eq!(7, kv_map.len());
+                let expected_span_attributes = HashMap::from([
+                    ("operation", "get_data"),
+                    ("safe_attribute", "this should remain"),
+                    ("redaction.metric.redacted_keys.count", "7"),
+                    ("redaction.metric.allowed_keys.names", "operation"),
+                    ("redaction.metric.allowed_keys.count", "1"),
+                    ("redaction.metric.redacted_keys.names", "api_key_header,db.statement,http.url,my_company_email,some_token,unallowed_key,user.email"),
+                    ("redaction.metric.ignored_keys.count", "1"),
+                ]);
+                validate(kv_map, expected_span_attributes);
+            }
+            _ => panic!("unexpected data type"),
+        }
     }
 
     #[test]
