@@ -50,7 +50,7 @@ type ExporterType<'a, Resource> = Exporter<
     SuccessStatusFinalizer,
 >;
 
-#[derive(Copy, Clone, Debug, Deserialize, clap::ValueEnum, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(from = "String")]
 pub enum Region {
     UsEast1,

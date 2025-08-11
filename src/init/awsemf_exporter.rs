@@ -8,6 +8,7 @@ use std::collections::HashMap;
 pub struct AwsEmfExporterArgs {
     /// AWS EMF Exporter Region
     #[arg(
+        id("AWS_EMF_REGION"),
         value_enum,
         long("awsemf-exporter-region"),
         env = "ROTEL_AWSEMF_EXPORTER_REGION",
@@ -17,6 +18,7 @@ pub struct AwsEmfExporterArgs {
 
     /// AWS EMF Exporter custom endpoint override
     #[arg(
+        id("AWS_EMF_CUSTOM_ENDPOINT"),
         long("awsemf-exporter-custom-endpoint"),
         env = "ROTEL_AWSEMF_EXPORTER_CUSTOM_ENDPOINT"
     )]

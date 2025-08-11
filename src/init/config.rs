@@ -447,7 +447,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 
             Ok(ExporterArgs::Clickhouse(args))
         }
-        "xray" => {
+        "aws-xray" => {
             let args: XRayExporterArgs = match figment.extract() {
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse X-Ray config: {}", e).into()),
@@ -455,7 +455,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 
             Ok(ExporterArgs::Xray(args))
         }
-        "awsemf" => {
+        "aws-emf" => {
             let args: AwsEmfExporterArgs = match figment.extract() {
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse AWS EMF config: {}", e).into()),
@@ -519,6 +519,11 @@ fn get_single_exporter_config(
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
             cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
         }
+        Exporter::AwsEmf => {
+            let args = ExporterArgs::Awsemf(config.aws_emf_exporter.clone());
+            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+        }
+        
         #[cfg(feature = "rdkafka")]
         Exporter::Kafka => {
             let kafka_config = config.kafka_exporter.build_config();
