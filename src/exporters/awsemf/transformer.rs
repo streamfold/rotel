@@ -5,7 +5,7 @@ use crate::exporters::awsemf::request_builder::TransformPayload;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_NAMESPACE};
 use serde_json::Error as JsonError;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{
     collections::HashMap,
@@ -13,6 +13,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
+
+use super::event::Event;
 
 // Only value supported at the moment
 const STORAGE_RESOLUTION: usize = 60;
@@ -33,7 +35,7 @@ impl Transformer {
 }
 
 impl TransformPayload<ResourceMetrics> for Transformer {
-    fn transform(&self, resource_metrics: Vec<ResourceMetrics>) -> Result<Vec<Value>, ExportError> {
+    fn transform(&self, resource_metrics: Vec<ResourceMetrics>) -> Result<Vec<Event>, ExportError> {
         let mut grouped_metrics: HashMap<GroupKey, GroupedMetric> = HashMap::new();
 
         for rm in resource_metrics {
@@ -509,7 +511,7 @@ impl MetricTransformer {
     pub fn translate_grouped_metric_to_emf(
         &self,
         grouped_metric: GroupedMetric,
-    ) -> Result<Value, ExportError> {
+    ) -> Result<Event, ExportError> {
         let timestamp_ms = grouped_metric.metadata.timestamp_ms;
 
         // Create the dimensions array (list of dimension names)
@@ -582,7 +584,7 @@ impl MetricTransformer {
             }
         }
 
-        Ok(emf_log)
+        Ok(Event::new(timestamp_ms, emf_log.to_string()))
     }
 
     fn extract_dimensions_from_number_data_point(

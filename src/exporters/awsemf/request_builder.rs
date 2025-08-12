@@ -8,12 +8,13 @@ use crate::exporters::http::request_builder_mapper::BuildRequest;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
-use serde_json::Value;
 use std::marker::PhantomData;
 use tower::BoxError;
 
+use super::event::Event;
+
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<T>) -> Result<Vec<Value>, ExportError>;
+    fn transform(&self, input: Vec<T>) -> Result<Vec<Event>, ExportError>;
 }
 
 #[derive(Clone)]
