@@ -51,7 +51,7 @@ pub struct AwsEmfExporterArgs {
     #[arg(
         long("awsemf-exporter-retain-initial-value-of-delta-metric"),
         env = "ROTEL_AWSEMF_EXPORTER_RETAIN_INITIAL_VALUE_OF_DELTA_METRIC",
-        action = clap::ArgAction::SetTrue
+        default_value = "false"
     )]
     pub retain_initial_value_of_delta_metric: bool,
 }

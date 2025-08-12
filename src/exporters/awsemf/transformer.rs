@@ -17,7 +17,7 @@ use thiserror::Error;
 // Only value supported at the moment
 const STORAGE_RESOLUTION: usize = 60;
 
-const DEFAULT_NAMESPACE: &str = "Rotel/Metrics";
+const DEFAULT_NAMESPACE: &str = "default";
 
 #[derive(Clone)]
 pub struct Transformer {

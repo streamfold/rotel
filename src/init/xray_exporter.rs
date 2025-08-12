@@ -6,19 +6,19 @@ use crate::exporters::shared::aws::Region;
 #[derive(Debug, Clone, Args, Deserialize)]
 #[serde(default)]
 pub struct XRayExporterArgs {
-    /// X-Ray Exporter Region
+    /// AWS X-Ray Exporter Region
     #[arg(
         value_enum,
-        long("xray-exporter-region"),
-        env = "ROTEL_XRAY_EXPORTER_REGION",
+        long("awsxray-exporter-region"),
+        env = "ROTEL_AWSXRAY_EXPORTER_REGION",
         default_value = "us-east-1"
     )]
     pub region: Region,
 
-    /// X-Ray Exporter custom endpoint override
+    /// AWS X-Ray Exporter custom endpoint override
     #[arg(
-        long("xray-exporter-custom-endpoint"),
-        env = "ROTEL_XRAY_EXPORTER_CUSTOM_ENDPOINT"
+        long("awsxray-exporter-custom-endpoint"),
+        env = "ROTEL_AWSXRAY_EXPORTER_CUSTOM_ENDPOINT"
     )]
     pub custom_endpoint: Option<String>,
 }
