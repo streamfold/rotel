@@ -22,10 +22,10 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 #[derive(Clone)]
 pub struct AwsEmfRequestBuilder {
     signer: AwsRequestSigner<SystemClock>,
-    pub base_headers: HeaderMap,
-    pub uri: Uri,
-    pub log_group_name: String,
-    pub log_stream_name: String,
+    base_headers: HeaderMap,
+    uri: Uri,
+    log_group_name: String,
+    log_stream_name: String,
 }
 
 impl AwsEmfRequestBuilder {
@@ -79,14 +79,12 @@ impl AwsEmfRequestBuilder {
         let mut batches = Vec::new();
         let mut curr_batch = EventBatch::new();
         for evt in events {
-            match curr_batch.add_event(evt) {
-                Some(e) => {
-                    batches.push(curr_batch);
+            if let Some(e) = curr_batch.add_event(evt) {
+                // Event didn't fit, start new batch
+                batches.push(curr_batch);
 
-                    curr_batch = EventBatch::new();
-                    curr_batch.add_event(e);
-                }
-                None => {}
+                curr_batch = EventBatch::new();
+                curr_batch.add_event(e);
             }
         }
         batches.push(curr_batch);

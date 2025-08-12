@@ -101,15 +101,15 @@ impl EventBatch {
     }
 
     pub(crate) fn get_events(self) -> Vec<Value> {
-        let mut log_events = Vec::with_capacity(self.events.len());
-        for emf_log in self.events {
-            log_events.push(json!({
-                "timestamp": emf_log.timestamp_ms,
-                "message": emf_log.message,
-            }));
-        }
-
-        log_events
+        self.events
+            .into_iter()
+            .map(|event| {
+                json!({
+                    "timestamp": event.timestamp_ms,
+                    "message": event.message,
+                })
+            })
+            .collect()
     }
 }
 
