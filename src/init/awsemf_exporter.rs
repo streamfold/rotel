@@ -8,7 +8,7 @@ use crate::exporters::shared::aws::Region;
 pub struct AwsEmfExporterArgs {
     /// AWS EMF Exporter Region
     #[arg(
-        id("AWS_EMF_REGION"),
+        id("AWSEMF_REGION"),
         value_enum,
         long("awsemf-exporter-region"),
         env = "ROTEL_AWSEMF_EXPORTER_REGION",
@@ -18,7 +18,7 @@ pub struct AwsEmfExporterArgs {
 
     /// AWS EMF Exporter custom endpoint override
     #[arg(
-        id("AWS_EMF_CUSTOM_ENDPOINT"),
+        id("AWSEMF_CUSTOM_ENDPOINT"),
         long("awsemf-exporter-custom-endpoint"),
         env = "ROTEL_AWSEMF_EXPORTER_CUSTOM_ENDPOINT"
     )]
@@ -28,16 +28,17 @@ pub struct AwsEmfExporterArgs {
     #[arg(
         long("awsemf-exporter-log-group-name"),
         env = "ROTEL_AWSEMF_EXPORTER_LOG_GROUP_NAME",
-        default_value = "/rotel/metrics"
+        default_value = "/metrics/default"
     )]
     pub log_group_name: String,
 
     /// CloudWatch log stream name
     #[arg(
         long("awsemf-exporter-log-stream-name"),
-        env = "ROTEL_AWSEMF_EXPORTER_LOG_STREAM_NAME"
+        env = "ROTEL_AWSEMF_EXPORTER_LOG_STREAM_NAME",
+        default_value = "otel-stream"
     )]
-    pub log_stream_name: Option<String>,
+    pub log_stream_name: String,
 
     /// CloudWatch metrics namespace
     #[arg(
@@ -60,8 +61,8 @@ impl Default for AwsEmfExporterArgs {
         Self {
             region: Region::UsEast1,
             custom_endpoint: None,
-            log_group_name: "/rotel/metrics".to_string(),
-            log_stream_name: None,
+            log_group_name: "/metrics/default".to_string(),
+            log_stream_name: "otel-stream".to_string(),
             namespace: None,
             retain_initial_value_of_delta_metric: false,
         }

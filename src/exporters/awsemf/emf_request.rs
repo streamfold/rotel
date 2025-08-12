@@ -3,11 +3,14 @@
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
 use bytes::Bytes;
+use flate2::Compression;
+use flate2::bufread::GzEncoder;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
 use http_body_util::Full;
 use serde_json::{Value, json};
 use std::error::Error;
+use std::io::Read;
 use tower::BoxError;
 
 fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
@@ -28,7 +31,7 @@ impl AwsEmfRequestBuilder {
         endpoint: String,
         config: AwsConfig,
         log_group_name: String,
-        log_stream_name: Option<String>,
+        log_stream_name: String,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let uri: url::Url = match endpoint.parse() {
             Ok(u) => u,
@@ -51,10 +54,6 @@ impl AwsEmfRequestBuilder {
         let signer =
             AwsRequestSigner::new("logs", config.region.clone().as_str(), config, SystemClock);
 
-        // Generate default log stream name if not provided
-        let log_stream_name =
-            log_stream_name.unwrap_or_else(|| format!("rotel-{}", uuid::Uuid::new_v4().simple()));
-
         let s = Self {
             uri,
             base_headers,
@@ -67,8 +66,6 @@ impl AwsEmfRequestBuilder {
 
     pub fn build(&self, payload: Vec<Value>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
         let mut log_events = Vec::new();
-
-        println!("AWS_EMF: {}", json!(payload).to_string());
 
         for emf_log in payload {
             log_events.push(json!({
@@ -86,11 +83,17 @@ impl AwsEmfRequestBuilder {
 
         let data = Bytes::from(data.into_bytes());
 
+        let mut gz_vec = Vec::new();
+        let mut gz = GzEncoder::new(&data[..], Compression::default());
+        gz.read_to_end(&mut gz_vec).unwrap();
+
+        let body = Bytes::from(gz_vec);
+
         let signed_request = self.signer.sign(
             self.uri.clone(),
             Method::POST,
             self.base_headers.clone(),
-            data,
+            body,
         );
 
         match signed_request {

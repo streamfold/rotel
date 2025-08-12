@@ -271,6 +271,7 @@ impl TryIntoConfig for ExporterArgs {
                 let mut builder = AwsEmfExporterConfigBuilder::new()
                     .with_region(awsemf.region)
                     .with_log_group_name(awsemf.log_group_name.clone())
+                    .with_log_stream_name(awsemf.log_stream_name.clone())
                     .with_retain_initial_value_of_delta_metric(
                         awsemf.retain_initial_value_of_delta_metric,
                     );
@@ -281,10 +282,6 @@ impl TryIntoConfig for ExporterArgs {
 
                 if let Some(custom_endpoint) = &awsemf.custom_endpoint {
                     builder = builder.with_custom_endpoint(custom_endpoint.clone());
-                }
-
-                if let Some(log_stream_name) = &awsemf.log_stream_name {
-                    builder = builder.with_log_stream_name(log_stream_name.clone());
                 }
 
                 Ok(ExporterConfig::Awsemf(builder))

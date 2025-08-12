@@ -359,10 +359,7 @@ impl Agent {
                         Ok(())
                     });
                 }
-                Some(ExporterConfig::Awsemf(_)) => {
-                    // AWS EMF exporter only supports metrics, not traces
-                }
-                None => {}
+                _ => {}
             }
         }
 
@@ -527,9 +524,6 @@ impl Agent {
                         logs_exporter.start(token).await;
                         Ok(())
                     });
-                }
-                Some(ExporterConfig::Awsemf(_)) => {
-                    // AWS EMF exporter only supports metrics, not logs
                 }
                 _ => {}
             }

@@ -53,7 +53,7 @@ type ExporterType<'a, Resource> = Exporter<
 pub struct AwsEmfExporterConfig {
     pub region: Region,
     pub log_group_name: String,
-    pub log_stream_name: Option<String>,
+    pub log_stream_name: String,
     pub namespace: Option<String>,
     pub custom_endpoint: Option<String>,
     pub retain_initial_value_of_delta_metric: bool,
@@ -64,8 +64,8 @@ impl Default for AwsEmfExporterConfig {
     fn default() -> Self {
         Self {
             region: Region::UsEast1,
-            log_group_name: "/rotel/metrics".to_string(),
-            log_stream_name: None,
+            log_group_name: "/metrics/default".to_string(),
+            log_stream_name: "otel-stream".to_string(),
             namespace: None,
             custom_endpoint: None,
             retain_initial_value_of_delta_metric: false,
@@ -102,7 +102,7 @@ impl AwsEmfExporterConfigBuilder {
     }
 
     pub fn with_log_stream_name<S: Into<String>>(mut self, log_stream_name: S) -> Self {
-        self.config.log_stream_name = Some(log_stream_name.into());
+        self.config.log_stream_name = log_stream_name.into();
         self
     }
 
@@ -161,7 +161,7 @@ impl AwsEmfExporterBuilder {
             RequestIterator::new(RequestBuilderMapper::new(rx.into_stream(), req_builder));
 
         let exp = Exporter::new(
-            "aws-emf",
+            "awsemf",
             "metrics",
             enc_stream,
             svc,
