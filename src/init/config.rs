@@ -447,7 +447,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 
             Ok(ExporterArgs::Clickhouse(args))
         }
-        "aws-xray" => {
+        "awsxray" => {
             let args: XRayExporterArgs = match figment.extract() {
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse X-Ray config: {}", e).into()),
@@ -455,7 +455,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 
             Ok(ExporterArgs::Xray(args))
         }
-        "aws-emf" => {
+        "awsemf" => {
             let args: AwsEmfExporterArgs = match figment.extract() {
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse AWS EMF config: {}", e).into()),
@@ -866,7 +866,7 @@ mod tests {
         let mut env_manager = EnvManager::new();
         env_manager.set_var("ROTEL_EXPORTER_TEST_REGION", "us-west-1");
 
-        let result = args_from_env_prefix("aws-xray", "test");
+        let result = args_from_env_prefix("awsxray", "test");
 
         assert!(result.is_ok());
         match result.unwrap() {

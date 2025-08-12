@@ -259,8 +259,10 @@ pub enum Exporter {
 
     Clickhouse,
 
+    #[clap(name = "awsxray")]
     AwsXray,
 
+    #[clap(name = "awsemf")]
     AwsEmf,
 
     #[cfg(feature = "rdkafka")]
