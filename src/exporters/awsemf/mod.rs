@@ -28,9 +28,9 @@ use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
 mod emf_request;
+mod event;
 mod request_builder;
 mod transformer;
-mod event;
 
 type SvcType = TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), AwsEmfDecoder>>>;
 

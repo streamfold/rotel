@@ -82,11 +82,11 @@ impl AwsEmfRequestBuilder {
             match curr_batch.add_event(evt) {
                 Some(e) => {
                     batches.push(curr_batch);
-    
+
                     curr_batch = EventBatch::new();
                     curr_batch.add_event(e);
-                },
-                None => {},
+                }
+                None => {}
             }
         }
         batches.push(curr_batch);
