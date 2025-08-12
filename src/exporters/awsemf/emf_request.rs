@@ -65,8 +65,11 @@ impl AwsEmfRequestBuilder {
     }
 
     pub fn build(&self, payload: Vec<Value>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
-        let mut log_events = Vec::new();
+        if payload.is_empty() {
+            return Ok(vec![]);
+        }
 
+        let mut log_events = Vec::new();
         for emf_log in payload {
             log_events.push(json!({
                 "timestamp": chrono::Utc::now().timestamp_millis(),
