@@ -261,13 +261,15 @@ are automatically sourced from Rotel's environment on startup.
 | --awsemf-exporter-custom-endpoint                      |                  |                  |
 | --awsemf-exporter-log-group-name                       | /metrics/default |                  |
 | --awsemf-exporter-log-stream-name                      | otel-stream      |                  |
-| --awsemf-exporter-namespace                            | default          |                  |
+| --awsemf-exporter-namespace                            |                  |                  |
 | --awsemf-exporter-retain-initial-value-of-delta-metric | false            |                  |
 
 **NOTE**:
 
 - At the moment the log group and log stream must exist or the exporter will fail to send logs.
 - If `--awsemf-exporter-retain-initial-value-of-delta-metric` is true, then the initial value of a delta metric is retained when calculating deltas.
+- If the namespace is not specified, Rotel will look for `service.namespace` and `service.name` in the resource attributes and use those. If those
+  don't exist, it will fall back to a namespace of _default_.
 
 ### Kafka exporter configuration (Experimental)
 

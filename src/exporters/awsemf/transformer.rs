@@ -713,13 +713,12 @@ impl MetricTransformer {
 }
 
 fn get_namespace(resource_attrs: &HashMap<String, String>, namespace: &Option<String>) -> String {
-    let svc_name_space_key = resource_attrs.get(SERVICE_NAMESPACE);
-    let svc_name_key = resource_attrs.get(SERVICE_NAME);
-
     if let Some(namespace) = namespace {
         return namespace.clone();
     }
 
+    let svc_name_space_key = resource_attrs.get(SERVICE_NAMESPACE);
+    let svc_name_key = resource_attrs.get(SERVICE_NAME);
     if svc_name_key.is_some() && svc_name_space_key.is_some() {
         return format!("{}/{}", svc_name_space_key.unwrap(), svc_name_key.unwrap());
     }
