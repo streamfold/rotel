@@ -1,6 +1,7 @@
+use crate::Engine;
 use crate::ddl::{
-    build_cluster_string, build_table_name, build_ttl_string, get_json_col_type,
-    replace_placeholders,
+    build_cluster_string, build_table_name, build_ttl_string, get_json_col_type, get_order_by,
+    get_partition_by, get_settings, replace_placeholders,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -9,20 +10,25 @@ pub(crate) fn get_metrics_ddl(
     cluster: &Option<String>,
     database: &String,
     table_prefix: &String,
-    engine: &str,
+    engine: Engine,
     ttl: &Duration,
     use_json: bool,
 ) -> Vec<String> {
     let map_or_json = get_json_col_type(use_json);
-    let mut attributes_ordered = "";
-    let mut map_indices = "";
-    let mut json_setting = "";
-    if !use_json {
-        map_indices = METRICS_TABLE_MAP_INDICES_SQL;
-        attributes_ordered = " , Attributes ";
+
+    let order_by = if !use_json {
+        "(ServiceName, MetricName, Attributes, toUnixTimestamp64Nano(TimeUnix))"
     } else {
-        json_setting = ", allow_experimental_json_type = 1";
-    }
+        "(ServiceName, MetricName, toUnixTimestamp64Nano(TimeUnix))"
+    };
+
+    let map_indices = if !use_json && engine != Engine::Null {
+        METRICS_TABLE_MAP_INDICES_SQL
+    } else {
+        ""
+    };
+
+    let settings_str = get_settings(use_json, engine);
 
     let sqls = [
         (METRICS_SUM_TABLE_SQL, "metrics_sum"),
@@ -44,16 +50,17 @@ pub(crate) fn get_metrics_ddl(
                         "TABLE",
                         build_table_name(database, table_prefix, table_name).as_str(),
                     ),
-                    ("CLUSTER", build_cluster_string(cluster).as_str()),
+                    ("CLUSTER", &build_cluster_string(cluster)),
                     ("MAP_OR_JSON", map_or_json),
-                    ("ENGINE", engine),
-                    ("ATTRIBUTES_ORDERED", attributes_ordered),
+                    ("ENGINE", &engine.to_string()),
                     ("MAP_INDICES", map_indices),
                     (
-                        "TTL_EXPR",
-                        build_ttl_string(ttl, "toDateTime(TimeUnix)").as_str(),
+                        "PARTITION_BY",
+                        &get_partition_by("toDate(TimeUnix)", engine),
                     ),
-                    ("JSON_SETTING", json_setting),
+                    ("ORDER_BY", &get_order_by(order_by, engine)),
+                    ("TTL_EXPR", &build_ttl_string(ttl, "toDateTime(TimeUnix)")),
+                    ("SETTINGS", &settings_str),
                 ]),
             )
         })
@@ -92,9 +99,9 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 
 ) ENGINE = %%ENGINE%%
 %%TTL_EXPR%%
-PARTITION BY toDate(TimeUnix)
-ORDER BY (ServiceName, MetricName %%ATTRIBUTES_ORDERED%% , toUnixTimestamp64Nano(TimeUnix))
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+%%PARTITION_BY%%
+%%ORDER_BY%%
+%%SETTINGS%%
 ;
 "#;
 
@@ -128,9 +135,9 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 
 ) ENGINE = %%ENGINE%%
 %%TTL_EXPR%%
-PARTITION BY toDate(TimeUnix)
-ORDER BY (ServiceName, MetricName %%ATTRIBUTES_ORDERED%% , toUnixTimestamp64Nano(TimeUnix))
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+%%PARTITION_BY%%
+%%ORDER_BY%%
+%%SETTINGS%%
 ;
 "#;
 
@@ -170,9 +177,9 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 
 ) ENGINE = %%ENGINE%%
 %%TTL_EXPR%%
-PARTITION BY toDate(TimeUnix)
-ORDER BY (ServiceName, MetricName %%ATTRIBUTES_ORDERED%% , toUnixTimestamp64Nano(TimeUnix))
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+%%PARTITION_BY%%
+%%ORDER_BY%%
+%%SETTINGS%%
 ;
 "#;
 
@@ -216,9 +223,9 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 
 ) ENGINE = %%ENGINE%%
 %%TTL_EXPR%%
-PARTITION BY toDate(TimeUnix)
-ORDER BY (ServiceName, MetricName %%ATTRIBUTES_ORDERED%% , toUnixTimestamp64Nano(TimeUnix))
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+%%PARTITION_BY%%
+%%ORDER_BY%%
+%%SETTINGS%%
 ;
 "#;
 
@@ -250,9 +257,9 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 
 ) ENGINE = %%ENGINE%%
 %%TTL_EXPR%%
-PARTITION BY toDate(TimeUnix)
-ORDER BY (ServiceName, MetricName %%ATTRIBUTES_ORDERED%% , toUnixTimestamp64Nano(TimeUnix))
-SETTINGS index_granularity=8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+%%PARTITION_BY%%
+%%ORDER_BY%%
+%%SETTINGS%%
 ;
 "#;
 

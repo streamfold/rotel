@@ -1,6 +1,7 @@
+use crate::Engine;
 use crate::ddl::{
-    build_cluster_string, build_table_name, build_ttl_string, get_json_col_type,
-    replace_placeholders,
+    build_cluster_string, build_table_name, build_ttl_string, get_json_col_type, get_order_by,
+    get_partition_by, get_primary_key, get_settings, replace_placeholders,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -9,18 +10,25 @@ pub(crate) fn get_logs_ddl(
     cluster: &Option<String>,
     database: &String,
     table_prefix: &String,
-    engine: &str,
+    engine: Engine,
     ttl: &Duration,
     use_json: bool,
 ) -> Vec<String> {
     let map_or_json = get_json_col_type(use_json);
-    let mut map_indices = "";
-    let mut json_setting = "";
-    if !use_json {
-        map_indices = LOGS_TABLE_MAP_INDICES_SQL;
+
+    let map_indices = if !use_json && engine != Engine::Null {
+        LOGS_TABLE_MAP_INDICES_SQL
     } else {
-        json_setting = ", allow_experimental_json_type = 1";
-    }
+        ""
+    };
+
+    let indices = if engine != Engine::Null {
+        LOGS_TABLE_INDICES_SQL
+    } else {
+        ""
+    };
+
+    let settings_str = get_settings(use_json, engine);
 
     let table_sql = replace_placeholders(
         LOGS_TABLE_SQL,
@@ -29,12 +37,25 @@ pub(crate) fn get_logs_ddl(
                 "TABLE",
                 build_table_name(database, table_prefix, "logs").as_str(),
             ),
-            ("CLUSTER", build_cluster_string(cluster).as_str()),
+            ("CLUSTER", &build_cluster_string(cluster)),
             ("MAP_OR_JSON", map_or_json),
-            ("ENGINE", engine),
+            ("ENGINE", &engine.to_string()),
             ("MAP_INDICES", map_indices),
-            ("TTL_EXPR", build_ttl_string(ttl, "TimestampTime").as_str()),
-            ("JSON_SETTING", json_setting),
+            ("INDICES", indices),
+            (
+                "PARTITION_BY",
+                &get_partition_by("toDate(TimestampTime)", engine),
+            ),
+            (
+                "ORDER_BY",
+                &get_order_by("(ServiceName, TimestampTime, Timestamp)", engine),
+            ),
+            (
+                "PRIMARY_KEY",
+                &get_primary_key("(ServiceName, TimestampTime)", engine),
+            ),
+            ("TTL_EXPR", &build_ttl_string(ttl, "TimestampTime")),
+            ("SETTINGS", &settings_str),
         ]),
     );
 
@@ -60,18 +81,21 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 	ScopeAttributes %%MAP_OR_JSON%% CODEC(ZSTD(1)),
 	LogAttributes %%MAP_OR_JSON%% CODEC(ZSTD(1)),
 
-	INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
-
     %%MAP_INDICES%%
 
-	INDEX idx_body Body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 8
+    %%INDICES%%
 ) ENGINE = %%ENGINE%%
-PARTITION BY toDate(TimestampTime)
-PRIMARY KEY (ServiceName, TimestampTime)
-ORDER BY (ServiceName, TimestampTime, Timestamp)
+%%PARTITION_BY%%
+%%PRIMARY_KEY%%
+%%ORDER_BY%%
 %%TTL_EXPR%%
-SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1 %%JSON_SETTING%%
+%%SETTINGS%%
 ;
+"#;
+
+const LOGS_TABLE_INDICES_SQL: &str = r#"
+	INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
+	INDEX idx_body Body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 8,
 "#;
 
 const LOGS_TABLE_MAP_INDICES_SQL: &str = r#"
