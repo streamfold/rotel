@@ -31,7 +31,8 @@ mod request_builder;
 mod transformer;
 mod xray_request;
 
-type SvcType = TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), XRayTraceDecoder>>>;
+type SvcType<RespBody> =
+    TowerRetry<RetryPolicy<RespBody>, Timeout<HttpClient<Full<Bytes>, RespBody, XRayTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -44,7 +45,7 @@ type ExporterType<'a, Resource> = Exporter<
         Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
     >,
-    SvcType,
+    SvcType<String>,
     Full<Bytes>,
     SuccessStatusFinalizer,
 >;
@@ -143,9 +144,9 @@ impl XRayExporterBuilder {
 #[derive(Default, Clone)]
 pub struct XRayTraceDecoder;
 
-impl ResponseDecode<()> for XRayTraceDecoder {
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        Ok(())
+impl ResponseDecode<String> for XRayTraceDecoder {
+    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
+        Ok("".to_string())
     }
 }
 

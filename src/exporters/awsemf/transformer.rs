@@ -73,13 +73,7 @@ pub struct MetricTransformer {
 }
 
 #[derive(Debug, Error)]
-pub enum ExportError {
-    #[error("Timestamp error")]
-    TimestampError,
-    #[error("Exporter is shut down")]
-    Shutdown,
-    #[error("Export timeout after {0:?}")]
-    Timeout(Duration),
+pub(crate) enum ExportError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] JsonError),
     #[error("IO error: {0}")]

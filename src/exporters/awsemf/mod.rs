@@ -6,15 +6,14 @@ use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
-use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
+use errors::{AwsEmfDecoder, AwsEmfResponse};
 use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
@@ -28,11 +27,13 @@ use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
 mod emf_request;
+mod errors;
 mod event;
 mod request_builder;
 mod transformer;
 
-type SvcType = TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), AwsEmfDecoder>>>;
+type SvcType<RespBody> =
+    TowerRetry<RetryPolicy<RespBody>, Timeout<HttpClient<Full<Bytes>, RespBody, AwsEmfDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -45,7 +46,7 @@ type ExporterType<'a, Resource> = Exporter<
         Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
     >,
-    SvcType,
+    SvcType<AwsEmfResponse>,
     Full<Bytes>,
     SuccessStatusFinalizer,
 >;
@@ -139,7 +140,7 @@ pub struct AwsEmfExporterBuilder {
 }
 
 impl AwsEmfExporterBuilder {
-    pub fn build<'a>(
+    pub(crate) fn build<'a>(
         self,
         rx: BoundedReceiver<Vec<ResourceMetrics>>,
         flush_receiver: Option<FlushReceiver>,
@@ -174,14 +175,5 @@ impl AwsEmfExporterBuilder {
         );
 
         Ok(exp)
-    }
-}
-
-#[derive(Default, Clone)]
-pub struct AwsEmfDecoder;
-
-impl ResponseDecode<()> for AwsEmfDecoder {
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        Ok(())
     }
 }
