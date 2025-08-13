@@ -509,7 +509,11 @@ impl MetricTransformer {
         let timestamp_ms = grouped_metric.metadata.timestamp_ms;
 
         // Create the dimensions array (list of dimension names)
-        let dimension_keys: Vec<String> = grouped_metric.labels.keys().cloned().collect();
+        let mut dimension_keys: Vec<String> = grouped_metric.labels.keys().cloned().collect();
+
+        // These don't technically need to be sorted, but it maintains consistency across
+        // log lines.
+        dimension_keys.sort();
 
         // Create metrics array for CloudWatch
         let mut cw_metrics = Vec::new();
@@ -536,18 +540,18 @@ impl MetricTransformer {
         let emf_obj = emf_log.as_object_mut().unwrap();
 
         // Add all labels as fields
-        for (key, value) in &grouped_metric.labels {
-            emf_obj.insert(key.clone(), json!(value));
+        for (key, value) in grouped_metric.labels {
+            emf_obj.insert(key, json!(value));
         }
 
         // Add all metric values as fields
-        for (metric_name, metric_info) in &grouped_metric.metrics {
-            match &metric_info.value {
+        for (metric_name, metric_info) in grouped_metric.metrics {
+            match metric_info.value {
                 MetricValue::Double(val) => {
-                    emf_obj.insert(metric_name.clone(), json!(val));
+                    emf_obj.insert(metric_name, json!(val));
                 }
                 MetricValue::Int(val) => {
-                    emf_obj.insert(metric_name.clone(), json!(val));
+                    emf_obj.insert(metric_name, json!(val));
                 }
                 MetricValue::Histogram {
                     count,
@@ -557,7 +561,7 @@ impl MetricTransformer {
                 } => {
                     // For histograms, emit as CloudWatch statistical set
                     emf_obj.insert(
-                        metric_name.clone(),
+                        metric_name,
                         json!({
                             "Count": count,
                             "Sum": sum,
@@ -572,8 +576,8 @@ impl MetricTransformer {
                     _quantiles,
                 } => {
                     // For summaries, emit count and sum (quantiles handled separately if detailed metrics enabled)
-                    emf_obj.insert(format!("{}_count", metric_name), json!(count));
-                    emf_obj.insert(format!("{}_sum", metric_name), json!(sum));
+                    emf_obj.insert(format!("{}_count", &metric_name), json!(count));
+                    emf_obj.insert(format!("{}_sum", &metric_name), json!(sum));
                 }
             }
         }
