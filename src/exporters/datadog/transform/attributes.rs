@@ -71,7 +71,7 @@ fn find_with_span_precedence(
     }
 
     // lastly, check the resource attributes
-    res_attrs.as_ref().get(key).map(|cv| cv.clone())
+    res_attrs.as_ref().get(key).cloned()
 }
 
 /// Search for an attribute value by key names, starting at the highest level and moving
@@ -123,5 +123,5 @@ fn find_key_in_attrlist_anyvalue(key: &str, attributes: &Vec<KeyValue>) -> Optio
     attributes
         .iter()
         .find(|&attr| attr.key == *key && attr.value.is_some())
-        .map(|kv| kv.value.clone().unwrap())
+        .and_then(|kv| kv.value.clone())
 }

@@ -150,13 +150,13 @@ impl DatadogExporterBuilder {
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new(self.environment.clone(), self.hostname.clone());
+        let transformer = Transformer::new(self.environment, self.hostname);
 
         let req_builder = RequestBuilder::new(
             transformer,
             self.region,
-            self.custom_endpoint.clone(),
-            self.api_token.clone(),
+            self.custom_endpoint,
+            self.api_token,
         )?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
