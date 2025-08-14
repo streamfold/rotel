@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use http::StatusCode;
 use tonic::Status;
 use tower::BoxError;
@@ -12,17 +14,22 @@ pub trait ResultFinalizer<Res> {
 #[derive(Default, Clone)]
 pub struct SuccessStatusFinalizer;
 
-pub enum FinalizerError {
-    HttpStatus(StatusCode),
-
-    GrpcStatus(Status),
+pub enum FinalizerError<RespBody> {
+    HttpStatus(StatusCode, Option<RespBody>),
+    GrpcStatus(Status, Option<RespBody>),
 }
 
-impl From<FinalizerError> for BoxError {
-    fn from(err: FinalizerError) -> Self {
+impl<RespBody: Display> From<FinalizerError<RespBody>> for BoxError {
+    fn from(err: FinalizerError<RespBody>) -> Self {
         match err {
-            FinalizerError::HttpStatus(status) => format!("Invalid HTTP status: {}", status).into(),
-            FinalizerError::GrpcStatus(status) => format!("Invalid gRPC status: {}", status).into(),
+            FinalizerError::HttpStatus(status, body) => match body {
+                Some(body) => format!("Invalid HTTP status: {} ({})", status, body).into(),
+                None => format!("Invalid HTTP status: {})", status).into(),
+            },
+            FinalizerError::GrpcStatus(status, body) => match body {
+                Some(body) => format!("Invalid gRPC status: {} ({})", status, body).into(),
+                None => format!("Invalid gRPC status: {}", status).into(),
+            },
         }
     }
 }
@@ -30,19 +37,20 @@ impl From<FinalizerError> for BoxError {
 impl<T, Err> ResultFinalizer<Result<Response<T>, Err>> for SuccessStatusFinalizer
 where
     Err: Into<BoxError>,
+    T: Display,
 {
     fn finalize(&self, result: Result<Response<T>, Err>) -> Result<(), BoxError> {
         match result {
             Ok(r) => match r {
-                Response::Http(parts, _) => match parts.status.as_u16() {
+                Response::Http(parts, body) => match parts.status.as_u16() {
                     200..=202 => Ok(()),
-                    _ => Err(FinalizerError::HttpStatus(parts.status).into()),
+                    _ => Err(FinalizerError::HttpStatus(parts.status, body).into()),
                 },
-                Response::Grpc(status, _) => {
+                Response::Grpc(status, body) => {
                     if status.code() == tonic::Code::Ok {
                         Ok(())
                     } else {
-                        Err(FinalizerError::GrpcStatus(status).into())
+                        Err(FinalizerError::GrpcStatus(status, body).into())
                     }
                 }
             },

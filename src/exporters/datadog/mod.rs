@@ -30,8 +30,10 @@ mod request_builder;
 mod transform;
 mod types;
 
-type SvcType =
-    TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), DatadogTraceDecoder>>>;
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    Timeout<HttpClient<Full<Bytes>, RespBody, DatadogTraceDecoder>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -44,7 +46,7 @@ type ExporterType<'a, Resource> = Exporter<
         Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
     >,
-    SvcType,
+    SvcType<String>,
     Full<Bytes>,
     SuccessStatusFinalizer,
 >;
@@ -184,6 +186,16 @@ impl DatadogExporterBuilder {
     }
 }
 
+#[derive(Default, Clone)]
+pub struct DatadogTraceDecoder;
+
+impl ResponseDecode<String> for DatadogTraceDecoder {
+    // todo: look at response
+    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
+        Ok(String::new())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate utilities;
@@ -269,15 +281,5 @@ mod tests {
             .build()
             .build(brx, None)
             .unwrap()
-    }
-}
-
-#[derive(Default, Clone)]
-pub struct DatadogTraceDecoder;
-
-impl ResponseDecode<()> for DatadogTraceDecoder {
-    // todo: look at response
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        Ok(())
     }
 }

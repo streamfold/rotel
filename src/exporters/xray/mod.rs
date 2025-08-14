@@ -4,7 +4,6 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
-use std::fmt::{Display, Formatter};
 
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
@@ -20,19 +19,20 @@ use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use serde::Deserialize;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
 use super::http::finalizer::SuccessStatusFinalizer;
+use super::shared::aws::Region;
 
 mod request_builder;
 mod transformer;
 mod xray_request;
 
-type SvcType = TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), XRayTraceDecoder>>>;
+type SvcType<RespBody> =
+    TowerRetry<RetryPolicy<RespBody>, Timeout<HttpClient<Full<Bytes>, RespBody, XRayTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -45,127 +45,10 @@ type ExporterType<'a, Resource> = Exporter<
         Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
     >,
-    SvcType,
+    SvcType<String>,
     Full<Bytes>,
     SuccessStatusFinalizer,
 >;
-
-#[derive(Copy, Clone, Debug, Deserialize)]
-#[serde(from = "String")]
-pub enum Region {
-    UsEast1,
-    UsEast2,
-    UsWest1,
-    UsWest2,
-    AfSouth1,
-    ApEast1,
-    ApSouth2,
-    ApSoutheast3,
-    ApSoutheast5,
-    ApSoutheast4,
-    ApSouth1,
-    ApNortheast3,
-    ApNortheast2,
-    ApSoutheast1,
-    ApSoutheast2,
-    ApSoutheast7,
-    ApNortheast1,
-    CaCentral1,
-    CaWest1,
-    EuCentral1,
-    EuWest1,
-    EuWest2,
-    EuSouth1,
-    EuWest3,
-    EuSouth2,
-    EuNorth1,
-    EuCentral2,
-    IlCentral1,
-    MxCentral1,
-    MeSouth1,
-    MeCentral1,
-    SaEast1,
-}
-
-impl Display for Region {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Region::UsEast1 => "us-east-1",
-            Region::UsEast2 => "us-east-2",
-            Region::UsWest1 => "us-west-1",
-            Region::UsWest2 => "us-west-2",
-            Region::AfSouth1 => "af-south-1",
-            Region::ApEast1 => "ap-east-1",
-            Region::ApSouth2 => "ap-south-2",
-            Region::ApSoutheast3 => "ap-southeast-3",
-            Region::ApSoutheast5 => "ap-southeast-5",
-            Region::ApSoutheast4 => "ap-southeast-4",
-            Region::ApSouth1 => "ap-south-1",
-            Region::ApNortheast3 => "ap-northeast-3",
-            Region::ApNortheast2 => "ap-northeast-2",
-            Region::ApSoutheast1 => "ap-southeast-1",
-            Region::ApSoutheast2 => "ap-southeast-2",
-            Region::ApSoutheast7 => "ap-southeast-7",
-            Region::ApNortheast1 => "ap-northeast-1",
-            Region::CaCentral1 => "ca-central-1",
-            Region::CaWest1 => "ca-west-1",
-            Region::EuCentral1 => "eu-central-1",
-            Region::EuWest1 => "eu-west-1",
-            Region::EuWest2 => "eu-west-2",
-            Region::EuSouth1 => "eu-south-1",
-            Region::EuWest3 => "eu-west-3",
-            Region::EuSouth2 => "eu-south-2",
-            Region::EuNorth1 => "eu-north-1",
-            Region::EuCentral2 => "eu-central-2",
-            Region::IlCentral1 => "il-central-1",
-            Region::MxCentral1 => "mx-central-1",
-            Region::MeSouth1 => "me-south-1",
-            Region::MeCentral1 => "me-central-1",
-            Region::SaEast1 => "sa-east-1",
-        };
-        write!(f, "{}", s)
-    }
-}
-
-impl From<String> for Region {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "us-east-1" => Region::UsEast1,
-            "us-east-2" => Region::UsEast2,
-            "us-west-1" => Region::UsWest1,
-            "us-west-2" => Region::UsWest2,
-            "af-south-1" => Region::AfSouth1,
-            "ap-east-1" => Region::ApEast1,
-            "ap-south-2" => Region::ApSouth2,
-            "ap-southeast-3" => Region::ApSoutheast3,
-            "ap-southeast-5" => Region::ApSoutheast5,
-            "ap-southeast-4" => Region::ApSoutheast4,
-            "ap-south-1" => Region::ApSouth1,
-            "ap-northeast-3" => Region::ApNortheast3,
-            "ap-northeast-2" => Region::ApNortheast2,
-            "ap-southeast-1" => Region::ApSoutheast1,
-            "ap-southeast-2" => Region::ApSoutheast2,
-            "ap-southeast-7" => Region::ApSoutheast7,
-            "ap-northeast-1" => Region::ApNortheast1,
-            "ca-central-1" => Region::CaCentral1,
-            "ca-west-1" => Region::CaWest1,
-            "eu-central-1" => Region::EuCentral1,
-            "eu-west-1" => Region::EuWest1,
-            "eu-west-2" => Region::EuWest2,
-            "eu-south-1" => Region::EuSouth1,
-            "eu-west-3" => Region::EuWest3,
-            "eu-south-2" => Region::EuSouth2,
-            "eu-north-1" => Region::EuNorth1,
-            "eu-central-2" => Region::EuCentral2,
-            "il-central-1" => Region::IlCentral1,
-            "mx-central-1" => Region::MxCentral1,
-            "me-south-1" => Region::MeSouth1,
-            "me-central-1" => Region::MeCentral1,
-            "sa-east-1" => Region::SaEast1,
-            _ => panic!("Unknown region: {}", s),
-        }
-    }
-}
 
 pub struct XRayExporterConfigBuilder {
     region: Region,
@@ -261,9 +144,9 @@ impl XRayExporterBuilder {
 #[derive(Default, Clone)]
 pub struct XRayTraceDecoder;
 
-impl ResponseDecode<()> for XRayTraceDecoder {
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        Ok(())
+impl ResponseDecode<String> for XRayTraceDecoder {
+    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
+        Ok(String::new())
     }
 }
 
