@@ -12,7 +12,7 @@ use crate::init::args::{AgentRun, DebugLogParam};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
-use crate::init::config::{get_exporters_config, ExporterConfig};
+use crate::init::config::{ExporterConfig, get_exporters_config};
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
@@ -480,7 +480,7 @@ impl Agent {
                         }
                     });
                 }
-                
+
                 Some(ExporterConfig::Awsemf(cfg_builder)) => {
                     let config = AwsConfig::from_env();
                     let builder = cfg_builder.build();

@@ -154,7 +154,7 @@ pub struct AgentRun {
 
     #[command(flatten)]
     pub aws_xray_exporter: XRayExporterArgs,
-    
+
     #[command(flatten)]
     pub aws_emf_exporter: AwsEmfExporterArgs,
 
