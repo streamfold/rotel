@@ -196,7 +196,6 @@ impl ResponseDecode<String> for DatadogTraceDecoder {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     extern crate utilities;
