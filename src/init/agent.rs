@@ -12,7 +12,7 @@ use crate::init::args::{AgentRun, DebugLogParam};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
-use crate::init::config::{ExporterConfig, get_exporters_config};
+use crate::init::config::{get_exporters_config, ExporterConfig};
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
@@ -380,7 +380,7 @@ impl Agent {
                         Ok(())
                     });
                 }
-                None => {}
+                _ => {}
             }
         }
 
@@ -478,6 +478,28 @@ impl Agent {
                                 "File exporter returned from run loop with error."
                             );
                         }
+                    });
+                }
+                
+                Some(ExporterConfig::Awsemf(cfg_builder)) => {
+                    let config = AwsConfig::from_env();
+                    let builder = cfg_builder.build();
+                    let exp = builder.build(
+                        metrics_pipeline_out_rx,
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        config,
+                    )?;
+
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = exp.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = e,
+                                "AWS EMF exporter returned from run loop with error."
+                            );
+                        }
+
                         Ok(())
                     });
                 }

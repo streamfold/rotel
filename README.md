@@ -77,26 +77,26 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 
 Any option above that does not contain a default is considered false or unset by default.
 
-| Option                            | Default              | Options                                                     |
-| --------------------------------- | -------------------- | ----------------------------------------------------------- |
-| --daemon                          |                      |                                                             |
-| --log-format                      | text                 | json                                                        |
-| --pid-file                        | /tmp/rotel-agent.pid |                                                             |
-| --log-file                        | /tmp/rotel-agent.log |                                                             |
-| --debug-log                       |                      | metrics, traces, logs                                       |
-| --debug-log-verbosity             | basic                | basic, detailed                                             |
-| --otlp-grpc-endpoint              | localhost:4317       |                                                             |
-| --otlp-http-endpoint              | localhost:4318       |                                                             |
-| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                             |
-| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray, kafka, file |
-| --otlp-receiver-traces-disabled   |                      |                                                             |
-| --otlp-receiver-metrics-disabled  |                      |                                                             |
-| --otlp-receiver-logs-disabled     |                      |                                                             |
-| --otlp-receiver-traces-http-path  | /v1/traces           |                                                             |
-| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                             |
-| --otlp-receiver-logs-http-path    | /v1/logs             |                                                             |
-| --otel-resource-attributes        |                      |                                                             |
-| --enable-internal-telemetry       |                      |                                                             |
+| Option                            | Default              | Options                                                            |
+| --------------------------------- | -------------------- | ------------------------------------------------------------------ |
+| --daemon                          |                      |                                                                    |
+| --log-format                      | text                 | json                                                               |
+| --pid-file                        | /tmp/rotel-agent.pid |                                                                    |
+| --log-file                        | /tmp/rotel-agent.log |                                                                    |
+| --debug-log                       |                      | metrics, traces, logs                                              |
+| --debug-log-verbosity             | basic                | basic, detailed                                                    |
+| --otlp-grpc-endpoint              | localhost:4317       |                                                                    |
+| --otlp-http-endpoint              | localhost:4318       |                                                                    |
+| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                                    |
+| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, awsxray, awsemf, kafka, file |
+| --otlp-receiver-traces-disabled   |                      |                                                                    |
+| --otlp-receiver-metrics-disabled  |                      |                                                                    |
+| --otlp-receiver-logs-disabled     |                      |                                                                    |
+| --otlp-receiver-traces-http-path  | /v1/traces           |                                                                    |
+| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                                    |
+| --otlp-receiver-logs-http-path    | /v1/logs             |                                                                    |
+| --otel-resource-attributes        |                      |                                                                    |
+| --enable-internal-telemetry       |                      |                                                                    |
 
 The PID and LOG files are only used when run in `--daemon` mode.
 
@@ -228,7 +228,7 @@ crate._
 
 ### AWS X-Ray exporter configuration
 
-The AWS X-Ray exporter can be selected by passing `--exporter aws-xray`. The X-Ray exporter only supports traces. Note:
+The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ray exporter only supports traces. Note:
 X-Ray
 limits batch sizes to 50 traces segments. If you assign a `--batch-max-size` of greater than 50, Rotel will override and
 enforce the max
@@ -239,12 +239,37 @@ AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_
 are
 automatically sourced from Rotel's environment on startup.
 
-| Option                          | Default   | Options          |
-| ------------------------------- | --------- | ---------------- |
-| --xray-exporter-region          | us-east-1 | aws region codes |
-| --xray-exporter-custom-endpoint |           |                  |
+| Option                             | Default   | Options          |
+| ---------------------------------- | --------- | ---------------- |
+| --awsxray-exporter-region          | us-east-1 | aws region codes |
+| --awsxray-exporter-custom-endpoint |           |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
+
+### AWS EMF exporter configuration
+
+The AWS EMF exporter can be selected by passing `--exporter awsemf`. The AWS EMF exporter only supports metrics. The
+AWS EMF exporter will convert metrics into the AWS Cloudwatch [Embedded metric format](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html) and
+send those as JSON log lines to Cloudwatch. Cloudwatch will convert the log lines into Cloudwatch Metrics.
+
+AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` for the EMF exporter
+are automatically sourced from Rotel's environment on startup.
+
+| Option                                                 | Default          | Options          |
+| ------------------------------------------------------ | ---------------- | ---------------- |
+| --awsemf-exporter-region                               | us-east-1        | aws region codes |
+| --awsemf-exporter-custom-endpoint                      |                  |                  |
+| --awsemf-exporter-log-group-name                       | /metrics/default |                  |
+| --awsemf-exporter-log-stream-name                      | otel-stream      |                  |
+| --awsemf-exporter-namespace                            |                  |                  |
+| --awsemf-exporter-retain-initial-value-of-delta-metric | false            |                  |
+
+**NOTE**:
+
+- At the moment the log group and log stream must exist or the exporter will fail to send logs.
+- If `--awsemf-exporter-retain-initial-value-of-delta-metric` is true, then the initial value of a delta metric is retained when calculating deltas.
+- If the namespace is not specified, Rotel will look for `service.namespace` and `service.name` in the resource attributes and use those. If those
+  don't exist, it will fall back to a namespace of _default_.
 
 ### Kafka exporter configuration (Experimental)
 
@@ -385,6 +410,7 @@ See [KAFKA_INTEGRATION_TESTS.md](KAFKA_INTEGRATION_TESTS.md) for detailed testin
 
 **NOTE**: The file exporter at the moment is experimental and not enabled by default. It must be enabled by building with the feature flag
 `--features file_exporter`, like:
+
 ```shell
 cargo build --features file_exporter
 ```
@@ -395,11 +421,11 @@ The File exporter can be selected with `--exporter file`. It writes telemetry
 out as periodic files on the local filesystem. Currently **Parquet** and
 **JSON** formats are supported.
 
-| Option                              | Default    | Description                                                                                                          |
-| ----------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| --file-exporter-format              | parquet    | `parquet` or `json`                                                                                                  |
-| --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                                      |
-| --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)           |
+| Option                              | Default    | Description                                                                                                  |
+| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| --file-exporter-format              | parquet    | `parquet` or `json`                                                                                          |
+| --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                              |
+| --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)   |
 | --file-exporter-parquet-compression | snappy     | Compression for Parquet files: `none`, `snappy`, `gzip`, `lz4`, `zstd` (only applies when format is parquet) |
 
 Each flush creates a file named `<telemetry-type>-<timestamp>.<ext>` inside the

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::Engine;
+
 pub(crate) fn build_table_name(
     database: &String,
     table_prefix: &String,
@@ -51,6 +53,52 @@ pub(crate) fn get_json_col_type<'a>(use_json: bool) -> &'a str {
         true => "JSON",
         false => "Map(LowCardinality(String), String)",
     }
+}
+
+pub(crate) fn get_partition_by(field: &str, engine: Engine) -> String {
+    match engine {
+        Engine::Null => "".to_string(),
+        _ => format!("PARTITION BY {}", field),
+    }
+}
+
+pub(crate) fn get_order_by(fields: &str, engine: Engine) -> String {
+    match engine {
+        Engine::Null => "".to_string(),
+        _ => format!("ORDER BY {}", fields),
+    }
+}
+
+pub(crate) fn get_primary_key(fields: &str, engine: Engine) -> String {
+    match engine {
+        Engine::Null => "".to_string(),
+        _ => format!("PRIMARY KEY {}", fields),
+    }
+}
+
+pub(crate) fn get_settings(use_json: bool, engine: Engine) -> String {
+    let mut settings = HashMap::new();
+    match engine {
+        Engine::MergeTree | Engine::ReplicatedMergeTree => {
+            settings.insert("index_granularity", 8192);
+            settings.insert("ttl_only_drop_parts", 1);
+            if use_json {
+                settings.insert("allow_experimental_json_type", 1);
+            }
+        }
+        Engine::Null => {}
+    };
+
+    let mut settings_str = settings
+        .into_iter()
+        .map(|(k, v)| format!("{} = {}", k, v))
+        .collect::<Vec<String>>()
+        .join(", ");
+    if !settings_str.is_empty() {
+        settings_str = format!("SETTINGS {}", settings_str);
+    }
+
+    settings_str
 }
 
 #[cfg(test)]

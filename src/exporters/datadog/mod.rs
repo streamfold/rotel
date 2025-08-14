@@ -6,11 +6,10 @@ use crate::exporters::datadog::transform::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::exporters::http::client::ResponseDecode;
-use crate::exporters::http::exporter::{Exporter, ResultLogger};
+use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
-use crate::exporters::http::response::Response;
 use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
@@ -23,15 +22,18 @@ use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
-use tracing::error;
+
+use super::http::finalizer::SuccessStatusFinalizer;
 
 mod api_request;
 mod request_builder;
 mod transform;
 mod types;
 
-type SvcType =
-    TowerRetry<RetryPolicy<()>, Timeout<HttpClient<Full<Bytes>, (), DatadogTraceDecoder>>>;
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    Timeout<HttpClient<Full<Bytes>, RespBody, DatadogTraceDecoder>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -44,9 +46,9 @@ type ExporterType<'a, Resource> = Exporter<
         Vec<Request<Full<Bytes>>>,
         Full<Bytes>,
     >,
-    SvcType,
+    SvcType<String>,
     Full<Bytes>,
-    DatadogResultLogger,
+    SuccessStatusFinalizer,
 >;
 
 #[derive(Copy, Clone)]
@@ -148,13 +150,13 @@ impl DatadogExporterBuilder {
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
 
-        let transformer = Transformer::new(self.environment.clone(), self.hostname.clone());
+        let transformer = Transformer::new(self.environment, self.hostname);
 
         let req_builder = RequestBuilder::new(
             transformer,
             self.region,
-            self.custom_endpoint.clone(),
-            self.api_token.clone(),
+            self.custom_endpoint,
+            self.api_token,
         )?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
@@ -173,9 +175,7 @@ impl DatadogExporterBuilder {
             "traces",
             enc_stream,
             svc,
-            DatadogResultLogger {
-                telemetry_type: "traces".to_string(),
-            },
+            SuccessStatusFinalizer::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -183,6 +183,16 @@ impl DatadogExporterBuilder {
         );
 
         Ok(exp)
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct DatadogTraceDecoder;
+
+impl ResponseDecode<String> for DatadogTraceDecoder {
+    // todo: look at response
+    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
+        Ok(String::new())
     }
 }
 
@@ -198,7 +208,7 @@ mod tests {
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
     use tokio::join;
-    use tokio_test::assert_ok;
+    use tokio_test::{assert_err, assert_ok};
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
@@ -247,13 +257,13 @@ mod tests {
         let cancellation_token = CancellationToken::new();
 
         let cancel_clone = cancellation_token.clone();
-        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let traces = FakeOTLP::trace_service_request();
         btx.send(traces.resource_spans).await.unwrap();
         drop(btx);
         let res = join!(jh);
-        assert_ok!(res.0);
+        assert_err!(res.0.unwrap()); // failed to drain
 
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }
@@ -271,31 +281,5 @@ mod tests {
             .build()
             .build(brx, None)
             .unwrap()
-    }
-}
-
-#[derive(Default, Clone)]
-pub struct DatadogTraceDecoder;
-
-impl ResponseDecode<()> for DatadogTraceDecoder {
-    // todo: look at response
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        Ok(())
-    }
-}
-
-pub struct DatadogResultLogger {
-    telemetry_type: String,
-}
-
-impl ResultLogger<Response<()>> for DatadogResultLogger {
-    fn handle(&self, resp: Response<()>) {
-        match resp.status_code().as_u16() {
-            200..=202 => {}
-            _ => error!(
-                telemetry_type = self.telemetry_type,
-                "Failed to export to Datadog: {:?}", resp
-            ),
-        };
     }
 }

@@ -2,6 +2,8 @@ import itertools
 import sys
 
 from rotel_sdk.open_telemetry.logs.v1 import ResourceLogs
+from rotel_sdk.open_telemetry.metrics.v1 import ResourceMetrics, MetricData, Gauge, Sum, Histogram, \
+    ExponentialHistogram, Summary
 from rotel_sdk.open_telemetry.trace.v1 import ResourceSpans
 
 sys.path.insert(0, './processors')
@@ -55,3 +57,30 @@ def process_spans(resource_spans: ResourceSpans):
     ):
         attrs = processor.process_attributes(span.attributes)
         span.attributes = attrs
+
+
+def process_metrics(resource_metrics: ResourceMetrics):
+    for metric in itertools.chain.from_iterable(
+            scope_metric.metrics for scope_metric in resource_metrics.scope_metrics
+    ):
+        if metric.data is not None:
+            if isinstance(metric.data, MetricData.Gauge):
+                gauge: Gauge = metric.data[0]
+                for dp in gauge.data_points:
+                    dp.attributes = processor.process_attributes(dp.attributes)
+            if isinstance(metric.data, MetricData.Sum):
+                sum: Sum = metric.data[0]
+                for dp in sum.data_points:
+                    dp.attributes = processor.process_attributes(dp.attributes)
+            if isinstance(metric.data, MetricData.Histogram):
+                histo: Histogram = metric.data[0]
+                for dp in histo.data_points:
+                    dp.attributes = processor.process_attributes(dp.attributes)
+            if isinstance(metric.data, MetricData.ExponentialHistogram):
+                exp_histo: ExponentialHistogram = metric.data[0]
+                for dp in exp_histo.data_points:
+                    dp.attributes = processor.process_attributes(dp.attributes)
+            if isinstance(metric.data, Summary):
+                summary: Summary = metric.data[0]
+                for dp in summary.data_points:
+                    dp.attributes = processor.process_attributes(dp.attributes)

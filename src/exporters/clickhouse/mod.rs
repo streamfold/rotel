@@ -20,7 +20,7 @@ use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPay
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http::client::ResponseDecode;
-use crate::exporters::http::exporter::{Exporter, ResultLogger};
+use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
@@ -40,7 +40,8 @@ use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
-use tracing::error;
+
+use super::http::finalizer::ResultFinalizer;
 
 // Buffer sizes from Clickhouse driver
 pub(crate) const BUFFER_SIZE: usize = 256 * 1024;
@@ -85,7 +86,7 @@ pub type ExporterType<'a, Resource> = Exporter<
     >,
     SvcType,
     ClickhousePayload,
-    ClickhouseResultLogger,
+    ClickhouseResultFinalizer,
 >;
 
 impl ClickhouseExporterConfigBuilder {
@@ -221,7 +222,7 @@ impl ClickhouseExporterBuilder {
             telemetry_type,
             enc_stream,
             svc,
-            ClickhouseResultLogger {
+            ClickhouseResultFinalizer {
                 telemetry_type: telemetry_type.to_string(),
             },
             flush_receiver,
@@ -246,23 +247,29 @@ impl ResponseDecode<()> for ClickhouseRespDecoder {
     }
 }
 
-pub struct ClickhouseResultLogger {
+pub struct ClickhouseResultFinalizer {
     telemetry_type: String,
 }
+// impl<T, Err> ResultFinalizer<Result<Response<T>, Err>> for SuccessStatusFinalizer
 
-impl ResultLogger<Response<()>> for ClickhouseResultLogger {
-    fn handle(&self, resp: Response<()>) {
-        match resp.status_code().as_u16() {
-            200..=202 => {}
-            404 => error!(
-                telemetry_type = self.telemetry_type,
-                "Received a 404 when exporting to Clickhouse, does the table exist?"
-            ),
-            _ => error!(
-                telemetry_type = self.telemetry_type,
-                "Failed to export to Clickhouse: {:?}", resp
-            ),
-        };
+impl<Err> ResultFinalizer<Result<Response<()>, Err>> for ClickhouseResultFinalizer
+where
+    Err: Into<BoxError>,
+{
+    fn finalize(&self, result: Result<Response<()>, Err>) -> Result<(), BoxError> {
+        match result {
+            Ok(r) => match r {
+                Response::Http(parts, _) => {
+                    match parts.status.as_u16() {
+                        200..=202 => Ok(()),
+                        404 => Err(format!("Received a 404 when exporting to Clickhouse, does the table exist? (type = {})", self.telemetry_type).into()),
+                        _ => Err(format!("Failed to export to Clickhouse (type = {}): {:?}", self.telemetry_type, parts).into()),
+                    }
+                },
+                Response::Grpc(_, _) => Err(format!("Clickhouse invalid response type").into()),
+            },
+            Err(e) => Err(e.into())
+        }
     }
 }
 

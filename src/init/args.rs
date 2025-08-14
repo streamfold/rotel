@@ -14,6 +14,8 @@ use clap::{Args, ValueEnum};
 use serde::Deserialize;
 use std::net::SocketAddr;
 
+use super::awsemf_exporter::AwsEmfExporterArgs;
+
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
     /// Daemonize
@@ -152,14 +154,17 @@ pub struct AgentRun {
 
     #[command(flatten)]
     pub aws_xray_exporter: XRayExporterArgs,
-
+    
     #[command(flatten)]
-    #[cfg(feature = "file_exporter")]
-    pub file_exporter: FileExporterArgs,
+    pub aws_emf_exporter: AwsEmfExporterArgs,
 
     #[command(flatten)]
     #[cfg(feature = "rdkafka")]
     pub kafka_exporter: KafkaExporterArgs,
+
+    #[command(flatten)]
+    #[cfg(feature = "file_exporter")]
+    pub file_exporter: FileExporterArgs,
 
     #[cfg(feature = "pprof")]
     #[clap(flatten)]
@@ -198,10 +203,11 @@ impl Default for AgentRun {
             datadog_exporter: DatadogExporterArgs::default(),
             clickhouse_exporter: ClickhouseExporterArgs::default(),
             aws_xray_exporter: XRayExporterArgs::default(),
-            #[cfg(feature = "file_exporter")]
-            file_exporter: FileExporterArgs::default(),
+            aws_emf_exporter: AwsEmfExporterArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_exporter: KafkaExporterArgs::default(),
+            #[cfg(feature = "file_exporter")]
+            file_exporter: FileExporterArgs::default(),
             #[cfg(feature = "pprof")]
             profile_group: ProfileGroup {
                 pprof_flame_graph: false,
@@ -257,11 +263,18 @@ pub enum Exporter {
     Blackhole,
     Datadog,
     Clickhouse,
+
+    #[clap(name = "awsxray")]
     AwsXray,
-    #[cfg(feature = "file_exporter")]
-    File,
+
+    #[clap(name = "awsemf")]
+    AwsEmf,
+
     #[cfg(feature = "rdkafka")]
     Kafka,
+
+    #[cfg(feature = "file_exporter")]
+    File,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]

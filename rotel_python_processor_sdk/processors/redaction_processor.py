@@ -58,6 +58,7 @@ from typing import List, Optional, Set, Dict
 
 from rotel_sdk.open_telemetry.common.v1 import *
 from rotel_sdk.open_telemetry.logs.v1 import *
+from rotel_sdk.open_telemetry.metrics.v1 import *
 from rotel_sdk.open_telemetry.trace.v1 import *
 
 
@@ -276,19 +277,34 @@ class RedactionProcessor:
                 attrs = self._redact_attributes(span.attributes, "span")
                 span.attributes = attrs
 
-    # TODO: Add support for metrics
-    # def process_metrics(self, metrics: MockMetrics) -> MockMetrics:
-    #     for rm in metrics.resource_metrics():
-    #         self._redact_attributes(rm.resource().attributes(), "resource")
-    #         for sm in rm.scope_metrics():
-    #             for metric in sm.metrics():
-    #                 for dp in metric.data_points():
-    #                     if isinstance(dp, dict):  # Metric data points attributes are dicts in our mock
-    #                         temp_map = MockPcommonMap(dp)
-    #                         self._redact_attributes(temp_map, "metric")
-    #                         dp.clear()
-    #                         dp.update(temp_map.as_map())
-    #     return metrics
+    def process_metrics(self, resource_metrics: ResourceMetrics):
+        if resource_metrics.resource is not None:
+            resource_metrics.resource.attributes = self._redact_attributes(resource_metrics.resource.attributes,
+                                                                           "resource")
+
+        for sm in resource_metrics.scope_metrics:
+            for metric in sm.metrics:
+                if metric.data is not None:
+                    if isinstance(metric.data, MetricData.Gauge):
+                        gauge = metric.data[0]
+                        for dp in gauge.data_points:
+                            dp.attributes = self._redact_attributes(dp.attributes, "metric")
+                    if isinstance(metric.data, MetricData.Sum):
+                        sum: Sum = metric.data[0]
+                        for dp in sum.data_points:
+                            dp.attributes = self._redact_attributes(dp.attributes, "metric")
+                    if isinstance(metric.data, MetricData.Histogram):
+                        histo: Histogram = metric.data[0]
+                        for dp in histo.data_points:
+                            dp.attributes = self._redact_attributes(dp.attributes, "metric")
+                    if isinstance(metric.data, MetricData.ExponentialHistogram):
+                        exp_histo: ExponentialHistogram = metric.data[0]
+                        for dp in exp_histo.data_points:
+                            dp.attributes = self._redact_attributes(dp.attributes, "metric")
+                    if isinstance(metric.data, Summary):
+                        summary: Summary = metric.data[0]
+                        for dp in summary.data_points:
+                            dp.attributes = self._redact_attributes(dp.attributes, "metric")
 
     def process_logs(self, resource_logs: ResourceLogs):
         if resource_logs.resource is not None:

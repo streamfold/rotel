@@ -7,7 +7,7 @@ use crate::ddl_logs::get_logs_ddl;
 use crate::ddl_metrics::get_metrics_ddl;
 use crate::ddl_traces::get_traces_ddl;
 use bytes::Bytes;
-use clap::{Args, Parser};
+use clap::{Args, Parser, ValueEnum};
 use http::{HeaderName, Method};
 use http_body_util::{BodyExt, Full};
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
@@ -16,6 +16,7 @@ use hyper_util::client::legacy::{Client as HyperClient, Client};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use rotel::crypto::init_crypto_provider;
 use rustls::ClientConfig;
+use std::fmt::Display;
 use std::process::ExitCode;
 use std::str;
 use std::time::Duration;
@@ -44,8 +45,8 @@ pub struct CreateDDLArgs {
     pub password: Option<String>,
 
     /// DB engine
-    #[arg(long, default_value = "MergeTree")]
-    pub engine: String,
+    #[arg(long, value_enum, default_value = "MergeTree")]
+    pub engine: Engine,
 
     /// Cluster name
     #[arg(long)]
@@ -70,6 +71,28 @@ pub struct CreateDDLArgs {
     /// Enable JSON column type
     #[arg(long, default_value = "false")]
     pub enable_json: bool,
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, ValueEnum)]
+pub enum Engine {
+    #[clap(name = "MergeTree")]
+    MergeTree,
+
+    #[clap(name = "ReplicatedMergeTree")]
+    ReplicatedMergeTree,
+
+    #[clap(name = "Null")]
+    Null,
+}
+
+impl Display for Engine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Engine::MergeTree => write!(f, "MergeTree"),
+            Engine::ReplicatedMergeTree => write!(f, "ReplicatedMergeTree"),
+            Engine::Null => write!(f, "Null"),
+        }
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -98,7 +121,9 @@ async fn main() -> ExitCode {
     match opt.command {
         Some(Commands::Create(ddl)) => {
             if !ddl.traces && !ddl.logs && !ddl.metrics {
-                eprintln!("Must select a resource type to create tables for");
+                eprintln!(
+                    "Must select a resource type to create tables for: --traces, --logs, and/or --metrics."
+                );
                 return ExitCode::FAILURE;
             }
 
@@ -122,7 +147,7 @@ async fn main() -> ExitCode {
                     &ddl.cluster,
                     &ddl.database,
                     &ddl.table_prefix,
-                    &ddl.engine,
+                    ddl.engine,
                     &ttl,
                     ddl.enable_json,
                 );
@@ -140,7 +165,7 @@ async fn main() -> ExitCode {
                     &ddl.cluster,
                     &ddl.database,
                     &ddl.table_prefix,
-                    &ddl.engine,
+                    ddl.engine,
                     &ttl,
                     ddl.enable_json,
                 );
@@ -158,7 +183,7 @@ async fn main() -> ExitCode {
                     &ddl.cluster,
                     &ddl.database,
                     &ddl.table_prefix,
-                    &ddl.engine,
+                    ddl.engine,
                     &ttl,
                     ddl.enable_json,
                 );
