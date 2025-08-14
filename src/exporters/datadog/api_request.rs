@@ -34,7 +34,7 @@ impl ApiRequestBuilder {
         let trace_url = build_url(&uri, TRACES_PATH);
 
         let mut base_headers = HeaderMap::new();
-        base_headers.insert("DD-API-KEY", api_key.clone().parse()?);
+        base_headers.insert("DD-API-KEY", api_key.parse()?);
 
         // these might change with different routes in the future
         base_headers.insert(

@@ -24,10 +24,11 @@ pub struct Transformer {
 
 impl Transformer {
     pub fn new(environment: String, hostname: String) -> Self {
+        let transformer = TraceTransformer::new(environment.clone(), hostname.clone());
         Self {
-            environment: environment.clone(),
-            hostname: hostname.clone(),
-            transformer: TraceTransformer::new(environment, hostname),
+            environment,
+            hostname,
+            transformer,
         }
     }
 }

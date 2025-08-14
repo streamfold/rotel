@@ -114,7 +114,7 @@ pub fn get_otel_operation_name_v2(span: &OTelSpan) -> String {
 
     // RPC & AWS
     let rpc_value = find_attr(&vec![attribute::RPC_SYSTEM], true).map(|cv| cv.to_string());
-    let is_aws = rpc_value.clone().is_some_and(|v| v == "aws-api");
+    let is_aws = rpc_value.as_ref().is_some_and(|v| v == "aws-api");
     if is_aws && is_client {
         if let Some(service) = find_attr(&vec![attribute::RPC_SERVICE], true) {
             return format!("aws.{}.request", service);

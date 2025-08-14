@@ -86,6 +86,7 @@ pub fn container_tags_from_resource_attributes(
 
         if let Some(dd_key) = CONTAINER_MAPPINGS.get(k.as_str()).map(|s| s.to_string()) {
             dd_tags.insert(dd_key, vstr.clone());
+            continue;
         }
 
         if let Some(custom_key) = k
@@ -93,7 +94,7 @@ pub fn container_tags_from_resource_attributes(
             .map(|s| s.to_string())
         {
             if !custom_key.is_empty() && !dd_tags.contains_key(&custom_key) {
-                dd_tags.insert(custom_key.clone(), vstr);
+                dd_tags.insert(custom_key, vstr);
             }
         }
     }

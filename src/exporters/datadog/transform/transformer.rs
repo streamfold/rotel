@@ -69,7 +69,7 @@ impl TraceTransformer {
         );
 
         let source = source::from_attributes(&resource_attrs)
-            .unwrap_or(source::Source::from_hostname(self.hostname.clone()));
+            .unwrap_or_else(|| source::Source::from_hostname(self.hostname.clone()));
         let hostname = if source.kind == source::SourceKind::Hostname {
             source.identifier.clone()
         } else {
