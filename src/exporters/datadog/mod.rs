@@ -186,6 +186,17 @@ impl DatadogExporterBuilder {
     }
 }
 
+#[derive(Default, Clone)]
+pub struct DatadogTraceDecoder;
+
+impl ResponseDecode<String> for DatadogTraceDecoder {
+    // todo: look at response
+    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
+        Ok(String::new())
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     extern crate utilities;
@@ -271,15 +282,5 @@ mod tests {
             .build()
             .build(brx, None)
             .unwrap()
-    }
-}
-
-#[derive(Default, Clone)]
-pub struct DatadogTraceDecoder;
-
-impl ResponseDecode<String> for DatadogTraceDecoder {
-    // todo: look at response
-    fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
-        Ok("".to_string())
     }
 }

@@ -146,7 +146,7 @@ pub struct XRayTraceDecoder;
 
 impl ResponseDecode<String> for XRayTraceDecoder {
     fn decode(&self, _: Bytes, _: ContentEncoding) -> Result<String, BoxError> {
-        Ok("".to_string())
+        Ok(String::new())
     }
 }
 
