@@ -4,8 +4,8 @@ use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
     LogsService, LogsServiceServer,
 };
@@ -20,7 +20,7 @@ use opentelemetry_proto::tonic::collector::metrics::v1::{
 };
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::TraceServiceServer;
 use opentelemetry_proto::tonic::collector::trace::v1::{
-    ExportTraceServiceRequest, ExportTraceServiceResponse, trace_service_server::TraceService,
+    trace_service_server::TraceService, ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -28,9 +28,9 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::default::Default;
 use std::error::Error;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::Server;
 use tonic::transport::server::Router;
-use tonic::{Request, Response, Status, codec::CompressionEncoding};
+use tonic::transport::Server;
+use tonic::{codec::CompressionEncoding, Request, Response, Status};
 
 #[derive(Default)]
 pub struct OTLPGrpcServerBuilder {
@@ -310,7 +310,7 @@ impl LogsService for CollectorService {
 mod tests {
     use crate::bounded_channel::bounded;
     use crate::listener::Listener;
-    use crate::receivers::otlp_grpc::OTLPGrpcServer;
+    use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
     use crate::receivers::otlp_output::OTLPOutput;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::{
