@@ -1,5 +1,5 @@
 use crate::aws_api::config::AwsConfig;
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
@@ -13,7 +13,7 @@ use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
 use crate::init::config::{
-    ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
+    get_exporters_config, get_receivers_config, ExporterConfig, ReceiverConfig,
 };
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
@@ -31,8 +31,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
@@ -94,11 +94,7 @@ impl Agent {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let config = self.config;
 
-        info!(
-            //grpc_endpoint = config.otlp_grpc_endpoint.to_string(),
-            //http_endpoint = config.otlp_http_endpoint.to_string(),
-            "Starting Rotel.",
-        );
+        info!("Starting Rotel.",);
 
         // Initialize the TLS library, we may want to do this conditionally
         init_crypto_provider()?;
@@ -610,6 +606,10 @@ impl Agent {
                     //
                     // OTLP GRPC server
                     //
+                    info!(
+                        grpc_endpoint = config.otlp_grpc_endpoint.to_string(),
+                        http_endpoint = config.otlp_http_endpoint.to_string(),
+                    );
                     let grpc_srv = OTLPGrpcServer::builder()
                         .with_max_recv_msg_size_mib(config.otlp_grpc_max_recv_msg_size_mib as usize)
                         .with_traces_output(traces_output.clone())
