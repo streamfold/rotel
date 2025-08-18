@@ -65,20 +65,33 @@ impl ClickhousePayloadBuilder {
     }
 }
 
-#[derive(Clone)]
 pub struct ClickhousePayload {
     inner: Arc<Mutex<Inner>>,
 }
 
+// We manually clone so that the state of the inner struct is maintained
+// per request. Otherwise we won't replay all chunks on a retry.
+impl Clone for ClickhousePayload {
+    fn clone(&self) -> Self {
+        let inner = self.inner.lock().unwrap();
+        Self {
+            inner: Arc::new(Mutex::new(inner.clone())),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Inner {
-    chunks: VecDeque<Bytes>,
+    chunks: Arc<VecDeque<Bytes>>,
+    current: usize,
 }
 
 impl ClickhousePayload {
     fn new(chunks: Vec<Bytes>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
-                chunks: chunks.into(),
+                chunks: Arc::new(chunks.into()),
+                current: 0,
             })),
         }
     }
@@ -92,9 +105,109 @@ impl Body for ClickhousePayload {
         self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match self.inner.lock().unwrap().chunks.pop_front() {
-            None => Poll::Ready(None),
-            Some(chunk) => Poll::Ready(Some(Ok(Frame::data(chunk.clone())))),
+        let mut inner = self.inner.lock().unwrap();
+
+        if inner.current >= inner.chunks.len() {
+            return Poll::Ready(None);
         }
+
+        let curr = inner.current;
+        inner.current += 1;
+
+        Poll::Ready(Some(Ok(Frame::data(inner.chunks[curr].clone()))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::task::{Context, Waker};
+
+    // Helper function to create a simple test row
+    #[derive(Serialize)]
+    struct TestRow {
+        id: u32,
+        name: String,
+    }
+
+    struct MockWaker;
+    impl std::task::Wake for MockWaker {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    #[test]
+    fn test_clone_independence() {
+        // Create a payload builder and add some test data
+        let mut builder = ClickhousePayloadBuilder::new(Compression::None);
+
+        // Add enough data to create multiple chunks
+        for i in 0..2 {
+            let row = TestRow {
+                id: i,
+                name: format!("test_{}", i),
+            };
+            builder.add_row(&row).unwrap();
+        }
+
+        let original_payload = builder.finish().unwrap();
+        let cloned_payload = original_payload.clone();
+
+        // Pin the payloads for polling
+        let mut original_pinned = Box::pin(original_payload);
+        let mut cloned_pinned = Box::pin(cloned_payload);
+
+        let waker = Waker::from(std::sync::Arc::new(MockWaker));
+        let mut ctx = Context::from_waker(&waker);
+
+        // Poll the original payload once to advance its state
+        let original_result = original_pinned.as_mut().poll_frame(&mut ctx);
+
+        // Verify we got a frame from the original
+        assert!(matches!(original_result, Poll::Ready(Some(Ok(_)))));
+
+        // Poll the cloned payload - it should start from the beginning
+        let cloned_result = cloned_pinned.as_mut().poll_frame(&mut ctx);
+
+        // Verify we got a frame from the clone
+        assert!(matches!(cloned_result, Poll::Ready(Some(Ok(_)))));
+
+        // Extract the frames to compare
+        if let (Poll::Ready(Some(Ok(original_frame))), Poll::Ready(Some(Ok(cloned_frame)))) =
+            (original_result, cloned_result)
+        {
+            // Both should return the same first chunk since the clone starts fresh
+            let original_data = original_frame.into_data().unwrap();
+            let cloned_data = cloned_frame.into_data().unwrap();
+            assert_eq!(
+                original_data, cloned_data,
+                "Clone should start from the beginning"
+            );
+        }
+
+        // Poll the original again to advance it further
+        let original_second = original_pinned.as_mut().poll_frame(&mut ctx);
+
+        // Poll the clone again - it should return the second chunk
+        let cloned_second = cloned_pinned.as_mut().poll_frame(&mut ctx);
+
+        // Both should get their respective second chunks
+        if let (Poll::Ready(Some(Ok(original_frame2))), Poll::Ready(Some(Ok(cloned_frame2)))) =
+            (original_second, cloned_second)
+        {
+            let original_data2 = original_frame2.into_data().unwrap();
+            let cloned_data2 = cloned_frame2.into_data().unwrap();
+            assert_eq!(
+                original_data2, cloned_data2,
+                "Both should have independent chunk sequences"
+            );
+        }
+
+        // Both should return None now
+
+        let original_third = original_pinned.as_mut().poll_frame(&mut ctx);
+        let cloned_third = cloned_pinned.as_mut().poll_frame(&mut ctx);
+
+        assert!(matches!(original_third, Poll::Ready(None)));
+        assert!(matches!(cloned_third, Poll::Ready(None)));
     }
 }
