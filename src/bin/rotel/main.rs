@@ -10,12 +10,12 @@ use std::error::Error;
 use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
-use std::process::{ExitCode, exit};
+use std::process::{exit, ExitCode};
 use std::time::Duration;
 use tokio::select;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::task::JoinSet;
-use tokio::time::{Instant, timeout};
+use tokio::time::{timeout, Instant};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tracing::log::warn;
@@ -88,21 +88,23 @@ fn main() -> ExitCode {
         Some(Commands::Start(agent)) => {
             // Attempt to bind ports before we daemonize, so that when the parent process returns
             // the ports are already available for connection.
-            let port_map =
-                match bind_endpoints(&[agent.otlp_grpc_endpoint, agent.otlp_http_endpoint]) {
-                    Ok(ports) => ports,
-                    Err(e) => {
-                        unsafe {
-                            if agent.daemon && check_rotel_active(&agent.pid_file) {
-                                // If we are already running, ignore the bind failure
-                                return ExitCode::SUCCESS;
-                            }
+            let port_map = match bind_endpoints(&[
+                agent.otlp_receiver.otlp_grpc_endpoint,
+                agent.otlp_receiver.otlp_http_endpoint,
+            ]) {
+                Ok(ports) => ports,
+                Err(e) => {
+                    unsafe {
+                        if agent.daemon && check_rotel_active(&agent.pid_file) {
+                            // If we are already running, ignore the bind failure
+                            return ExitCode::SUCCESS;
                         }
-                        eprintln!("ERROR: {}", e);
-
-                        return ExitCode::from(1);
                     }
-                };
+                    eprintln!("ERROR: {}", e);
+
+                    return ExitCode::from(1);
+                }
+            };
 
             if agent.daemon {
                 match daemonize(&agent.pid_file, &agent.log_file) {

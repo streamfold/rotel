@@ -4,13 +4,15 @@ use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
+use crate::init::kafka_receiver::KafkaReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
+use crate::init::otlp_receiver::OTLPReceiverArgs;
 use crate::init::parse;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::str::FromStr;
 
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
@@ -39,65 +41,20 @@ pub struct AgentRun {
     )]
     pub debug_log_verbosity: DebugLogVerbosity,
 
-    /// OTLP gRPC endpoint
-    #[arg(long, env = "ROTEL_OTLP_GRPC_ENDPOINT", default_value = "localhost:4317", value_parser = parse::parse_endpoint
-    )]
-    pub otlp_grpc_endpoint: SocketAddr,
+    #[command(flatten)]
+    pub otlp_receiver: OTLPReceiverArgs,
 
-    /// OTLP HTTP endpoint
-    #[arg(long, env = "ROTEL_OTLP_HTTP_ENDPOINT", default_value = "localhost:4318", value_parser = parse::parse_endpoint
-    )]
-    pub otlp_http_endpoint: SocketAddr,
+    #[command(flatten)]
+    #[cfg(feature = "rdkafka")]
+    pub kafka_receiver: KafkaReceiverArgs,
 
-    /// OTLP GRPC max recv msg size MB
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_GRPC_MAX_RECV_MSG_SIZE_MIB",
-        default_value = "4"
-    )]
-    pub otlp_grpc_max_recv_msg_size_mib: u64,
+    /// Single receiver (type)
+    #[arg(value_enum, long, env = "ROTEL_RECEIVER")]
+    pub receiver: Option<Receiver>,
 
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_RECEIVER_TRACES_DISABLED",
-        default_value = "false"
-    )]
-    pub otlp_receiver_traces_disabled: bool,
-
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_RECEIVER_METRICS_DISABLED",
-        default_value = "false"
-    )]
-    pub otlp_receiver_metrics_disabled: bool,
-
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_RECEIVER_LOGS_DISABLED",
-        default_value = "false"
-    )]
-    pub otlp_receiver_logs_disabled: bool,
-
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_RECEIVER_TRACES_HTTP_PATH",
-        default_value = "/v1/traces"
-    )]
-    pub otlp_receiver_traces_http_path: String,
-
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_RECEIVER_METRICS_HTTP_PATH",
-        default_value = "/v1/metrics"
-    )]
-    pub otlp_receiver_metrics_http_path: String,
-
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_RECEIVER_LOGS_HTTP_PATH",
-        default_value = "/v1/logs"
-    )]
-    pub otlp_receiver_logs_http_path: String,
+    /// Multiple exporters (name:type,...)
+    #[arg(value_enum, long, env = "ROTEL_RECEIVERS")]
+    pub receivers: Option<String>,
 
     #[arg(long, env = "ROTEL_OTLP_WITH_TRACE_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
     pub otlp_with_trace_processor: Vec<String>,
@@ -168,15 +125,11 @@ impl Default for AgentRun {
             log_file: "/tmp/rotel-agent.log".to_string(),
             debug_log: vec![DebugLogParam::None],
             debug_log_verbosity: DebugLogVerbosity::Basic,
-            otlp_grpc_endpoint: "127.0.0.1:4317".parse().unwrap(),
-            otlp_http_endpoint: "127.0.0.1:4318".parse().unwrap(),
-            otlp_grpc_max_recv_msg_size_mib: 4,
-            otlp_receiver_traces_disabled: false,
-            otlp_receiver_metrics_disabled: false,
-            otlp_receiver_logs_disabled: false,
-            otlp_receiver_traces_http_path: "/v1/traces".to_string(),
-            otlp_receiver_metrics_http_path: "/v1/metrics".to_string(),
-            otlp_receiver_logs_http_path: "/v1/logs".to_string(),
+            receiver: None,
+            receivers: None,
+            otlp_receiver: OTLPReceiverArgs::default(),
+            #[cfg(feature = "rdkafka")]
+            kafka_receiver: KafkaReceiverArgs::default(),
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
@@ -257,6 +210,24 @@ pub enum Exporter {
 
     #[cfg(feature = "rdkafka")]
     Kafka,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, ValueEnum)]
+pub enum Receiver {
+    Otlp,
+    #[cfg(feature = "rdkafka")]
+    Kafka,
+}
+
+impl FromStr for Receiver {
+    type Err = &'static str; // Define an error type
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "otlp" => Ok(Receiver::Otlp),
+            "kafka" => Ok(Receiver::Kafka),
+            _ => Err("Unknown receiver"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, ValueEnum)]

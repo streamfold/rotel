@@ -2,20 +2,22 @@ use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::KafkaExporterConfig;
-use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
+use crate::exporters::otlp::Endpoint;
 use crate::exporters::xray::XRayExporterConfigBuilder;
-use crate::init::args::{AgentRun, Exporter};
+use crate::init::args::{AgentRun, Exporter, Receiver};
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::{
-    OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
+    build_logs_config, build_metrics_config, build_traces_config, OTLPExporterBaseArgs,
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
-use figment::{Figment, providers::Env};
+use crate::receivers::kafka::config::KafkaReceiverConfig;
+use crate::receivers::otlp::OTLPReceiverConfig;
+use figment::{providers::Env, Figment};
 use gethostname::gethostname;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -125,6 +127,13 @@ pub(crate) enum ExporterConfig {
     Xray(XRayExporterConfigBuilder),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
+}
+
+#[derive(Debug)]
+pub(crate) enum ReceiverConfig {
+    Otlp(OTLPReceiverConfig),
+    #[cfg(feature = "rdkafka")]
+    Kafka(KafkaReceiverConfig),
 }
 
 impl TryIntoConfig for ExporterArgs {
@@ -266,6 +275,35 @@ impl TryIntoConfig for ExporterArgs {
     }
 }
 
+pub(crate) fn get_receivers_config(
+    config: &AgentRun,
+) -> Result<HashMap<Receiver, ReceiverConfig>, BoxError> {
+    if config.receivers.is_none() && config.receiver.is_none() {
+        let mut map = HashMap::new();
+        map.insert(Receiver::Otlp, get_receiver_config(config, Receiver::Otlp));
+        return Ok(map);
+    }
+    if config.receivers.is_some() && config.receiver.is_some() {
+        return Err("Can not use --receiver and --receivers together".into());
+    }
+
+    if let Some(receiver) = config.receiver {
+        let mut map = HashMap::new();
+        map.insert(receiver, get_receiver_config(config, receiver));
+        return Ok(map);
+    }
+
+    let mut receivers: HashMap<Receiver, ReceiverConfig> = HashMap::new();
+    if let Some(recs) = &config.receivers {
+        let rec: Vec<&str> = recs.split(",").collect();
+        for receiver in rec {
+            let receiver: Receiver = receiver.parse()?;
+            receivers.insert(receiver, get_receiver_config(config, receiver));
+        }
+    }
+    Ok(receivers)
+}
+
 pub(crate) fn get_exporters_config(
     config: &AgentRun,
     environment: &str,
@@ -276,7 +314,7 @@ pub(crate) fn get_exporters_config(
     }
 
     if config.exporters.is_some() && config.exporter.is_some() {
-        return Err("Can not use --exporter and --exporters".into());
+        return Err("Can not use --exporter and --exporters together".into());
     }
 
     if let Some(exporter) = config.exporter {
@@ -433,6 +471,15 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
             Ok(ExporterArgs::Kafka(args))
         }
         _ => Err(format!("unknown exporter type: {}", exporter_type).into()),
+    }
+}
+
+// Function is currently small but expect it will grow over time so splitting out rather than inlining for now.
+fn get_receiver_config(config: &AgentRun, receiver: Receiver) -> ReceiverConfig {
+    match receiver {
+        Receiver::Otlp => ReceiverConfig::Otlp(OTLPReceiverConfig::from(&config.otlp_receiver)),
+        #[cfg(feature = "rdkafka")]
+        Receiver::Kafka => ReceiverConfig::Kafka(config.kafka_receiver.build_config()),
     }
 }
 
