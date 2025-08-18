@@ -15,7 +15,6 @@ mod transformer;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ConnectionConfig;
 use crate::exporters::clickhouse::exception::extract_exception;
-use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
@@ -35,8 +34,11 @@ use http::Request;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use payload::ClickhousePayload;
+use std::fmt::Display;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fmt, str};
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
@@ -70,8 +72,10 @@ pub struct ClickhouseExporterConfigBuilder {
     use_json_underscore: bool,
 }
 
-type SvcType =
-    TowerRetry<RetryPolicy<()>, Timeout<HttpClient<ClickhousePayload, (), ClickhouseRespDecoder>>>;
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    Timeout<HttpClient<ClickhousePayload, RespBody, ClickhouseRespDecoder>>,
+>;
 
 pub type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -84,7 +88,7 @@ pub type ExporterType<'a, Resource> = Exporter<
         Vec<Request<ClickhousePayload>>,
         ClickhousePayload,
     >,
-    SvcType,
+    SvcType<ClickhouseResponse>,
     ClickhousePayload,
     ClickhouseResultFinalizer,
 >;
@@ -235,35 +239,70 @@ impl ClickhouseExporterBuilder {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ClickhouseResponse {
+    Empty,
+    DbException(i32, String, String),
+    Unknown(String),
+}
+
+impl Display for ClickhouseResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ClickhouseResponse::Empty => write!(f, ""),
+            ClickhouseResponse::DbException(code, exception, version) => {
+                write!(
+                    f,
+                    "Database exception (code: {}, exception: {}, version: {})",
+                    code, exception, version
+                )
+            }
+            ClickhouseResponse::Unknown(msg) => write!(f, "Unknown error: {}", msg),
+        }
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct ClickhouseRespDecoder;
 
-impl ResponseDecode<()> for ClickhouseRespDecoder {
-    fn decode(&self, resp: Bytes, _: ContentEncoding) -> Result<(), BoxError> {
-        match extract_exception(resp.as_ref()) {
-            None => Ok(()),
-            Some(e) => Err(e),
+impl ResponseDecode<ClickhouseResponse> for ClickhouseRespDecoder {
+    fn decode(&self, body: Bytes, _: ContentEncoding) -> Result<ClickhouseResponse, BoxError> {
+        // If there's an exception in the response, extract it
+        if let Some((code, exception, version)) = extract_exception(body.as_ref()) {
+            return Ok(ClickhouseResponse::DbException(code, exception, version));
         }
+
+        let str_payload = str::from_utf8(&body)
+            .map(|s| s.to_string())
+            .map_err(|e| format!("error decoding response: {}", e))?;
+
+        if str_payload.is_empty() {
+            return Ok(ClickhouseResponse::Empty);
+        }
+
+        return Ok(ClickhouseResponse::Unknown(str_payload));
     }
 }
 
 pub struct ClickhouseResultFinalizer {
     telemetry_type: String,
 }
-// impl<T, Err> ResultFinalizer<Result<Response<T>, Err>> for SuccessStatusFinalizer
 
-impl<Err> ResultFinalizer<Result<Response<()>, Err>> for ClickhouseResultFinalizer
+impl<Err> ResultFinalizer<Result<Response<ClickhouseResponse>, Err>> for ClickhouseResultFinalizer
 where
     Err: Into<BoxError>,
 {
-    fn finalize(&self, result: Result<Response<()>, Err>) -> Result<(), BoxError> {
+    fn finalize(&self, result: Result<Response<ClickhouseResponse>, Err>) -> Result<(), BoxError> {
         match result {
             Ok(r) => match r {
-                Response::Http(parts, _) => {
+                Response::Http(parts, body) => {
                     match parts.status.as_u16() {
                         200..=202 => Ok(()),
                         404 => Err(format!("Received a 404 when exporting to Clickhouse, does the table exist? (type = {})", self.telemetry_type).into()),
-                        _ => Err(format!("Failed to export to Clickhouse (type = {}): {:?}", self.telemetry_type, parts).into()),
+                        _ => match body {
+                            Some(body) => Err(format!("Failed to export to Clickhouse (status = {}): {}", parts.status, body).into()),
+                            None => Err(format!("Failed to export to Clickhouse (status = {})", parts.status).into()),
+                        }
                     }
                 },
                 Response::Grpc(_, _) => Err(format!("Clickhouse invalid response type").into()),
