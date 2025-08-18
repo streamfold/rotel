@@ -3,8 +3,8 @@ use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::KafkaExporterConfig;
-use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::Endpoint;
+use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter, Receiver};
 use crate::init::awsemf_exporter::AwsEmfExporterArgs;
@@ -13,13 +13,13 @@ use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::{
-    build_logs_config, build_metrics_config, build_traces_config, OTLPExporterBaseArgs,
+    OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::receivers::kafka::config::KafkaReceiverConfig;
 use crate::receivers::otlp::OTLPReceiverConfig;
-use figment::{providers::Env, Figment};
+use figment::{Figment, providers::Env};
 use gethostname::gethostname;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
