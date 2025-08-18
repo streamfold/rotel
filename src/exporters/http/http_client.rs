@@ -48,7 +48,6 @@ where
     <ReqBody as Body>::Data: Send,
     <ReqBody as Body>::Error: Into<BoxError>,
     Dec: ResponseDecode<Resp> + Clone,
-    Resp: Default,
 {
     async fn perform_request(&self, req: Request<ReqBody>) -> Result<Response<Resp>, BoxError> {
         match self.inner.request(req).await {
@@ -118,7 +117,7 @@ where
     ReqBody: Body + Clone + Send + 'static + Unpin,
     <ReqBody as Body>::Data: Send,
     <ReqBody as Body>::Error: Into<BoxError>,
-    Resp: Default + Send + Clone + Sync + 'static,
+    Resp: Send + Clone + Sync + 'static,
 {
     type Response = Response<Resp>;
     type Error = BoxError;

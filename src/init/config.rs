@@ -1,23 +1,25 @@
+use crate::exporters::awsemf::AwsEmfExporterConfigBuilder;
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::KafkaExporterConfig;
-use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
+use crate::exporters::otlp::Endpoint;
 use crate::exporters::xray::XRayExporterConfigBuilder;
 use crate::init::args::{AgentRun, Exporter, Receiver};
+use crate::init::awsemf_exporter::AwsEmfExporterArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::{
-    OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
+    build_logs_config, build_metrics_config, build_traces_config, OTLPExporterBaseArgs,
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::receivers::kafka::config::KafkaReceiverConfig;
 use crate::receivers::otlp::OTLPReceiverConfig;
-use figment::{Figment, providers::Env};
+use figment::{providers::Env, Figment};
 use gethostname::gethostname;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -90,6 +92,7 @@ pub(crate) enum ExporterArgs {
     Datadog(DatadogExporterArgs),
     Clickhouse(ClickhouseExporterArgs),
     Xray(XRayExporterArgs),
+    Awsemf(AwsEmfExporterArgs),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterArgs),
 }
@@ -125,6 +128,7 @@ pub(crate) enum ExporterConfig {
     Datadog(DatadogExporterConfigBuilder),
     Clickhouse(ClickhouseExporterConfigBuilder),
     Xray(XRayExporterConfigBuilder),
+    Awsemf(AwsEmfExporterConfigBuilder),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
 }
@@ -263,6 +267,33 @@ impl TryIntoConfig for ExporterArgs {
                     XRayExporterConfigBuilder::new(xray.region, xray.custom_endpoint.clone());
 
                 Ok(ExporterConfig::Xray(builder))
+            }
+            ExporterArgs::Awsemf(awsemf) => {
+                if pipeline_type != PipelineType::Metrics {
+                    return Err(format!(
+                        "AWS EMF exporter only supports metrics, not {}",
+                        pipeline_type
+                    )
+                    .into());
+                }
+
+                let mut builder = AwsEmfExporterConfigBuilder::new()
+                    .with_region(awsemf.region)
+                    .with_log_group_name(awsemf.log_group_name.clone())
+                    .with_log_stream_name(awsemf.log_stream_name.clone())
+                    .with_retain_initial_value_of_delta_metric(
+                        awsemf.retain_initial_value_of_delta_metric,
+                    );
+
+                if let Some(namespace) = &awsemf.namespace {
+                    builder = builder.with_namespace(namespace.clone());
+                }
+
+                if let Some(custom_endpoint) = &awsemf.custom_endpoint {
+                    builder = builder.with_custom_endpoint(custom_endpoint.clone());
+                }
+
+                Ok(ExporterConfig::Awsemf(builder))
             }
             #[cfg(feature = "rdkafka")]
             ExporterArgs::Kafka(k) => {
@@ -454,13 +485,20 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 
             Ok(ExporterArgs::Clickhouse(args))
         }
-        "xray" => {
+        "awsxray" => {
             let args: XRayExporterArgs = match figment.extract() {
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse X-Ray config: {}", e).into()),
             };
 
             Ok(ExporterArgs::Xray(args))
+        }
+        "awsemf" => {
+            let args: AwsEmfExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => return Err(format!("failed to parse AWS EMF config: {}", e).into()),
+            };
+            Ok(ExporterArgs::Awsemf(args))
         }
         #[cfg(feature = "rdkafka")]
         "kafka" => {
@@ -528,6 +566,11 @@ fn get_single_exporter_config(
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
             cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
         }
+        Exporter::AwsEmf => {
+            let args = ExporterArgs::Awsemf(config.aws_emf_exporter.clone());
+            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+        }
+
         #[cfg(feature = "rdkafka")]
         Exporter::Kafka => {
             let kafka_config = config.kafka_exporter.build_config();
@@ -870,7 +913,7 @@ mod tests {
         let mut env_manager = EnvManager::new();
         env_manager.set_var("ROTEL_EXPORTER_TEST_REGION", "us-west-1");
 
-        let result = args_from_env_prefix("xray", "test");
+        let result = args_from_env_prefix("awsxray", "test");
 
         assert!(result.is_ok());
         match result.unwrap() {

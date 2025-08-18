@@ -8,6 +8,7 @@ pub mod wait;
 #[cfg(feature = "rdkafka")]
 mod kafka_receiver;
 
+mod awsemf_exporter;
 mod clickhouse_exporter;
 mod datadog_exporter;
 #[cfg(feature = "rdkafka")]

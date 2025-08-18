@@ -14,6 +14,8 @@ use clap::{Args, ValueEnum};
 use serde::Deserialize;
 use std::str::FromStr;
 
+use super::awsemf_exporter::AwsEmfExporterArgs;
+
 #[derive(Debug, Args, Clone)]
 pub struct AgentRun {
     /// Daemonize
@@ -109,6 +111,9 @@ pub struct AgentRun {
     pub aws_xray_exporter: XRayExporterArgs,
 
     #[command(flatten)]
+    pub aws_emf_exporter: AwsEmfExporterArgs,
+
+    #[command(flatten)]
     #[cfg(feature = "rdkafka")]
     pub kafka_exporter: KafkaExporterArgs,
 
@@ -145,6 +150,7 @@ impl Default for AgentRun {
             datadog_exporter: DatadogExporterArgs::default(),
             clickhouse_exporter: ClickhouseExporterArgs::default(),
             aws_xray_exporter: XRayExporterArgs::default(),
+            aws_emf_exporter: AwsEmfExporterArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_exporter: KafkaExporterArgs::default(),
             #[cfg(feature = "pprof")]
@@ -206,7 +212,11 @@ pub enum Exporter {
 
     Clickhouse,
 
+    #[clap(name = "awsxray")]
     AwsXray,
+
+    #[clap(name = "awsemf")]
+    AwsEmf,
 
     #[cfg(feature = "rdkafka")]
     Kafka,

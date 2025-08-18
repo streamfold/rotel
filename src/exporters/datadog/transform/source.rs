@@ -61,7 +61,7 @@ fn hostname_from_attrs(attrs: &ConvertedAttrMap) -> Option<String> {
     let unchecked = unchecked_hostname_from_attrs(attrs)?;
 
     // Make sure we ignore localhost variants
-    match unchecked.clone().as_str() {
+    match unchecked.as_str() {
         "0.0.0.0" => None,
         "127.0.0.1" => None,
         "localhost" => None,

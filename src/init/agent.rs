@@ -361,7 +361,7 @@ impl Agent {
                         Ok(())
                     });
                 }
-                None => {}
+                _ => {}
             }
         }
 
@@ -438,6 +438,28 @@ impl Agent {
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
                         metrics_exporter.start(token).await;
+                        Ok(())
+                    });
+                }
+                Some(ExporterConfig::Awsemf(cfg_builder)) => {
+                    let config = AwsConfig::from_env();
+                    let builder = cfg_builder.build();
+                    let exp = builder.build(
+                        metrics_pipeline_out_rx,
+                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        config,
+                    )?;
+
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = exp.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = e,
+                                "AWS EMF exporter returned from run loop with error."
+                            );
+                        }
+
                         Ok(())
                     });
                 }

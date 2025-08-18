@@ -40,23 +40,27 @@ To quickly get started with Rotel you can leverage the bundled [Python](https://
 follow these steps:
 
 1. **Running Rotel**
-    - We use the prebuilt docker image for this example, but you can also download a binary from the
-      [releases](https://github.com/streamfold/rotel/releases) page.
-    - Execute Rotel with the following arguments. To debug metrics or logs, add
-      an additional `--debug-log metrics|logs`.
+   - We use the prebuilt docker image for this example, but you can also download a binary from the
+     [releases](https://github.com/streamfold/rotel/releases) page.
+   - Execute Rotel with the following arguments. To debug metrics or logs, add
+     an additional `--debug-log metrics|logs`.
+
    ```bash
    docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
    ```
-    - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+
+   - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
 2. **Verify**
-    - Send OTLP traces to Rotel and verify that it is receiving data:
+   - Send OTLP traces to Rotel and verify that it is receiving data:
+
    ```bash
    go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
-   
+
    telemetrygen traces --otlp-insecure --duration 5s
    ```
-    - Check the output from Rotel and you should see several "Received traces" log lines.
+
+   - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
 
@@ -73,26 +77,26 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 
 Any option above that does not contain a default is considered false or unset by default.
 
-| Option                            | Default              | Options                                               |
-|-----------------------------------|----------------------|-------------------------------------------------------|
-| --daemon                          |                      |                                                       |
-| --log-format                      | text                 | json                                                  |
-| --pid-file                        | /tmp/rotel-agent.pid |                                                       |
-| --log-file                        | /tmp/rotel-agent.log |                                                       |
-| --debug-log                       |                      | metrics, traces, logs                                 |
-| --debug-log-verbosity             | basic                | basic, detailed                                       |
-| --otlp-grpc-endpoint              | localhost:4317       |                                                       |
-| --otlp-http-endpoint              | localhost:4318       |                                                       |
-| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                       |
-| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, aws-xray, kafka |
-| --otlp-receiver-traces-disabled   |                      |                                                       |
-| --otlp-receiver-metrics-disabled  |                      |                                                       |
-| --otlp-receiver-logs-disabled     |                      |                                                       |
-| --otlp-receiver-traces-http-path  | /v1/traces           |                                                       |
-| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                       |
-| --otlp-receiver-logs-http-path    | /v1/logs             |                                                       |
-| --otel-resource-attributes        |                      |                                                       |
-| --enable-internal-telemetry       |                      |                                                       |
+| Option                            | Default              | Options                                                      |
+| --------------------------------- | -------------------- | ------------------------------------------------------------ |
+| --daemon                          |                      |                                                              |
+| --log-format                      | text                 | json                                                         |
+| --pid-file                        | /tmp/rotel-agent.pid |                                                              |
+| --log-file                        | /tmp/rotel-agent.log |                                                              |
+| --debug-log                       |                      | metrics, traces, logs                                        |
+| --debug-log-verbosity             | basic                | basic, detailed                                              |
+| --otlp-grpc-endpoint              | localhost:4317       |                                                              |
+| --otlp-http-endpoint              | localhost:4318       |                                                              |
+| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                              |
+| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, awsxray, awsemf, kafka |
+| --otlp-receiver-traces-disabled   |                      |                                                              |
+| --otlp-receiver-metrics-disabled  |                      |                                                              |
+| --otlp-receiver-logs-disabled     |                      |                                                              |
+| --otlp-receiver-traces-http-path  | /v1/traces           |                                                              |
+| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                              |
+| --otlp-receiver-logs-http-path    | /v1/logs             |                                                              |
+| --otel-resource-attributes        |                      |                                                              |
+| --enable-internal-telemetry       |                      |                                                              |
 
 The PID and LOG files are only used when run in `--daemon` mode.
 
@@ -103,7 +107,7 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
 | Option                                 | Default | Options    |
-|----------------------------------------|---------|------------|
+| -------------------------------------- | ------- | ---------- |
 | --otlp-exporter-endpoint               |         |            |
 | --otlp-exporter-protocol               | grpc    | grpc, http |
 | --otlp-exporter-custom-headers         |         |            |
@@ -170,7 +174,7 @@ The Datadog exporter can be selected by passing `--exporter datadog`. The Datado
 moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
 
 | Option                             | Default | Options                |
-|------------------------------------|---------|------------------------|
+| ---------------------------------- | ------- | ---------------------- |
 | --datadog-exporter-region          | us1     | us1, us3, us5, eu, ap1 |
 | --datadog-exporter-custom-endpoint |         |                        |
 | --datadog-exporter-api-key         |         |                        |
@@ -184,7 +188,7 @@ logs,
 and traces.
 
 | Option                                | Default | Options     |
-|---------------------------------------|---------|-------------|
+| ------------------------------------- | ------- | ----------- |
 | --clickhouse-exporter-endpoint        |         |             |
 | --clickhouse-exporter-database        | otel    |             |
 | --clickhouse-exporter-table-prefix    | otel    |             |
@@ -224,7 +228,7 @@ crate._
 
 ### AWS X-Ray exporter configuration
 
-The AWS X-Ray exporter can be selected by passing `--exporter aws-xray`. The X-Ray exporter only supports traces. Note:
+The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ray exporter only supports traces. Note:
 X-Ray
 limits batch sizes to 50 traces segments. If you assign a `--batch-max-size` of greater than 50, Rotel will override and
 enforce the max
@@ -235,12 +239,37 @@ AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_
 are
 automatically sourced from Rotel's environment on startup.
 
-| Option                          | Default   | Options          |
-|---------------------------------|-----------|------------------|
-| --xray-exporter-region          | us-east-1 | aws region codes |
-| --xray-exporter-custom-endpoint |           |                  |
+| Option                             | Default   | Options          |
+| ---------------------------------- | --------- | ---------------- |
+| --awsxray-exporter-region          | us-east-1 | aws region codes |
+| --awsxray-exporter-custom-endpoint |           |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
+
+### AWS EMF exporter configuration
+
+The AWS EMF exporter can be selected by passing `--exporter awsemf`. The AWS EMF exporter only supports metrics. The
+AWS EMF exporter will convert metrics into the AWS Cloudwatch [Embedded metric format](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html) and
+send those as JSON log lines to Cloudwatch. Cloudwatch will convert the log lines into Cloudwatch Metrics.
+
+AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` for the EMF exporter
+are automatically sourced from Rotel's environment on startup.
+
+| Option                                                 | Default          | Options          |
+| ------------------------------------------------------ | ---------------- | ---------------- |
+| --awsemf-exporter-region                               | us-east-1        | aws region codes |
+| --awsemf-exporter-custom-endpoint                      |                  |                  |
+| --awsemf-exporter-log-group-name                       | /metrics/default |                  |
+| --awsemf-exporter-log-stream-name                      | otel-stream      |                  |
+| --awsemf-exporter-namespace                            |                  |                  |
+| --awsemf-exporter-retain-initial-value-of-delta-metric | false            |                  |
+
+**NOTE**:
+
+- At the moment the log group and log stream must exist or the exporter will fail to send logs.
+- If `--awsemf-exporter-retain-initial-value-of-delta-metric` is true, then the initial value of a delta metric is retained when calculating deltas.
+- If the namespace is not specified, Rotel will look for `service.namespace` and `service.name` in the resource attributes and use those. If those
+  don't exist, it will fall back to a namespace of _default_.
 
 ### Kafka exporter configuration (Experimental)
 
@@ -248,7 +277,7 @@ The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka expo
 logs, and traces.
 
 | Option                                                    | Default           | Options                                                                     |
-|-----------------------------------------------------------|-------------------|-----------------------------------------------------------------------------|
+| --------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
 | --kafka-exporter-brokers                                  | localhost:9092    |                                                                             |
 | --kafka-exporter-traces-topic                             | otlp_traces       |                                                                             |
 | --kafka-exporter-metrics-topic                            | otlp_metrics      |                                                                             |
@@ -342,7 +371,7 @@ rotel start --exporter kafka \
   --kafka-exporter-brokers "broker1:9092,broker2:9092"
 ```
 
-**Configuration Precedence**: Custom configuration parameters are applied *after* all built-in options, meaning they
+**Configuration Precedence**: Custom configuration parameters are applied _after_ all built-in options, meaning they
 will override any conflicting built-in settings. For example:
 
 ```shell
@@ -371,7 +400,7 @@ To run integration tests that verify actual Kafka functionality:
 # Run integration tests
 cargo test --test kafka_integration_tests --features integration-tests
 
-# Stop test environment  
+# Stop test environment
 ./scripts/kafka-test-env.sh stop
 ```
 
@@ -387,7 +416,7 @@ logs,
 or traces). For example, `--traces-batch-max-size` will override the batch max size for traces only.
 
 | Option           | Default | Options |
-|------------------|---------|---------|
+| ---------------- | ------- | ------- |
 | --batch-max-size | 8192    |         |
 | --batch-timeout  | 200ms   |         |
 
@@ -404,21 +433,21 @@ and `environment` attributes. `--otel-resource-attributes "service.name=my-servi
 
 Alternatively you can use the `ROTEL_OTEL_RESOURCE_ATTRIBUTES` environment variable to achieve the same outcome.
 
-```ROTEL_OTEL_RESOURCE_ATTRIBUTES=service.name=my-service,environment=production rotel start --otlp-exporter-endpoint <endpoint url>```
+`ROTEL_OTEL_RESOURCE_ATTRIBUTES=service.name=my-service,environment=production rotel start --otlp-exporter-endpoint <endpoint url>`
 
 ### Retries and timeouts
 
 You can override the default request timeout of 5 seconds for the OTLP Exporter with the exporter setting:
 
-* `--otlp-exporter-request-timeout`: Takes a string time duration, so `"250ms"` for 250 milliseconds, `"3s"` for 3
+- `--otlp-exporter-request-timeout`: Takes a string time duration, so `"250ms"` for 250 milliseconds, `"3s"` for 3
   seconds, etc.
 
 Requests will be retried if they match retryable error codes like 429 (Too Many Requests) or timeout. You can control
 the behavior with the following exporter options:
 
-* `--otlp-exporter-retry-initial-backoff`: Initial backoff duration
-* `--otlp-exporter-retry-max-backoff`: Maximum backoff interval
-* `--otlp-exporter-retry-max-elapsed-time`: Maximum wall time a request will be retried for until it is marked as
+- `--otlp-exporter-retry-initial-backoff`: Initial backoff duration
+- `--otlp-exporter-retry-max-backoff`: Maximum backoff interval
+- `--otlp-exporter-retry-max-elapsed-time`: Maximum wall time a request will be retried for until it is marked as
   permanent failure
 
 All options should be represented as string time durations.
@@ -442,7 +471,7 @@ CLI arguments can be passed as environment variables as well. It is not possible
 at the same time.
 
 | Option              | Default | Options                          |
-|---------------------|---------|----------------------------------|
+| ------------------- | ------- | -------------------------------- |
 | --exporters         |         | name:type pairs, comma-separated |
 | --exporters-traces  |         | exporter name                    |
 | --exporters-metrics |         | exporter name                    |
@@ -473,9 +502,9 @@ options for the given exporter type.
 Using our example above, the user must set, at a minimum, the following environment variables. (For Clickhouse Cloud you
 would need to include a username/password, but we are skipping those for brevity.)
 
-* `ROTEL_EXPORTER_LOGGING_ENDPOINT=https://xxxxxxx.us-east-1.aws.clickhouse.cloud:8443`
-* `ROTEL_EXPORTER_STATS_ENDPOINT=https://xxxxxxx.us-west-1.aws.clickhouse.cloud:8443`
-* `ROTEL_EXPORTER_DATADOG_API_KEY=dd-abcd1234`
+- `ROTEL_EXPORTER_LOGGING_ENDPOINT=https://xxxxxxx.us-east-1.aws.clickhouse.cloud:8443`
+- `ROTEL_EXPORTER_STATS_ENDPOINT=https://xxxxxxx.us-west-1.aws.clickhouse.cloud:8443`
+- `ROTEL_EXPORTER_DATADOG_API_KEY=dd-abcd1234`
 
 Lastly, the user would need to connect these exporters to the telemetry types. Using the requirements above, the user
 would specify the following:
@@ -486,9 +515,9 @@ would specify the following:
 
 Alternatively, the following environment variables would do the same:
 
-* `ROTEL_EXPORTERS_TRACES=datadog`
-* `ROTEL_EXPORTERS_METRICS=stats`
-* `ROTEL_EXPORTERS_LOGS=logging`
+- `ROTEL_EXPORTERS_TRACES=datadog`
+- `ROTEL_EXPORTERS_METRICS=stats`
+- `ROTEL_EXPORTERS_LOGS=logging`
 
 _NOTE: At the moment, only a single exporter can be set for any telemetry type. This constraint will be relaxed in the
 future._
@@ -555,7 +584,7 @@ rotel_python_processor_sdk directory.
 Current prebuilt processors include...
 
 | Name                 | Supported telemetry types |
-|----------------------|---------------------------|
+| -------------------- | ------------------------- |
 | Attributes Processor | logs, metrics, traces,    |
 | Redaction Processor  | logs, metrics, traces     |
 
@@ -592,7 +621,7 @@ run nightly comparing the latest OTEL version against the latest Rotel release.
 
 If you set the option `--debug-log` to `["traces"]`, or the environment variable `ROTEL_DEBUG_LOG=traces`, then
 rotel will log a summary to the log file `/tmp/rotel-agent.log` each time it processes trace spans. You can add also
-specify *metrics* to debug metrics and *logs* to debug logs. By default the debug logging will output a single line
+specify _metrics_ to debug metrics and _logs_ to debug logs. By default the debug logging will output a single line
 summary of the telemetry. You can increase the verbosity by specifying `--debug-log-verbosity detailed`, which will
 include verbose multi-line output.
 
@@ -606,9 +635,9 @@ may include logging from third-party crates used in Rotel.
 On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following
 tags:
 
-* `streamfold/rotel:<release name>`
-* `streamfold/rotel:latest`
-* `streamfold/rotel:sha-<sha>`
+- `streamfold/rotel:<release name>`
+- `streamfold/rotel:latest`
+- `streamfold/rotel:sha-<sha>`
 
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
 
@@ -616,16 +645,16 @@ Rotel releases with built-in Python Processor support and Python 3.13 are also a
 on [Dockerhub](https://hub.docker.com/repository/docker/streamfold/rotel-python-processors/general)
 with the following tags:
 
-* `streamfold/rotel-python-processors:<release name>`
-* `streamfold/rotel-python-processors:latest`
-* `streamfold/rotel-python-processors:sha-<sha>`
+- `streamfold/rotel-python-processors:<release name>`
+- `streamfold/rotel-python-processors:latest`
+- `streamfold/rotel-python-processors:sha-<sha>`
 
 When running an image, you can mount directories from your local filesystem as volumes to provide processor code
 to the container with `-v` flag, for example: `-v ~/my_processor_directory:/processors`. You can then start rotel and
 pass in processors like the example below.
 
 ```
-docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors streamfold/rotel-python-processors:latest 
+docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors streamfold/rotel-python-processors:latest
 --exporter blackhole --debug-log traces --debug-log-verbosity detailed --otlp-with-trace-processor /processors/my_processor.py`
 ```
 
@@ -638,4 +667,3 @@ your thoughts and ideas. See you there! 🚀
 ## Developing
 
 See the [DEVELOPING.md](DEVELOPING.md) doc for building and development instructions.
-
