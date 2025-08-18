@@ -1,5 +1,5 @@
 use crate::aws_api::config::AwsConfig;
-use crate::bounded_channel::{bounded, BoundedReceiver};
+use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
@@ -13,7 +13,7 @@ use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
 use crate::init::config::{
-    get_exporters_config, get_receivers_config, ExporterConfig, ReceiverConfig,
+    ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
 };
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
@@ -31,8 +31,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
