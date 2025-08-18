@@ -88,21 +88,23 @@ fn main() -> ExitCode {
         Some(Commands::Start(agent)) => {
             // Attempt to bind ports before we daemonize, so that when the parent process returns
             // the ports are already available for connection.
-            let port_map =
-                match bind_endpoints(&[agent.otlp_grpc_endpoint, agent.otlp_http_endpoint]) {
-                    Ok(ports) => ports,
-                    Err(e) => {
-                        unsafe {
-                            if agent.daemon && check_rotel_active(&agent.pid_file) {
-                                // If we are already running, ignore the bind failure
-                                return ExitCode::SUCCESS;
-                            }
+            let port_map = match bind_endpoints(&[
+                agent.otlp_receiver.otlp_grpc_endpoint,
+                agent.otlp_receiver.otlp_http_endpoint,
+            ]) {
+                Ok(ports) => ports,
+                Err(e) => {
+                    unsafe {
+                        if agent.daemon && check_rotel_active(&agent.pid_file) {
+                            // If we are already running, ignore the bind failure
+                            return ExitCode::SUCCESS;
                         }
-                        eprintln!("ERROR: {}", e);
-
-                        return ExitCode::from(1);
                     }
-                };
+                    eprintln!("ERROR: {}", e);
+
+                    return ExitCode::from(1);
+                }
+            };
 
             if agent.daemon {
                 match daemonize(&agent.pid_file, &agent.log_file) {

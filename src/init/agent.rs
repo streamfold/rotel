@@ -8,18 +8,20 @@ use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build
 use crate::exporters::otlp;
 use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
-use crate::init::args::{AgentRun, DebugLogParam};
+use crate::init::args::{AgentRun, DebugLogParam, Receiver};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
-use crate::init::config::{ExporterConfig, get_exporters_config};
+use crate::init::config::{
+    ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
+};
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
-use crate::receivers::otlp_grpc::OTLPGrpcServer;
-use crate::receivers::otlp_http::OTLPHttpServer;
+use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
+use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
@@ -92,11 +94,7 @@ impl Agent {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let config = self.config;
 
-        info!(
-            grpc_endpoint = config.otlp_grpc_endpoint.to_string(),
-            http_endpoint = config.otlp_http_endpoint.to_string(),
-            "Starting Rotel.",
-        );
+        info!("Starting Rotel.",);
 
         // Initialize the TLS library, we may want to do this conditionally
         init_crypto_provider()?;
@@ -135,9 +133,10 @@ impl Agent {
             bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
+        let rec_config = get_receivers_config(&config)?;
         let exp_config = get_exporters_config(&config, &self.environment)?;
 
-        let activation = TelemetryActivation::from_config(&config, &exp_config);
+        let activation = TelemetryActivation::from_config(&rec_config, &exp_config);
 
         // If there are no listeners, suggest the blackhole exporter
         if activation.traces == TelemetryState::NoListeners
@@ -166,48 +165,51 @@ impl Agent {
         let mut logs_output = None;
         let mut internal_metrics_output = None;
 
-        match activation.traces {
-            TelemetryState::Active => traces_output = Some(trace_otlp_output),
-            TelemetryState::Disabled => {
-                info!(
-                    "OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces"
-                );
+        // Only notify user if we have an otlp receiver
+        if rec_config.contains_key(&Receiver::Otlp) {
+            match activation.traces {
+                TelemetryState::Active => traces_output = Some(trace_otlp_output),
+                TelemetryState::Disabled => {
+                    info!(
+                        "OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces"
+                    );
+                }
+                TelemetryState::NoListeners => {
+                    info!(
+                        "No exporters are configured for traces, OTLP receiver will be configured to not accept traces"
+                    );
+                }
             }
-            TelemetryState::NoListeners => {
-                info!(
-                    "No exporters are configured for traces, OTLP receiver will be configured to not accept traces"
-                );
-            }
-        }
 
-        match activation.metrics {
-            TelemetryState::Active => {
-                metrics_output = Some(metrics_otlp_output);
-                internal_metrics_output = Some(internal_metrics_otlp_output);
+            match activation.metrics {
+                TelemetryState::Active => {
+                    metrics_output = Some(metrics_otlp_output);
+                    internal_metrics_output = Some(internal_metrics_otlp_output);
+                }
+                TelemetryState::Disabled => {
+                    info!(
+                        "OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics"
+                    );
+                }
+                TelemetryState::NoListeners => {
+                    info!(
+                        "No exporters are configured for metrics, OTLP receiver will be configured to not accept metrics"
+                    );
+                }
             }
-            TelemetryState::Disabled => {
-                info!(
-                    "OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics"
-                );
-            }
-            TelemetryState::NoListeners => {
-                info!(
-                    "No exporters are configured for metrics, OTLP receiver will be configured to not accept metrics"
-                );
-            }
-        }
 
-        match activation.logs {
-            TelemetryState::Active => logs_output = Some(logs_otlp_output),
-            TelemetryState::Disabled => {
-                info!(
-                    "OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept logs"
-                );
-            }
-            TelemetryState::NoListeners => {
-                info!(
-                    "No exporters are configured for logs, OTLP receiver will be configured to not accept logs"
-                );
+            match activation.logs {
+                TelemetryState::Active => logs_output = Some(logs_otlp_output),
+                TelemetryState::Disabled => {
+                    info!(
+                        "OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept logs"
+                    );
+                }
+                TelemetryState::NoListeners => {
+                    info!(
+                        "No exporters are configured for logs, OTLP receiver will be configured to not accept logs"
+                    );
+                }
             }
         }
 
@@ -620,40 +622,55 @@ impl Agent {
             });
         }
 
-        //
-        // OTLP GRPC server
-        //
-        let grpc_srv = OTLPGrpcServer::builder()
-            .with_max_recv_msg_size_mib(config.otlp_grpc_max_recv_msg_size_mib as usize)
-            .with_traces_output(traces_output.clone())
-            .with_metrics_output(metrics_output.clone())
-            .with_logs_output(logs_output.clone())
-            .build();
+        for config in rec_config.values() {
+            match config {
+                ReceiverConfig::Otlp(config) => {
+                    //
+                    // OTLP GRPC server
+                    //
+                    info!(
+                        grpc_endpoint = config.otlp_grpc_endpoint.to_string(),
+                        http_endpoint = config.otlp_http_endpoint.to_string(),
+                    );
+                    let grpc_srv = OTLPGrpcServer::builder()
+                        .with_max_recv_msg_size_mib(config.otlp_grpc_max_recv_msg_size_mib as usize)
+                        .with_traces_output(traces_output.clone())
+                        .with_metrics_output(metrics_output.clone())
+                        .with_logs_output(logs_output.clone())
+                        .build();
 
-        let grpc_listener = self.port_map.remove(&config.otlp_grpc_endpoint).unwrap();
-        {
-            let receivers_cancel = receivers_cancel.clone();
-            receivers_task_set
-                .spawn(async move { grpc_srv.serve(grpc_listener, receivers_cancel).await });
-        }
+                    let grpc_listener = self.port_map.remove(&config.otlp_grpc_endpoint).unwrap();
+                    {
+                        let receivers_cancel = receivers_cancel.clone();
+                        receivers_task_set.spawn(async move {
+                            grpc_srv.serve(grpc_listener, receivers_cancel).await
+                        });
+                    }
 
-        //
-        // OTLP HTTP server
-        //
-        let http_srv = OTLPHttpServer::builder()
-            .with_traces_output(traces_output.clone())
-            .with_metrics_output(metrics_output.clone())
-            .with_logs_output(logs_output.clone())
-            .with_traces_path(config.otlp_receiver_traces_http_path.clone())
-            .with_metrics_path(config.otlp_receiver_metrics_http_path.clone())
-            .with_logs_path(config.otlp_receiver_logs_http_path.clone())
-            .build();
+                    //
+                    // OTLP HTTP server
+                    //
+                    let http_srv = OTLPHttpServer::builder()
+                        .with_traces_output(traces_output.clone())
+                        .with_metrics_output(metrics_output.clone())
+                        .with_logs_output(logs_output.clone())
+                        .with_traces_path(config.otlp_receiver_traces_http_path.clone())
+                        .with_metrics_path(config.otlp_receiver_metrics_http_path.clone())
+                        .with_logs_path(config.otlp_receiver_logs_http_path.clone())
+                        .build();
 
-        let http_listener = self.port_map.remove(&config.otlp_http_endpoint).unwrap();
-        {
-            let receivers_cancel = receivers_cancel.clone();
-            receivers_task_set
-                .spawn(async move { http_srv.serve(http_listener, receivers_cancel).await });
+                    let http_listener = self.port_map.remove(&config.otlp_http_endpoint).unwrap();
+                    {
+                        let receivers_cancel = receivers_cancel.clone();
+                        receivers_task_set.spawn(async move {
+                            http_srv.serve(http_listener, receivers_cancel).await
+                        });
+                    }
+                }
+                ReceiverConfig::Kafka(_config) => {
+                    return Err("Kafka receiver not supported yet".into());
+                }
+            }
         }
 
         //

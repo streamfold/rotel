@@ -13,6 +13,7 @@ use serde::Deserialize;
 pub struct KafkaExporterArgs {
     /// Kafka broker addresses (comma-separated)
     #[arg(
+        id("KAFKA_EXPORTER_BROKERS"),
         long("kafka-exporter-brokers"),
         env = "ROTEL_KAFKA_EXPORTER_BROKERS",
         default_value = "localhost:9092"
@@ -21,6 +22,7 @@ pub struct KafkaExporterArgs {
 
     /// Topic name for traces
     #[arg(
+        id("KAFKA_EXPORTER_TRACES_TOPIC"),
         long("kafka-exporter-traces-topic"),
         env = "ROTEL_KAFKA_EXPORTER_TRACES_TOPIC",
         default_value = "otlp_traces"
@@ -29,6 +31,7 @@ pub struct KafkaExporterArgs {
 
     /// Topic name for metrics
     #[arg(
+        id("KAFKA_EXPORTER_METRICS_TOPIC"),
         long("kafka-exporter-metrics-topic"),
         env = "ROTEL_KAFKA_EXPORTER_METRICS_TOPIC",
         default_value = "otlp_metrics"
@@ -37,6 +40,7 @@ pub struct KafkaExporterArgs {
 
     /// Topic name for logs
     #[arg(
+        id("KAFKA_EXPORTER_LOGS_TOPIC"),
         long("kafka-exporter-logs-topic"),
         env = "ROTEL_KAFKA_EXPORTER_LOGS_TOPIC",
         default_value = "otlp_logs"
@@ -45,6 +49,7 @@ pub struct KafkaExporterArgs {
 
     /// Serialization format
     #[arg(
+        id("KAFKA_EXPORTER_FORMAT"),
         value_enum,
         long("kafka-exporter-format"),
         env = "ROTEL_KAFKA_EXPORTER_FORMAT",
@@ -72,6 +77,7 @@ pub struct KafkaExporterArgs {
 
     /// Client ID for the Kafka producer
     #[arg(
+        id("KAFKA_EXPORTER_CLIENT_ID"),
         long("kafka-exporter-client-id"),
         env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID",
         default_value = "rotel"
@@ -128,6 +134,7 @@ pub struct KafkaExporterArgs {
 
     /// Request timeout in milliseconds
     #[arg(
+        id("KAFKA_EXPORTER_REQUEST_TIMEOUT_MS"),
         long("kafka-exporter-request-timeout-ms"),
         env = "ROTEL_KAFKA_EXPORTER_REQUEST_TIMEOUT_MS",
         default_value = "30000"
@@ -169,6 +176,7 @@ pub struct KafkaExporterArgs {
 
     /// Custom Kafka producer configuration parameters (key=value pairs). These will override built-in options if conflicts exist.
     #[arg(
+        id("KAFKA_EXPORTER_CUSTOM_CONFIG"),
         long("kafka-exporter-custom-config"),
         env = "ROTEL_KAFKA_EXPORTER_CUSTOM_CONFIG",
         value_parser = parse_key_val::<String, String>,
@@ -179,6 +187,7 @@ pub struct KafkaExporterArgs {
 
     /// SASL username for authentication
     #[arg(
+        id("KAFKA_EXPORTER_SASL_USERNAME"),
         long("kafka-exporter-sasl-username"),
         env = "ROTEL_KAFKA_EXPORTER_SASL_USERNAME"
     )]
@@ -186,6 +195,7 @@ pub struct KafkaExporterArgs {
 
     /// SASL password for authentication
     #[arg(
+        id("KAFKA_EXPORTER_SASL_PASSWORD"),
         long("kafka-exporter-sasl-password"),
         env = "ROTEL_KAFKA_EXPORTER_SASL_PASSWORD"
     )]
@@ -193,6 +203,7 @@ pub struct KafkaExporterArgs {
 
     /// SASL mechanism
     #[arg(
+        id("KAFKA_EXPORTER_SASL_MECHANISM"),
         long("kafka-exporter-sasl-mechanism"),
         env = "ROTEL_KAFKA_EXPORTER_SASL_MECHANISM"
     )]
@@ -200,6 +211,7 @@ pub struct KafkaExporterArgs {
 
     /// Security protocol
     #[arg(
+        id("KAFKA_EXPORTER_SECURITY_PROTOCOL"),
         long("kafka-exporter-security-protocol"),
         env = "ROTEL_KAFKA_EXPORTER_SECURITY_PROTOCOL",
         default_value = "plaintext"

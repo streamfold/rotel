@@ -310,7 +310,7 @@ impl LogsService for CollectorService {
 mod tests {
     use crate::bounded_channel::bounded;
     use crate::listener::Listener;
-    use crate::receivers::otlp_grpc::OTLPGrpcServer;
+    use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
     use crate::receivers::otlp_output::OTLPOutput;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::{

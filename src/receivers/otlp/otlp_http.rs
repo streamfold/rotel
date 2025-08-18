@@ -622,7 +622,7 @@ mod tests {
     extern crate utilities;
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::listener::Listener;
-    use crate::receivers::otlp_http::{
+    use crate::receivers::otlp::otlp_http::{
         MAX_BODY_SIZE, OTLPHttpServer, OTLPService, ValidateOTLPContentType, build_service,
     };
     use crate::receivers::otlp_output::OTLPOutput;
