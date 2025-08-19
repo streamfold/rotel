@@ -57,7 +57,10 @@ mod tests {
 
         let (code, desc, version) = result.unwrap();
         assert_eq!(code, 62);
-        assert_eq!(desc, "Syntax error: failed at position 1: SELECT. Expected one of: SHOW, CREATE, DROP, RENAME, ALTER ");
+        assert_eq!(
+            desc,
+            "Syntax error: failed at position 1: SELECT. Expected one of: SHOW, CREATE, DROP, RENAME, ALTER "
+        );
         assert_eq!(version, "23.8.1.94854");
     }
 
