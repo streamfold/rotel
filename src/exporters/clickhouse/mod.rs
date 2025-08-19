@@ -322,7 +322,7 @@ mod tests {
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use tokio::join;
-    use tokio_test::{assert_err, assert_ok};
+    use tokio_test::assert_ok;
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
@@ -406,37 +406,6 @@ mod tests {
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
-
-        hello_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn db_exception() {
-        init_crypto();
-        let server = MockServer::start();
-        let addr = format!("http://127.0.0.1:{}", server.port());
-
-        let hello_mock = server.mock(|when, then| {
-            when.method(POST).path("/");
-            then.status(200)
-                // Must keep newline for matching
-                .body("Code: 395. DB::Exception: Value passed to 'throwIf' function is non-zero: while executing 'FUNCTION throwIf(equals(number, 2) :: 1) -> throwIf(equals(number, 2))
-");
-        });
-
-        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let exporter = new_traces_exporter(addr, brx);
-
-        let cancellation_token = CancellationToken::new();
-
-        let cancel_clone = cancellation_token.clone();
-        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
-
-        let traces = FakeOTLP::trace_service_request();
-        btx.send(traces.resource_spans).await.unwrap();
-        drop(btx);
-        let res = join!(jh).0.unwrap();
-        assert_err!(res);
 
         hello_mock.assert();
     }

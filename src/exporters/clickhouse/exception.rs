@@ -19,7 +19,7 @@ pub fn extract_exception(chunk: &[u8]) -> Option<(i32, String, String)> {
 }
 
 pub static DB_EXCEPTION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    RegexBuilder::new(r"Code: (\d+)\. DB::Exception: ([^.]*).*\(version ([^ ]+)")
+    RegexBuilder::new(r"Code: (\d+)\. DB::Exception: ([^()]*).*\(version ([^ ]+)")
         .dot_matches_new_line(true)
         .build()
         .unwrap()
@@ -42,4 +42,68 @@ fn extract_exception_slow(chunk: &[u8]) -> Option<(i32, String, String)> {
             Err(_) => None,
         })
         .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_exception_with_valid_format() {
+        let chunk = b"Code: 62. DB::Exception: Syntax error: failed at position 1: SELECT. Expected one of: SHOW, CREATE, DROP, RENAME, ALTER (version 23.8.1.94854 (official build))\n";
+
+        let result = extract_exception(chunk);
+        assert!(result.is_some());
+
+        let (code, desc, version) = result.unwrap();
+        assert_eq!(code, 62);
+        assert_eq!(desc, "Syntax error: failed at position 1: SELECT. Expected one of: SHOW, CREATE, DROP, RENAME, ALTER ");
+        assert_eq!(version, "23.8.1.94854");
+    }
+
+    #[test]
+    fn test_extract_exception_with_different_code() {
+        let chunk = b"Code: 404. DB::Exception: Table default.test_table doesn't exist (version 22.3.15.33 (official build))\n";
+
+        let result = extract_exception(chunk);
+        assert!(result.is_some());
+
+        let (code, desc, version) = result.unwrap();
+        assert_eq!(code, 404);
+        assert_eq!(desc, "Table default.test_table doesn't exist ");
+        assert_eq!(version, "22.3.15.33");
+    }
+
+    #[test]
+    fn test_extract_exception_without_ending_pattern() {
+        let chunk = b"Code: 62. DB::Exception: Some error (version 23.8.1.94854 (official build))";
+
+        let result = extract_exception(chunk);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_exception_with_invalid_format() {
+        let chunk = b"Some random error message))\n";
+
+        let result = extract_exception(chunk);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_exception_with_malformed_code() {
+        let chunk =
+            b"Code: abc. DB::Exception: Invalid code (version 23.8.1.94854 (official build))\n";
+
+        let result = extract_exception(chunk);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_exception_with_empty_chunk() {
+        let chunk = b"";
+
+        let result = extract_exception(chunk);
+        assert!(result.is_none());
+    }
 }
