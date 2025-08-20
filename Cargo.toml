@@ -63,6 +63,7 @@ sha2 = "0.10"
 regex = "1.11.1"
 rdkafka = { version = "0.36", features = ["tokio", "libz-static", "ssl-vendored", "zstd", "cmake-build"], optional = true }
 figment = { version = "0.10.19", default-features = false, features = ["env"] }
+wildcard = "0.3.0"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

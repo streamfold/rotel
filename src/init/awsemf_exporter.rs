@@ -54,6 +54,22 @@ pub struct AwsEmfExporterArgs {
         default_value = "false"
     )]
     pub retain_initial_value_of_delta_metric: bool,
+
+    /// Dimensions include list
+    #[arg(
+        long("awsemf-exporter-include-dimensions"),
+        env = "ROTEL_AWSEMF_EXPORTER_INCLUDE_DIMENSIONS",
+        value_delimiter = ','
+    )]
+    pub include_dimensions: Vec<String>,
+
+    /// Dimensions exclude list
+    #[arg(
+        long("awsemf-exporter-exclude-dimensions"),
+        env = "ROTEL_AWSEMF_EXPORTER_EXCLUDE_DIMENSIONS",
+        value_delimiter = ','
+    )]
+    pub exclude_dimensions: Vec<String>,
 }
 
 impl Default for AwsEmfExporterArgs {
@@ -65,6 +81,8 @@ impl Default for AwsEmfExporterArgs {
             log_stream_name: "otel-stream".to_string(),
             namespace: None,
             retain_initial_value_of_delta_metric: false,
+            include_dimensions: Vec::new(),
+            exclude_dimensions: Vec::new(),
         }
     }
 }
