@@ -13,11 +13,13 @@ use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
+use dim_filter::DimensionFilter;
 use errors::{AwsEmfDecoder, AwsEmfResponse};
 use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+use std::sync::Arc;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
@@ -26,6 +28,7 @@ use tower::{BoxError, ServiceBuilder};
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
+mod dim_filter;
 mod emf_request;
 mod errors;
 mod event;
@@ -60,6 +63,8 @@ pub struct AwsEmfExporterConfig {
     pub custom_endpoint: Option<String>,
     pub retain_initial_value_of_delta_metric: bool,
     pub retry_config: RetryConfig,
+    pub include_dimensions: Vec<String>,
+    pub exclude_dimensions: Vec<String>,
 }
 
 impl Default for AwsEmfExporterConfig {
@@ -72,6 +77,8 @@ impl Default for AwsEmfExporterConfig {
             custom_endpoint: None,
             retain_initial_value_of_delta_metric: false,
             retry_config: Default::default(),
+            include_dimensions: Vec::new(),
+            exclude_dimensions: Vec::new(),
         }
     }
 }
@@ -128,6 +135,16 @@ impl AwsEmfExporterConfigBuilder {
         self
     }
 
+    pub fn with_include_dimensions(mut self, include_dimensions: Vec<String>) -> Self {
+        self.config.include_dimensions = include_dimensions;
+        self
+    }
+
+    pub fn with_exclude_dimensions(mut self, exclude_dimensions: Vec<String>) -> Self {
+        self.config.exclude_dimensions = exclude_dimensions;
+        self
+    }
+
     pub fn build(self) -> AwsEmfExporterBuilder {
         AwsEmfExporterBuilder {
             config: self.config,
@@ -147,7 +164,11 @@ impl AwsEmfExporterBuilder {
         aws_config: AwsConfig,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
         let client = HttpClient::build(tls::Config::default(), Default::default())?;
-        let transformer = Transformer::new(self.config.clone());
+        let dim_filter = Arc::new(DimensionFilter::new(
+            self.config.include_dimensions.clone(),
+            self.config.exclude_dimensions.clone(),
+        )?);
+        let transformer = Transformer::new(self.config.clone(), dim_filter);
 
         let req_builder = RequestBuilder::new(transformer, aws_config, self.config.clone())?;
 
