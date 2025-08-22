@@ -11,6 +11,8 @@ mod kafka_receiver;
 mod awsemf_exporter;
 mod clickhouse_exporter;
 mod datadog_exporter;
+#[cfg(feature = "file_exporter")]
+pub mod file_exporter;
 #[cfg(feature = "rdkafka")]
 mod kafka_exporter;
 mod otlp_exporter;
