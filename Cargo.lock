@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "rotel"
-version = "0.0.1-alpha10"
+version = "0.0.1-alpha27"
 dependencies = [
  "bstr",
  "bytes",

@@ -4,16 +4,19 @@ use rdkafka::ClientConfig;
 use std::collections::HashMap;
 
 /// Deserialization format for Kafka messages
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, PartialEq, Debug, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DeserializationFormat {
     /// JSON format
     Json,
     /// Protobuf format
+    #[default]
     Protobuf,
 }
 
 /// SASL mechanism configuration (same as exporter)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SaslMechanism {
     Plain,
     ScramSha256,
@@ -21,7 +24,8 @@ pub enum SaslMechanism {
 }
 
 /// Security protocol configuration (same as exporter)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SecurityProtocol {
     Plaintext,
     Ssl,
@@ -30,41 +34,27 @@ pub enum SecurityProtocol {
 }
 
 /// Auto offset reset behavior
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, PartialEq, Debug, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AutoOffsetReset {
     /// Start from the beginning of the topic
     Earliest,
     /// Start from the end of the topic
+    #[default]
     Latest,
     /// Throw error if no offset is found
     Error,
 }
 
 /// Consumer isolation level
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, PartialEq, Debug, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum IsolationLevel {
     /// Read all messages (including uncommitted)
     ReadUncommitted,
     /// Read only committed messages
+    #[default]
     ReadCommitted,
-}
-
-impl Default for DeserializationFormat {
-    fn default() -> Self {
-        DeserializationFormat::Protobuf
-    }
-}
-
-impl Default for AutoOffsetReset {
-    fn default() -> Self {
-        AutoOffsetReset::Latest
-    }
-}
-
-impl Default for IsolationLevel {
-    fn default() -> Self {
-        IsolationLevel::ReadCommitted
-    }
 }
 
 impl SecurityProtocol {
@@ -171,9 +161,6 @@ pub struct KafkaReceiverConfig {
     /// Maximum wait time for fetch requests in milliseconds
     pub fetch_max_wait_ms: u32,
 
-    /// Request timeout in milliseconds - same name as exporter
-    pub request_timeout_ms: u32,
-
     /// Socket timeout in milliseconds
     pub socket_timeout_ms: u32,
 
@@ -239,7 +226,6 @@ impl Default for KafkaReceiverConfig {
             max_partition_fetch_bytes: 1048576, // 1MB
             fetch_min_bytes: 1,
             fetch_max_wait_ms: 500,
-            request_timeout_ms: 30000,
             socket_timeout_ms: 60000,
             metadata_max_age_ms: 300000,
             isolation_level: IsolationLevel::default(),
@@ -393,7 +379,12 @@ impl KafkaReceiverConfig {
         self.ssl_certificate_location = cert_location;
         self.ssl_key_location = key_location;
         self.ssl_key_password = key_password;
-        if self.security_protocol.is_none() {
+        if self.security_protocol.is_none()
+            && (self.ssl_ca_location.is_some()
+                || self.ssl_certificate_location.is_some()
+                || self.ssl_key_location.is_some()
+                || self.ssl_key_password.is_some())
+        {
             self.security_protocol = Some(SecurityProtocol::Ssl);
         }
         self
@@ -405,6 +396,31 @@ impl KafkaReceiverConfig {
             self.consumer_config.insert(key, value);
         }
         self
+    }
+
+    /// Get the list of topics to subscribe to based on enabled signal types
+    pub fn get_topics(&self) -> Vec<String> {
+        let mut topics = Vec::new();
+
+        if self.traces {
+            if let Some(ref topic) = self.traces_topic {
+                topics.push(topic.clone());
+            }
+        }
+
+        if self.metrics {
+            if let Some(ref topic) = self.metrics_topic {
+                topics.push(topic.clone());
+            }
+        }
+
+        if self.logs {
+            if let Some(ref topic) = self.logs_topic {
+                topics.push(topic.clone());
+            }
+        }
+
+        topics
     }
 
     /// Build rdkafka ClientConfig from this configuration
@@ -427,46 +443,45 @@ impl KafkaReceiverConfig {
         );
         config.set(
             "auto.commit.interval.ms",
-            &self.auto_commit_interval_ms.to_string(),
+            self.auto_commit_interval_ms.to_string(),
         );
 
         // Offset management
         config.set("auto.offset.reset", self.auto_offset_reset.to_kafka_value());
 
         // Session and heartbeat settings
-        config.set("session.timeout.ms", &self.session_timeout_ms.to_string());
+        config.set("session.timeout.ms", self.session_timeout_ms.to_string());
         config.set(
             "heartbeat.interval.ms",
-            &self.heartbeat_interval_ms.to_string(),
+            self.heartbeat_interval_ms.to_string(),
         );
         config.set(
             "max.poll.interval.ms",
-            &self.max_poll_interval_ms.to_string(),
+            self.max_poll_interval_ms.to_string(),
         );
 
         // Fetch settings
         config.set(
             "max.partition.fetch.bytes",
-            &self.max_partition_fetch_bytes.to_string(),
+            self.max_partition_fetch_bytes.to_string(),
         );
-        config.set("fetch.min.bytes", &self.fetch_min_bytes.to_string());
-        config.set("fetch.max.wait.ms", &self.fetch_max_wait_ms.to_string());
+        config.set("fetch.min.bytes", self.fetch_min_bytes.to_string());
+        config.set("fetch.wait.max.ms", self.fetch_max_wait_ms.to_string());
 
         // Timeout settings
-        config.set("request.timeout.ms", &self.request_timeout_ms.to_string());
-        config.set("socket.timeout.ms", &self.socket_timeout_ms.to_string());
-        config.set("metadata.max.age.ms", &self.metadata_max_age_ms.to_string());
+        config.set("socket.timeout.ms", self.socket_timeout_ms.to_string());
+        config.set("metadata.max.age.ms", self.metadata_max_age_ms.to_string());
 
         // Isolation level
         config.set("isolation.level", self.isolation_level.to_kafka_value());
 
-        // Partition EOF notifications
+        // Partition EOF notifications - enable by default for debugging
         config.set(
             "enable.partition.eof",
             if self.enable_partition_eof {
                 "true"
             } else {
-                "false"
+                "false" // Enable to help debug partition issues
             },
         );
 
@@ -514,5 +529,263 @@ impl KafkaReceiverConfig {
         }
 
         config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = KafkaReceiverConfig::default();
+        assert_eq!(config.brokers, "localhost:9092");
+        assert_eq!(config.group_id, "rotel-consumer");
+        assert_eq!(config.client_id, "rotel");
+        assert_eq!(config.traces_topic, Some("otlp_traces".to_string()));
+        assert_eq!(config.metrics_topic, Some("otlp_metrics".to_string()));
+        assert_eq!(config.logs_topic, Some("otlp_logs".to_string()));
+        assert!(!config.traces);
+        assert!(!config.metrics);
+        assert!(!config.logs);
+        assert!(config.enable_auto_commit);
+        assert_eq!(config.auto_commit_interval_ms, 5000);
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = KafkaReceiverConfig::new("kafka:9092".to_string(), "my-group".to_string())
+            .with_traces(true)
+            .with_metrics(true)
+            .with_logs(true)
+            .with_traces_topic("my-traces".to_string())
+            .with_metrics_topic(Some("my-metrics".to_string()))
+            .with_logs_topic("my-logs".to_string())
+            .with_client_id("my-client".to_string())
+            .with_auto_commit(false, 10000)
+            .with_auto_offset_reset(AutoOffsetReset::Earliest)
+            .with_session_timeout_ms(60000)
+            .with_heartbeat_interval_ms(5000)
+            .with_max_poll_interval_ms(600000)
+            .with_fetch_config(100, 1000, 2097152)
+            .with_isolation_level(IsolationLevel::ReadUncommitted)
+            .with_deserialization_format(DeserializationFormat::Json);
+
+        assert_eq!(config.brokers, "kafka:9092");
+        assert_eq!(config.group_id, "my-group");
+        assert_eq!(config.client_id, "my-client");
+        assert!(config.traces);
+        assert!(config.metrics);
+        assert!(config.logs);
+        assert_eq!(config.traces_topic, Some("my-traces".to_string()));
+        assert_eq!(config.metrics_topic, Some("my-metrics".to_string()));
+        assert_eq!(config.logs_topic, Some("my-logs".to_string()));
+        assert!(!config.enable_auto_commit);
+        assert_eq!(config.auto_commit_interval_ms, 10000);
+        assert_eq!(config.auto_offset_reset, AutoOffsetReset::Earliest);
+        assert_eq!(config.session_timeout_ms, 60000);
+        assert_eq!(config.heartbeat_interval_ms, 5000);
+        assert_eq!(config.max_poll_interval_ms, 600000);
+        assert_eq!(config.fetch_min_bytes, 100);
+        assert_eq!(config.fetch_max_wait_ms, 1000);
+        assert_eq!(config.max_partition_fetch_bytes, 2097152);
+        assert_eq!(config.isolation_level, IsolationLevel::ReadUncommitted);
+        assert_eq!(config.deserialization_format, DeserializationFormat::Json);
+    }
+
+    #[test]
+    fn test_get_topics_none_enabled() {
+        let config = KafkaReceiverConfig::default();
+        assert!(config.get_topics().is_empty());
+    }
+
+    #[test]
+    fn test_get_topics_traces_enabled() {
+        let config = KafkaReceiverConfig::default().with_traces(true);
+        let topics = config.get_topics();
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0], "otlp_traces");
+    }
+
+    #[test]
+    fn test_get_topics_all_enabled() {
+        let config = KafkaReceiverConfig::default()
+            .with_traces(true)
+            .with_metrics(true)
+            .with_logs(true);
+        let topics = config.get_topics();
+        assert_eq!(topics.len(), 3);
+        assert!(topics.contains(&"otlp_traces".to_string()));
+        assert!(topics.contains(&"otlp_metrics".to_string()));
+        assert!(topics.contains(&"otlp_logs".to_string()));
+    }
+
+    #[test]
+    fn test_get_topics_enabled_but_no_topic_name() {
+        let mut config = KafkaReceiverConfig::default().with_traces(true);
+        config.traces_topic = None;
+        let topics = config.get_topics();
+        assert!(topics.is_empty());
+    }
+
+    #[test]
+    fn test_sasl_auth_config() {
+        let config = KafkaReceiverConfig::default().with_sasl_auth(
+            "user".to_string(),
+            "pass".to_string(),
+            SaslMechanism::ScramSha256,
+            SecurityProtocol::SaslSsl,
+        );
+
+        assert_eq!(config.sasl_username, Some("user".to_string()));
+        assert_eq!(config.sasl_password, Some("pass".to_string()));
+        assert_eq!(config.sasl_mechanism, Some(SaslMechanism::ScramSha256));
+        assert_eq!(config.security_protocol, Some(SecurityProtocol::SaslSsl));
+    }
+
+    #[test]
+    fn test_ssl_config() {
+        let config = KafkaReceiverConfig::default().with_ssl_config(
+            Some("/path/to/ca.pem".to_string()),
+            Some("/path/to/cert.pem".to_string()),
+            Some("/path/to/key.pem".to_string()),
+            Some("keypass".to_string()),
+        );
+
+        assert_eq!(config.ssl_ca_location, Some("/path/to/ca.pem".to_string()));
+        assert_eq!(
+            config.ssl_certificate_location,
+            Some("/path/to/cert.pem".to_string())
+        );
+        assert_eq!(
+            config.ssl_key_location,
+            Some("/path/to/key.pem".to_string())
+        );
+        assert_eq!(config.ssl_key_password, Some("keypass".to_string()));
+        assert_eq!(config.security_protocol, Some(SecurityProtocol::Ssl));
+    }
+
+    #[test]
+    fn test_ssl_config_preserves_security_protocol_if_set() {
+        let config = KafkaReceiverConfig::default()
+            .with_sasl_auth(
+                "user".to_string(),
+                "pass".to_string(),
+                SaslMechanism::Plain,
+                SecurityProtocol::SaslSsl,
+            )
+            .with_ssl_config(Some("/path/to/ca.pem".to_string()), None, None, None);
+
+        assert_eq!(config.security_protocol, Some(SecurityProtocol::SaslSsl));
+    }
+
+    #[test]
+    fn test_custom_config() {
+        let custom = vec![
+            ("socket.keepalive.enable".to_string(), "true".to_string()),
+            ("connections.max.idle.ms".to_string(), "540000".to_string()),
+        ];
+        let config = KafkaReceiverConfig::default().with_custom_config(custom);
+
+        assert_eq!(
+            config.consumer_config.get("socket.keepalive.enable"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            config.consumer_config.get("connections.max.idle.ms"),
+            Some(&"540000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_client_config_basic() {
+        let config =
+            KafkaReceiverConfig::new("broker1:9092,broker2:9092".to_string(), "test".to_string());
+        let client_config = config.build_client_config();
+
+        let config_map = client_config.create_native_config().unwrap();
+        assert_eq!(
+            config_map.get("bootstrap.servers").unwrap(),
+            "broker1:9092,broker2:9092"
+        );
+        assert_eq!(config_map.get("group.id").unwrap(), "test");
+        assert_eq!(config_map.get("client.id").unwrap(), "rotel");
+    }
+
+    #[test]
+    fn test_build_client_config_with_sasl() {
+        let config = KafkaReceiverConfig::default().with_sasl_auth(
+            "myuser".to_string(),
+            "mypass".to_string(),
+            SaslMechanism::ScramSha512,
+            SecurityProtocol::SaslPlaintext,
+        );
+        let client_config = config.build_client_config();
+
+        let config_map = client_config.create_native_config().unwrap();
+        assert_eq!(
+            config_map.get("security.protocol").unwrap(),
+            "sasl_plaintext"
+        );
+        assert_eq!(config_map.get("sasl.mechanism").unwrap(), "SCRAM-SHA-512");
+        assert_eq!(config_map.get("sasl.username").unwrap(), "myuser");
+        assert_eq!(config_map.get("sasl.password").unwrap(), "mypass");
+    }
+
+    #[test]
+    fn test_build_client_config_with_custom_overrides() {
+        let custom = vec![("enable.auto.commit".to_string(), "false".to_string())];
+        let config = KafkaReceiverConfig::default()
+            .with_auto_commit(true, 5000)
+            .with_custom_config(custom);
+        let client_config = config.build_client_config();
+
+        let config_map = client_config.create_native_config().unwrap();
+        assert_eq!(config_map.get("enable.auto.commit").unwrap(), "false");
+    }
+
+    #[test]
+    fn test_security_protocol_to_kafka_value() {
+        assert_eq!(SecurityProtocol::Plaintext.to_kafka_value(), "plaintext");
+        assert_eq!(SecurityProtocol::Ssl.to_kafka_value(), "ssl");
+        assert_eq!(
+            SecurityProtocol::SaslPlaintext.to_kafka_value(),
+            "sasl_plaintext"
+        );
+        assert_eq!(SecurityProtocol::SaslSsl.to_kafka_value(), "sasl_ssl");
+    }
+
+    #[test]
+    fn test_sasl_mechanism_to_kafka_value() {
+        assert_eq!(SaslMechanism::Plain.to_kafka_value(), "PLAIN");
+        assert_eq!(SaslMechanism::ScramSha256.to_kafka_value(), "SCRAM-SHA-256");
+        assert_eq!(SaslMechanism::ScramSha512.to_kafka_value(), "SCRAM-SHA-512");
+    }
+
+    #[test]
+    fn test_auto_offset_reset_to_kafka_value() {
+        assert_eq!(AutoOffsetReset::Earliest.to_kafka_value(), "earliest");
+        assert_eq!(AutoOffsetReset::Latest.to_kafka_value(), "latest");
+        assert_eq!(AutoOffsetReset::Error.to_kafka_value(), "error");
+    }
+
+    #[test]
+    fn test_isolation_level_to_kafka_value() {
+        assert_eq!(
+            IsolationLevel::ReadUncommitted.to_kafka_value(),
+            "read_uncommitted"
+        );
+        assert_eq!(
+            IsolationLevel::ReadCommitted.to_kafka_value(),
+            "read_committed"
+        );
+    }
+
+    #[test]
+    fn test_deserialization_format_default() {
+        assert_eq!(
+            DeserializationFormat::default(),
+            DeserializationFormat::Protobuf
+        );
     }
 }
