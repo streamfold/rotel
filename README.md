@@ -296,7 +296,8 @@ With these options, here's how the following attributes would be handled:
 
 **NOTE**:
 
-- At the moment the log group and log stream must exist or the exporter will fail to send logs.
+- If the log stream or log group do not exist, the exporter will attempt to create them automatically. Make sure that the credentials have the
+  right IAM permissions.
 - If `--awsemf-exporter-retain-initial-value-of-delta-metric` is true, then the initial value of a delta metric is retained when calculating deltas.
 - If the namespace is not specified, Rotel will look for `service.namespace` and `service.name` in the resource attributes and use those. If those
   don't exist, it will fall back to a namespace of _default_.
