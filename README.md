@@ -194,6 +194,7 @@ and traces.
 | --clickhouse-exporter-table-prefix    | otel    |             |
 | --clickhouse-exporter-compression     | lz4     | none, lz4   |
 | --clickhouse-exporter-async-insert    | true    | true, false |
+| --clickhouse-exporter-request-timeout | 5s      |             |
 | --clickhouse-exporter-enable-json     |         |             |
 | --clickhouse-exporter-json-underscore |         |             |
 | --clickhouse-exporter-user            |         |             |
