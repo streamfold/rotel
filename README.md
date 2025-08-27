@@ -1,8 +1,22 @@
-# rotel 🌶️ 🍅
+<p align="center">
+  <h1 align="center">Rotel 🌶️ 🍅</h1>
+</p>
 
-High Performance, Resource Efficient OpenTelemetry Collection
+<p align="center">
+  High Performance, Resource Efficient OpenTelemetry Collection
+</p>
 
-## Description
+<p align="center">
+  <a title="Releases" target="_blank" href="https://github.com/streamfold/rotel/releases"><img src="https://img.shields.io/github/release/streamfold/rotel?style=flat-square&color=9CF"></a>
+ </p>
+
+<p align="center">
+  <a title="Rotel Discord" target="_blank" href="https://rotel.dev/discord"><img alt="Chat with Rotel users and develpers on Discord" src="https://img.shields.io/discord/1349105218268168192?style=social&logo=Discord&label=Rotel%20Discord"></a>
+</p>
+
+---
+
+## About
 
 **Rotel** provides an efficient, high-performance solution for collecting, processing, and exporting telemetry data.
 Rotel is ideal for resource-constrained environments and applications where minimizing overhead is critical.
