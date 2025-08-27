@@ -14,6 +14,7 @@ use std::{
 };
 use thiserror::Error;
 
+use super::DimensionFilter;
 use super::event::Event;
 
 // Only value supported at the moment
@@ -27,9 +28,9 @@ pub struct Transformer {
 }
 
 impl Transformer {
-    pub fn new(config: AwsEmfExporterConfig) -> Self {
+    pub fn new(config: AwsEmfExporterConfig, dim_filter: Arc<DimensionFilter>) -> Self {
         Self {
-            metric_transformer: MetricTransformer::new(config),
+            metric_transformer: MetricTransformer::new(config, dim_filter),
         }
     }
 }
@@ -68,6 +69,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
 #[derive(Clone)]
 pub struct MetricTransformer {
     config: AwsEmfExporterConfig,
+    dim_filter: Arc<DimensionFilter>,
     delta_calculator: Arc<DeltaCalculator>,
     summary_calculator: Arc<SummaryDeltaCalculator>,
 }
@@ -185,9 +187,10 @@ pub struct SummaryMetricEntry {
 }
 
 impl MetricTransformer {
-    pub fn new(config: AwsEmfExporterConfig) -> Self {
+    pub fn new(config: AwsEmfExporterConfig, dim_filter: Arc<DimensionFilter>) -> Self {
         Self {
             config,
+            dim_filter,
             delta_calculator: Arc::new(DeltaCalculator::new()),
             summary_calculator: Arc::new(SummaryDeltaCalculator::new()),
         }
@@ -508,8 +511,13 @@ impl MetricTransformer {
     ) -> Result<Event, ExportError> {
         let timestamp_ms = grouped_metric.metadata.timestamp_ms;
 
-        // Create the dimensions array (list of dimension names)
-        let mut dimension_keys: Vec<String> = grouped_metric.labels.keys().cloned().collect();
+        // Create the dimensions array filtered to the included dimsensions
+        let mut dimension_keys: Vec<String> = grouped_metric
+            .labels
+            .keys()
+            .filter(|l| self.dim_filter.should_include(&l))
+            .cloned()
+            .collect();
 
         // These don't technically need to be sorted, but it maintains consistency across
         // log lines.
@@ -916,7 +924,7 @@ mod tests {
             .with_log_stream_name("test-log-stream")
             .build()
             .config;
-        MetricTransformer::new(config)
+        MetricTransformer::new(config, new_dim_filter(vec![], vec![]))
     }
 
     fn create_test_attributes() -> Vec<KeyValue> {
@@ -1152,7 +1160,7 @@ mod tests {
         // Use retain_initial_value_of_delta_metric=true for backward compatibility in tests
         let mut config = create_test_transformer().config;
         config.retain_initial_value_of_delta_metric = true;
-        let transformer = MetricTransformer::new(config);
+        let transformer = MetricTransformer::new(config, new_dim_filter(vec![], vec![]));
         let mut grouped_metrics = HashMap::new();
         let resource_attrs = HashMap::new();
 
@@ -1211,7 +1219,7 @@ mod tests {
         // Use retain_initial_value_of_delta_metric=true for backward compatibility in tests
         let mut config = create_test_transformer().config;
         config.retain_initial_value_of_delta_metric = true;
-        let transformer = MetricTransformer::new(config);
+        let transformer = MetricTransformer::new(config, new_dim_filter(vec![], vec![]));
         let mut grouped_metrics = HashMap::new();
         let resource_attrs = HashMap::new();
 
@@ -1788,7 +1796,7 @@ mod tests {
     fn test_delta_calculation_with_retain_initial_value() {
         let mut config = create_test_transformer().config;
         config.retain_initial_value_of_delta_metric = true;
-        let transformer = MetricTransformer::new(config);
+        let transformer = MetricTransformer::new(config, new_dim_filter(vec![], vec![]));
         let mut grouped_metrics = HashMap::new();
         let resource_attrs = HashMap::new();
 
@@ -1972,7 +1980,7 @@ mod tests {
         // This is just a basic test to verify the feature is enabled
         let mut config = create_test_transformer().config;
         config.retain_initial_value_of_delta_metric = true;
-        let transformer = MetricTransformer::new(config);
+        let transformer = MetricTransformer::new(config, new_dim_filter(vec![], vec![]));
 
         let mut grouped_metrics = HashMap::new();
         let resource_attrs = HashMap::new();
@@ -2016,5 +2024,81 @@ mod tests {
         // Note: Delta calculation test for the second data point is complex due to
         // MetricKey equality issues in the test environment. The core implementation
         // works correctly as verified by the SummaryDeltaCalculator unit test.
+    }
+
+    #[test]
+    fn test_dimension_filter_wildcard_patterns() {
+        let dim_filter = new_dim_filter(
+            vec!["service.*".to_string(), "http.*".to_string()],
+            vec!["*.internal".to_string()],
+        );
+        let transformer = MetricTransformer::new(
+            AwsEmfExporterConfigBuilder::default()
+                .with_namespace("TestNamespace")
+                .with_log_group_name("test-log-group")
+                .with_log_stream_name("test-log-stream")
+                .build()
+                .config,
+            dim_filter,
+        );
+
+        let mut labels = HashMap::new();
+        labels.insert("service.name".to_string(), "api".to_string()); // Should be included
+        labels.insert("service.version".to_string(), "v1".to_string()); // Should be included
+        labels.insert("http.method".to_string(), "GET".to_string()); // Should be included
+        labels.insert("http.internal".to_string(), "true".to_string()); // Should be excluded (matches exclude pattern)
+        labels.insert("database.host".to_string(), "localhost".to_string()); // Should be excluded (doesn't match include)
+        labels.insert("other.internal".to_string(), "false".to_string()); // Should be excluded (matches exclude pattern)
+
+        let mut metrics = HashMap::new();
+        metrics.insert(
+            "test_metric".to_string(),
+            MetricInfo {
+                value: MetricValue::Double(3.14),
+                unit: "ratio".to_string(),
+            },
+        );
+
+        let grouped_metric = GroupedMetric {
+            labels,
+            metrics,
+            metadata: MetricMetadata {
+                namespace: "TestNamespace".to_string(),
+                timestamp_ms: 1234567890,
+            },
+        };
+
+        let result = transformer.translate_grouped_metric_to_emf(grouped_metric);
+        assert!(result.is_ok());
+
+        let event = result.unwrap();
+        let log_data: serde_json::Value = serde_json::from_str(&event.message).unwrap();
+
+        // Check that only expected dimensions are in the Dimensions array
+        let dimensions = log_data["_aws"]["CloudWatchMetrics"][0]["Dimensions"][0]
+            .as_array()
+            .unwrap();
+        assert_eq!(dimensions.len(), 3);
+        assert!(dimensions.contains(&json!("service.name")));
+        assert!(dimensions.contains(&json!("service.version")));
+        assert!(dimensions.contains(&json!("http.method")));
+        assert!(!dimensions.contains(&json!("http.internal")));
+        assert!(!dimensions.contains(&json!("database.host")));
+        assert!(!dimensions.contains(&json!("other.internal")));
+
+        // Check that all labels are still present as fields
+        assert!(log_data["service.name"].is_string());
+        assert!(log_data["service.version"].is_string());
+        assert!(log_data["http.method"].is_string());
+        assert!(log_data["http.internal"].is_string());
+        assert!(log_data["database.host"].is_string());
+        assert!(log_data["other.internal"].is_string());
+    }
+
+    fn new_dim_filter(
+        include_dims: Vec<String>,
+        exclude_dims: Vec<String>,
+    ) -> Arc<DimensionFilter> {
+        Arc::new(DimensionFilter::new(include_dims, exclude_dims).unwrap())
     }
 }

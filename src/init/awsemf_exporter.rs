@@ -40,6 +40,13 @@ pub struct AwsEmfExporterArgs {
     )]
     pub log_stream_name: String,
 
+    /// CloudWatch log group retention
+    #[arg(
+        long("awsemf-exporter-log-retention"),
+        env = "ROTEL_AWSEMF_EXPORTER_LOG_RETENTION"
+    )]
+    pub log_retention: Option<u16>,
+
     /// CloudWatch metrics namespace
     #[arg(
         long("awsemf-exporter-namespace"),
@@ -54,6 +61,22 @@ pub struct AwsEmfExporterArgs {
         default_value = "false"
     )]
     pub retain_initial_value_of_delta_metric: bool,
+
+    /// Dimensions include list
+    #[arg(
+        long("awsemf-exporter-include-dimensions"),
+        env = "ROTEL_AWSEMF_EXPORTER_INCLUDE_DIMENSIONS",
+        value_delimiter = ','
+    )]
+    pub include_dimensions: Vec<String>,
+
+    /// Dimensions exclude list
+    #[arg(
+        long("awsemf-exporter-exclude-dimensions"),
+        env = "ROTEL_AWSEMF_EXPORTER_EXCLUDE_DIMENSIONS",
+        value_delimiter = ','
+    )]
+    pub exclude_dimensions: Vec<String>,
 }
 
 impl Default for AwsEmfExporterArgs {
@@ -63,8 +86,11 @@ impl Default for AwsEmfExporterArgs {
             custom_endpoint: None,
             log_group_name: "/metrics/default".to_string(),
             log_stream_name: "otel-stream".to_string(),
+            log_retention: None,
             namespace: None,
             retain_initial_value_of_delta_metric: false,
+            include_dimensions: Vec::new(),
+            exclude_dimensions: Vec::new(),
         }
     }
 }

@@ -281,9 +281,15 @@ impl TryIntoConfig for ExporterArgs {
                     .with_region(awsemf.region)
                     .with_log_group_name(awsemf.log_group_name.clone())
                     .with_log_stream_name(awsemf.log_stream_name.clone())
+                    .with_include_dimensions(awsemf.include_dimensions.clone())
+                    .with_exclude_dimensions(awsemf.exclude_dimensions.clone())
                     .with_retain_initial_value_of_delta_metric(
                         awsemf.retain_initial_value_of_delta_metric,
                     );
+
+                if let Some(log_retention) = &awsemf.log_retention {
+                    builder = builder.with_log_retention(*log_retention);
+                }
 
                 if let Some(namespace) = &awsemf.namespace {
                     builder = builder.with_namespace(namespace.clone());
@@ -498,6 +504,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse AWS EMF config: {}", e).into()),
             };
+
             Ok(ExporterArgs::Awsemf(args))
         }
         #[cfg(feature = "rdkafka")]
