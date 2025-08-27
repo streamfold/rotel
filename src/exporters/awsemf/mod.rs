@@ -229,3 +229,300 @@ impl AwsEmfExporterBuilder {
         Ok(exp)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate utilities;
+
+    use crate::aws_api::config::AwsConfig;
+    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::exporters::awsemf::{AwsEmfExporterConfigBuilder, ExporterType};
+    use crate::exporters::crypto_init_tests::init_crypto;
+    use crate::exporters::http::retry::RetryConfig;
+    use crate::exporters::shared::aws::Region;
+    use httpmock::prelude::*;
+    use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
+    use std::time::Duration;
+    use tokio::join;
+    use tokio_test::{assert_err, assert_ok};
+    use tokio_util::sync::CancellationToken;
+    use utilities::otlp::FakeOTLP;
+
+    #[tokio::test]
+    async fn success_and_retry() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, None);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
+
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(metrics.resource_metrics).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_ok!(res.0.unwrap());
+
+        hello_mock.assert();
+
+        // Test retry scenario with 429 status
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(429)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"__type":"ServiceUnavailableException","message":"Rate exceeded"}"#);
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, None);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
+
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(metrics.resource_metrics).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_err!(res.0.unwrap()); // failed to drain
+
+        assert!(hello_mock.hits() >= 3); // somewhat timing dependent
+    }
+
+    #[tokio::test]
+    async fn resource_not_found_triggers_creation() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // First request returns ResourceNotFoundException
+        let resource_not_found_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.PutLogEvents");
+            then.status(400)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"__type":"ResourceNotFoundException","message":"The specified log group does not exist."}"#);
+        });
+
+        // Mock for creating log stream
+        let create_log_stream_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.CreateLogStream");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        // Because create log stream succeeds, the following will not be called
+
+        // Mock for creating log group
+        let create_log_group_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.CreateLogGroup");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        // Retention mock
+        let retention_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.PutRetentionPolicy");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"nextSequenceToken":"12345"}"#);
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, None);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
+
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(metrics.resource_metrics).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_err!(res.0.unwrap());
+
+        // Verify the calls made
+        assert!(resource_not_found_mock.hits() > 0);
+        assert!(create_log_stream_mock.hits() > 0);
+        create_log_group_mock.assert_hits(0);
+        retention_mock.assert_hits(0);
+    }
+
+    #[tokio::test]
+    async fn resource_already_exists_is_handled() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // First request returns ResourceNotFoundException
+        let put_log_events_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.PutLogEvents");
+            then.status(400)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"__type":"ResourceNotFoundException","message":"The specified log stream does not exist."}"#);
+        });
+
+        // Mock for creating log stream that returns resource already exists
+        let create_log_stream_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.CreateLogStream");
+            then.status(400)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"__type":"ResourceAlreadyExistsException","message":"The specified log stream already exists."}"#);
+        });
+
+        // should not be hit
+        let create_log_group_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.CreateLogGroup");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, None);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
+
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(metrics.resource_metrics).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_err!(res.0.unwrap());
+
+        // Verify the calls were made
+        assert!(put_log_events_mock.hits() > 0);
+        assert!(create_log_stream_mock.hits() > 0);
+        create_log_group_mock.assert_hits(0);
+    }
+
+    #[tokio::test]
+    async fn log_group_retention() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // First request returns ResourceNotFoundException
+        let put_logs_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.PutLogEvents");
+            then.status(400)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"__type":"ResourceNotFoundException","message":"The specified log stream does not exist."}"#);
+        });
+
+        // Mock for creating log stream
+        let create_log_stream_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.CreateLogStream");
+            then.status(400)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"__type":"ResourceNotFoundException","message":"The specified log group does not exist."}"#);
+        });
+
+        // Mock for creating log group
+        let create_log_group_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.CreateLogGroup");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        // Retention mock
+        let retention_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .header("x-amz-target", "Logs_20140328.PutRetentionPolicy");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body(r#"{"nextSequenceToken":"12345"}"#);
+        });
+
+        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, Some(3));
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
+
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(metrics.resource_metrics).await.unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_err!(res.0.unwrap());
+
+        // Verify the calls were made
+        assert!(put_logs_mock.hits() > 0);
+        assert!(create_log_stream_mock.hits() > 0);
+        assert!(create_log_group_mock.hits() > 0);
+        assert!(retention_mock.hits() > 0);
+    }
+
+    fn new_exporter<'a>(
+        addr: String,
+        brx: BoundedReceiver<Vec<ResourceMetrics>>,
+        aws_config: AwsConfig,
+        log_retention: Option<u16>,
+    ) -> ExporterType<'a, ResourceMetrics> {
+        let mut builder = AwsEmfExporterConfigBuilder::new()
+            .with_region(Region::UsEast1)
+            .with_custom_endpoint(addr)
+            .with_log_group_name("test-log-group".to_string())
+            .with_log_stream_name("test-log-stream".to_string())
+            .with_retry_config(RetryConfig {
+                initial_backoff: Duration::from_millis(10),
+                max_backoff: Duration::from_millis(50),
+                max_elapsed_time: Duration::from_millis(50),
+            });
+
+        if let Some(log_retention) = &log_retention {
+            builder = builder.with_log_retention(*log_retention);
+        }
+
+        builder.build().build(brx, None, aws_config).unwrap()
+    }
+}
