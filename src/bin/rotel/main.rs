@@ -94,7 +94,7 @@ fn main() -> ExitCode {
                 .clone()
                 .unwrap_or("".to_string())
                 .split(",")
-                .map(String::from)
+                .map(|s| s.to_string().to_lowercase())
                 .collect();
             if matches!(agent.receiver, Some(Receiver::Otlp))
                 || receivers.contains(&"otlp".to_string())
