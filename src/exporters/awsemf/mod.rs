@@ -2,6 +2,7 @@
 
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::awsemf::request_builder::RequestBuilder;
+use crate::exporters::awsemf::response_interceptor::ResponseInterceptor;
 use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
@@ -13,6 +14,7 @@ use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
 use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
+
 use dim_filter::DimensionFilter;
 use errors::{AwsEmfDecoder, AwsEmfResponse};
 use flume::r#async::RecvStream;
@@ -28,15 +30,21 @@ use tower::{BoxError, ServiceBuilder};
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
+mod cloudwatch;
 mod dim_filter;
 mod emf_request;
 mod errors;
 mod event;
 mod request_builder;
+mod response_interceptor;
 mod transformer;
 
-type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<HttpClient<Full<Bytes>, RespBody, AwsEmfDecoder>>>;
+use cloudwatch::Cloudwatch;
+
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    ResponseInterceptor<Timeout<HttpClient<Full<Bytes>, RespBody, AwsEmfDecoder>>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -170,15 +178,30 @@ impl AwsEmfExporterBuilder {
         )?);
         let transformer = Transformer::new(self.config.clone(), dim_filter);
 
-        let req_builder = RequestBuilder::new(transformer, aws_config, self.config.clone())?;
+        let req_builder =
+            RequestBuilder::new(transformer, aws_config.clone(), self.config.clone())?;
 
         let retry_layer = RetryPolicy::new(self.config.retry_config, None);
         let retry_broadcast = retry_layer.retry_broadcast();
 
-        let svc = ServiceBuilder::new()
-            .retry(retry_layer)
+        // Create CloudWatch API instance
+        let cloudwatch_api = Arc::new(Cloudwatch::new(
+            aws_config.clone(),
+            self.config.custom_endpoint.clone(),
+            self.config.log_group_name.clone(),
+            self.config.log_stream_name.clone(),
+        )?);
+
+        // Build service stack: retry -> response_interceptor -> timeout -> client
+        let timeout_client = ServiceBuilder::new()
             .timeout(Duration::from_secs(5))
             .service(client);
+
+        let interceptor_service = ResponseInterceptor::new(timeout_client, cloudwatch_api);
+
+        let svc = ServiceBuilder::new()
+            .retry(retry_layer)
+            .service(interceptor_service);
 
         let enc_stream =
             RequestIterator::new(RequestBuilderMapper::new(rx.into_stream(), req_builder));
