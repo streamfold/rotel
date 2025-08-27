@@ -40,6 +40,13 @@ pub struct AwsEmfExporterArgs {
     )]
     pub log_stream_name: String,
 
+    /// CloudWatch log group retention
+    #[arg(
+        long("awsemf-exporter-log-retention"),
+        env = "ROTEL_AWSEMF_EXPORTER_LOG_RETENTION"
+    )]
+    pub log_retention: Option<u16>,
+
     /// CloudWatch metrics namespace
     #[arg(
         long("awsemf-exporter-namespace"),
@@ -79,6 +86,7 @@ impl Default for AwsEmfExporterArgs {
             custom_endpoint: None,
             log_group_name: "/metrics/default".to_string(),
             log_stream_name: "otel-stream".to_string(),
+            log_retention: None,
             namespace: None,
             retain_initial_value_of_delta_metric: false,
             include_dimensions: Vec::new(),

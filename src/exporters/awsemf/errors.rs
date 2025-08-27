@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::{fmt::Display, io::Write, str};
 use tower::BoxError;
 
-use crate::exporters::http::{client::ResponseDecode, types::ContentEncoding};
+use crate::exporters::http::{client::ResponseDecode, response::Response, types::ContentEncoding};
 
 // These may apply to AWS in general, might be able to generalize later
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ pub(crate) enum AwsEmfResponse {
     ResourceNotFoundException(String),
     ServiceUnavailableException(String),
     UnrecognizedClientException(String),
+    ResourceAlreadyExistsException(String),
 }
 
 impl Display for AwsEmfResponse {
@@ -37,6 +38,9 @@ impl Display for AwsEmfResponse {
             }
             AwsEmfResponse::UnrecognizedClientException(msg) => {
                 write!(f, "UnrecognizedClientException: {}", msg)
+            }
+            AwsEmfResponse::ResourceAlreadyExistsException(msg) => {
+                write!(f, "ResourceAlreadyExistsException: {}", msg)
             }
         }
     }
@@ -92,6 +96,9 @@ impl ResponseDecode<AwsEmfResponse> for AwsEmfDecoder {
                     "UnrecognizedClientException" => {
                         Ok(AwsEmfResponse::UnrecognizedClientException(msg))
                     }
+                    "ResourceAlreadyExistsException" => {
+                        Ok(AwsEmfResponse::ResourceAlreadyExistsException(msg))
+                    }
                     _ => Ok(AwsEmfResponse::Unknown(t, msg)),
                 }
             }
@@ -111,4 +118,16 @@ fn gzip_decode(body: Bytes) -> Result<Bytes, BoxError> {
         Ok(buf) => Ok(Bytes::from(buf)),
         Err(e) => Err(format!("failed to finish gzip decode of response: {}", e).into()),
     }
+}
+
+pub(crate) fn is_retryable_error(
+    result: &Result<Response<AwsEmfResponse>, BoxError>,
+) -> Option<bool> {
+    // Force these to be retried since we'll try to create the log stream/group
+    if let Ok(Response::Http(_, Some(AwsEmfResponse::ResourceNotFoundException(_)))) = result {
+        return Some(true);
+    }
+
+    // Fall back to normal processing
+    None
 }
