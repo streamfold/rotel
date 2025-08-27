@@ -16,7 +16,7 @@ use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 
 use dim_filter::DimensionFilter;
-use errors::{AwsEmfDecoder, AwsEmfResponse};
+use errors::{AwsEmfDecoder, AwsEmfResponse, is_retryable_error};
 use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
@@ -188,7 +188,7 @@ impl AwsEmfExporterBuilder {
         let req_builder =
             RequestBuilder::new(transformer, aws_config.clone(), self.config.clone())?;
 
-        let retry_layer = RetryPolicy::new(self.config.retry_config, None);
+        let retry_layer = RetryPolicy::new(self.config.retry_config, Some(is_retryable_error));
         let retry_broadcast = retry_layer.retry_broadcast();
 
         // Create CloudWatch API instance

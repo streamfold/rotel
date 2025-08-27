@@ -217,21 +217,33 @@ impl Cloudwatch {
             debug!("CloudWatch API request successful: {}", status);
             Ok(())
         } else {
+            let (head, body) = response.into_parts();
+
+            let encoding = match head.headers.get(CONTENT_ENCODING) {
+                None => ContentEncoding::None,
+                Some(v) => match TryFrom::try_from(v) {
+                    Ok(ce) => ce,
+                    Err(e) => return Err(e),
+                },
+            };
+
             // Collect response body for error details
-            let body_bytes = response
-                .into_body()
+            let body_bytes = body
                 .collect()
                 .await
                 .map_err(|e| format!("Failed to read response body: {}", e))?
                 .to_bytes();
 
             // We are looking for the ResourceNotFoundException to identify if we need to create
-            // the higher level resources, like log group. We also translate this into an error
-            // for easier handling.
-            match decoder.decode(body_bytes, ContentEncoding::Gzip) {
+            // the higher level resources, like log group. It's possible a resource already exists
+            // if it was created by another thread, so don't fail those requests.
+            //
+            // We also translate resource not found into an error for easier handling.
+            match decoder.decode(body_bytes, encoding) {
                 Ok(AwsEmfResponse::ResourceNotFoundException(_)) => {
                     Err("ResourceNotFoundException".into())
                 }
+                Ok(AwsEmfResponse::ResourceAlreadyExistsException(_)) => Ok(()),
                 Ok(r) => Err(format!("Unexpected error: {}", r).into()),
                 Err(e) => Err(e),
             }
