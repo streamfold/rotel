@@ -67,6 +67,7 @@ pub struct AwsEmfExporterConfig {
     pub region: Region,
     pub log_group_name: String,
     pub log_stream_name: String,
+    pub log_retention: u16,
     pub namespace: Option<String>,
     pub custom_endpoint: Option<String>,
     pub retain_initial_value_of_delta_metric: bool,
@@ -81,6 +82,7 @@ impl Default for AwsEmfExporterConfig {
             region: Region::UsEast1,
             log_group_name: "/metrics/default".to_string(),
             log_stream_name: "otel-stream".to_string(),
+            log_retention: 0,
             namespace: None,
             custom_endpoint: None,
             retain_initial_value_of_delta_metric: false,
@@ -120,6 +122,11 @@ impl AwsEmfExporterConfigBuilder {
 
     pub fn with_log_stream_name<S: Into<String>>(mut self, log_stream_name: S) -> Self {
         self.config.log_stream_name = log_stream_name.into();
+        self
+    }
+
+    pub fn with_log_retention(mut self, log_retention: u16) -> Self {
+        self.config.log_retention = log_retention;
         self
     }
 
@@ -190,6 +197,7 @@ impl AwsEmfExporterBuilder {
             self.config.custom_endpoint.clone(),
             self.config.log_group_name.clone(),
             self.config.log_stream_name.clone(),
+            self.config.log_retention,
         )?);
 
         // Build service stack: retry -> response_interceptor -> timeout -> client

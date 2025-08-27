@@ -25,6 +25,7 @@ pub(crate) struct Cloudwatch {
     base_headers: HeaderMap,
     log_group: String,
     log_stream: String,
+    log_retention: u16,
     client: HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>,
 }
 
@@ -34,6 +35,7 @@ impl Cloudwatch {
         endpoint: Option<String>,
         log_group: String,
         log_stream: String,
+        log_retention: u16,
     ) -> Result<Self, BoxError> {
         let endpoint_url =
             endpoint.unwrap_or_else(|| format!("https://logs.{}.amazonaws.com", aws_config.region));
@@ -61,6 +63,7 @@ impl Cloudwatch {
             base_headers,
             log_group,
             log_stream,
+            log_retention,
             client,
         })
     }
@@ -92,6 +95,13 @@ impl Cloudwatch {
                     // Try to create the log group first
                     self.create_log_group(&self.log_group).await?;
 
+                    // Set the retention policy for the newly created log group if not zero.
+                    // Log groups default to never expire.
+                    if self.log_retention != 0 {
+                        self.set_log_retention(&self.log_group, self.log_retention)
+                            .await?;
+                    }
+
                     // Now try to create the log stream again
                     self.create_log_stream(&self.log_group, &self.log_stream)
                         .await?;
@@ -104,6 +114,25 @@ impl Cloudwatch {
                 }
             }
         }
+    }
+
+    async fn set_log_retention(
+        &self,
+        log_group_name: &str,
+        retention_in_days: u16,
+    ) -> Result<(), BoxError> {
+        let payload = json!({
+            "logGroupName": log_group_name,
+            "retentionInDays": retention_in_days
+        });
+
+        let mut headers = self.base_headers.clone();
+        headers.insert(
+            "X-Amz-Target",
+            HeaderValue::from_static("Logs_20140328.PutRetentionPolicy"),
+        );
+
+        self.make_request(payload, headers).await
     }
 
     async fn create_log_stream(
@@ -235,7 +264,7 @@ mod tests {
     fn test_is_resource_not_found_error() {
         init_crypto_provider().expect("Failed to init crypto");
         let config = sample_aws_config();
-        let cw = Cloudwatch::new(config, None, String::new(), String::new()).unwrap();
+        let cw = Cloudwatch::new(config, None, String::new(), String::new(), 0).unwrap();
 
         let error: BoxError = "ResourceNotFoundException: Log group does not exist".into();
         assert!(cw.is_resource_not_found_error(&error));

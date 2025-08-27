@@ -287,6 +287,10 @@ impl TryIntoConfig for ExporterArgs {
                         awsemf.retain_initial_value_of_delta_metric,
                     );
 
+                if let Some(log_retention) = &awsemf.log_retention {
+                    builder = builder.with_log_retention(*log_retention);
+                }
+
                 if let Some(namespace) = &awsemf.namespace {
                     builder = builder.with_namespace(namespace.clone());
                 }
