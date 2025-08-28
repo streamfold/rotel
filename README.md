@@ -27,7 +27,8 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - OTLP receiver supporting gRPC, HTTP/Protobuf, and HTTP/JSON
 - OTLP exporter supporting gRPC and HTTP/Protobuf
 - Built-in batching and retry mechanisms
-- Experimental Clickhouse, Datadog, and Kafka exporters
+- Additional exporters: [Clickhouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration), and [Kafka](#kafka-exporter-configuration-experimental)
+- Kafka Receiver
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
 and a compact binary size, simplifying deployment without the need for a sidecar container.
