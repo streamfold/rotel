@@ -27,7 +27,7 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - OTLP receiver supporting gRPC, HTTP/Protobuf, and HTTP/JSON
 - OTLP exporter supporting gRPC and HTTP/Protobuf
 - Built-in batching and retry mechanisms
-- Additional exporters: [Clickhouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration), and [Kafka](#kafka-exporter-configuration-experimental)
+- Additional exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration), and [Kafka](#kafka-exporter-configuration-experimental)
 - Kafka Receiver
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
@@ -196,9 +196,9 @@ moment. For more information, see the [Datadog Exporter](src/exporters/datadog/R
 
 Specifying a custom endpoint will override the region selection.
 
-### Clickhouse exporter configuration
+### ClickHouse exporter configuration
 
-The Clickhouse exporter can be selected by passing `--exporter clickhouse`. The Clickhouse exporter supports metrics,
+The ClickHouse exporter can be selected by passing `--exporter clickhouse`. The ClickHouse exporter supports metrics,
 logs,
 and traces.
 
@@ -215,31 +215,31 @@ and traces.
 | --clickhouse-exporter-user            |         |             |
 | --clickhouse-exporter-password        |         |             |
 
-The Clickhouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed
+The ClickHouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed
 onto the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to
 generate the full table name of `otel_traces`.
 
-The Clickhouse exporter will enable [async inserts](https://clickhouse.com/docs/optimize/asynchronous-inserts) by
+The ClickHouse exporter will enable [async inserts](https://clickhouse.com/docs/optimize/asynchronous-inserts) by
 default,
 although it can be disabled server-side. Async inserts are
-recommended for most workloads to avoid overloading Clickhouse with many small inserts. Async inserts can be disabled by
+recommended for most workloads to avoid overloading ClickHouse with many small inserts. Async inserts can be disabled by
 specifying:
 `--clickhouse-exporter-async-insert false`.
 
 The exporter will not generate the table schema if it does not exist. Use the
-[clickhouse-ddl](/src/bin/clickhouse-ddl/README.md) command for generating the necessary table DDL for Clickhouse. The
+[clickhouse-ddl](/src/bin/clickhouse-ddl/README.md) command for generating the necessary table DDL for ClickHouse. The
 DDL matches the schema used in the
-OpenTelemetry [Clickhouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
+OpenTelemetry [ClickHouse exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md).
 
 Enabling JSON via the `--clickhouse-exporter-enable-json` will use the new
-[JSON data type](https://clickhouse.com/docs/sql-reference/data-types/newjson) in Clickhouse. This data
-type is only available on the most recent versions of Clickhouse. Make sure that you enable JSON with `--enable-json`
+[JSON data type](https://clickhouse.com/docs/sql-reference/data-types/newjson) in ClickHouse. This data
+type is only available on the most recent versions of ClickHouse. Make sure that you enable JSON with `--enable-json`
 when creating tables with `clickhouse-ddl`. By default, any JSON key inserted with a period in it will create
 a nested JSON object. You can replace periods in JSON keys with underscores by passing the option
 `--clickhouse-exporter-json-underscore` which will keep the JSON keys flat. For example, the resource attribute
 `service.name` will be inserted as `service_name`.
 
-_The Clickhouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse)
+_The ClickHouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse)
 crate._
 
 ### AWS X-Ray exporter configuration
@@ -556,7 +556,7 @@ at the same time.
 | --exporters-logs    |         | exporter name                    |
 
 First start by defining the set of exporters that you would like to use, optionally specifying a custom name for them
-to differentiate their configuration options. For example, to export logs and metrics to two separate Clickhouse nodes
+to differentiate their configuration options. For example, to export logs and metrics to two separate ClickHouse nodes
 while exporting traces to Datadog, we'll use the following `--exporters` argument (or `ROTEL_EXPORTERS` envvar):
 
 ```shell
@@ -577,7 +577,7 @@ Therefore, there are no CLI argument alternatives for them at the moment. The `{
 configuration
 options for the given exporter type.
 
-Using our example above, the user must set, at a minimum, the following environment variables. (For Clickhouse Cloud you
+Using our example above, the user must set, at a minimum, the following environment variables. (For ClickHouse Cloud you
 would need to include a username/password, but we are skipping those for brevity.)
 
 - `ROTEL_EXPORTER_LOGGING_ENDPOINT=https://xxxxxxx.us-east-1.aws.clickhouse.cloud:8443`
