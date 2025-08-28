@@ -22,9 +22,9 @@ pub struct KafkaReceiver {
     pub traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
     pub metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
     pub logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
-    pub traces_topic: &'static str,
-    pub metrics_topic: &'static str,
-    pub logs_topic: &'static str,
+    pub traces_topic: String,
+    pub metrics_topic: String,
+    pub logs_topic: String,
     pub format: DeserializationFormat,
 }
 
@@ -59,13 +59,13 @@ impl KafkaReceiver {
         })?;
 
         let traces_topic = config.traces_topic.clone();
-        let traces_topic = traces_topic.unwrap_or("".into()).leak();
+        let traces_topic = traces_topic.unwrap_or("".into());
 
         let metrics_topic = config.metrics_topic.clone();
-        let metrics_topic = metrics_topic.unwrap_or("".into()).leak();
+        let metrics_topic = metrics_topic.unwrap_or("".into());
 
         let logs_topic = config.logs_topic.clone();
-        let logs_topic = logs_topic.unwrap_or("".into()).leak();
+        let logs_topic = logs_topic.unwrap_or("".into());
 
         Ok(Self {
             consumer,
