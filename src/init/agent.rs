@@ -20,6 +20,7 @@ use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
+use crate::receivers::kafka::receiver::KafkaReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -165,47 +166,58 @@ impl Agent {
         let mut logs_output = None;
         let mut internal_metrics_output = None;
 
+        let otlp_rec_enabled = rec_config.contains_key(&Receiver::Otlp);
         // Only notify user if we have an otlp receiver
-        if rec_config.contains_key(&Receiver::Otlp) {
-            match activation.traces {
-                TelemetryState::Active => traces_output = Some(trace_otlp_output),
-                TelemetryState::Disabled => {
+        match activation.traces {
+            TelemetryState::Active => traces_output = Some(trace_otlp_output),
+            TelemetryState::Disabled => {
+                if otlp_rec_enabled {
                     info!(
                         "OTLP Receiver for traces disabled, OTLP receiver will be configured to not accept traces"
                     );
                 }
-                TelemetryState::NoListeners => {
+            }
+            TelemetryState::NoListeners => {
+                if otlp_rec_enabled {
                     info!(
                         "No exporters are configured for traces, OTLP receiver will be configured to not accept traces"
                     );
                 }
             }
+        }
 
-            match activation.metrics {
-                TelemetryState::Active => {
-                    metrics_output = Some(metrics_otlp_output);
-                    internal_metrics_output = Some(internal_metrics_otlp_output);
-                }
-                TelemetryState::Disabled => {
+        match activation.metrics {
+            TelemetryState::Active => {
+                metrics_output = Some(metrics_otlp_output);
+                internal_metrics_output = Some(internal_metrics_otlp_output);
+            }
+            TelemetryState::Disabled => {
+                if otlp_rec_enabled {
                     info!(
                         "OTLP Receiver for metrics disabled, OTLP receiver will be configured to not accept metrics"
                     );
                 }
-                TelemetryState::NoListeners => {
+            }
+            TelemetryState::NoListeners => {
+                if otlp_rec_enabled {
                     info!(
                         "No exporters are configured for metrics, OTLP receiver will be configured to not accept metrics"
                     );
                 }
             }
+        }
 
-            match activation.logs {
-                TelemetryState::Active => logs_output = Some(logs_otlp_output),
-                TelemetryState::Disabled => {
+        match activation.logs {
+            TelemetryState::Active => logs_output = Some(logs_otlp_output),
+            TelemetryState::Disabled => {
+                if otlp_rec_enabled {
                     info!(
                         "OTLP Receiver for logs disabled, OTLP receiver will be configured to not accept logs"
                     );
                 }
-                TelemetryState::NoListeners => {
+            }
+            TelemetryState::NoListeners => {
+                if otlp_rec_enabled {
                     info!(
                         "No exporters are configured for logs, OTLP receiver will be configured to not accept logs"
                     );
@@ -667,8 +679,15 @@ impl Agent {
                         });
                     }
                 }
-                ReceiverConfig::Kafka(_config) => {
-                    return Err("Kafka receiver not supported yet".into());
+                ReceiverConfig::Kafka(config) => {
+                    let kafka = KafkaReceiver::new(
+                        config.clone(),
+                        traces_output.clone(),
+                        metrics_output.clone(),
+                        logs_output.clone(),
+                    )?;
+                    let receivers_cancel = receivers_cancel.clone();
+                    receivers_task_set.spawn(async move { kafka.run(receivers_cancel).await });
                 }
             }
         }
@@ -723,13 +742,17 @@ impl Agent {
             },
             e = wait::wait_for_any_task(&mut receivers_task_set) => {
                 match e {
-                    Ok(()) => warn!("Unexpected early exit of receiver."),
+                    Ok(()) => {
+                        info!("Unexpected early exit of receiver.");
+                        },
                     Err(e) => result = Err(e),
                 }
             },
             e = wait::wait_for_any_task(&mut pipeline_task_set) => {
                 match e {
-                    Ok(()) => warn!("Unexpected early exit of pipeline."),
+                    Ok(()) => {
+                         info!("Unexpected early exit of pipeline.");
+                    }
                     Err(e) => result = Err(e),
                 }
             },

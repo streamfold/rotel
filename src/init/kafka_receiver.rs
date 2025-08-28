@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::init::parse::parse_key_val;
-use crate::receivers::kafka::config::{
-    AutoOffsetReset, DeserializationFormat, IsolationLevel, KafkaReceiverConfig, SaslMechanism,
-    SecurityProtocol,
-};
-use clap::{Args, ValueEnum};
+use crate::receivers::kafka::config::KafkaReceiverConfig;
+use clap::Args;
 use serde::Deserialize;
 
-#[derive(Debug, Args, Clone, Deserialize)]
+#[derive(Default, Debug, Args, Clone, Deserialize)]
 #[serde(default)]
 pub struct KafkaReceiverArgs {
     /// Kafka broker addresses (comma-separated)
@@ -24,7 +21,8 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_TRACES_TOPIC"),
         long("kafka-receiver-traces-topic"),
-        env = "ROTEL_KAFKA_RECEIVER_TRACES_TOPIC"
+        env = "ROTEL_KAFKA_RECEIVER_TRACES_TOPIC",
+        default_value = "otlp_traces"
     )]
     pub traces_topic: Option<String>,
 
@@ -32,7 +30,8 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_METRICS_TOPIC"),
         long("kafka-receiver-metrics-topic"),
-        env = "ROTEL_KAFKA_RECEIVER_METRICS_TOPIC"
+        env = "ROTEL_KAFKA_RECEIVER_METRICS_TOPIC",
+        default_value = "otlp_metrics"
     )]
     pub metrics_topic: Option<String>,
 
@@ -40,18 +39,31 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_LOGS_TOPIC"),
         long("kafka-receiver-logs-topic"),
-        env = "ROTEL_KAFKA_RECEIVER_LOGS_TOPIC"
+        env = "ROTEL_KAFKA_RECEIVER_LOGS_TOPIC",
+        default_value = "otlp_logs"
     )]
     pub logs_topic: Option<String>,
 
     /// Boolean flags to control what to consume
-    #[arg(long("kafka-receiver-traces"), env = "ROTEL_KAFKA_RECEIVER_TRACES")]
+    #[arg(
+        long("kafka-receiver-traces"),
+        env = "ROTEL_KAFKA_RECEIVER_TRACES",
+        default_value = "false"
+    )]
     pub traces: bool,
 
-    #[arg(long("kafka-receiver-metrics"), env = "ROTEL_KAFKA_RECEIVER_METRICS")]
+    #[arg(
+        long("kafka-receiver-metrics"),
+        env = "ROTEL_KAFKA_RECEIVER_METRICS",
+        default_value = "false"
+    )]
     pub metrics: bool,
 
-    #[arg(long("kafka-receiver-logs"), env = "ROTEL_KAFKA_RECEIVER_LOGS")]
+    #[arg(
+        long("kafka-receiver-logs"),
+        env = "ROTEL_KAFKA_RECEIVER_LOGS",
+        default_value = "false"
+    )]
     pub logs: bool,
 
     /// Deserialization format
@@ -62,7 +74,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_FORMAT",
         default_value = "protobuf"
     )]
-    pub format: KafkaDeserializationFormat,
+    pub format: crate::receivers::kafka::config::DeserializationFormat,
 
     /// Consumer group ID for coordinated consumption
     #[arg(
@@ -104,7 +116,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_AUTO_OFFSET_RESET",
         default_value = "latest"
     )]
-    pub auto_offset_reset: KafkaAutoOffsetReset,
+    pub auto_offset_reset: crate::receivers::kafka::config::AutoOffsetReset,
 
     /// Session timeout in milliseconds
     #[arg(
@@ -154,15 +166,6 @@ pub struct KafkaReceiverArgs {
     )]
     pub fetch_max_wait_ms: u32,
 
-    /// Request timeout in milliseconds
-    #[arg(
-        id("KAFKA_RECEIVER_REQUEST_TIMEOUT_MS"),
-        long("kafka-receiver-request-timeout-ms"),
-        env = "ROTEL_KAFKA_RECEIVER_REQUEST_TIMEOUT_MS",
-        default_value = "30000"
-    )]
-    pub request_timeout_ms: u32,
-
     /// Socket timeout in milliseconds
     #[arg(
         long("kafka-receiver-socket-timeout-ms"),
@@ -186,7 +189,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_ISOLATION_LEVEL",
         default_value = "read-committed"
     )]
-    pub isolation_level: KafkaIsolationLevel,
+    pub isolation_level: crate::receivers::kafka::config::IsolationLevel,
 
     /// Enable partition EOF notifications
     #[arg(
@@ -208,7 +211,8 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_SASL_USERNAME"),
         long("kafka-receiver-sasl-username"),
-        env = "ROTEL_KAFKA_RECEIVER_SASL_USERNAME"
+        env = "ROTEL_KAFKA_RECEIVER_SASL_USERNAME",
+        default_value = None,
     )]
     pub sasl_username: Option<String>,
 
@@ -216,7 +220,8 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_SASL_PASSWORD"),
         long("kafka-receiver-sasl-password"),
-        env = "ROTEL_KAFKA_RECEIVER_SASL_PASSWORD"
+        env = "ROTEL_KAFKA_RECEIVER_SASL_PASSWORD",
+        default_value = None,
     )]
     pub sasl_password: Option<String>,
 
@@ -224,43 +229,49 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_SASL_MECHANISM"),
         long("kafka-receiver-sasl-mechanism"),
-        env = "ROTEL_KAFKA_RECEIVER_SASL_MECHANISM"
+        env = "ROTEL_KAFKA_RECEIVER_SASL_MECHANISM",
+        default_value = None,
     )]
-    pub sasl_mechanism: Option<KafkaSaslMechanism>,
+    pub sasl_mechanism: Option<crate::receivers::kafka::config::SaslMechanism>,
 
     /// Security protocol
     #[arg(
         id("KAFKA_RECEIVER_SECURITY_PROTOCOL"),
         long("kafka-receiver-security-protocol"),
-        env = "ROTEL_KAFKA_RECEIVER_SECURITY_PROTOCOL"
+        env = "ROTEL_KAFKA_RECEIVER_SECURITY_PROTOCOL", 
+        default_value = None,
     )]
-    pub security_protocol: Option<KafkaSecurityProtocol>,
+    pub security_protocol: Option<crate::receivers::kafka::config::SecurityProtocol>,
 
     /// SSL CA certificate location
     #[arg(
         long("kafka-receiver-ssl-ca-location"),
-        env = "ROTEL_KAFKA_RECEIVER_SSL_CA_LOCATION"
+        env = "ROTEL_KAFKA_RECEIVER_SSL_CA_LOCATION",
+        default_value = None,
     )]
     pub ssl_ca_location: Option<String>,
 
     /// SSL certificate location
     #[arg(
         long("kafka-receiver-ssl-certificate-location"),
-        env = "ROTEL_KAFKA_RECEIVER_SSL_CERTIFICATE_LOCATION"
+        env = "ROTEL_KAFKA_RECEIVER_SSL_CERTIFICATE_LOCATION",
+        default_value = None,
     )]
     pub ssl_certificate_location: Option<String>,
 
     /// SSL key location
     #[arg(
         long("kafka-receiver-ssl-key-location"),
-        env = "ROTEL_KAFKA_RECEIVER_SSL_KEY_LOCATION"
+        env = "ROTEL_KAFKA_RECEIVER_SSL_KEY_LOCATION",
+        default_value = None,
     )]
     pub ssl_key_location: Option<String>,
 
     /// SSL key password
     #[arg(
         long("kafka-receiver-ssl-key-password"),
-        env = "ROTEL_KAFKA_RECEIVER_SSL_KEY_PASSWORD"
+        env = "ROTEL_KAFKA_RECEIVER_SSL_KEY_PASSWORD",
+        default_value = None,
     )]
     pub ssl_key_password: Option<String>,
 
@@ -276,187 +287,16 @@ pub struct KafkaReceiverArgs {
     pub custom_config: Vec<(String, String)>,
 }
 
-impl Default for KafkaReceiverArgs {
-    fn default() -> Self {
-        KafkaReceiverArgs {
-            brokers: "localhost:9092".to_string(),
-            traces_topic: Some("otlp_traces".to_string()),
-            metrics_topic: Some("otlp_metrics".to_string()),
-            logs_topic: Some("otlp_logs".to_string()),
-            traces: false,
-            metrics: false,
-            logs: false,
-            format: Default::default(),
-            group_id: "rotel-consumer".to_string(),
-            client_id: "rotel".to_string(),
-            enable_auto_commit: true,
-            auto_commit_interval_ms: 5000,
-            auto_offset_reset: Default::default(),
-            session_timeout_ms: 30000,
-            heartbeat_interval_ms: 3000,
-            max_poll_interval_ms: 300000,
-            max_partition_fetch_bytes: 1048576,
-            fetch_min_bytes: 1,
-            fetch_max_wait_ms: 500,
-            request_timeout_ms: 30000,
-            socket_timeout_ms: 60000,
-            metadata_max_age_ms: 300000,
-            isolation_level: Default::default(),
-            enable_partition_eof: false,
-            check_crcs: true,
-            sasl_username: None,
-            sasl_password: None,
-            sasl_mechanism: None,
-            security_protocol: None,
-            ssl_ca_location: None,
-            ssl_certificate_location: None,
-            ssl_key_location: None,
-            ssl_key_password: None,
-            custom_config: vec![],
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KafkaDeserializationFormat {
-    Json,
-    Protobuf,
-}
-
-impl Default for KafkaDeserializationFormat {
-    fn default() -> Self {
-        KafkaDeserializationFormat::Protobuf
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KafkaAutoOffsetReset {
-    /// Start from the beginning of the topic
-    Earliest,
-    /// Start from the end of the topic
-    Latest,
-    /// Throw error if no offset is found
-    Error,
-}
-
-impl Default for KafkaAutoOffsetReset {
-    fn default() -> Self {
-        KafkaAutoOffsetReset::Latest
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum KafkaIsolationLevel {
-    /// Read all messages (including uncommitted)
-    ReadUncommitted,
-    /// Read only committed messages
-    ReadCommitted,
-}
-
-impl Default for KafkaIsolationLevel {
-    fn default() -> Self {
-        KafkaIsolationLevel::ReadCommitted
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum KafkaSaslMechanism {
-    /// SASL/PLAIN mechanism
-    Plain,
-    /// SASL/SCRAM-SHA-256 mechanism
-    ScramSha256,
-    /// SASL/SCRAM-SHA-512 mechanism
-    ScramSha512,
-}
-
-impl Default for KafkaSaslMechanism {
-    fn default() -> Self {
-        KafkaSaslMechanism::Plain
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug, ValueEnum, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum KafkaSecurityProtocol {
-    /// Plaintext protocol
-    Plaintext,
-    /// SSL/TLS protocol
-    Ssl,
-    /// SASL/PLAINTEXT protocol
-    SaslPlaintext,
-    /// SASL/SSL protocol
-    SaslSsl,
-}
-
-impl Default for KafkaSecurityProtocol {
-    fn default() -> Self {
-        KafkaSecurityProtocol::Plaintext
-    }
-}
-
-impl From<KafkaDeserializationFormat> for DeserializationFormat {
-    fn from(value: KafkaDeserializationFormat) -> Self {
-        match value {
-            KafkaDeserializationFormat::Json => DeserializationFormat::Json,
-            KafkaDeserializationFormat::Protobuf => DeserializationFormat::Protobuf,
-        }
-    }
-}
-
-impl From<KafkaAutoOffsetReset> for AutoOffsetReset {
-    fn from(value: KafkaAutoOffsetReset) -> Self {
-        match value {
-            KafkaAutoOffsetReset::Earliest => AutoOffsetReset::Earliest,
-            KafkaAutoOffsetReset::Latest => AutoOffsetReset::Latest,
-            KafkaAutoOffsetReset::Error => AutoOffsetReset::Error,
-        }
-    }
-}
-
-impl From<KafkaIsolationLevel> for IsolationLevel {
-    fn from(value: KafkaIsolationLevel) -> Self {
-        match value {
-            KafkaIsolationLevel::ReadUncommitted => IsolationLevel::ReadUncommitted,
-            KafkaIsolationLevel::ReadCommitted => IsolationLevel::ReadCommitted,
-        }
-    }
-}
-
-impl From<KafkaSaslMechanism> for SaslMechanism {
-    fn from(value: KafkaSaslMechanism) -> Self {
-        match value {
-            KafkaSaslMechanism::Plain => SaslMechanism::Plain,
-            KafkaSaslMechanism::ScramSha256 => SaslMechanism::ScramSha256,
-            KafkaSaslMechanism::ScramSha512 => SaslMechanism::ScramSha512,
-        }
-    }
-}
-
-impl From<KafkaSecurityProtocol> for SecurityProtocol {
-    fn from(value: KafkaSecurityProtocol) -> Self {
-        match value {
-            KafkaSecurityProtocol::Plaintext => SecurityProtocol::Plaintext,
-            KafkaSecurityProtocol::Ssl => SecurityProtocol::Ssl,
-            KafkaSecurityProtocol::SaslPlaintext => SecurityProtocol::SaslPlaintext,
-            KafkaSecurityProtocol::SaslSsl => SecurityProtocol::SaslSsl,
-        }
-    }
-}
-
 impl KafkaReceiverArgs {
     pub fn build_config(&self) -> KafkaReceiverConfig {
         let mut config = KafkaReceiverConfig::new(self.brokers.clone(), self.group_id.clone())
             .with_traces(self.traces)
             .with_metrics(self.metrics)
             .with_logs(self.logs)
-            .with_deserialization_format(self.format.into())
+            .with_deserialization_format(self.format)
             .with_client_id(self.client_id.clone())
             .with_auto_commit(self.enable_auto_commit, self.auto_commit_interval_ms)
-            .with_auto_offset_reset(self.auto_offset_reset.into())
+            .with_auto_offset_reset(self.auto_offset_reset)
             .with_session_timeout_ms(self.session_timeout_ms)
             .with_heartbeat_interval_ms(self.heartbeat_interval_ms)
             .with_max_poll_interval_ms(self.max_poll_interval_ms)
@@ -465,7 +305,7 @@ impl KafkaReceiverArgs {
                 self.fetch_max_wait_ms,
                 self.max_partition_fetch_bytes,
             )
-            .with_isolation_level(self.isolation_level.into())
+            .with_isolation_level(self.isolation_level)
             .with_custom_config(self.custom_config.clone());
 
         // Set topics if provided
@@ -480,7 +320,6 @@ impl KafkaReceiverArgs {
         }
 
         // Set timeout configurations
-        config.request_timeout_ms = self.request_timeout_ms;
         config.socket_timeout_ms = self.socket_timeout_ms;
         config.metadata_max_age_ms = self.metadata_max_age_ms;
 
@@ -495,14 +334,9 @@ impl KafkaReceiverArgs {
             self.sasl_mechanism,
             self.security_protocol,
         ) {
-            config = config.with_sasl_auth(
-                username.clone(),
-                password.clone(),
-                mechanism.into(),
-                protocol.into(),
-            );
+            config = config.with_sasl_auth(username.clone(), password.clone(), mechanism, protocol);
         } else if let Some(protocol) = self.security_protocol {
-            config.security_protocol = Some(protocol.into());
+            config.security_protocol = Some(protocol);
         }
 
         // Configure SSL if provided
@@ -519,40 +353,39 @@ impl KafkaReceiverArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::receivers::kafka::config::{AutoOffsetReset, IsolationLevel, SaslMechanism};
 
     #[test]
     fn test_kafka_sasl_mechanism_deserialization() {
-        let plain = serde_json::from_str::<KafkaSaslMechanism>("\"plain\"").unwrap();
-        assert_eq!(plain, KafkaSaslMechanism::Plain);
+        let plain = serde_json::from_str::<SaslMechanism>("\"plain\"").unwrap();
+        assert_eq!(plain, SaslMechanism::Plain);
 
-        let scram_sha_256 = serde_json::from_str::<KafkaSaslMechanism>("\"scram-sha256\"").unwrap();
-        assert_eq!(scram_sha_256, KafkaSaslMechanism::ScramSha256);
+        let scram_sha_256 = serde_json::from_str::<SaslMechanism>("\"scram-sha256\"").unwrap();
+        assert_eq!(scram_sha_256, SaslMechanism::ScramSha256);
 
-        let scram_sha_512 = serde_json::from_str::<KafkaSaslMechanism>("\"scram-sha512\"").unwrap();
-        assert_eq!(scram_sha_512, KafkaSaslMechanism::ScramSha512);
+        let scram_sha_512 = serde_json::from_str::<SaslMechanism>("\"scram-sha512\"").unwrap();
+        assert_eq!(scram_sha_512, SaslMechanism::ScramSha512);
     }
 
     #[test]
     fn test_kafka_auto_offset_reset_deserialization() {
-        let earliest = serde_json::from_str::<KafkaAutoOffsetReset>("\"earliest\"").unwrap();
-        assert_eq!(earliest, KafkaAutoOffsetReset::Earliest);
+        let earliest = serde_json::from_str::<AutoOffsetReset>("\"earliest\"").unwrap();
+        assert_eq!(earliest, AutoOffsetReset::Earliest);
 
-        let latest = serde_json::from_str::<KafkaAutoOffsetReset>("\"latest\"").unwrap();
-        assert_eq!(latest, KafkaAutoOffsetReset::Latest);
+        let latest = serde_json::from_str::<AutoOffsetReset>("\"latest\"").unwrap();
+        assert_eq!(latest, AutoOffsetReset::Latest);
 
-        let error = serde_json::from_str::<KafkaAutoOffsetReset>("\"error\"").unwrap();
-        assert_eq!(error, KafkaAutoOffsetReset::Error);
+        let error = serde_json::from_str::<AutoOffsetReset>("\"error\"").unwrap();
+        assert_eq!(error, AutoOffsetReset::Error);
     }
 
     #[test]
     fn test_kafka_isolation_level_deserialization() {
         let read_uncommitted =
-            serde_json::from_str::<KafkaIsolationLevel>("\"read-uncommitted\"").unwrap();
-        assert_eq!(read_uncommitted, KafkaIsolationLevel::ReadUncommitted);
+            serde_json::from_str::<IsolationLevel>("\"read-uncommitted\"").unwrap();
+        assert_eq!(read_uncommitted, IsolationLevel::ReadUncommitted);
 
-        let read_committed =
-            serde_json::from_str::<KafkaIsolationLevel>("\"read-committed\"").unwrap();
-        assert_eq!(read_committed, KafkaIsolationLevel::ReadCommitted);
+        let read_committed = serde_json::from_str::<IsolationLevel>("\"read-committed\"").unwrap();
+        assert_eq!(read_committed, IsolationLevel::ReadCommitted);
     }
 }
