@@ -10,6 +10,8 @@ use crate::init::args::{AgentRun, Exporter, Receiver};
 use crate::init::awsemf_exporter::AwsEmfExporterArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
+#[cfg(feature = "file_exporter")]
+use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::otlp_exporter::{
@@ -95,6 +97,8 @@ pub(crate) enum ExporterArgs {
     Awsemf(AwsEmfExporterArgs),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterArgs),
+    #[cfg(feature = "file_exporter")]
+    File(FileExporterArgs),
 }
 
 #[derive(PartialEq)]
@@ -131,6 +135,8 @@ pub(crate) enum ExporterConfig {
     Awsemf(AwsEmfExporterConfigBuilder),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
+    #[cfg(feature = "file_exporter")]
+    File(crate::exporters::file::config::FileExporterConfig),
 }
 
 #[derive(Debug)]
@@ -268,6 +274,16 @@ impl TryIntoConfig for ExporterArgs {
                     XRayExporterConfigBuilder::new(xray.region, xray.custom_endpoint.clone());
 
                 Ok(ExporterConfig::Xray(builder))
+            }
+            #[cfg(feature = "file_exporter")]
+            ExporterArgs::File(file) => {
+                let config = crate::exporters::file::config::FileExporterConfig::new(
+                    file.file_format,
+                    file.output_dir.clone(),
+                    file.flush_interval,
+                    file.parquet_compression,
+                );
+                Ok(ExporterConfig::File(config))
             }
             ExporterArgs::Awsemf(awsemf) => {
                 if pipeline_type != PipelineType::Metrics {
@@ -585,6 +601,13 @@ fn get_single_exporter_config(
             cfg.traces = Some(ExporterConfig::Kafka(kafka_config.clone()));
             cfg.metrics = Some(ExporterConfig::Kafka(kafka_config.clone()));
             cfg.logs = Some(ExporterConfig::Kafka(kafka_config));
+        }
+        #[cfg(feature = "file_exporter")]
+        Exporter::File => {
+            let args = ExporterArgs::File(config.file_exporter.clone());
+            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
         }
     }
 

@@ -373,6 +373,27 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "file_exporter")]
+                Some(ExporterConfig::File(config)) => {
+                    let exporter =
+                        crate::exporters::file::FileExporterBuilder::build_traces_exporter(
+                            &config,
+                            trace_pipeline_out_rx,
+                        )?;
+
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = exporter.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = %e,
+                                exporter_type = "file_traces",
+                                "File exporter returned from run loop with error."
+                            );
+                        }
+                        Ok(())
+                    });
+                }
                 _ => {}
             }
         }
@@ -453,6 +474,27 @@ impl Agent {
                         Ok(())
                     });
                 }
+                #[cfg(feature = "file_exporter")]
+                Some(ExporterConfig::File(config)) => {
+                    let exporter =
+                        crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
+                            &config,
+                            metrics_pipeline_out_rx,
+                        )?;
+
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = exporter.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = %e,
+                                exporter_type = "file_metrics",
+                                "File exporter returned from run loop with error."
+                            );
+                        }
+                    });
+                }
+
                 Some(ExporterConfig::Awsemf(cfg_builder)) => {
                     let config = AwsConfig::from_env();
                     let builder = cfg_builder.build();
@@ -536,6 +578,27 @@ impl Agent {
                     let token = exporters_cancel.clone();
                     exporters_task_set.spawn(async move {
                         logs_exporter.start(token).await;
+                        Ok(())
+                    });
+                }
+                #[cfg(feature = "file_exporter")]
+                Some(ExporterConfig::File(config)) => {
+                    let exporter =
+                        crate::exporters::file::FileExporterBuilder::build_logs_exporter(
+                            &config,
+                            logs_pipeline_out_rx,
+                        )?;
+
+                    let token = exporters_cancel.clone();
+                    exporters_task_set.spawn(async move {
+                        let res = exporter.start(token).await;
+                        if let Err(e) = res {
+                            error!(
+                                error = %e,
+                                exporter_type = "file_logs",
+                                "File exporter returned from run loop with error."
+                            );
+                        }
                         Ok(())
                     });
                 }

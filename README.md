@@ -91,26 +91,26 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 
 Any option above that does not contain a default is considered false or unset by default.
 
-| Option                            | Default              | Options                                                      |
-| --------------------------------- | -------------------- | ------------------------------------------------------------ |
-| --daemon                          |                      |                                                              |
-| --log-format                      | text                 | json                                                         |
-| --pid-file                        | /tmp/rotel-agent.pid |                                                              |
-| --log-file                        | /tmp/rotel-agent.log |                                                              |
-| --debug-log                       |                      | metrics, traces, logs                                        |
-| --debug-log-verbosity             | basic                | basic, detailed                                              |
-| --otlp-grpc-endpoint              | localhost:4317       |                                                              |
-| --otlp-http-endpoint              | localhost:4318       |                                                              |
-| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                              |
-| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, awsxray, awsemf, kafka |
-| --otlp-receiver-traces-disabled   |                      |                                                              |
-| --otlp-receiver-metrics-disabled  |                      |                                                              |
-| --otlp-receiver-logs-disabled     |                      |                                                              |
-| --otlp-receiver-traces-http-path  | /v1/traces           |                                                              |
-| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                              |
-| --otlp-receiver-logs-http-path    | /v1/logs             |                                                              |
-| --otel-resource-attributes        |                      |                                                              |
-| --enable-internal-telemetry       |                      |                                                              |
+| Option                            | Default              | Options                                                            |
+| --------------------------------- | -------------------- | ------------------------------------------------------------------ |
+| --daemon                          |                      |                                                                    |
+| --log-format                      | text                 | json                                                               |
+| --pid-file                        | /tmp/rotel-agent.pid |                                                                    |
+| --log-file                        | /tmp/rotel-agent.log |                                                                    |
+| --debug-log                       |                      | metrics, traces, logs                                              |
+| --debug-log-verbosity             | basic                | basic, detailed                                                    |
+| --otlp-grpc-endpoint              | localhost:4317       |                                                                    |
+| --otlp-http-endpoint              | localhost:4318       |                                                                    |
+| --otlp-grpc-max-recv-msg-size-mib | 4                    |                                                                    |
+| --exporter                        | otlp                 | otlp, blackhole, datadog, clickhouse, awsxray, awsemf, kafka, file |
+| --otlp-receiver-traces-disabled   |                      |                                                                    |
+| --otlp-receiver-metrics-disabled  |                      |                                                                    |
+| --otlp-receiver-logs-disabled     |                      |                                                                    |
+| --otlp-receiver-traces-http-path  | /v1/traces           |                                                                    |
+| --otlp-receiver-metrics-http-path | /v1/metrics          |                                                                    |
+| --otlp-receiver-logs-http-path    | /v1/logs             |                                                                    |
+| --otel-resource-attributes        |                      |                                                                    |
+| --enable-internal-telemetry       |                      |                                                                    |
 
 The PID and LOG files are only used when run in `--daemon` mode.
 
@@ -453,6 +453,35 @@ cargo test --test kafka_integration_tests --features integration-tests
 ```
 
 See [KAFKA_INTEGRATION_TESTS.md](KAFKA_INTEGRATION_TESTS.md) for detailed testing instructions.
+
+### File exporter configuration
+
+**NOTE**: The file exporter at the moment is experimental and not enabled by default. It must be enabled by building with the feature flag
+`--features file_exporter`, like:
+
+```shell
+cargo build --features file_exporter
+```
+
+**WARNING**: The Parquet and JSON file format is evolving and subject to breaking changes between releases. There is consolidation planned with official Arrow schemas from the OpenTelemetry Arrow project.
+
+The File exporter can be selected with `--exporter file`. It writes telemetry
+out as periodic files on the local filesystem. Currently **Parquet** and
+**JSON** formats are supported.
+
+| Option                              | Default    | Description                                                                                                  |
+| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| --file-exporter-format              | parquet    | `parquet` or `json`                                                                                          |
+| --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                              |
+| --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)   |
+| --file-exporter-parquet-compression | snappy     | Compression for Parquet files: `none`, `snappy`, `gzip`, `lz4`, `zstd` (only applies when format is parquet) |
+
+Each flush creates a file named `<telemetry-type>-<timestamp>.<ext>` inside the
+specified directory. For example, with default settings Rotel will emit files
+such as `traces-20250614-120000.parquet` every five seconds. Files are saved into the `traces`, `logs`, and `metrics` subdirectories.
+
+_The File exporter is useful for local debugging, offline analysis, and for
+feeding telemetry into batch-processing systems._
 
 ### Batch configuration
 
