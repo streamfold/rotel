@@ -27,7 +27,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
 use rotel::init::agent::Agent;
-use rotel::init::args::AgentRun;
+use rotel::init::args::{AgentRun, Receiver};
 use rotel::init::misc::bind_endpoints;
 use rotel::init::wait;
 
@@ -88,8 +88,21 @@ fn main() -> ExitCode {
         Some(Commands::Start(agent)) => {
             // Attempt to bind ports before we daemonize, so that when the parent process returns
             // the ports are already available for connection.
-            let port_map =
-                match bind_endpoints(&[agent.otlp_grpc_endpoint, agent.otlp_http_endpoint]) {
+            let mut port_map = HashMap::new();
+            let receivers: Vec<String> = agent
+                .receivers
+                .clone()
+                .unwrap_or("".to_string())
+                .split(",")
+                .map(|s| s.to_string().to_lowercase())
+                .collect();
+            if matches!(agent.receiver, Some(Receiver::Otlp))
+                || receivers.contains(&"otlp".to_string())
+            {
+                port_map = match bind_endpoints(&[
+                    agent.otlp_receiver.otlp_grpc_endpoint,
+                    agent.otlp_receiver.otlp_http_endpoint,
+                ]) {
                     Ok(ports) => ports,
                     Err(e) => {
                         unsafe {
@@ -103,6 +116,7 @@ fn main() -> ExitCode {
                         return ExitCode::from(1);
                     }
                 };
+            }
 
             if agent.daemon {
                 match daemonize(&agent.pid_file, &agent.log_file) {

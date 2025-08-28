@@ -76,6 +76,16 @@ pub struct ClickhouseExporterArgs {
         default_value = "false"
     )]
     pub json_underscore: bool,
+
+    /// Clickhouse Exporter request timeout
+    #[arg(
+        id("CLICKHOUSE_EXPORTER_REQUEST_TIMEOUT"),
+        long("clickhouse-exporter-request-timeout"),
+        env = "ROTEL_CLICKHOUSE_EXPORTER_REQUEST_TIMEOUT",
+        default_value = "5s",
+        value_parser = humantime::parse_duration
+    )]
+    pub request_timeout: std::time::Duration,
 }
 
 impl Default for ClickhouseExporterArgs {
@@ -90,6 +100,7 @@ impl Default for ClickhouseExporterArgs {
             async_insert: "true".to_string(),
             enable_json: false,
             json_underscore: false,
+            request_timeout: std::time::Duration::from_secs(5),
         }
     }
 }

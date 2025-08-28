@@ -6,7 +6,7 @@ use crate::exporters::kafka::KafkaExporterConfig;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
-use crate::init::args::{AgentRun, Exporter};
+use crate::init::args::{AgentRun, Exporter, Receiver};
 use crate::init::awsemf_exporter::AwsEmfExporterArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
@@ -19,6 +19,8 @@ use crate::init::otlp_exporter::{
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
+use crate::receivers::kafka::config::KafkaReceiverConfig;
+use crate::receivers::otlp::OTLPReceiverConfig;
 use figment::{Figment, providers::Env};
 use gethostname::gethostname;
 use std::collections::HashMap;
@@ -137,6 +139,13 @@ pub(crate) enum ExporterConfig {
     File(crate::exporters::file::config::FileExporterConfig),
 }
 
+#[derive(Debug)]
+pub(crate) enum ReceiverConfig {
+    Otlp(OTLPReceiverConfig),
+    #[cfg(feature = "rdkafka")]
+    Kafka(KafkaReceiverConfig),
+}
+
 impl TryIntoConfig for ExporterArgs {
     fn try_into_config(
         &self,
@@ -239,7 +248,8 @@ impl TryIntoConfig for ExporterArgs {
                 .with_compression(ch.compression)
                 .with_async_insert(async_insert)
                 .with_json(ch.enable_json)
-                .with_json_underscore(ch.json_underscore);
+                .with_json_underscore(ch.json_underscore)
+                .with_request_timeout(ch.request_timeout);
 
                 if let Some(user) = &ch.user {
                     cfg_builder = cfg_builder.with_user(user.clone());
@@ -288,9 +298,15 @@ impl TryIntoConfig for ExporterArgs {
                     .with_region(awsemf.region)
                     .with_log_group_name(awsemf.log_group_name.clone())
                     .with_log_stream_name(awsemf.log_stream_name.clone())
+                    .with_include_dimensions(awsemf.include_dimensions.clone())
+                    .with_exclude_dimensions(awsemf.exclude_dimensions.clone())
                     .with_retain_initial_value_of_delta_metric(
                         awsemf.retain_initial_value_of_delta_metric,
                     );
+
+                if let Some(log_retention) = &awsemf.log_retention {
+                    builder = builder.with_log_retention(*log_retention);
+                }
 
                 if let Some(namespace) = &awsemf.namespace {
                     builder = builder.with_namespace(namespace.clone());
@@ -313,6 +329,35 @@ impl TryIntoConfig for ExporterArgs {
     }
 }
 
+pub(crate) fn get_receivers_config(
+    config: &AgentRun,
+) -> Result<HashMap<Receiver, ReceiverConfig>, BoxError> {
+    if config.receivers.is_none() && config.receiver.is_none() {
+        let mut map = HashMap::new();
+        map.insert(Receiver::Otlp, get_receiver_config(config, Receiver::Otlp));
+        return Ok(map);
+    }
+    if config.receivers.is_some() && config.receiver.is_some() {
+        return Err("Can not use --receiver and --receivers together".into());
+    }
+
+    if let Some(receiver) = config.receiver {
+        let mut map = HashMap::new();
+        map.insert(receiver, get_receiver_config(config, receiver));
+        return Ok(map);
+    }
+
+    let mut receivers: HashMap<Receiver, ReceiverConfig> = HashMap::new();
+    if let Some(recs) = &config.receivers {
+        let rec: Vec<&str> = recs.split(",").collect();
+        for receiver in rec {
+            let receiver: Receiver = receiver.parse()?;
+            receivers.insert(receiver, get_receiver_config(config, receiver));
+        }
+    }
+    Ok(receivers)
+}
+
 pub(crate) fn get_exporters_config(
     config: &AgentRun,
     environment: &str,
@@ -323,7 +368,7 @@ pub(crate) fn get_exporters_config(
     }
 
     if config.exporters.is_some() && config.exporter.is_some() {
-        return Err("Can not use --exporter and --exporters".into());
+        return Err("Can not use --exporter and --exporters together".into());
     }
 
     if let Some(exporter) = config.exporter {
@@ -476,6 +521,7 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
                 Ok(args) => args,
                 Err(e) => return Err(format!("failed to parse AWS EMF config: {}", e).into()),
             };
+
             Ok(ExporterArgs::Awsemf(args))
         }
         #[cfg(feature = "rdkafka")]
@@ -487,6 +533,15 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
             Ok(ExporterArgs::Kafka(args))
         }
         _ => Err(format!("unknown exporter type: {}", exporter_type).into()),
+    }
+}
+
+// Function is currently small but expect it will grow over time so splitting out rather than inlining for now.
+fn get_receiver_config(config: &AgentRun, receiver: Receiver) -> ReceiverConfig {
+    match receiver {
+        Receiver::Otlp => ReceiverConfig::Otlp(OTLPReceiverConfig::from(&config.otlp_receiver)),
+        #[cfg(feature = "rdkafka")]
+        Receiver::Kafka => ReceiverConfig::Kafka(config.kafka_receiver.build_config()),
     }
 }
 

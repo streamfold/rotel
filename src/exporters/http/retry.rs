@@ -174,12 +174,20 @@ where
                 }
 
                 // Log the retry attempt
-                info!(
-                    attempt = self.attempts,
-                    delay = ?sleep_duration,
-                    status = ?result,
-                    "Exporting failed, will retry again after delay.",
-                );
+                match result {
+                    Ok(r) => info!(
+                        attempt = self.attempts,
+                        delay = ?sleep_duration,
+                        response = ?r,
+                        "Exporting failed, will retry again after delay.",
+                    ),
+                    Err(e) => info!(
+                        attempt = self.attempts,
+                        delay = ?sleep_duration,
+                        error = e,
+                        "Exporting failed, will retry again after delay.",
+                    ),
+                };
 
                 let mut rx = self.retry_broadcast.subscribe();
                 let fut = async move {
