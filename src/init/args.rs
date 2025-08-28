@@ -53,7 +53,7 @@ pub struct AgentRun {
     pub kafka_receiver: KafkaReceiverArgs,
 
     /// Single receiver (type)
-    #[arg(value_enum, long, env = "ROTEL_RECEIVER")]
+    #[arg(value_enum, long, env = "ROTEL_RECEIVER", default_value = "otlp")]
     pub receiver: Option<Receiver>,
 
     /// Multiple exporters (name:type,...)
