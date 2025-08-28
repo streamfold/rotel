@@ -242,7 +242,8 @@ impl TryIntoConfig for ExporterArgs {
                 .with_compression(ch.compression)
                 .with_async_insert(async_insert)
                 .with_json(ch.enable_json)
-                .with_json_underscore(ch.json_underscore);
+                .with_json_underscore(ch.json_underscore)
+                .with_request_timeout(ch.request_timeout);
 
                 if let Some(user) = &ch.user {
                     cfg_builder = cfg_builder.with_user(user.clone());

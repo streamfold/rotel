@@ -70,6 +70,7 @@ pub struct ClickhouseExporterConfigBuilder {
     async_insert: bool,
     use_json: bool,
     use_json_underscore: bool,
+    request_timeout: Duration,
 }
 
 type SvcType<RespBody> = TowerRetry<
@@ -103,6 +104,7 @@ impl ClickhouseExporterConfigBuilder {
             endpoint,
             database,
             table_prefix,
+            request_timeout: Duration::from_secs(5),
             ..Default::default()
         }
     }
@@ -137,6 +139,11 @@ impl ClickhouseExporterConfigBuilder {
         self
     }
 
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
         let config = ConnectionConfig {
             endpoint: self.endpoint,
@@ -155,6 +162,7 @@ impl ClickhouseExporterConfigBuilder {
             config,
             request_mapper: mapper,
             retry_config: self.retry_config,
+            request_timeout: self.request_timeout,
         })
     }
 }
@@ -163,6 +171,7 @@ pub struct ClickhouseExporterBuilder {
     config: ConnectionConfig,
     retry_config: RetryConfig,
     request_mapper: Arc<RequestMapper>,
+    request_timeout: Duration,
 }
 
 impl ClickhouseExporterBuilder {
@@ -215,7 +224,7 @@ impl ClickhouseExporterBuilder {
 
         let svc = ServiceBuilder::new()
             .retry(retry_layer)
-            .timeout(Duration::from_secs(5))
+            .timeout(self.request_timeout)
             .service(client);
 
         let enc_stream =
