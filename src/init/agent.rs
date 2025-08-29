@@ -492,6 +492,8 @@ impl Agent {
                                 "File exporter returned from run loop with error."
                             );
                         }
+
+                        Ok(())
                     });
                 }
 
