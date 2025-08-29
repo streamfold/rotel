@@ -2110,6 +2110,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
+name = "intermediate_language"
+version = "0.1.0"
+
+[[package]]
 name = "inventory"
 version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3646,6 +3650,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "indexmap 2.10.0",
+ "intermediate_language",
  "libc",
  "lz4_flex",
  "num_cpus",

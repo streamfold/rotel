@@ -89,6 +89,7 @@ parquet = { version = "55.1.0", optional = true }
 arrow = { version = "55.1.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 wildcard = "0.3.0"
+intermediate_language = {path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_abstraction/intermediate_language" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
