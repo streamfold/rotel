@@ -89,7 +89,14 @@ parquet = { version = "55.1.0", optional = true }
 arrow = { version = "55.1.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 wildcard = "0.3.0"
-intermediate_language = {path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_abstraction/intermediate_language" }
+intermediate_language = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_abstraction/intermediate_language" }
+data_engine_recordset = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_engine/engine-recordset" }
+data_engine_expressions = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_engine/expressions" }
+data_engine_parser_abstractions = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_engine/parser-abstractions" }
+data_engine_ottl_parser = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_engine/ottl-parser" }
+ottl_plugin = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_abstraction/ottl_plugin" }
+data_engine_kql_parser = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_engine/kql-parser" }
+data_engine_recordset_otlp_bridge = { path = "/home/mheffner/git/clones/open-telemetry/otel-arrow/rust/experimental/query_engine/engine-recordset-otlp-bridge" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
