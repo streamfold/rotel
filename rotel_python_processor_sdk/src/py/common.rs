@@ -5,11 +5,11 @@ use crate::model::common::{
     RAnyValue, RArrayValue, REntityRef, RInstrumentationScope, RKeyValue, RKeyValueList,
 };
 use crate::model::otel_transform::convert_attributes;
-use crate::py::{AttributesList, handle_poison_error};
+use crate::py::{handle_poison_error, AttributesList};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::{PyAnyMethods, PyBool, PyBytes, PyFloat, PyInt, PyString};
 #[allow(deprecated)]
-use pyo3::{IntoPy, Py, PyErr, PyObject, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, IntoPy, Py, PyErr, PyObject, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
 
 // Wrapper for AnyValue that can be exposed to Python

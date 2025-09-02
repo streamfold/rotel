@@ -3,9 +3,9 @@ use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::model::trace::{REvent, RLink, RScopeSpans, RSpan, RStatus};
 use crate::py::common::KeyValue;
-use crate::py::{AttributesList, InstrumentationScope, Resource, handle_poison_error};
+use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::exceptions::PyRuntimeError;
-use pyo3::{Py, PyErr, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
 use std::vec;
 

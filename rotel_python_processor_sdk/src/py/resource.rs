@@ -1,7 +1,7 @@
 use crate::model::common::{REntityRef, RKeyValue};
 use crate::py::common::{EntityRef, EntityRefs, KeyValue};
 use crate::py::handle_poison_error;
-use pyo3::{Py, PyErr, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
+use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
 use std::vec;
 

@@ -3,8 +3,8 @@
 use crate::model::common::RInstrumentationScope;
 use crate::model::resource::RResource;
 use crate::py::common::KeyValue;
-use crate::py::{AttributesList, InstrumentationScope, Resource, handle_poison_error};
-use pyo3::{Py, PyErr, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
+use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
+use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
 use std::vec;
 
