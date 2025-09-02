@@ -17,7 +17,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing-log = "0.2.0"
 tracing-bunyan-formatter = "0.3.10"
 tracing-appender = "0.2.3"
-tonic = { version = "0.14.1", features = ["gzip", "tls", "tls-roots", "tls-native-roots"] }
+tonic = { version = "0.13.1", features = ["gzip", "tls-aws-lc", "tls-native-roots"] }
 opentelemetry = "0.30.0"
 opentelemetry_sdk = { version = "0.30.0" }
 opentelemetry-proto = { version = "0.30.0" }

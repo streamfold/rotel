@@ -65,6 +65,7 @@ mod tests {
                     }),
                 }],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_spans: vec![ScopeSpans {
                 scope: None,
@@ -95,6 +96,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_metrics: vec![ScopeMetrics {
                 scope: None,
@@ -132,6 +134,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_logs: vec![ScopeLogs {
                 scope: None,
@@ -459,6 +462,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_spans: vec![ScopeSpans {
                 scope: None,
@@ -490,6 +494,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_spans: vec![],
             schema_url: "".to_string(),
@@ -520,6 +525,7 @@ mod tests {
                     }),
                 }],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_logs: vec![],
             schema_url: "".to_string(),
@@ -549,6 +555,7 @@ mod tests {
                     }),
                 }],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_logs: vec![],
             schema_url: "".to_string(),
@@ -573,6 +580,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![], // Empty attributes
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_logs: vec![],
             schema_url: "".to_string(),
@@ -602,6 +610,7 @@ mod tests {
                         }),
                     }],
                     dropped_attributes_count: 0,
+                    entity_refs: Vec::new(),
                 }),
                 scope_logs: vec![],
                 schema_url: "".to_string(),
@@ -615,6 +624,7 @@ mod tests {
                         }),
                     }],
                     dropped_attributes_count: 0,
+                    entity_refs: Vec::new(),
                 }),
                 scope_logs: vec![],
                 schema_url: "".to_string(),
@@ -644,6 +654,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_logs: vec![],
             schema_url: "".to_string(),
@@ -674,6 +685,7 @@ mod tests {
                     }),
                 }],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_metrics: vec![],
             schema_url: "".to_string(),
@@ -703,6 +715,7 @@ mod tests {
                     }),
                 }],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_metrics: vec![],
             schema_url: "".to_string(),
@@ -727,6 +740,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![], // Empty attributes
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_metrics: vec![],
             schema_url: "".to_string(),
@@ -756,6 +770,7 @@ mod tests {
                         }),
                     }],
                     dropped_attributes_count: 0,
+                    entity_refs: Vec::new(),
                 }),
                 scope_metrics: vec![],
                 schema_url: "".to_string(),
@@ -769,6 +784,7 @@ mod tests {
                         }),
                     }],
                     dropped_attributes_count: 0,
+                    entity_refs: Vec::new(),
                 }),
                 scope_metrics: vec![],
                 schema_url: "".to_string(),
@@ -798,6 +814,7 @@ mod tests {
             resource: Some(Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
             }),
             scope_metrics: vec![],
             schema_url: "".to_string(),
