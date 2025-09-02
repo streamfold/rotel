@@ -76,6 +76,7 @@ criterion = { version = "0.5.1", features = ["async_tokio"] }
 tracing-test = "0.2.5"
 tempfile = "3.19.1"
 rdkafka = { version = "0.36", features = ["tokio", "libz-static", "ssl-vendored", "zstd", "cmake-build"] }
+tonic = { version = "0.13.1", features = ["gzip", "tls-aws-lc"] } # TLS used to test exporter TLS
 
 [build-dependencies]
 prost-build = "0.13.4"
