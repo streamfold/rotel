@@ -51,6 +51,14 @@ pub struct RKeyValue {
     pub value: Arc<Mutex<Option<RAnyValue>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct REntityRef {
+    pub schema_url: Arc<Mutex<String>>,
+    pub r#type: Arc<Mutex<String>>,
+    pub id_keys: Arc<Mutex<Vec<String>>>,
+    pub description_keys: Arc<Mutex<Vec<String>>>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RInstrumentationScope {
     pub name: String,

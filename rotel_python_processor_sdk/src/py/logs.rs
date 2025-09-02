@@ -4,8 +4,8 @@ use crate::model::logs::{RLogRecord, RScopeLogs};
 use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::py::common::{AnyValue, KeyValue};
-use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
-use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
+use crate::py::{AttributesList, InstrumentationScope, Resource, handle_poison_error};
+use pyo3::{Py, PyErr, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
 use std::sync::{Arc, Mutex};
 
 #[pyclass]
@@ -28,6 +28,7 @@ impl ResourceLogs {
         Ok(Some(Resource {
             attributes: inner.attributes.clone(),
             dropped_attributes_count: inner.dropped_attributes_count.clone(),
+            entity_refs: inner.entity_refs.clone(),
         }))
     }
     #[setter]
@@ -36,6 +37,7 @@ impl ResourceLogs {
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
+            entity_refs: resource.entity_refs,
         });
         Ok(())
     }

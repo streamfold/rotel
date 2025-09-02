@@ -3,9 +3,9 @@ use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::model::trace::{REvent, RLink, RScopeSpans, RSpan, RStatus};
 use crate::py::common::KeyValue;
-use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
+use crate::py::{AttributesList, InstrumentationScope, Resource, handle_poison_error};
 use pyo3::exceptions::PyRuntimeError;
-use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
+use pyo3::{Py, PyErr, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
 use std::sync::{Arc, Mutex};
 use std::vec;
 
@@ -29,6 +29,7 @@ impl ResourceSpans {
         Ok(Some(Resource {
             attributes: inner.attributes.clone(),
             dropped_attributes_count: inner.dropped_attributes_count.clone(),
+            entity_refs: inner.entity_refs.clone(),
         }))
     }
     #[setter]
@@ -37,6 +38,7 @@ impl ResourceSpans {
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
+            entity_refs: resource.entity_refs,
         });
         Ok(())
     }

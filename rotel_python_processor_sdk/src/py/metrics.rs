@@ -3,8 +3,8 @@
 use crate::model::common::RInstrumentationScope;
 use crate::model::resource::RResource;
 use crate::py::common::KeyValue;
-use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
-use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
+use crate::py::{AttributesList, InstrumentationScope, Resource, handle_poison_error};
+use pyo3::{Py, PyErr, PyRef, PyRefMut, PyResult, Python, pyclass, pymethods};
 use std::sync::{Arc, Mutex};
 use std::vec;
 
@@ -36,6 +36,7 @@ impl ResourceMetrics {
         Ok(Some(Resource {
             attributes: inner_resource.attributes.clone(),
             dropped_attributes_count: inner_resource.dropped_attributes_count.clone(),
+            entity_refs: inner_resource.entity_refs.clone(),
         }))
     }
 
@@ -45,6 +46,7 @@ impl ResourceMetrics {
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
+            entity_refs: resource.entity_refs,
         });
         Ok(())
     }
