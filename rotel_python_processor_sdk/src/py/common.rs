@@ -696,7 +696,7 @@ impl EntityRef {
     }
 
     #[setter]
-    fn set_type(&mut self, new_value: String) -> PyResult<()> {
+    fn set_type_(&mut self, new_value: String) -> PyResult<()> {
         let inner = self.inner.lock().map_err(handle_poison_error)?;
         let mut type_val = inner.r#type.lock().map_err(handle_poison_error)?;
         *type_val = new_value;

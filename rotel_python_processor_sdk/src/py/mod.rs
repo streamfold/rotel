@@ -110,6 +110,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
+    common_v1_module.add_class::<EntityRef>()?;
+    common_v1_module.add_class::<EntityRefs>()?;
     common_v1_module.add_class::<KeyValueList>()?;
     common_v1_module.add_class::<KeyValue>()?;
     common_v1_module.add_class::<Attributes>()?;
@@ -158,8 +160,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::model::common::RValue::*;
     use crate::model::common::{RAnyValue, RKeyValue};
+    use crate::model::common::{REntityRef, RValue::*};
     use crate::model::{otel_transform, py_transform};
     use crate::py::metrics::ResourceMetrics;
     use chrono::Utc;
@@ -541,6 +543,54 @@ mod tests {
             }
             _ => panic!("wrong value type"),
         }
+    }
+
+    #[test]
+    fn read_and_write_resource_entities() {
+        initialize();
+
+        let entity_ref = Arc::new(Mutex::new(REntityRef {
+            schema_url: Arc::new(Mutex::new("http://example.com/schema/v1.0".to_string())),
+            r#type: Arc::new(Mutex::new("host".to_string())),
+            id_keys: Arc::new(Mutex::new(vec!["host.id".to_string()])),
+            description_keys: Arc::new(Mutex::new(vec![
+                "host.arch".to_string(),
+                "host.name".to_string(),
+            ])),
+        }));
+
+        let entity_refs = Arc::new(Mutex::new(vec![entity_ref]));
+
+        let resource = Resource {
+            attributes: Arc::new(Mutex::new(Vec::new())),
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: entity_refs.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_and_write_resource_entities_test.py", py, resource)
+        })
+        .unwrap();
+
+        let entity_refs = Arc::into_inner(entity_refs).unwrap();
+        let mut entity_refs = entity_refs.into_inner().unwrap();
+        let entity_ref = Arc::into_inner(entity_refs.pop().unwrap()).unwrap();
+        let entity_ref = entity_ref.into_inner().unwrap();
+
+        let schema_url = entity_ref.schema_url.lock().unwrap();
+        assert_eq!("http://example.com/schema/v2.0", *schema_url);
+
+        let r#type = entity_ref.r#type.lock().unwrap();
+        assert_eq!("container", *r#type);
+
+        let id_keys = entity_ref.id_keys.lock().unwrap();
+        assert_eq!(1, id_keys.len());
+        assert_eq!("container.id", id_keys[0]);
+
+        let desc_keys = entity_ref.description_keys.lock().unwrap();
+        assert_eq!(2, desc_keys.len());
+        assert_eq!("container.image.id", desc_keys[0]);
+        assert_eq!("container.image.name", desc_keys[1]);
     }
 
     #[test]
