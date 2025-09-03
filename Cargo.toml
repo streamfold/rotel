@@ -4,7 +4,7 @@ version = "0.0.1-alpha27"
 edition = "2024"
 homepage = "https://github.com/streamfold/rotel"
 readme = "README.md"
-rust-version = "1.85.1"
+rust-version = "1.89.0"
 default-run = "rotel"
 
 [dependencies]
@@ -35,16 +35,27 @@ rand = "0.8.5"
 bytes = "1.9.0"
 read-restrict = "0.3.0"
 tower = { version = "0.5.2", features = ["retry", "timeout"] }
-tower-http = { version = "0.6.2", features = ["limit", "trace", "compression-gzip", "validate-request"] }
+tower-http = { version = "0.6.2", features = [
+    "limit",
+    "trace",
+    "compression-gzip",
+    "validate-request",
+] }
 url = "2.5.4"
 hyper-rustls = { version = "0.27.5", features = ["http2"] }
 rustls = "0.23.20"
 rustls-pki-types = "1.10.0"
-pprof = { version = "0.14.0", features = ["flamegraph", "prost", "prost-codec"], optional = true }
+pprof = { version = "0.14.0", features = [
+    "flamegraph",
+    "prost",
+    "prost-codec",
+], optional = true }
 num_cpus = "1.16.0"
 hex = "0.4.3"
 serde_json = "1.0.135"
-opentelemetry-semantic-conventions = { version = "0.29.0", features = ["semconv_experimental"] }
+opentelemetry-semantic-conventions = { version = "0.29.0", features = [
+    "semconv_experimental",
+] }
 gethostname = "0.5.0"
 libc = "0.2.170"
 pin-project = "1.1.10"
@@ -61,7 +72,13 @@ indexmap = "2.9.0"
 hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
-rdkafka = { version = "0.36", features = ["tokio", "libz-static", "ssl-vendored", "zstd", "cmake-build"], optional = true }
+rdkafka = { version = "0.36", features = [
+    "tokio",
+    "libz-static",
+    "ssl-vendored",
+    "zstd",
+    "cmake-build",
+], optional = true }
 figment = { version = "0.10.19", default-features = false, features = ["env"] }
 parquet = { version = "55.1.0", optional = true }
 arrow = { version = "55.1.0", optional = true }
@@ -75,8 +92,17 @@ httpmock = "0.7.0"
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tracing-test = "0.2.5"
 tempfile = "3.19.1"
-rdkafka = { version = "0.36", features = ["tokio", "libz-static", "ssl-vendored", "zstd", "cmake-build"] }
-tonic = { version = "0.13.1", features = ["gzip", "tls-aws-lc"] } # TLS used to test exporter TLS
+rdkafka = { version = "0.36", features = [
+    "tokio",
+    "libz-static",
+    "ssl-vendored",
+    "zstd",
+    "cmake-build",
+] }
+tonic = { version = "0.13.1", features = [
+    "gzip",
+    "tls-aws-lc",
+] } # TLS used to test exporter TLS
 
 [build-dependencies]
 prost-build = "0.13.4"
