@@ -734,18 +734,14 @@ pub fn transform_resource(
     let mut new_entity_refs = vec![];
     let entity_refs = Arc::into_inner(resource.entity_refs).unwrap();
     let entity_refs = entity_refs.into_inner().unwrap();
-    for entity_ref_arc in entity_refs.iter() {
-        let entity_ref = entity_ref_arc.lock().unwrap();
-        let schema_url = entity_ref.schema_url.lock().unwrap().clone();
-        let r#type = entity_ref.r#type.lock().unwrap().clone();
-        let id_keys = entity_ref.id_keys.lock().unwrap().clone();
-        let description_keys = entity_ref.description_keys.lock().unwrap().clone();
+    for entity_ref_arc in entity_refs.into_iter() {
+        let moved_data = Arc::into_inner(entity_ref_arc).unwrap().into_inner().unwrap();
 
         new_entity_refs.push(opentelemetry_proto::tonic::common::v1::EntityRef {
-            schema_url,
-            r#type,
-            id_keys,
-            description_keys,
+            schema_url: Arc::into_inner(moved_data.schema_url).unwrap().into_inner().unwrap(),
+            r#type: Arc::into_inner(moved_data.r#type).unwrap().into_inner().unwrap(),
+            id_keys: Arc::into_inner(moved_data.id_keys).unwrap().into_inner().unwrap(),
+            description_keys: Arc::into_inner(moved_data.description_keys).unwrap().into_inner().unwrap(),
         });
     }
 
