@@ -1,4 +1,4 @@
-from rotel_sdk.open_telemetry.common.v1 import EntityRef, EntityRefs
+from rotel_sdk.open_telemetry.common.v1 import EntityRef
 
 
 def process(resource):
@@ -10,16 +10,16 @@ def process(resource):
     assert er.description_keys[0] == "host.arch"
     assert er.description_keys[1] == "host.name"
 
+    # update er to make sure change is applied on rust side
+    er.id_keys = ["k8s.node.uid"]
+
     new_er = EntityRef()
     new_er.schema_url = "http://example.com/schema/v2.0"
     new_er.type_ = "container"
     new_er.id_keys = ["container.id"]
     new_er.description_keys = ["container.image.id", "container.image.name"]
 
-    new_ers = EntityRefs()
-    new_ers.append(new_er)
-
-    resource.entity_refs = new_ers
+    resource.entity_refs.append(new_er)
 
     # Check len support
-    assert 1 == len(resource.entity_refs)
+    assert 2 == len(resource.entity_refs)

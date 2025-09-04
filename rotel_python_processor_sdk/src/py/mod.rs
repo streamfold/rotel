@@ -574,6 +574,8 @@ mod tests {
 
         let entity_refs = Arc::into_inner(entity_refs).unwrap();
         let mut entity_refs = entity_refs.into_inner().unwrap();
+        
+        assert_eq!(2, entity_refs.len());
         let entity_ref = Arc::into_inner(entity_refs.pop().unwrap()).unwrap();
         let entity_ref = entity_ref.into_inner().unwrap();
 
@@ -591,6 +593,17 @@ mod tests {
         assert_eq!(2, desc_keys.len());
         assert_eq!("container.image.id", desc_keys[0]);
         assert_eq!("container.image.name", desc_keys[1]);
+        
+        // Test that the original entity ref reflects new settings
+        let entity_ref = Arc::into_inner(entity_refs.pop().unwrap()).unwrap();
+        let entity_ref = entity_ref.into_inner().unwrap();
+
+        let r#type = entity_ref.r#type.lock().unwrap();
+        assert_eq!("host", *r#type);
+
+        let id_keys = entity_ref.id_keys.lock().unwrap();
+        assert_eq!(1, id_keys.len());
+        assert_eq!("k8s.node.uid", id_keys[0]);        
     }
 
     #[test]
