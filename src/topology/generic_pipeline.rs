@@ -50,55 +50,66 @@ pub trait ResourceAttributeSettable {
 
 impl ResourceAttributeSettable for ResourceSpans {
     fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
-        let mut drop_count = 0;
-        if let Some(rs) = &self.resource {
-            drop_count = rs.dropped_attributes_count;
-        }
-        self.resource = Some(Resource {
-            attributes: build_attrs(&self.resource, attributes),
-            dropped_attributes_count: drop_count,
+        self.resource = Some(match self.resource.take() {
+            Some(rs) => Resource {
+                attributes: build_attrs(rs.attributes, attributes),
+                dropped_attributes_count: rs.dropped_attributes_count,
+                entity_refs: rs.entity_refs,
+            },
+            None => Resource {
+                attributes: build_attrs(Vec::new(), attributes),
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            },
         });
     }
 }
 
 impl ResourceAttributeSettable for ResourceMetrics {
     fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
-        let mut drop_count = 0;
-        if let Some(rs) = &self.resource {
-            drop_count = rs.dropped_attributes_count;
-        }
-        self.resource = Some(Resource {
-            attributes: build_attrs(&self.resource, attributes),
-            dropped_attributes_count: drop_count,
+        self.resource = Some(match self.resource.take() {
+            Some(rs) => Resource {
+                attributes: build_attrs(rs.attributes, attributes),
+                dropped_attributes_count: rs.dropped_attributes_count,
+                entity_refs: rs.entity_refs,
+            },
+            None => Resource {
+                attributes: build_attrs(Vec::new(), attributes),
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            },
         });
     }
 }
 
 impl ResourceAttributeSettable for ResourceLogs {
     fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
-        let mut drop_count = 0;
-        if let Some(rs) = &self.resource {
-            drop_count = rs.dropped_attributes_count;
-        }
-        self.resource = Some(Resource {
-            attributes: build_attrs(&self.resource, attributes),
-            dropped_attributes_count: drop_count,
+        self.resource = Some(match self.resource.take() {
+            Some(rs) => Resource {
+                attributes: build_attrs(rs.attributes, attributes),
+                dropped_attributes_count: rs.dropped_attributes_count,
+                entity_refs: rs.entity_refs,
+            },
+            None => Resource {
+                attributes: build_attrs(Vec::new(), attributes),
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            },
         });
     }
 }
 
-pub fn build_attrs(resource: &Option<Resource>, attributes: Vec<KeyValue>) -> Vec<KeyValue> {
-    if resource.is_none() {
+pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: Vec<KeyValue>) -> Vec<KeyValue> {
+    if resource_attributes.is_empty() {
         return attributes;
     }
     // Let's retain the order and create a map of keys to reduce the number of iterations required to find/replace an existing key
     let mut map = indexmap::IndexMap::<String, KeyValue>::new();
     // Yes there is only one, but we've already determined that we have one.
-    for res in resource.iter() {
-        for attr in res.attributes.iter() {
-            map.insert(attr.key.clone(), attr.clone());
-        }
+    for attr in resource_attributes.iter() {
+        map.insert(attr.key.clone(), attr.clone());
     }
+
     // Now iterate the new attributes and see if we already have a key or not
     for new_attr in attributes {
         map.insert(new_attr.key.clone(), new_attr);

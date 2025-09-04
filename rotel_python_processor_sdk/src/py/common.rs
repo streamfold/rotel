@@ -2,7 +2,7 @@ use crate::model::common::RValue::{
     BoolValue, BytesValue, DoubleValue, IntValue, KvListValue, RVArrayValue, StringValue,
 };
 use crate::model::common::{
-    RAnyValue, RArrayValue, RInstrumentationScope, RKeyValue, RKeyValueList,
+    RAnyValue, RArrayValue, REntityRef, RInstrumentationScope, RKeyValue, RKeyValueList,
 };
 use crate::model::otel_transform::convert_attributes;
 use crate::py::{handle_poison_error, AttributesList};
@@ -650,5 +650,257 @@ impl InstrumentationScope {
         };
         binding.replace(updated_scope);
         Ok(())
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct EntityRef {
+    pub inner: Arc<Mutex<REntityRef>>,
+}
+
+#[pymethods]
+impl EntityRef {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(EntityRef {
+            inner: Arc::new(Mutex::new(REntityRef {
+                schema_url: Arc::new(Mutex::new(String::new())),
+                r#type: Arc::new(Mutex::new(String::new())),
+                id_keys: Arc::new(Mutex::new(vec![])),
+                description_keys: Arc::new(Mutex::new(vec![])),
+            })),
+        })
+    }
+
+    #[getter]
+    fn schema_url(&self) -> PyResult<String> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let schema_url = inner.schema_url.lock().map_err(handle_poison_error)?;
+        Ok(schema_url.clone())
+    }
+
+    #[setter]
+    fn set_schema_url(&mut self, new_value: String) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut schema_url = inner.schema_url.lock().map_err(handle_poison_error)?;
+        *schema_url = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn type_(&self) -> PyResult<String> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let type_val = inner.r#type.lock().map_err(handle_poison_error)?;
+        Ok(type_val.clone())
+    }
+
+    #[setter]
+    fn set_type_(&mut self, new_value: String) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut type_val = inner.r#type.lock().map_err(handle_poison_error)?;
+        *type_val = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn id_keys(&self) -> PyResult<EntityRefKeys> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(EntityRefKeys {
+            inner: inner.id_keys.clone(),
+        })
+    }
+
+    #[setter]
+    fn set_id_keys(&mut self, new_value: Vec<String>) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut id_keys = inner.id_keys.lock().map_err(handle_poison_error)?;
+        *id_keys = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn description_keys(&self) -> PyResult<EntityRefKeys> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(EntityRefKeys {
+            inner: inner.description_keys.clone(),
+        })
+    }
+
+    #[setter]
+    fn set_description_keys(&mut self, new_value: Vec<String>) -> PyResult<()> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let mut description_keys = inner.description_keys.lock().map_err(handle_poison_error)?;
+        *description_keys = new_value;
+        Ok(())
+    }
+}
+
+#[pyclass]
+pub struct EntityRefKeys {
+    inner: Arc<Mutex<Vec<String>>>,
+}
+
+#[pymethods]
+impl EntityRefKeys {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(EntityRefKeys {
+            inner: Arc::new(Mutex::new(vec![])),
+        })
+    }
+
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<EntityRefKeysIter>> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let iter = EntityRefKeysIter {
+            inner: inner.clone().into_iter(),
+        };
+        Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<String> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        match inner.get(index) {
+            Some(item) => Ok(item.clone()),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+
+    fn __setitem__(&self, index: usize, value: String) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value;
+        Ok(())
+    }
+
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
+
+    fn append(&self, item: String) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.push(item);
+        Ok(())
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+pub struct EntityRefKeysIter {
+    inner: std::vec::IntoIter<String>,
+}
+
+#[pymethods]
+impl EntityRefKeysIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<String>> {
+        Ok(slf.inner.next())
+    }
+}
+
+#[pyclass]
+pub struct EntityRefs {
+    pub inner: Arc<Mutex<Vec<Arc<Mutex<REntityRef>>>>>,
+}
+
+#[pymethods]
+impl EntityRefs {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(EntityRefs {
+            inner: Arc::new(Mutex::new(vec![])),
+        })
+    }
+
+    fn __iter__<'py>(&'py self, py: Python<'py>) -> PyResult<Py<EntityRefsIter>> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        let iter = EntityRefsIter {
+            inner: inner.clone().into_iter(),
+        };
+        Py::new(py, iter)
+    }
+
+    fn __getitem__(&self, index: usize) -> PyResult<EntityRef> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        match inner.get(index) {
+            Some(item) => Ok(EntityRef {
+                inner: item.clone(),
+            }),
+            None => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            )),
+        }
+    }
+
+    fn __setitem__(&self, index: usize, value: &EntityRef) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner[index] = value.inner.clone();
+        Ok(())
+    }
+
+    fn __delitem__(&self, index: usize) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        if index >= inner.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "Index out of bounds",
+            ));
+        }
+        inner.remove(index);
+        Ok(())
+    }
+
+    fn append(&self, item: &EntityRef) -> PyResult<()> {
+        let mut inner = self.inner.lock().map_err(handle_poison_error)?;
+        inner.push(item.inner.clone());
+        Ok(())
+    }
+
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.inner.lock().map_err(handle_poison_error)?;
+        Ok(inner.len())
+    }
+}
+
+#[pyclass]
+pub struct EntityRefsIter {
+    inner: std::vec::IntoIter<Arc<Mutex<REntityRef>>>,
+}
+
+#[pymethods]
+impl EntityRefsIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<EntityRef>> {
+        match slf.inner.next() {
+            Some(entity_ref) => Ok(Some(EntityRef { inner: entity_ref })),
+            None => Ok(None),
+        }
     }
 }

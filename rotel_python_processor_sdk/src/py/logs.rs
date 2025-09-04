@@ -28,6 +28,7 @@ impl ResourceLogs {
         Ok(Some(Resource {
             attributes: inner.attributes.clone(),
             dropped_attributes_count: inner.dropped_attributes_count.clone(),
+            entity_refs: inner.entity_refs.clone(),
         }))
     }
     #[setter]
@@ -36,6 +37,7 @@ impl ResourceLogs {
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
+            entity_refs: resource.entity_refs,
         });
         Ok(())
     }

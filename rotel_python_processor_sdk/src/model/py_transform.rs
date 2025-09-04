@@ -711,8 +711,6 @@ pub fn transform_resource(
 ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
     let attributes = Arc::into_inner(resource.attributes).unwrap();
     let attributes = attributes.into_inner().unwrap();
-    let dropped_attributes_count = Arc::into_inner(resource.dropped_attributes_count).unwrap();
-    let dropped_attributes_count = dropped_attributes_count.into_inner().unwrap();
     let mut new_attrs = vec![];
     for attr in attributes.iter() {
         let kv = attr.lock().unwrap();
@@ -731,9 +729,44 @@ pub fn transform_resource(
             }
         }
     }
+
+    // Transform entity_refs
+    let mut new_entity_refs = vec![];
+    let entity_refs = Arc::into_inner(resource.entity_refs).unwrap();
+    let entity_refs = entity_refs.into_inner().unwrap();
+    for entity_ref_arc in entity_refs.into_iter() {
+        let moved_data = Arc::into_inner(entity_ref_arc)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+
+        new_entity_refs.push(opentelemetry_proto::tonic::common::v1::EntityRef {
+            schema_url: Arc::into_inner(moved_data.schema_url)
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+            r#type: Arc::into_inner(moved_data.r#type)
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+            id_keys: Arc::into_inner(moved_data.id_keys)
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+            description_keys: Arc::into_inner(moved_data.description_keys)
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+        });
+    }
+
+    let dropped_attributes_count = Arc::into_inner(resource.dropped_attributes_count).unwrap();
+    let dropped_attributes_count = dropped_attributes_count.into_inner().unwrap();
+
     Some(opentelemetry_proto::tonic::resource::v1::Resource {
         attributes: new_attrs,
         dropped_attributes_count,
+        entity_refs: new_entity_refs,
     })
 }
 

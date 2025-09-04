@@ -36,6 +36,7 @@ impl ResourceMetrics {
         Ok(Some(Resource {
             attributes: inner_resource.attributes.clone(),
             dropped_attributes_count: inner_resource.dropped_attributes_count.clone(),
+            entity_refs: inner_resource.entity_refs.clone(),
         }))
     }
 
@@ -45,6 +46,7 @@ impl ResourceMetrics {
         *inner = Some(RResource {
             attributes: resource.attributes,
             dropped_attributes_count: resource.dropped_attributes_count,
+            entity_refs: resource.entity_refs,
         });
         Ok(())
     }

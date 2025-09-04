@@ -17,12 +17,7 @@ pub fn transform_resource_spans(
     };
     if rs.resource.is_some() {
         let resource = rs.resource.unwrap();
-        let dropped_attributes_count = resource.dropped_attributes_count;
-        let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
-            attributes: Arc::new(Mutex::new(kvs.to_owned())),
-            dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
-        })));
+        let res = Arc::new(Mutex::new(Some(build_rotel_sdk_resource(resource))));
         resource_span.resource = res.clone()
     }
     let mut scope_spans = vec![];
@@ -90,12 +85,7 @@ pub fn transform_resource_logs(
     };
     if rl.resource.is_some() {
         let resource = rl.resource.unwrap();
-        let dropped_attributes_count = resource.dropped_attributes_count;
-        let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
-            attributes: Arc::new(Mutex::new(kvs.to_owned())),
-            dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
-        })));
+        let res = Arc::new(Mutex::new(Some(build_rotel_sdk_resource(resource))));
         resource_logs.resource = res.clone();
     }
 
@@ -164,12 +154,7 @@ pub fn transform_resource_metrics(
 
     if rm.resource.is_some() {
         let resource = rm.resource.unwrap();
-        let dropped_attributes_count = resource.dropped_attributes_count;
-        let kvs = build_rotel_sdk_resource(resource);
-        let res = Arc::new(Mutex::new(Some(crate::model::resource::RResource {
-            attributes: Arc::new(Mutex::new(kvs.to_owned())),
-            dropped_attributes_count: Arc::new(Mutex::new(dropped_attributes_count)),
-        })));
+        let res = Arc::new(Mutex::new(Some(build_rotel_sdk_resource(resource))));
         resource_metrics.resource = res.clone();
     }
 
@@ -463,7 +448,7 @@ pub fn convert_attributes(
 
 fn build_rotel_sdk_resource(
     resource: opentelemetry_proto::tonic::resource::v1::Resource,
-) -> Vec<Arc<Mutex<RKeyValue>>> {
+) -> crate::model::resource::RResource {
     let mut kvs = vec![];
     for a in resource.attributes {
         let key = Arc::new(Mutex::new(a.key));
@@ -482,7 +467,23 @@ fn build_rotel_sdk_resource(
             }
         }
     }
-    kvs
+
+    let mut entity_refs = vec![];
+    for entity_ref in resource.entity_refs {
+        let r_entity_ref = REntityRef {
+            schema_url: Arc::new(Mutex::new(entity_ref.schema_url)),
+            r#type: Arc::new(Mutex::new(entity_ref.r#type)),
+            id_keys: Arc::new(Mutex::new(entity_ref.id_keys)),
+            description_keys: Arc::new(Mutex::new(entity_ref.description_keys)),
+        };
+        entity_refs.push(Arc::new(Mutex::new(r_entity_ref)));
+    }
+
+    crate::model::resource::RResource {
+        attributes: Arc::new(Mutex::new(kvs)),
+        dropped_attributes_count: Arc::new(Mutex::new(resource.dropped_attributes_count)),
+        entity_refs: Arc::new(Mutex::new(entity_refs)),
+    }
 }
 
 pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> RAnyValue {

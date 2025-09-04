@@ -1,5 +1,5 @@
-use crate::model::common::RKeyValue;
-use crate::py::common::KeyValue;
+use crate::model::common::{REntityRef, RKeyValue};
+use crate::py::common::{EntityRef, EntityRefs, KeyValue};
 use crate::py::handle_poison_error;
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,7 @@ use std::vec;
 pub struct Resource {
     pub attributes: Arc<Mutex<Vec<Arc<Mutex<RKeyValue>>>>>,
     pub dropped_attributes_count: Arc<Mutex<u32>>,
+    pub entity_refs: Arc<Mutex<Vec<Arc<Mutex<REntityRef>>>>>,
 }
 
 #[pymethods]
@@ -19,6 +20,7 @@ impl Resource {
         Ok(Resource {
             attributes: Arc::new(Mutex::new(vec![])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(vec![])),
         })
     }
     #[getter]
@@ -43,6 +45,23 @@ impl Resource {
     fn set_dropped_attributes_count(&mut self, new_value: u32) -> PyResult<()> {
         let mut dropped = self.dropped_attributes_count.lock().unwrap();
         *dropped = new_value;
+        Ok(())
+    }
+
+    #[getter]
+    fn entity_refs(&self) -> PyResult<EntityRefs> {
+        Ok(EntityRefs {
+            inner: self.entity_refs.clone(),
+        })
+    }
+
+    #[setter]
+    fn set_entity_refs(&mut self, new_value: Vec<EntityRef>) -> PyResult<()> {
+        let mut entity_refs = self.entity_refs.lock().map_err(handle_poison_error)?;
+        entity_refs.clear();
+        for entity_ref in new_value.iter() {
+            entity_refs.push(entity_ref.inner.clone());
+        }
         Ok(())
     }
 }

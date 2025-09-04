@@ -26,7 +26,7 @@ impl InternalOTLPMetricsExporter {
 }
 
 impl PushMetricExporter for InternalOTLPMetricsExporter {
-    async fn export(&self, metrics: &mut ResourceMetrics) -> OTelSdkResult {
+    async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
         match &self.metrics_output {
             // TODO
             // So here we're using the main metrics OTLPOutput and that has a dependency on whether metrics have been disabled
@@ -48,8 +48,9 @@ impl PushMetricExporter for InternalOTLPMetricsExporter {
         Ok(())
     }
 
-    fn shutdown(&self) -> OTelSdkResult {
+    fn shutdown_with_timeout(&self, _timeout: std::time::Duration) -> OTelSdkResult {
         // TODO, do we want to manually drop the reference to metrics_output or set to None?
+        // Technically any call to export() after shutting down should return an error
         Ok(())
     }
 

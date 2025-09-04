@@ -110,6 +110,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
+    common_v1_module.add_class::<EntityRef>()?;
+    common_v1_module.add_class::<EntityRefs>()?;
     common_v1_module.add_class::<KeyValueList>()?;
     common_v1_module.add_class::<KeyValue>()?;
     common_v1_module.add_class::<Attributes>()?;
@@ -158,8 +160,8 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::model::common::RValue::*;
     use crate::model::common::{RAnyValue, RKeyValue};
+    use crate::model::common::{REntityRef, RValue::*};
     use crate::model::{otel_transform, py_transform};
     use crate::py::metrics::ResourceMetrics;
     use chrono::Utc;
@@ -459,6 +461,7 @@ mod tests {
         let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -499,6 +502,7 @@ mod tests {
         let resource = Resource {
             attributes: attrs.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -542,6 +546,67 @@ mod tests {
     }
 
     #[test]
+    fn read_and_write_resource_entities() {
+        initialize();
+
+        let entity_ref = Arc::new(Mutex::new(REntityRef {
+            schema_url: Arc::new(Mutex::new("http://example.com/schema/v1.0".to_string())),
+            r#type: Arc::new(Mutex::new("host".to_string())),
+            id_keys: Arc::new(Mutex::new(vec!["host.id".to_string()])),
+            description_keys: Arc::new(Mutex::new(vec![
+                "host.arch".to_string(),
+                "host.name".to_string(),
+            ])),
+        }));
+
+        let entity_refs = Arc::new(Mutex::new(vec![entity_ref]));
+
+        let resource = Resource {
+            attributes: Arc::new(Mutex::new(Vec::new())),
+            dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: entity_refs.clone(),
+        };
+
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_and_write_resource_entities_test.py", py, resource)
+        })
+        .unwrap();
+
+        let entity_refs = Arc::into_inner(entity_refs).unwrap();
+        let mut entity_refs = entity_refs.into_inner().unwrap();
+
+        assert_eq!(2, entity_refs.len());
+        let entity_ref = Arc::into_inner(entity_refs.pop().unwrap()).unwrap();
+        let entity_ref = entity_ref.into_inner().unwrap();
+
+        let schema_url = entity_ref.schema_url.lock().unwrap();
+        assert_eq!("http://example.com/schema/v2.0", *schema_url);
+
+        let r#type = entity_ref.r#type.lock().unwrap();
+        assert_eq!("container", *r#type);
+
+        let id_keys = entity_ref.id_keys.lock().unwrap();
+        assert_eq!(1, id_keys.len());
+        assert_eq!("container.id", id_keys[0]);
+
+        let desc_keys = entity_ref.description_keys.lock().unwrap();
+        assert_eq!(2, desc_keys.len());
+        assert_eq!("container.image.id", desc_keys[0]);
+        assert_eq!("container.image.name", desc_keys[1]);
+
+        // Test that the original entity ref reflects new settings
+        let entity_ref = Arc::into_inner(entity_refs.pop().unwrap()).unwrap();
+        let entity_ref = entity_ref.into_inner().unwrap();
+
+        let r#type = entity_ref.r#type.lock().unwrap();
+        assert_eq!("host", *r#type);
+
+        let id_keys = entity_ref.id_keys.lock().unwrap();
+        assert_eq!(1, id_keys.len());
+        assert_eq!("k8s.node.uid", id_keys[0]);
+    }
+
+    #[test]
     fn read_and_write_attributes_key_value_list_value() {
         initialize();
 
@@ -580,6 +645,7 @@ mod tests {
         let resource = Resource {
             attributes: attrs_arc.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -649,6 +715,7 @@ mod tests {
         let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -683,6 +750,7 @@ mod tests {
         let resource = Resource {
             attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -721,6 +789,7 @@ mod tests {
         let resource = Resource {
             attributes: attrs_arc.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -749,6 +818,7 @@ mod tests {
         let resource = Resource {
             attributes: attrs_arc.clone(),
             dropped_attributes_count: Arc::new(Mutex::new(0)),
+            entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
@@ -1323,6 +1393,7 @@ mod tests {
             resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: vec![],
             }),
             scope_logs: vec![initial_scope_logs],
             schema_url: "http://example.com/resource-logs-schema".to_string(),
@@ -1415,6 +1486,7 @@ mod tests {
             resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: vec![],
             }),
             scope_logs: vec![initial_scope_logs],
             schema_url: "http://example.com/resource-logs-schema".to_string(),
@@ -1540,6 +1612,7 @@ mod tests {
             resource: Some(opentelemetry_proto::tonic::resource::v1::Resource {
                 attributes: vec![],
                 dropped_attributes_count: 0,
+                entity_refs: vec![],
             }),
             scope_logs: vec![initial_scope_logs],
             schema_url: "http://example.com/resource-logs-schema".to_string(),
@@ -1641,6 +1714,7 @@ mod tests {
                 },
             ],
             dropped_attributes_count: 0,
+            entity_refs: vec![],
         };
 
         let mut spans = FakeOTLP::trace_spans(2);
@@ -2199,6 +2273,7 @@ mod tests {
             Some(opentelemetry_proto::tonic::resource::v1::Resource {
                 attributes: resource_attrs.clone(),
                 dropped_attributes_count: 0,
+                entity_refs: vec![],
             });
         trace_request.resource_spans[0].scope_spans[0].spans[0].attributes = span_attrs.clone();
 
@@ -2316,6 +2391,7 @@ mod tests {
             Some(opentelemetry_proto::tonic::resource::v1::Resource {
                 attributes: resource_attrs.clone(),
                 dropped_attributes_count: 0,
+                entity_refs: vec![],
             });
         let data = metrics_request.resource_metrics[0].scope_metrics[0].metrics[0]
             .data
@@ -2766,6 +2842,7 @@ mod tests {
                     },
                 ],
                 dropped_attributes_count: 10,
+                entity_refs: vec![],
             }),
             scope_metrics: vec![
                 opentelemetry_proto::tonic::metrics::v1::ScopeMetrics {
