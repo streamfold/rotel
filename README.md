@@ -497,11 +497,9 @@ feeding telemetry into batch-processing systems._
 
 ### Kafka Receiver configuration
 
-The Kafka Receiver allows Rotel to consume telemetry data from Kafka topics. This enables you to use Kafka as a buffer
-or
-transport layer for your telemetry data pipeline. The receiver supports consuming metrics, logs, and traces from
-separate
-topics in either JSON or Protobuf format.
+The Kafka Receiver allows Rotel to consume telemetry data from Kafka topics. The receiver supports consuming metrics,
+logs, and traces from
+separate topics in either JSON or Protobuf format.
 
 To enable the Kafka receiver, you must specify which telemetry types to consume using the appropriate flags:
 
@@ -621,8 +619,7 @@ rotel start \
 ```
 
 Custom configuration parameters are applied after all built-in options, allowing them to override any conflicting
-settings.
-See
+settings. See
 the [librdkafka configuration documentation](https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md)
 for all available consumer parameters.
 
