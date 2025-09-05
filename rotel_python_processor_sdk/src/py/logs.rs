@@ -123,6 +123,15 @@ impl ScopeLogsList {
         inner.remove(index);
         Ok(())
     }
+    fn append(&self, item: &ScopeLogs) -> PyResult<()> {
+        let mut k = self.0.lock().map_err(handle_poison_error)?;
+        k.push(Arc::new(Mutex::new(RScopeLogs {
+            scope: item.scope.clone(),
+            log_records: item.log_records.clone(),
+            schema_url: item.schema_url.clone(),
+        })));
+        Ok(())
+    }
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.0.lock().map_err(handle_poison_error)?;
         Ok(inner.len())
