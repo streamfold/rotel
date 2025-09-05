@@ -148,6 +148,9 @@ mod tests {
         assert!(resp.is_ok());
         let spans = resp.unwrap().unwrap();
         assert_eq!(10, spans.size_of());
+        for rs in spans {
+            assert!(rs.resource.is_some())
+        }
         // Grab what's left in the batch
         let leftover = batch.take_batch();
         assert_eq!(2, leftover.size_of());
@@ -171,8 +174,11 @@ mod tests {
         let second_request = FakeOTLP::metrics_service_request_with_metrics(1, 7);
         let resp = batch.offer(second_request.resource_metrics);
         assert!(resp.is_ok());
-        let spans = resp.unwrap().unwrap();
-        assert_eq!(10, spans.size_of());
+        let metrics = resp.unwrap().unwrap();
+        assert_eq!(10, metrics.size_of());
+        for rm in metrics {
+            assert!(rm.resource.is_some())
+        }
         // Grab what's left in the batch
         let leftover = batch.take_batch();
         assert_eq!(2, leftover.size_of());
@@ -196,8 +202,11 @@ mod tests {
         let second_request = FakeOTLP::logs_service_request_with_logs(1, 7);
         let resp = batch.offer(second_request.resource_logs);
         assert!(resp.is_ok());
-        let spans = resp.unwrap().unwrap();
-        assert_eq!(10, spans.size_of());
+        let logs = resp.unwrap().unwrap();
+        assert_eq!(10, logs.size_of());
+        for rl in logs {
+            assert!(rl.resource.is_some())
+        }
         // Grab what's left in the batch
         let leftover = batch.take_batch();
         assert_eq!(2, leftover.size_of());
