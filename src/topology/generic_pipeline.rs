@@ -2,9 +2,9 @@
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use flume::SendError;
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use flume::r#async::SendFut;
+use flume::SendError;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -13,7 +13,7 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{PythonProcessable, register_processor};
+use rotel_sdk::model::{register_processor, PythonProcessable};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
@@ -423,11 +423,11 @@ impl BatchSplittable for ResourceSpans {
                 split_scope_spans.push(ss)
             }
         }
-        let mut rs = ResourceSpans::default();
-        rs.scope_spans = split_scope_spans;
-        rs.schema_url = self.schema_url.clone();
-        rs.resource = rs.resource.clone();
-        rs
+        ResourceSpans {
+            scope_spans: split_scope_spans,
+            schema_url: self.schema_url.clone(),
+            resource: self.resource.clone(),
+        }
     }
 }
 
@@ -488,11 +488,11 @@ impl BatchSplittable for ResourceMetrics {
                 split_scope_metrics.push(sm)
             }
         }
-        let mut rs = ResourceMetrics::default();
-        rs.scope_metrics = split_scope_metrics;
-        rs.schema_url = self.schema_url.clone();
-        rs.resource = rs.resource.clone();
-        rs
+        ResourceMetrics {
+            scope_metrics: split_scope_metrics,
+            schema_url: self.schema_url.clone(),
+            resource: self.resource.clone(),
+        }
     }
 }
 
@@ -540,11 +540,11 @@ impl BatchSplittable for ResourceLogs {
                 split_scope_logs.push(sl)
             }
         }
-        let mut rs = ResourceLogs::default();
-        rs.scope_logs = split_scope_logs;
-        rs.schema_url = self.schema_url.clone();
-        rs.resource = rs.resource.clone();
-        rs
+        ResourceLogs {
+            scope_logs: split_scope_logs,
+            schema_url: self.schema_url.clone(),
+            resource: self.resource.clone(),
+        }
     }
 }
 
