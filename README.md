@@ -484,6 +484,152 @@ such as `traces-20250614-120000.parquet` every five seconds. Files are saved int
 _The File exporter is useful for local debugging, offline analysis, and for
 feeding telemetry into batch-processing systems._
 
+### Kafka Receiver configuration
+
+The Kafka Receiver allows Rotel to consume telemetry data from Kafka topics. This enables you to use Kafka as a buffer or 
+transport layer for your telemetry data pipeline. The receiver supports consuming metrics, logs, and traces from separate 
+topics in either JSON or Protobuf format.
+
+To enable the Kafka receiver, you must specify which telemetry types to consume using the appropriate flags:
+- `--kafka-receiver-traces` to consume traces
+- `--kafka-receiver-metrics` to consume metrics  
+- `--kafka-receiver-logs` to consume logs
+
+| Option                                        | Default           | Options                                                 |
+| --------------------------------------------- | ----------------- | ------------------------------------------------------- |
+| --kafka-receiver-brokers                      | localhost:9092    | Kafka broker addresses (comma-separated)               |
+| --kafka-receiver-traces-topic                 | otlp_traces       | Topic name for traces                                  |
+| --kafka-receiver-metrics-topic                | otlp_metrics      | Topic name for metrics                                 |
+| --kafka-receiver-logs-topic                   | otlp_logs         | Topic name for logs                                    |
+| --kafka-receiver-traces                       | false             | Enable consuming traces                                |
+| --kafka-receiver-metrics                      | false             | Enable consuming metrics                               |
+| --kafka-receiver-logs                         | false             | Enable consuming logs                                  |
+| --kafka-receiver-format                       | protobuf          | json, protobuf                                         |
+| --kafka-receiver-group-id                     | rotel-consumer    | Consumer group ID for coordinated consumption          |
+| --kafka-receiver-client-id                    | rotel             | Client ID for the Kafka consumer                       |
+| --kafka-receiver-enable-auto-commit            | true              | Enable auto commit of offsets                          |
+| --kafka-receiver-auto-commit-interval-ms      | 5000              | Auto commit interval in milliseconds                   |
+| --kafka-receiver-auto-offset-reset             | latest            | earliest, latest, error                                |
+| --kafka-receiver-session-timeout-ms           | 30000             | Session timeout in milliseconds                        |
+| --kafka-receiver-heartbeat-interval-ms        | 3000              | Heartbeat interval in milliseconds                     |
+| --kafka-receiver-max-poll-interval-ms         | 300000            | Maximum poll interval in milliseconds                  |
+| --kafka-receiver-max-partition-fetch-bytes    | 1048576           | Maximum bytes per partition the consumer will buffer   |
+| --kafka-receiver-fetch-min-bytes               | 1                 | Minimum number of bytes for fetch requests             |
+| --kafka-receiver-fetch-max-wait-ms            | 500               | Maximum wait time for fetch requests in milliseconds   |
+| --kafka-receiver-socket-timeout-ms            | 60000             | Socket timeout in milliseconds                         |
+| --kafka-receiver-metadata-max-age-ms          | 300000            | Maximum age of metadata in milliseconds                |
+| --kafka-receiver-isolation-level               | read-committed    | read-uncommitted, read-committed                       |
+| --kafka-receiver-enable-partition-eof         | false             | Enable partition EOF notifications                     |
+| --kafka-receiver-check-crcs                   | true              | Check CRC32 of consumed messages                       |
+| --kafka-receiver-custom-config                |                   | Custom consumer config (comma-separated key=value)     |
+| --kafka-receiver-sasl-username                |                   | SASL username for authentication                       |
+| --kafka-receiver-sasl-password                |                   | SASL password for authentication                       |
+| --kafka-receiver-sasl-mechanism                |                   | plain, scram-sha256, scram-sha512                      |
+| --kafka-receiver-security-protocol            |                   | plaintext, ssl, sasl-plaintext, sasl-ssl               |
+| --kafka-receiver-ssl-ca-location              |                   | SSL CA certificate location                            |
+| --kafka-receiver-ssl-certificate-location     |                   | SSL certificate location                                |
+| --kafka-receiver-ssl-key-location             |                   | SSL key location                                       |
+| --kafka-receiver-ssl-key-password             |                   | SSL key password                                       |
+
+#### Consumer Configuration
+
+The Kafka receiver acts as a consumer and supports standard Kafka consumer configurations:
+
+**Consumer Group Management:**
+- `--kafka-receiver-group-id`: Sets the consumer group ID for coordinated consumption across multiple Rotel instances
+- `--kafka-receiver-enable-auto-commit`: Controls whether offsets are automatically committed
+- `--kafka-receiver-auto-commit-interval-ms`: How often to commit offsets when auto-commit is enabled
+
+**Offset Management:**
+- `--kafka-receiver-auto-offset-reset`: Controls behavior when no initial offset exists or the current offset is invalid
+  - `earliest`: Start consuming from the beginning of the topic
+  - `latest`: Start consuming from the end of the topic (default)
+  - `error`: Throw an error if no offset is found
+
+**Session and Heartbeat Configuration:**
+- `--kafka-receiver-session-timeout-ms`: Maximum time before the consumer is considered dead and rebalancing occurs
+- `--kafka-receiver-heartbeat-interval-ms`: How often to send heartbeats to the broker
+- `--kafka-receiver-max-poll-interval-ms`: Maximum delay between poll() calls before consumer is considered failed
+
+**Fetch Configuration:**
+- `--kafka-receiver-fetch-min-bytes`: Minimum amount of data the server should return for a fetch request
+- `--kafka-receiver-fetch-max-wait-ms`: Maximum time the server will wait to accumulate fetch-min-bytes of data
+- `--kafka-receiver-max-partition-fetch-bytes`: Maximum amount of data per partition the server will return
+
+**Data Integrity:**
+- `--kafka-receiver-check-crcs`: Enables CRC32 checking of consumed messages for data integrity
+- `--kafka-receiver-isolation-level`: Controls which messages are visible to the consumer
+  - `read-uncommitted`: Read all messages including those from uncommitted transactions
+  - `read-committed`: Only read messages from committed transactions (default)
+
+#### Security Configuration
+
+For secure Kafka clusters, the receiver supports both SASL and SSL authentication:
+
+**SASL Authentication:**
+```shell
+rotel start \
+  --kafka-receiver-traces \
+  --kafka-receiver-brokers "broker1:9092,broker2:9092" \
+  --kafka-receiver-sasl-username "your-username" \
+  --kafka-receiver-sasl-password "your-password" \
+  --kafka-receiver-sasl-mechanism "scram-sha256" \
+  --kafka-receiver-security-protocol "sasl-ssl"
+```
+
+**SSL Configuration:**
+```shell
+rotel start \
+  --kafka-receiver-traces \
+  --kafka-receiver-brokers "broker1:9093,broker2:9093" \
+  --kafka-receiver-security-protocol "ssl" \
+  --kafka-receiver-ssl-ca-location "/path/to/ca-cert" \
+  --kafka-receiver-ssl-certificate-location "/path/to/client-cert" \
+  --kafka-receiver-ssl-key-location "/path/to/client-key"
+```
+
+#### Advanced Configuration
+
+The `--kafka-receiver-custom-config` option allows setting arbitrary Kafka consumer configuration parameters using 
+comma-separated key=value pairs:
+
+```shell
+rotel start \
+  --kafka-receiver-traces \
+  --kafka-receiver-custom-config "max.poll.records=100,fetch.max.bytes=52428800"
+```
+
+Custom configuration parameters are applied after all built-in options, allowing them to override any conflicting settings.
+See the [librdkafka configuration documentation](https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md) 
+for all available consumer parameters.
+
+#### Example Usage
+
+Basic example consuming traces from Kafka:
+```shell
+rotel start \
+  --kafka-receiver-traces \
+  --kafka-receiver-brokers "localhost:9092" \
+  --kafka-receiver-traces-topic "my-traces" \
+  --kafka-receiver-format "json" \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Consuming multiple telemetry types with custom configuration:
+```shell
+rotel start \
+  --kafka-receiver-traces \
+  --kafka-receiver-metrics \
+  --kafka-receiver-logs \
+  --kafka-receiver-brokers "kafka1:9092,kafka2:9092,kafka3:9092" \
+  --kafka-receiver-group-id "rotel-production" \
+  --kafka-receiver-auto-offset-reset "earliest" \
+  --kafka-receiver-format "protobuf" \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443"
+```
+
 ### Batch configuration
 
 You can configure the properties of the batch processor, controlling both the size limit of the batch and how long the
@@ -538,6 +684,83 @@ that you have configured.
 
 **NOTE**: Internal telemetry is not sent to any outside sources and you are in full control of where this data is
 exported to.
+
+### Multiple receivers
+
+Rotel supports configuring multiple receivers to ingest telemetry data from different sources simultaneously. This allows you 
+to receive data via OTLP and consume from Kafka topics at the same time.
+
+The following configuration parameters enable multiple receivers:
+
+| Option              | Default | Options                            |
+| ------------------- | ------- | ---------------------------------- |
+| --receiver          | otlp    | otlp, kafka                        |
+| --receivers         |         | comma-separated list (otlp,kafka)  |
+
+**Important Notes:**
+- You cannot use `--receiver` and `--receivers` at the same time
+- If neither flag is specified, Rotel defaults to using the OTLP receiver
+- When using multiple receivers, each receiver type can only be specified once
+
+#### Basic Usage
+
+**Single receiver (default OTLP):**
+```shell
+rotel start --exporter otlp --otlp-exporter-endpoint localhost:4317
+```
+
+**Single Kafka receiver:**
+```shell
+rotel start --receiver kafka \
+  --kafka-receiver-traces \
+  --kafka-receiver-brokers "localhost:9092" \
+  --exporter otlp \
+  --otlp-exporter-endpoint localhost:4317
+```
+
+**Multiple receivers (OTLP and Kafka):**
+```shell
+rotel start --receivers otlp,kafka \
+  --kafka-receiver-traces \
+  --kafka-receiver-brokers "localhost:9092" \
+  --exporter otlp \
+  --otlp-exporter-endpoint localhost:4317
+```
+
+#### Receiver Configuration
+
+When using multiple receivers, each receiver maintains its own configuration:
+
+- **OTLP Receiver**: Configure using `--otlp-*` flags (see [Configuration](#configuration) section)
+- **Kafka Receiver**: Configure using `--kafka-receiver-*` flags (see [Kafka Receiver configuration](#kafka-receiver-configuration) section)
+
+Each receiver can be independently configured to accept different telemetry types. For example, you might receive traces via 
+OTLP while consuming logs and metrics from Kafka:
+
+```shell
+rotel start --receivers otlp,kafka \
+  --otlp-receiver-metrics-disabled \
+  --otlp-receiver-logs-disabled \
+  --kafka-receiver-metrics \
+  --kafka-receiver-logs \
+  --kafka-receiver-brokers "kafka:9092" \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443"
+```
+
+#### Environment Variables
+
+Both receiver flags can be set via environment variables:
+- `ROTEL_RECEIVER=kafka` - Sets a single receiver
+- `ROTEL_RECEIVERS=otlp,kafka` - Sets multiple receivers
+
+Example with environment variables:
+```shell
+export ROTEL_RECEIVERS=otlp,kafka
+export ROTEL_KAFKA_RECEIVER_TRACES=true
+export ROTEL_KAFKA_RECEIVER_BROKERS=kafka1:9092,kafka2:9092
+rotel start --exporter otlp --otlp-exporter-endpoint localhost:4317
+```
 
 ### Multiple exporters
 
