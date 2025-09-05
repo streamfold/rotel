@@ -423,11 +423,11 @@ impl BatchSplittable for ResourceSpans {
                 split_scope_spans.push(ss)
             }
         }
-        let mut rs = ResourceSpans::default();
-        rs.scope_spans = split_scope_spans;
-        rs.schema_url = self.schema_url.clone();
-        rs.resource = rs.resource.clone();
-        rs
+        ResourceSpans {
+            scope_spans: split_scope_spans,
+            schema_url: self.schema_url.clone(),
+            resource: self.resource.clone(),
+        }
     }
 }
 
@@ -488,11 +488,11 @@ impl BatchSplittable for ResourceMetrics {
                 split_scope_metrics.push(sm)
             }
         }
-        let mut rs = ResourceMetrics::default();
-        rs.scope_metrics = split_scope_metrics;
-        rs.schema_url = self.schema_url.clone();
-        rs.resource = rs.resource.clone();
-        rs
+        ResourceMetrics {
+            scope_metrics: split_scope_metrics,
+            schema_url: self.schema_url.clone(),
+            resource: self.resource.clone(),
+        }
     }
 }
 
@@ -540,11 +540,11 @@ impl BatchSplittable for ResourceLogs {
                 split_scope_logs.push(sl)
             }
         }
-        let mut rs = ResourceLogs::default();
-        rs.scope_logs = split_scope_logs;
-        rs.schema_url = self.schema_url.clone();
-        rs.resource = rs.resource.clone();
-        rs
+        ResourceLogs {
+            scope_logs: split_scope_logs,
+            schema_url: self.schema_url.clone(),
+            resource: self.resource.clone(),
+        }
     }
 }
 
