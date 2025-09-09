@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::client::build_hyper_client;
+use crate::exporters::http::client::{Client, Protocol as HttpProtocol, ResponseDecode};
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
+use crate::exporters::http::types::ContentEncoding;
 /// A client implementation for OTLP (OpenTelemetry Protocol) exports that supports both gRPC and HTTP protocols.
 /// The client handles TLS configuration, request processing, and response decoding.
 use crate::exporters::otlp::errors::ExporterError;
@@ -10,14 +11,7 @@ use crate::exporters::otlp::request::EncodedRequest;
 use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
-use http::header::CONTENT_ENCODING;
-use http::{HeaderValue, Response};
-use http_body_util::BodyExt;
 use http_body_util::Full;
-use hyper::body::Incoming;
-use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::Client as HyperClient;
-use hyper_util::client::legacy::connect::HttpConnector;
 use opentelemetry::KeyValue;
 use std::error::Error;
 use std::future::Future;
@@ -26,7 +20,73 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tonic::Status;
 use tonic::codegen::Service;
-use tower_http::BoxError;
+use tower::{BoxError, Service as TowerService};
+
+/// ResponseDecode implementation for gRPC codec
+#[derive(Clone)]
+pub struct GrpcDecoder<T> {
+    send_failed: RotelCounter<u64>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> GrpcDecoder<T>
+where
+    T: prost::Message + Default,
+{
+    pub fn new(send_failed: RotelCounter<u64>) -> Self {
+        Self {
+            send_failed,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> ResponseDecode<T> for GrpcDecoder<T>
+where
+    T: prost::Message + Default,
+{
+    fn decode(&self, body: Bytes, _encoding: ContentEncoding) -> Result<T, BoxError> {
+        // For gRPC, we don't use the ContentEncoding parameter since compression is handled in the gRPC framing
+        grpc_codec::grpc_decode_body::<T>(body, self.send_failed.clone(), 1).map_err(|e| e.into())
+    }
+}
+
+/// ResponseDecode implementation for HTTP codec
+#[derive(Clone)]
+pub struct HttpDecoder<T> {
+    send_failed: RotelCounter<u64>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> HttpDecoder<T>
+where
+    T: prost::Message + Default,
+{
+    pub fn new(send_failed: RotelCounter<u64>) -> Self {
+        Self {
+            send_failed,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> ResponseDecode<T> for HttpDecoder<T>
+where
+    T: prost::Message + Default,
+{
+    fn decode(&self, body: Bytes, encoding: ContentEncoding) -> Result<T, BoxError> {
+        let compressed = encoding == ContentEncoding::Gzip;
+        http_codec::http_decode_body::<T>(body, compressed, self.send_failed.clone(), 1)
+            .map_err(|e| e.into())
+    }
+}
+
+/// Enum to hold either gRPC or HTTP client
+#[derive(Clone)]
+enum UnifiedClientType<T> {
+    Grpc(Client<Full<Bytes>, T, GrpcDecoder<T>>),
+    Http(Client<Full<Bytes>, T, HttpDecoder<T>>),
+}
 
 /// Client struct for handling OTLP exports.
 /// Generic over message type T which must implement prost::Message, i.e. ExportTraceServiceRequest.
@@ -35,10 +95,8 @@ pub struct OTLPClient<T>
 where
     T: prost::Message + Default,
 {
-    /// The underlying Hyper HTTP client with TLS support
-    client: HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>,
-    /// The protocol (HTTP or gRPC) used for communication
-    protocol: Protocol,
+    /// The underlying unified HTTP client
+    client: UnifiedClientType<T>,
     /// PhantomData to handle generic type T
     _phantom: PhantomData<T>,
     send_failed: RotelCounter<u64>,
@@ -48,7 +106,7 @@ where
 /// Implementation of Tower's Service trait for OTLPClient
 impl<T> Service<EncodedRequest> for OTLPClient<T>
 where
-    T: prost::Message + Default + Clone + Send + 'static,
+    T: prost::Message + Default + Clone + Send + Sync + 'static,
 {
     type Response = HttpResponse<T>;
     type Error = BoxError;
@@ -61,9 +119,18 @@ where
 
     /// Processes the request and returns a Future containing the response
     fn call(&mut self, req: EncodedRequest) -> Self::Future {
-        let this = self.clone();
+        let mut client = self.client.clone();
+        let send_failed = self.send_failed.clone();
+        let sent = self.sent.clone();
+
         Box::pin(async move {
-            let result = this.perform_request(req.clone()).await;
+            let result = Self::perform_request_with_client(
+                &mut client,
+                send_failed.clone(),
+                sent.clone(),
+                req.clone(),
+            )
+            .await;
             match result {
                 Ok(response) => {
                     // Simulate a successful grpc response here for non-error requests,
@@ -77,23 +144,25 @@ where
                     match error {
                         ExporterError::Http(parts, _) => Ok(HttpResponse::from_http(parts, None)),
                         ExporterError::Grpc(status) => Ok(HttpResponse::from_grpc(status, None)),
-                        _ => Err(error.into()),
+                        _ => Err(Box::new(error) as BoxError),
                     }
                 }
             }
-        })
+        }) as Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>
     }
 }
 
 impl<T> OTLPClient<T>
 where
-    T: prost::Message + Default,
+    T: prost::Message + Default + Send + Sync + Clone + 'static,
 {
-    /// Creates a new OTLPClient instance with the specified TLS configuration and protocol
+    /// Creates a new OTLPClient instance with the specified protocol
     ///
     /// # Arguments
     /// * `tls_config` - TLS configuration for secure communication
     /// * `protocol` - The protocol (HTTP or gRPC) to use for communication
+    /// * `sent` - Counter for successful sends
+    /// * `send_failed` - Counter for failed sends
     ///
     /// # Returns
     /// * `Result<Self, Box<dyn Error + Send + Sync>>` - The created client or an error
@@ -103,204 +172,94 @@ where
         sent: RotelCounter<u64>,
         send_failed: RotelCounter<u64>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let client = build_client(tls_config, protocol.clone())?;
+        let client = match protocol {
+            Protocol::Grpc => {
+                let decoder: GrpcDecoder<T> = GrpcDecoder::new(send_failed.clone());
+                let client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
+                UnifiedClientType::Grpc(client)
+            }
+            Protocol::Http => {
+                let decoder: HttpDecoder<T> = HttpDecoder::new(send_failed.clone());
+                let client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
+                UnifiedClientType::Http(client)
+            }
+        };
+
         Ok(Self {
             client,
-            protocol,
             sent,
             send_failed,
             _phantom: PhantomData,
         })
     }
 
-    /// Performs the actual request to the OTLP endpoint and handles the response
+    /// Performs the actual request to the OTLP endpoint and handles the response using stored client
     ///
     /// # Arguments
-    /// * `request` - The HTTP request to send
+    /// * `client` - The unified client
+    /// * `send_failed` - Counter for failed sends
+    /// * `sent` - Counter for successful sends
+    /// * `encoded_request` - The encoded request to send
     ///
     /// # Returns
     /// * `Result<T, ExporterError>` - The decoded response or an error
-    async fn perform_request(&self, encoded_request: EncodedRequest) -> Result<T, ExporterError> {
+    async fn perform_request_with_client(
+        client: &mut UnifiedClientType<T>,
+        send_failed: RotelCounter<u64>,
+        sent: RotelCounter<u64>,
+        encoded_request: EncodedRequest,
+    ) -> Result<T, ExporterError> {
         let count = encoded_request.size as u64;
-        match self.client.request(encoded_request.request).await {
+
+        let response = match client {
+            UnifiedClientType::Grpc(client) => {
+                TowerService::call(client, encoded_request.request).await
+            }
+            UnifiedClientType::Http(client) => {
+                TowerService::call(client, encoded_request.request).await
+            }
+        };
+
+        match response {
             Ok(response) => {
-                let (mut body, encoding) =
-                    process_head(response, self.send_failed.clone(), encoded_request.size).await?;
-                let mut resp = T::default();
-                while let Some(next) = body.frame().await {
-                    match next {
-                        Ok(frame) => {
-                            if frame.is_data() {
-                                let data = frame.into_data().unwrap();
-
-                                match self.protocol {
-                                    Protocol::Grpc => {
-                                        match grpc_codec::grpc_decode_body::<T>(
-                                            data,
-                                            self.send_failed.clone(),
-                                            count,
-                                        ) {
-                                            Ok(r) => {
-                                                self.sent.add(count, &[]);
-                                                resp = r
-                                            }
-                                            Err(e) => return Err(e),
-                                        }
-                                    }
-                                    Protocol::Http => {
-                                        match http_codec::http_decode_body(
-                                            data,
-                                            encoding.is_some(),
-                                            self.send_failed.clone(),
-                                            count,
-                                        ) {
-                                            Ok(r) => {
-                                                self.sent.add(count, &[]);
-                                                resp = r
-                                            }
-                                            Err(e) => return Err(e),
-                                        }
-                                    }
-                                }
-                            } else if frame.is_trailers() {
-                                let trailers = frame.into_trailers().unwrap();
-
-                                match Status::from_header_map(&trailers) {
-                                    None => {
-                                        self.send_failed.add(
-                                            count,
-                                            &[
-                                                KeyValue::new("error", "trailer"),
-                                                KeyValue::new("value", "no status code"),
-                                            ],
-                                        );
-                                        return Err(ExporterError::Generic(
-                                            "unable to parse trailer headers".into(),
-                                        ));
-                                    }
-                                    Some(status) => {
-                                        if status.code() != tonic::Code::Ok {
-                                            self.send_failed.add(
-                                                count,
-                                                &[
-                                                    KeyValue::new("error", "trailers"),
-                                                    KeyValue::new(
-                                                        "value",
-                                                        status.code().to_string(),
-                                                    ),
-                                                ],
-                                            );
-                                            return Err(ExporterError::Grpc(status));
-                                        }
-                                    }
-                                }
-                            }
+                if let Some(body) = response.body() {
+                    sent.add(count, &[]);
+                    Ok(body.clone())
+                } else {
+                    // Handle error responses
+                    match response.status() {
+                        Some(status) if status.code() != tonic::Code::Ok => {
+                            send_failed.add(
+                                count,
+                                &[
+                                    KeyValue::new("error", "grpc_status"),
+                                    KeyValue::new("value", status.code().to_string()),
+                                ],
+                            );
+                            Err(ExporterError::Grpc(status.clone()))
                         }
-                        Err(e) => {
-                            self.send_failed
-                                .add(count, &[KeyValue::new("error", "unknown")]);
-                            return Err(ExporterError::Generic(format!(
-                                "failed reading grpc response: {}",
-                                e
-                            )));
+                        _ => {
+                            if let Some(http_status) = response.http_status() {
+                                send_failed.add(
+                                    count,
+                                    &[
+                                        KeyValue::new("error", "http_status"),
+                                        KeyValue::new("value", http_status.status.to_string()),
+                                    ],
+                                );
+                                Err(ExporterError::Http(http_status.clone(), None))
+                            } else {
+                                send_failed.add(count, &[KeyValue::new("error", "no_body")]);
+                                Err(ExporterError::Generic("No response body".into()))
+                            }
                         }
                     }
                 }
-
-                Ok(resp)
             }
-            Err(status) => {
-                if status.is_connect() {
-                    self.send_failed
-                        .add(count, &[KeyValue::new("error", "connect")]);
-                    Err(ExporterError::Connect)
-                } else {
-                    self.send_failed
-                        .add(count, &[KeyValue::new("error", "unknown")]);
-                    Err(ExporterError::Generic(format!(
-                        "failed request: {:?}",
-                        status.source()
-                    )))
-                }
+            Err(e) => {
+                send_failed.add(count, &[KeyValue::new("error", "request_failed")]);
+                Err(ExporterError::Generic(format!("Request failed: {}", e)))
             }
         }
     }
-}
-
-/// Processes the response headers and body, handling status codes and content encoding
-///
-/// # Arguments
-/// * `response` - The HTTP response to process
-///
-/// # Returns
-/// * `Result<(Incoming, Option<HeaderValue>), ExporterError>` - The processed body and content encoding
-async fn process_head(
-    response: Response<Incoming>,
-    failed: RotelCounter<u64>,
-    count: usize,
-) -> Result<(Incoming, Option<HeaderValue>), ExporterError> {
-    let (head, body) = response.into_parts();
-
-    if head.status != 200 {
-        let resp = match body.collect().await {
-            Ok(b) => match String::from_utf8(b.to_bytes().to_vec()) {
-                Ok(text) => Some(text),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        };
-
-        failed.add(
-            count as u64,
-            &[
-                KeyValue::new("error", "head.status"),
-                KeyValue::new("value", head.status.to_string()),
-            ],
-        );
-        return Err(ExporterError::Http(head, resp));
-    }
-
-    // grpc responses encode the compression within the payload, for HTTP responses
-    // we must identify them from the Content-Encoding header
-    let encoding = head.headers.get(CONTENT_ENCODING);
-    if encoding.is_some_and(|ce| ce != "gzip") {
-        failed.add(count as u64, &[KeyValue::new("error", "content-encoding")]);
-        return Err(ExporterError::Generic(format!(
-            "unknown content encoding: {:?}",
-            encoding.unwrap()
-        )));
-    }
-
-    // If we get an invalid status from headers, return immediately
-    let header_status = Status::from_header_map(&head.headers);
-    if let Some(status) = header_status.clone() {
-        if status.code() != tonic::Code::Ok {
-            failed.add(
-                count as u64,
-                &[
-                    KeyValue::new("error", "header.status"),
-                    KeyValue::new("value", header_status.unwrap().to_string()),
-                ],
-            );
-            return Err(ExporterError::Grpc(status));
-        }
-    }
-    // Extra clone here to dry up, we might not want this. We could instead of splitting into
-    // parts above, do that before the call and pass in the Option<&HeaderValue>
-    Ok((body, encoding.cloned()))
-}
-
-/// Builds an HTTP client with the specified TLS configuration and protocol settings
-///
-/// # Arguments
-/// * `tls_config` - TLS configuration for secure communication
-/// * `protocol` - The protocol (HTTP or gRPC) to use for communication
-///
-/// # Returns
-/// * `Result<HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>, Box<dyn Error + Send + Sync>>` - The configured client or an error
-fn build_client(
-    tls_config: Config,
-    protocol: Protocol,
-) -> Result<HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>, Box<dyn Error + Send + Sync>> {
-    build_hyper_client(tls_config, protocol == Protocol::Grpc).map_err(|e| e.into())
 }

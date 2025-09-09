@@ -16,7 +16,23 @@ pub struct Config {
     identity: Option<ClientIdentity<'static>>,
 }
 
+impl Clone for Config {
+    fn clone(&self) -> Self {
+        Self {
+            skip_verify: self.skip_verify,
+            ca_certificate: self.ca_certificate.clone(),
+            identity: self.identity.as_ref().map(|id| id.clone()),
+        }
+    }
+}
+
 pub struct ClientIdentity<'a>(CertificateDer<'a>, PrivateKeyDer<'a>);
+
+impl<'a> Clone for ClientIdentity<'a> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), self.1.clone_key())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum FileType {
