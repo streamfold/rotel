@@ -6,8 +6,8 @@ use crate::exporters::datadog::transform::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::exporters::http::client::ResponseDecode;
+use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
-use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
@@ -30,10 +30,8 @@ mod request_builder;
 mod transform;
 mod types;
 
-type SvcType<RespBody> = TowerRetry<
-    RetryPolicy<RespBody>,
-    Timeout<HttpClient<Full<Bytes>, RespBody, DatadogTraceDecoder>>,
->;
+type SvcType<RespBody> =
+    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<Full<Bytes>, RespBody, DatadogTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -148,7 +146,7 @@ impl DatadogExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        let client = HttpClient::build(tls::Config::default(), Default::default())?;
+        let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
 
         let transformer = Transformer::new(self.environment, self.hostname);
 

@@ -17,7 +17,7 @@
 //! # Modules
 //!
 //! - `config`: Configuration structures and builders for OTLP exporters
-//! - `errors`: Error types specific to OTLP export operations  
+//! - `errors`: Error types specific to OTLP export operations
 //! - `request`: Request handling and processing
 //! - `client`: Client implementations for different protocols
 //! - `exporter`: Core exporter implementation

@@ -7,8 +7,8 @@ use crate::exporters::xray::transformer::Transformer;
 
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
+use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
-use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
@@ -32,7 +32,7 @@ mod transformer;
 mod xray_request;
 
 type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<HttpClient<Full<Bytes>, RespBody, XRayTraceDecoder>>>;
+    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<Full<Bytes>, RespBody, XRayTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -104,7 +104,7 @@ impl XRayExporterBuilder {
         environment: String,
         config: AwsConfig,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        let client = HttpClient::build(tls::Config::default(), Default::default())?;
+        let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let transformer = Transformer::new(environment);
 
         let req_builder = RequestBuilder::new(
