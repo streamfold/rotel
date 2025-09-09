@@ -4,9 +4,6 @@ use crate::exporters::http::client::{Client, Protocol as HttpProtocol, ResponseD
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
-/// A client implementation for OTLP (OpenTelemetry Protocol) exports that supports both gRPC and HTTP protocols.
-/// The client handles TLS configuration, request processing, and response decoding.
-use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::request::EncodedRequest;
 use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
 use crate::telemetry::{Counter, RotelCounter};
@@ -18,7 +15,6 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tonic::Status;
 use tonic::codegen::Service;
 use tower::{BoxError, Service as TowerService};
 
@@ -46,8 +42,10 @@ where
     T: prost::Message + Default,
 {
     fn decode(&self, body: Bytes, _encoding: ContentEncoding) -> Result<T, BoxError> {
+        let body_len = body.len();
         // For gRPC, we don't use the ContentEncoding parameter since compression is handled in the gRPC framing
-        grpc_codec::grpc_decode_body::<T>(body, self.send_failed.clone(), 1).map_err(|e| e.into())
+        grpc_codec::grpc_decode_body::<T>(body, self.send_failed.clone(), body_len as u64)
+            .map_err(|e| e.into())
     }
 }
 
@@ -76,8 +74,14 @@ where
 {
     fn decode(&self, body: Bytes, encoding: ContentEncoding) -> Result<T, BoxError> {
         let compressed = encoding == ContentEncoding::Gzip;
-        http_codec::http_decode_body::<T>(body, compressed, self.send_failed.clone(), 1)
-            .map_err(|e| e.into())
+        let body_len = body.len();
+        http_codec::http_decode_body::<T>(
+            body,
+            compressed,
+            self.send_failed.clone(),
+            body_len as u64,
+        )
+        .map_err(|e| e.into())
     }
 }
 
@@ -122,16 +126,52 @@ where
         let mut client = self.client.clone();
         let send_failed = self.send_failed.clone();
         let sent = self.sent.clone();
+        let req_size = req.size;
 
         Box::pin(async move {
-            let result = Self::perform_request_with_client(
-                &mut client,
-                send_failed.clone(),
-                sent.clone(),
-                req.clone(),
-            )
-            .await;
+            let result = Self::perform_request_with_client(&mut client, req).await;
+
             match result {
+                Ok(resp) => match &resp {
+                    HttpResponse::Http(parts, _) => {
+                        match parts.status.as_u16() {
+                            200..=202 => {
+                                sent.add(req_size as u64, &[]);
+                            }
+                            _ => {
+                                send_failed.add(
+                                    req_size as u64,
+                                    &[
+                                        KeyValue::new("error", "http_status"),
+                                        KeyValue::new("value", parts.status.to_string()),
+                                    ],
+                                );
+                            }
+                        }
+                        Ok(resp)
+                    }
+                    HttpResponse::Grpc(status, _) => {
+                        if status.code() != tonic::Code::Ok {
+                            send_failed.add(
+                                req_size as u64,
+                                &[
+                                    KeyValue::new("error", "grpc_status"),
+                                    KeyValue::new("value", status.code().to_string()),
+                                ],
+                            );
+                        } else {
+                            sent.add(req_size as u64, &[]);
+                        }
+                        Ok(resp)
+                    }
+                },
+                Err(e) => {
+                    send_failed.add(req_size as u64, &[KeyValue::new("error", "request_failed")]);
+                    Err(e)
+                }
+            }
+
+            /*match result {
                 Ok(response) => {
                     // Simulate a successful grpc response here for non-error requests,
                     // later we'll push the response generation further up the stack
@@ -147,7 +187,7 @@ where
                         _ => Err(Box::new(error) as BoxError),
                     }
                 }
-            }
+            }*/
         }) as Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>
     }
 }
@@ -205,12 +245,8 @@ where
     /// * `Result<T, ExporterError>` - The decoded response or an error
     async fn perform_request_with_client(
         client: &mut UnifiedClientType<T>,
-        send_failed: RotelCounter<u64>,
-        sent: RotelCounter<u64>,
         encoded_request: EncodedRequest,
-    ) -> Result<T, ExporterError> {
-        let count = encoded_request.size as u64;
-
+    ) -> Result<HttpResponse<T>, BoxError> {
         let response = match client {
             UnifiedClientType::Grpc(client) => {
                 TowerService::call(client, encoded_request.request).await
@@ -219,7 +255,8 @@ where
                 TowerService::call(client, encoded_request.request).await
             }
         };
-
+        response
+        /*
         match response {
             Ok(response) => {
                 if let Some(body) = response.body() {
@@ -261,5 +298,6 @@ where
                 Err(ExporterError::Generic(format!("Request failed: {}", e)))
             }
         }
+        */
     }
 }
