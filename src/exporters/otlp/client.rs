@@ -170,25 +170,7 @@ where
                     Err(e)
                 }
             }
-
-            /*match result {
-                Ok(response) => {
-                    // Simulate a successful grpc response here for non-error requests,
-                    // later we'll push the response generation further up the stack
-                    let http_resp = HttpResponse::from_grpc(Status::ok("OK"), Some(response));
-                    Ok(http_resp)
-                }
-                Err(error) => {
-                    // Map http/grpc errors back into response types to handle them generically,
-                    // all remaining errors are converted to BoxError types
-                    match error {
-                        ExporterError::Http(parts, _) => Ok(HttpResponse::from_http(parts, None)),
-                        ExporterError::Grpc(status) => Ok(HttpResponse::from_grpc(status, None)),
-                        _ => Err(Box::new(error) as BoxError),
-                    }
-                }
-            }*/
-        }) as Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>
+        })
     }
 }
 
@@ -247,57 +229,13 @@ where
         client: &mut UnifiedClientType<T>,
         encoded_request: EncodedRequest,
     ) -> Result<HttpResponse<T>, BoxError> {
-        let response = match client {
+        match client {
             UnifiedClientType::Grpc(client) => {
                 TowerService::call(client, encoded_request.request).await
             }
             UnifiedClientType::Http(client) => {
                 TowerService::call(client, encoded_request.request).await
             }
-        };
-        response
-        /*
-        match response {
-            Ok(response) => {
-                if let Some(body) = response.body() {
-                    sent.add(count, &[]);
-                    Ok(body.clone())
-                } else {
-                    // Handle error responses
-                    match response.status() {
-                        Some(status) if status.code() != tonic::Code::Ok => {
-                            send_failed.add(
-                                count,
-                                &[
-                                    KeyValue::new("error", "grpc_status"),
-                                    KeyValue::new("value", status.code().to_string()),
-                                ],
-                            );
-                            Err(ExporterError::Grpc(status.clone()))
-                        }
-                        _ => {
-                            if let Some(http_status) = response.http_status() {
-                                send_failed.add(
-                                    count,
-                                    &[
-                                        KeyValue::new("error", "http_status"),
-                                        KeyValue::new("value", http_status.status.to_string()),
-                                    ],
-                                );
-                                Err(ExporterError::Http(http_status.clone(), None))
-                            } else {
-                                send_failed.add(count, &[KeyValue::new("error", "no_body")]);
-                                Err(ExporterError::Generic("No response body".into()))
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                send_failed.add(count, &[KeyValue::new("error", "request_failed")]);
-                Err(ExporterError::Generic(format!("Request failed: {}", e)))
-            }
         }
-        */
     }
 }

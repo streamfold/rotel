@@ -142,7 +142,7 @@ where
     <ReqBody as Body>::Data: Send,
 {
     pub fn build(tls_config: Config, protocol: Protocol, decoder: Dec) -> Result<Self, BoxError> {
-        let inner = build_hyper_client(tls_config, false)?;
+        let inner = build_hyper_client(tls_config, protocol == Protocol::Grpc)?;
 
         Ok(Self {
             inner,
