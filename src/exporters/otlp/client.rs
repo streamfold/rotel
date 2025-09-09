@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::http::client::build_hyper_client;
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
 /// A client implementation for OTLP (OpenTelemetry Protocol) exports that supports both gRPC and HTTP protocols.
@@ -17,14 +18,12 @@ use hyper::body::Incoming;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::{TokioExecutor, TokioTimer};
 use opentelemetry::KeyValue;
 use std::error::Error;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Duration;
 use tonic::Status;
 use tonic::codegen::Service;
 use tower_http::BoxError;
@@ -303,21 +302,5 @@ fn build_client(
     tls_config: Config,
     protocol: Protocol,
 ) -> Result<HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>, Box<dyn Error + Send + Sync>> {
-    let client_config = tls_config.into_client_config()?;
-
-    let https = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(client_config)
-        .https_or_http()
-        .enable_http2()
-        .build();
-
-    let client = hyper_util::client::legacy::Client::builder(TokioExecutor::new())
-        // todo: make configurable
-        .pool_idle_timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(100)
-        .http2_only(protocol == Protocol::Grpc)
-        .timer(TokioTimer::new())
-        .build::<_, Full<Bytes>>(https);
-
-    Ok(client)
+    build_hyper_client(tls_config, protocol == Protocol::Grpc).map_err(|e| e.into())
 }
