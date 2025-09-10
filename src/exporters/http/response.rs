@@ -33,27 +33,6 @@ impl<T> Response<T> {
             Response::Grpc(_, _) => StatusCode::OK, // gRPC always OK if parsed
         }
     }
-
-    pub fn body(&self) -> Option<&T> {
-        match self {
-            Response::Http(_, body) => body.as_ref(),
-            Response::Grpc(_, body) => body.as_ref(),
-        }
-    }
-
-    pub fn status(&self) -> Option<&Status> {
-        match self {
-            Response::Http(_, _) => None,
-            Response::Grpc(status, _) => Some(status),
-        }
-    }
-
-    pub fn http_status(&self) -> Option<&Parts> {
-        match self {
-            Response::Http(parts, _) => Some(parts),
-            Response::Grpc(_, _) => None,
-        }
-    }
 }
 
 impl<T> Debug for Response<T>
