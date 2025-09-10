@@ -8,6 +8,7 @@ use crate::exporters::otlp::request::EncodedRequest;
 use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
+use http::StatusCode;
 use http_body_util::Full;
 use opentelemetry::KeyValue;
 use std::error::Error;
@@ -16,7 +17,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tonic::codegen::Service;
-use tower::{BoxError, Service as TowerService};
+use tower::BoxError;
 
 /// ResponseDecode implementation for gRPC codec
 #[derive(Clone)]
@@ -85,7 +86,8 @@ where
     }
 }
 
-/// Enum to hold either gRPC or HTTP client
+/// Enum to hold either gRPC or HTTP client. This helps hide the
+/// decoder types from the client type
 #[derive(Clone)]
 enum UnifiedClientType<T> {
     Grpc(Client<Full<Bytes>, T, GrpcDecoder<T>>),
@@ -134,20 +136,18 @@ where
             match result {
                 Ok(resp) => match &resp {
                     HttpResponse::Http(parts, _) => {
-                        match parts.status.as_u16() {
-                            200..=202 => {
-                                sent.add(req_size as u64, &[]);
-                            }
-                            _ => {
-                                send_failed.add(
-                                    req_size as u64,
-                                    &[
-                                        KeyValue::new("error", "http_status"),
-                                        KeyValue::new("value", parts.status.to_string()),
-                                    ],
-                                );
-                            }
+                        if parts.status == StatusCode::OK {
+                            sent.add(req_size as u64, &[]);
+                        } else {
+                            send_failed.add(
+                                req_size as u64,
+                                &[
+                                    KeyValue::new("error", "http_status"),
+                                    KeyValue::new("value", parts.status.to_string()),
+                                ],
+                            );
                         }
+
                         Ok(resp)
                     }
                     HttpResponse::Grpc(status, _) => {
@@ -178,16 +178,6 @@ impl<T> OTLPClient<T>
 where
     T: prost::Message + Default + Send + Sync + Clone + 'static,
 {
-    /// Creates a new OTLPClient instance with the specified protocol
-    ///
-    /// # Arguments
-    /// * `tls_config` - TLS configuration for secure communication
-    /// * `protocol` - The protocol (HTTP or gRPC) to use for communication
-    /// * `sent` - Counter for successful sends
-    /// * `send_failed` - Counter for failed sends
-    ///
-    /// # Returns
-    /// * `Result<Self, Box<dyn Error + Send + Sync>>` - The created client or an error
     pub fn new(
         tls_config: Config,
         protocol: Protocol,
@@ -215,27 +205,13 @@ where
         })
     }
 
-    /// Performs the actual request to the OTLP endpoint and handles the response using stored client
-    ///
-    /// # Arguments
-    /// * `client` - The unified client
-    /// * `send_failed` - Counter for failed sends
-    /// * `sent` - Counter for successful sends
-    /// * `encoded_request` - The encoded request to send
-    ///
-    /// # Returns
-    /// * `Result<T, ExporterError>` - The decoded response or an error
     async fn perform_request_with_client(
         client: &mut UnifiedClientType<T>,
         encoded_request: EncodedRequest,
     ) -> Result<HttpResponse<T>, BoxError> {
         match client {
-            UnifiedClientType::Grpc(client) => {
-                TowerService::call(client, encoded_request.request).await
-            }
-            UnifiedClientType::Http(client) => {
-                TowerService::call(client, encoded_request.request).await
-            }
+            UnifiedClientType::Grpc(client) => client.call(encoded_request.request).await,
+            UnifiedClientType::Http(client) => client.call(encoded_request.request).await,
         }
     }
 }
