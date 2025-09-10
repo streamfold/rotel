@@ -10,6 +10,9 @@ use crate::aws_api::config::AwsConfig;
 /// - Support for both metrics and traces telemetry
 ///
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::http::finalizer::SuccessStatusFinalizer;
+use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
+use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::retry::RetryPolicy;
 use crate::exporters::otlp::client::OTLPClient;
@@ -53,6 +56,8 @@ use tower::retry::{Retry, RetryLayer};
 use tower::timeout::{Timeout, TimeoutLayer};
 use tower::{BoxError, Service, ServiceBuilder};
 use tracing::{debug, error, warn};
+
+use crate::exporters::http::exporter::Exporter as HttpExporter;
 
 const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
@@ -115,6 +120,24 @@ pub fn build_traces_exporter(
         .layer(RetryLayer::new(retry_policy))
         .layer(TimeoutLayer::new(traces_config.request_timeout))
         .service(client);
+
+    let enc_stream = RequestIterator::new(RequestBuilderMapper::new(
+        trace_rx.into_stream(),
+        req_builder,
+    ));
+
+    let exp = HttpExporter::new(
+        "otlp",
+        "traces",
+        enc_stream,
+        svc,
+        SuccessStatusFinalizer::default(),
+        flush_receiver,
+        retry_broadcast,
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+    );
+
     Ok(Exporter::new(
         traces_config.type_name.clone(),
         svc,
