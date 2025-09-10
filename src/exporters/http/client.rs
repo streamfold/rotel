@@ -1,63 +1,9 @@
-//! HTTP client implementation that supports both gRPC and HTTP protocols.
-//!
-//! This module provides a single `Client` that can handle both gRPC and HTTP requests
-//! based on the `Protocol` enum.
-//!
-//! ## Migration Guide
-//!
-//! ### Migration from HttpClient
-//! ```rust,no_run
-//! // Old way
-//! use crate::exporters::http::http_client::HttpClient;
-//! let client = HttpClient::build(tls_config, decoder)?;
-//!
-//! // New way
-//! use crate::exporters::http::client::{Client, Protocol};
-//! let client = Client::build(tls_config, Protocol::Http, decoder)?;
-//! ```
-//!
-//! ### Migration from GrpcClient
-//! ```rust,no_run
-//! // Old way
-//! use crate::exporters::http::grpc_client::GrpcClient;
-//! let client = GrpcClient::build(tls_config, decoder)?;
-//!
-//! // New way
-//! use crate::exporters::http::client::{Client, Protocol};
-//! let client = Client::build(tls_config, Protocol::Grpc, decoder)?;
-//! ```
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use crate::exporters::http::client::{Client, Protocol};
-//! use crate::exporters::http::tls::Config;
-//!
-//! // For HTTP protocol
-//! let http_client = Client::build(
-//!     Config::default(),
-//!     Protocol::Http,
-//!     decoder
-//! )?;
-//!
-//! // For gRPC protocol
-//! let grpc_client = Client::build(
-//!     Config::default(),
-//!     Protocol::Grpc,
-//!     decoder
-//! )?;
-//! ```
-//!
-//! ## Protocol Differences
-//!
-//! The client handles protocol-specific behavior automatically:
-//!
-//! - **gRPC**: Strict content encoding validation, trailer status parsing, gRPC status handling
-//! - **HTTP**: Flexible content encoding, error response body decoding, trailer warnings
-//!
-//! Both protocols share the same core networking and TLS configuration.
-
 // SPDX-License-Identifier: Apache-2.0
+
+// HTTP client implementation that supports both gRPC and HTTP protocols.
+//
+// This module provides a single `Client` that can handle both gRPC and HTTP requests
+// based on the `Protocol` enum.
 
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
