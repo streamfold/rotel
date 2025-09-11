@@ -28,6 +28,7 @@
 pub mod config;
 pub mod exporter;
 pub mod request;
+mod exp_request_builder;
 
 pub(crate) mod errors;
 

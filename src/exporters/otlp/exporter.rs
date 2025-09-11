@@ -19,6 +19,7 @@ use crate::exporters::otlp::client::OTLPClient;
 use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
+use crate::exporters::otlp::exp_request_builder::ExporterRequestBuilder;
 use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
 use crate::exporters::otlp::signer::{
     AwsSigv4RequestSigner, AwsSigv4RequestSignerBuilder, RequestSigner,
@@ -79,15 +80,7 @@ pub fn build_traces_exporter(
     traces_config: OTLPExporterTracesConfig,
     trace_rx: BoundedReceiver<Vec<ResourceSpans>>,
     flush_receiver: Option<FlushReceiver>,
-) -> Result<
-    Exporter<
-        ResourceSpans,
-        ExportTraceServiceRequest,
-        AwsSigv4RequestSigner,
-        ExportTraceServiceResponse,
-    >,
-    Box<dyn Error + Send + Sync>,
-> {
+) -> Result<HttpExporter<RequestIterator<RequestBuilderMapper<flume::r#async::RecvStream<'_, Vec<ResourceSpans>>, ResourceSpans, http_body_util::Full<bytes::Bytes>, ExporterRequestBuilder<ResourceSpans, ExportTraceServiceRequest, AwsSigv4RequestSigner>>, Vec<http::Request<http_body_util::Full<bytes::Bytes>>>, http_body_util::Full<bytes::Bytes>>, Retry<RetryPolicy<_>, Timeout<OTLPClient<_>>>, _, SuccessStatusFinalizer>, _> {
     let sent = get_meter()
         .u64_counter("rotel_exporter_sent_spans")
         .with_description("Number of spans successfully exported")
@@ -121,9 +114,11 @@ pub fn build_traces_exporter(
         .layer(TimeoutLayer::new(traces_config.request_timeout))
         .service(client);
 
+    let exp_req_builder = ExporterRequestBuilder::new(req_builder);
+
     let enc_stream = RequestIterator::new(RequestBuilderMapper::new(
         trace_rx.into_stream(),
-        req_builder,
+        exp_req_builder,
     ));
 
     let exp = HttpExporter::new(
@@ -138,16 +133,17 @@ pub fn build_traces_exporter(
         Duration::from_secs(2),
     );
 
-    Ok(Exporter::new(
-        traces_config.type_name.clone(),
-        svc,
-        req_builder.clone(),
-        trace_rx.clone(),
-        traces_config.encode_drain_max_time,
-        traces_config.export_drain_max_time,
-        flush_receiver,
-        retry_broadcast,
-    ))
+    Ok(exp)
+    // Ok(Exporter::new(
+    //     traces_config.type_name.clone(),
+    //     svc,
+    //     req_builder.clone(),
+    //     trace_rx.clone(),
+    //     traces_config.encode_drain_max_time,
+    //     traces_config.export_drain_max_time,
+    //     flush_receiver,
+    //     retry_broadcast,
+    // ))
 }
 
 fn get_signer_builder(cfg: &OTLPExporterTracesConfig) -> Option<AwsSigv4RequestSignerBuilder> {
