@@ -66,6 +66,7 @@ jobs:
       - name: tar
         run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
       - name: upload
+        if: github.event_name != 'pull_request'
         run: |
           id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
           curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
