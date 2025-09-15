@@ -7,8 +7,8 @@ use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::aws_api::config::AwsConfig;
+use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
-use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
@@ -43,7 +43,7 @@ use cloudwatch::Cloudwatch;
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,
-    ResponseInterceptor<Timeout<HttpClient<Full<Bytes>, RespBody, AwsEmfDecoder>>>,
+    ResponseInterceptor<Timeout<Client<Full<Bytes>, RespBody, AwsEmfDecoder>>>,
 >;
 
 type ExporterType<'a, Resource> = Exporter<
@@ -178,7 +178,7 @@ impl AwsEmfExporterBuilder {
         flush_receiver: Option<FlushReceiver>,
         aws_config: AwsConfig,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
-        let client = HttpClient::build(tls::Config::default(), Default::default())?;
+        let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let dim_filter = Arc::new(DimensionFilter::new(
             self.config.include_dimensions.clone(),
             self.config.exclude_dimensions.clone(),

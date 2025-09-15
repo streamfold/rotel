@@ -19,8 +19,8 @@ use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPay
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
 use crate::exporters::http::client::ResponseDecode;
+use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
-use crate::exporters::http::http_client::HttpClient;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::response::Response;
@@ -75,7 +75,7 @@ pub struct ClickhouseExporterConfigBuilder {
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,
-    Timeout<HttpClient<ClickhousePayload, RespBody, ClickhouseRespDecoder>>,
+    Timeout<Client<ClickhousePayload, RespBody, ClickhouseRespDecoder>>,
 >;
 
 pub type ExporterType<'a, Resource> = Exporter<
@@ -209,7 +209,7 @@ impl ClickhouseExporterBuilder {
         Resource: Clone + Send + Sync + 'static,
         Transformer: TransformPayload<Resource>,
     {
-        let client = HttpClient::build(tls::Config::default(), Default::default())?;
+        let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
 
         let transformer = Transformer::new(
             self.config.compression.clone(),
