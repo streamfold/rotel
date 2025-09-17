@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::{Serialize, Serializer};
 
 //
@@ -15,7 +17,7 @@ use serde::{Serialize, Serializer};
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct SpanRow {
+pub struct SpanRow<'a> {
     pub(crate) timestamp: u64,
     pub(crate) trace_id: String,
     pub(crate) span_id: String,
@@ -23,10 +25,10 @@ pub struct SpanRow {
     pub(crate) trace_state: String,
     pub(crate) span_name: String,
     pub(crate) span_kind: String,
-    pub(crate) service_name: String,
-    pub(crate) resource_attributes: MapOrJson,
-    pub(crate) scope_name: String,
-    pub(crate) scope_version: String,
+    pub(crate) service_name: Cow<'a, str>,
+    pub(crate) resource_attributes: Cow<'a, MapOrJson>,
+    pub(crate) scope_name: Cow<'a, str>,
+    pub(crate) scope_version: Cow<'a, str>,
     pub(crate) span_attributes: MapOrJson,
     pub(crate) duration: i64,
     pub(crate) status_code: String,
