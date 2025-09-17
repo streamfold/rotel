@@ -18,13 +18,12 @@ pub enum ConvertedAttrValue {
 
 impl Display for ConvertedAttrValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            ConvertedAttrValue::Int(i) => i.to_string(),
+        match self {
+            ConvertedAttrValue::Int(i) => write!(f, "{}", i),
             // todo: match to OTEL conversion at pdata/pcommon/value.go:404
-            ConvertedAttrValue::Double(d) => json!(d).to_string(),
-            ConvertedAttrValue::String(s) => s.clone(),
-        };
-        write!(f, "{}", str)
+            ConvertedAttrValue::Double(d) => write!(f, "{}", json!(d).to_string()),
+            ConvertedAttrValue::String(s) => write!(f, "{}", s),
+        }
     }
 }
 
