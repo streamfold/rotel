@@ -50,6 +50,34 @@ impl Transformer {
         }
     }
 
+    pub fn transform_attrs_into(&self, attrs: Vec<ConvertedAttrKeyValue>) -> MapOrJson {
+        match self.use_json {
+            true => {
+                let hm: HashMap<String, String> = attrs
+                    .into_iter()
+                    // periods(.) in key names will be converted into a nested format, so swap
+                    // them to underscores to avoid nesting
+                    .map(|kv| {
+                        if self.use_json_underscore {
+                            (kv.0.replace(".", "_"), kv.1.to_string())
+                        } else {
+                            (kv.0, kv.1.to_string())
+                        }
+                    })
+                    .collect();
+
+                MapOrJson::Json(json!(hm).to_string())
+            }
+            false => MapOrJson::Map(
+                attrs
+                    .into_iter()
+                    .map(|kv| (kv.0, kv.1.to_string()))
+                    .collect(),
+            ),
+        }
+    }
+
+    
     pub fn transform_attrs_fast(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
         match self.use_json {
             true => MapOrJson::Json(self.build_json_direct(attrs)),

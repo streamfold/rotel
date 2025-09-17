@@ -20,8 +20,8 @@ impl TransformPayload<ResourceSpans> for Transformer {
         for rs in input {
             let res_attrs = rs.resource.unwrap_or_default().attributes;
             let res_attrs = cvattr::convert_into(res_attrs);
-            let res_attrs_field = self.transform_attrs(&res_attrs);
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
+            let res_attrs_field = self.transform_attrs_into(res_attrs);
 
             for ss in rs.scope_spans {
                 let (scope_name, scope_version) = match ss.scope {
@@ -30,9 +30,13 @@ impl TransformPayload<ResourceSpans> for Transformer {
                 };
 
                 for span in ss.spans {
-                    let (status_code, status_message, span_attrs) = (
-                        status_code(&span),
-                        status_message(&span),
+                    let status_message = match &span.status {
+                        None => "",
+                        Some(s) => s.message.as_str(),
+                    };
+                    
+                    let (status_code, span_attrs) = (
+                        Cow::Borrowed(status_code(&span)),
                         cvattr::convert_into(span.attributes),
                     );
 
@@ -43,7 +47,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                             let timestamp = e.time_unix_nano;
                             let name = Cow::Owned(e.name);
                             let evt_attrs = cvattr::convert_into(e.attributes);
-                            let evt_attrs = self.transform_attrs(&evt_attrs);
+                            let evt_attrs = self.transform_attrs_into(evt_attrs);
 
                             (timestamp, (name, evt_attrs))
                         })
@@ -66,10 +70,10 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         resource_attributes: Cow::Borrowed(&res_attrs_field),
                         scope_name: Cow::Borrowed(&scope_name),
                         scope_version: Cow::Borrowed(&scope_version),
-                        span_attributes: self.transform_attrs(&span_attrs),
+                        span_attributes: self.transform_attrs_into(span_attrs),
                         duration: (span.end_time_unix_nano - span.start_time_unix_nano) as i64,
                         status_code,
-                        status_message,
+                        status_message: Cow::Borrowed(status_message),
                         events_timestamp,
                         events_name,
                         events_attributes,
@@ -116,26 +120,19 @@ fn span_kind_to_string<'a>(kind: i32) -> &'a str {
     } else if kind == SpanKind::Producer as i32 {
         "Producer"
     } else if kind == SpanKind::Consumer as i32 {
-        "client"
+        "Consumer"
     } else {
         "Unspecified"
     }
 }
 
-fn status_message(span: &Span) -> String {
+fn status_code<'a>(span: &Span) -> &'a str {
     match &span.status {
-        None => "".to_string(),
-        Some(s) => s.message.clone(),
-    }
-}
-
-fn status_code(span: &Span) -> String {
-    match &span.status {
-        None => "Unset".to_string(),
+        None => "Unset",
         Some(s) => match s.code {
-            1 => "Ok".to_string(),
-            2 => "Error".to_string(),
-            _ => "Unset".to_string(),
+            1 => "Ok",
+            2 => "Error",
+            _ => "Unset",
         },
     }
 }

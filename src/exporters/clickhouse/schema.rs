@@ -31,8 +31,8 @@ pub struct SpanRow<'a> {
     pub(crate) scope_version: Cow<'a, str>,
     pub(crate) span_attributes: MapOrJson,
     pub(crate) duration: i64,
-    pub(crate) status_code: String,
-    pub(crate) status_message: String,
+    pub(crate) status_code: Cow<'a, str>,
+    pub(crate) status_message: Cow<'a, str>,
 
     #[serde(rename = "Events.Timestamp")]
     pub(crate) events_timestamp: Vec<u64>,
