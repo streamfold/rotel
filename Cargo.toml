@@ -129,6 +129,10 @@ harness = false
 name = "encode_otlp_trace_bench"
 harness = false
 
+[[bench]]
+name = "transform_attrs_bench"
+harness = false
+
 [[bin]]
 name = "rotel"
 
