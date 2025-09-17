@@ -132,3 +132,13 @@ pub(crate) fn convert(attrs: &Vec<KeyValue>) -> Vec<ConvertedAttrKeyValue> {
 
     converted
 }
+
+pub(crate) fn convert_into(attrs: Vec<KeyValue>) -> Vec<ConvertedAttrKeyValue> {
+    // Convert attributes to meta and metrics
+    let converted: Vec<ConvertedAttrKeyValue> = attrs
+        .into_iter()
+        .filter_map(|attr| attr.try_into().ok())
+        .collect();
+
+    converted
+}

@@ -19,7 +19,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
         let mut payload_builder = ClickhousePayloadBuilder::new(self.compression.clone());
         for rs in input {
             let res_attrs = rs.resource.unwrap_or_default().attributes;
-            let res_attrs = cvattr::convert(&res_attrs);
+            let res_attrs = cvattr::convert_into(res_attrs);
             let res_attrs_field = self.transform_attrs(&res_attrs);
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
 
@@ -30,9 +30,29 @@ impl TransformPayload<ResourceSpans> for Transformer {
                 };
 
                 for span in ss.spans {
-                    let span_attrs = cvattr::convert(&span.attributes);
-                    let status_code = status_code(&span);
-                    let status_message = status_message(&span);
+                    let (status_code, status_message, span_attrs) = (
+                        status_code(&span),
+                        status_message(&span),
+                        cvattr::convert_into(span.attributes),
+                    );
+
+                    let evt_props: Vec<_> = span
+                        .events
+                        .into_iter()
+                        .map(|e| {
+                            let timestamp = e.time_unix_nano;
+                            let name = Cow::Owned(e.name);
+                            let evt_attrs = cvattr::convert_into(e.attributes);
+                            let evt_attrs = self.transform_attrs(&evt_attrs);
+
+                            (timestamp, (name, evt_attrs))
+                        })
+                        .collect();
+
+                    let (events_timestamp, name_and_attrs): (Vec<_>, Vec<_>) =
+                        evt_props.into_iter().unzip();
+                    let (events_name, events_attributes): (Vec<_>, Vec<_>) =
+                        name_and_attrs.into_iter().unzip();
 
                     let row = SpanRow {
                         timestamp: span.start_time_unix_nano,
@@ -50,20 +70,10 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         duration: (span.end_time_unix_nano - span.start_time_unix_nano) as i64,
                         status_code,
                         status_message,
-                        events_timestamp: span.events.iter().map(|e| e.time_unix_nano).collect(),
-                        events_name: span
-                            .events
-                            .iter()
-                            .map(|e| Cow::Borrowed(e.name.as_str()))
-                            .collect(),
-                        events_attributes: span
-                            .events
-                            .iter()
-                            .map(|e| {
-                                let event_attrs = cvattr::convert(&e.attributes);
-                                self.transform_attrs(&event_attrs)
-                            })
-                            .collect(),
+                        events_timestamp,
+                        events_name,
+                        events_attributes,
+                        // TODO: use into_iter() form for links too
                         links_trace_id: span
                             .links
                             .iter()
