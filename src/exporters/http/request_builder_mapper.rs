@@ -45,11 +45,11 @@ where
 {
     pub fn new(input: InStr, req_builder: ReqBuilder) -> Self {
         let max_concurrent_encoders = std::env::var("ROTEL_MAX_CONCURRENT_ENCODERS")
-                    .ok()
-                    .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(MAX_CONCURRENT_ENCODERS);
-        
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(MAX_CONCURRENT_ENCODERS);
+
         Self {
             input: input.fuse(),
             req_builder,
