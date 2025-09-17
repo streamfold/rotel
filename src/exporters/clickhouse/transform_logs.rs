@@ -3,7 +3,7 @@ use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::LogRecordRow;
 use crate::exporters::clickhouse::transformer::{
-    Transformer, find_attribute, get_scope_properties,
+    Transformer, find_attribute,
 };
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrValue;
@@ -24,11 +24,9 @@ impl TransformPayload<ResourceLogs> for Transformer {
             let res_schema_url = rl.schema_url;
 
             for sl in rl.scope_logs {
-                let (scope_name, scope_version) = get_scope_properties(sl.scope.as_ref());
-
-                let scope_attrs = match sl.scope.as_ref() {
-                    None => Vec::new(),
-                    Some(scope) => cvattr::convert(&scope.attributes),
+                let (scope_name, scope_version, scope_attrs) = match sl.scope {
+                    Some(scope) => (scope.name, scope.version, cvattr::convert(&scope.attributes)),
+                    None => (String::new(), String::new(), Vec::new()),
                 };
 
                 for log in sl.log_records {

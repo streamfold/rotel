@@ -6,7 +6,7 @@ use crate::exporters::clickhouse::schema::{
     MetricsMeta, MetricsSumRow, MetricsSummaryRow,
 };
 use crate::exporters::clickhouse::transformer::{
-    Transformer, find_attribute, get_scope_properties,
+    Transformer, find_attribute,
 };
 use crate::otlp::cvattr;
 use opentelemetry_proto::tonic::metrics::v1::exemplar::Value;
@@ -30,14 +30,11 @@ impl TransformPayload<ResourceMetrics> for Transformer {
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
 
             for sm in rm.scope_metrics {
-                let (scope_name, scope_version) = get_scope_properties(sm.scope.as_ref());
-                let scope_attrs = match &sm.scope {
-                    None => Vec::new(),
-                    Some(scope) => cvattr::convert(&scope.attributes),
+                let (scope_name, scope_version, scope_attrs, dropped_attr_count) = match sm.scope {
+                    Some(scope) => (scope.name, scope.version, cvattr::convert(&scope.attributes), scope.dropped_attributes_count),
+                    None => (String::new(), String::new(), Vec::new(), 0),
                 };
-
-                let dropped_attr_count = sm.scope.map(|s| s.dropped_attributes_count).unwrap_or(0);
-
+                
                 for metric in sm.metrics {
                     if let Some(data) = metric.data {
                         let mut meta = MetricsMeta {
