@@ -24,7 +24,7 @@ pub struct SpanRow<'a> {
     pub(crate) parent_span_id: String,
     pub(crate) trace_state: String,
     pub(crate) span_name: String,
-    pub(crate) span_kind: String,
+    pub(crate) span_kind: Cow<'a, str>,
     pub(crate) service_name: Cow<'a, str>,
     pub(crate) resource_attributes: Cow<'a, MapOrJson>,
     pub(crate) scope_name: Cow<'a, str>,

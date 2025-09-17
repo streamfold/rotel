@@ -1,7 +1,6 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::schema::MapOrJson;
 use crate::otlp::cvattr::ConvertedAttrKeyValue;
-use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
 use serde_json::json;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -20,13 +19,6 @@ impl Transformer {
             use_json,
             use_json_underscore,
         }
-    }
-}
-
-pub(crate) fn get_scope_properties(scope: Option<&InstrumentationScope>) -> (String, String) {
-    match scope {
-        None => (String::new(), String::new()),
-        Some(scope) => (scope.name.clone(), scope.version.clone()),
     }
 }
 

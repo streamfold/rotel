@@ -5,7 +5,7 @@ use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
 use crate::exporters::clickhouse::transformer::{
-    Transformer, find_attribute, get_scope_properties,
+    Transformer, find_attribute,
 };
 use crate::otlp::cvattr;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
@@ -26,8 +26,11 @@ impl TransformPayload<ResourceSpans> for Transformer {
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
 
             for ss in rs.scope_spans {
-                let (scope_name, scope_version) = get_scope_properties(ss.scope.as_ref());
-
+                let (scope_name, scope_version) = match ss.scope {
+                    Some(scope) => (scope.name, scope.version),
+                    None => (String::new(), String::new()),
+                };
+                
                 for span in ss.spans {
                     let span_attrs = cvattr::convert(&span.attributes);
                     let status_code = status_code(&span);
@@ -40,7 +43,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         parent_span_id: hex::encode(span.parent_span_id),
                         trace_state: span.trace_state,
                         span_name: span.name,
-                        span_kind: span_kind_to_string(span.kind),
+                        span_kind: Cow::Borrowed(span_kind_to_string(span.kind)),
                         service_name: Cow::Borrowed(&service_name),
                         resource_attributes: Cow::Borrowed(&res_attrs_field),
                         scope_name: Cow::Borrowed(&scope_name),
@@ -91,19 +94,19 @@ impl TransformPayload<ResourceSpans> for Transformer {
     }
 }
 
-fn span_kind_to_string(kind: i32) -> String {
+fn span_kind_to_string<'a>(kind: i32) -> &'a str {
     if kind == SpanKind::Internal as i32 {
-        "Internal".to_string()
+        "Internal"
     } else if kind == SpanKind::Server as i32 {
-        "Server".to_string()
+        "Server"
     } else if kind == SpanKind::Client as i32 {
-        "Client".to_string()
+        "Client"
     } else if kind == SpanKind::Producer as i32 {
-        "Producer".to_string()
+        "Producer"
     } else if kind == SpanKind::Consumer as i32 {
-        "client".to_string()
+        "client"
     } else {
-        "Unspecified".to_string()
+        "Unspecified"
     }
 }
 
