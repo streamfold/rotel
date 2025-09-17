@@ -4,9 +4,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
-use crate::exporters::clickhouse::transformer::{
-    Transformer, find_attribute,
-};
+use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
 use crate::otlp::cvattr;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
@@ -30,7 +28,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                     Some(scope) => (scope.name, scope.version),
                     None => (String::new(), String::new()),
                 };
-                
+
                 for span in ss.spans {
                     let span_attrs = cvattr::convert(&span.attributes);
                     let status_code = status_code(&span);
@@ -53,7 +51,11 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         status_code,
                         status_message,
                         events_timestamp: span.events.iter().map(|e| e.time_unix_nano).collect(),
-                        events_name: span.events.iter().map(|e| e.name.clone()).collect(),
+                        events_name: span
+                            .events
+                            .iter()
+                            .map(|e| Cow::Borrowed(e.name.as_str()))
+                            .collect(),
                         events_attributes: span
                             .events
                             .iter()
@@ -71,7 +73,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         links_trace_state: span
                             .links
                             .iter()
-                            .map(|l| l.trace_state.clone())
+                            .map(|l| Cow::Borrowed(l.trace_state.as_str()))
                             .collect(),
                         links_attributes: span
                             .links
