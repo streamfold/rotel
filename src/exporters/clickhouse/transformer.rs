@@ -26,15 +26,15 @@ impl Transformer {
     pub fn transform_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
         match self.use_json {
             true => {
-                let hm: HashMap<String, String> = attrs
+                let hm: HashMap<Cow<'_, String>, String> = attrs
                     .iter()
                     // periods(.) in key names will be converted into a nested format, so swap
                     // them to underscores to avoid nesting
                     .map(|kv| {
                         if self.use_json_underscore {
-                            (kv.0.replace(".", "_"), kv.1.to_string())
+                            (Cow::Owned(kv.0.replace(".", "_")), kv.1.to_string())
                         } else {
-                            (kv.0.clone(), kv.1.to_string())
+                            (Cow::Borrowed(&kv.0), kv.1.to_string())
                         }
                     })
                     .collect();
