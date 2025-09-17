@@ -39,6 +39,7 @@ pub struct Exporter<InStr, Svc, Payload, Finalizer> {
     retry_broadcast: BroadcastSender<bool>,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
+    max_concurrent_requests: usize,
     _phantom: PhantomData<Payload>,
 }
 
@@ -54,6 +55,12 @@ impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer> {
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
     ) -> Self {
+        let max_concurrent_requests = std::env::var("ROTEL_MAX_CONCURRENT_REQUESTS")
+            .ok()
+            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(MAX_CONCURRENT_REQUESTS);
+
         Self {
             meta: Meta {
                 exporter_name: exporter_name.to_string(),
@@ -66,6 +73,7 @@ impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer> {
             retry_broadcast,
             encode_drain_max_time,
             export_drain_max_time,
+            max_concurrent_requests,
             _phantom: PhantomData,
         }
     }
@@ -107,7 +115,7 @@ where
                     }
                 },
 
-                input = self.input.next(), if export_futures.len() < MAX_CONCURRENT_REQUESTS => {
+                input = self.input.next(), if export_futures.len() < self.max_concurrent_requests => {
                     match input {
                         None => {
                             debug!(?meta, "Exporter received end of input, exiting.");

@@ -6,8 +6,9 @@ Rotel depends on the latest Rust toolchain, we recommend [rustup](https://rustup
 * gcc or another compiler with linker for libc
 * cmake
 * openssl
-* protoc
+* protobuf-compiler
 * libzstd-dev
+* libclang-dev
 
 ## Building and running
 
