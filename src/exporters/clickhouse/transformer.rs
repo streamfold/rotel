@@ -25,7 +25,7 @@ impl Transformer {
 
 pub(crate) fn get_scope_properties(scope: Option<&InstrumentationScope>) -> (String, String) {
     match scope {
-        None => ("".to_string(), "".to_string()),
+        None => (String::new(), String::new()),
         Some(scope) => (scope.name.clone(), scope.version.clone()),
     }
 }
@@ -99,5 +99,5 @@ pub(crate) fn find_attribute(attr: &str, attributes: &[ConvertedAttrKeyValue]) -
         .iter()
         .find(|kv| kv.0 == attr)
         .map(|kv| kv.1.to_string())
-        .unwrap_or("".to_string())
+        .unwrap_or(String::new())
 }
