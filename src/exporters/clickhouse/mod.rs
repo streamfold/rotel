@@ -10,7 +10,7 @@ mod schema;
 mod transform_logs;
 mod transform_metrics;
 mod transform_traces;
-mod transformer;
+pub mod transformer;
 
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ConnectionConfig;
