@@ -2,9 +2,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::LogRecordRow;
-use crate::exporters::clickhouse::transformer::{
-    Transformer, find_attribute,
-};
+use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrValue;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -25,7 +23,11 @@ impl TransformPayload<ResourceLogs> for Transformer {
 
             for sl in rl.scope_logs {
                 let (scope_name, scope_version, scope_attrs) = match sl.scope {
-                    Some(scope) => (scope.name, scope.version, cvattr::convert(&scope.attributes)),
+                    Some(scope) => (
+                        scope.name,
+                        scope.version,
+                        cvattr::convert(&scope.attributes),
+                    ),
                     None => (String::new(), String::new(), Vec::new()),
                 };
 

@@ -37,7 +37,7 @@ pub struct SpanRow<'a> {
     #[serde(rename = "Events.Timestamp")]
     pub(crate) events_timestamp: Vec<u64>,
     #[serde(rename = "Events.Name")]
-    pub(crate) events_name: Vec<String>,
+    pub(crate) events_name: Vec<Cow<'a, str>>,
     #[serde(rename = "Events.Attributes")]
     pub(crate) events_attributes: Vec<MapOrJson>,
 
@@ -46,7 +46,7 @@ pub struct SpanRow<'a> {
     #[serde(rename = "Links.SpanId")]
     pub(crate) links_span_id: Vec<String>,
     #[serde(rename = "Links.TraceState")]
-    pub(crate) links_trace_state: Vec<String>,
+    pub(crate) links_trace_state: Vec<Cow<'a, str>>,
     #[serde(rename = "Links.Attributes")]
     pub(crate) links_attributes: Vec<MapOrJson>,
 }

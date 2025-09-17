@@ -5,9 +5,7 @@ use crate::exporters::clickhouse::schema::{
     MapOrJson, MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow,
     MetricsMeta, MetricsSumRow, MetricsSummaryRow,
 };
-use crate::exporters::clickhouse::transformer::{
-    Transformer, find_attribute,
-};
+use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
 use crate::otlp::cvattr;
 use opentelemetry_proto::tonic::metrics::v1::exemplar::Value;
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
@@ -31,10 +29,15 @@ impl TransformPayload<ResourceMetrics> for Transformer {
 
             for sm in rm.scope_metrics {
                 let (scope_name, scope_version, scope_attrs, dropped_attr_count) = match sm.scope {
-                    Some(scope) => (scope.name, scope.version, cvattr::convert(&scope.attributes), scope.dropped_attributes_count),
+                    Some(scope) => (
+                        scope.name,
+                        scope.version,
+                        cvattr::convert(&scope.attributes),
+                        scope.dropped_attributes_count,
+                    ),
                     None => (String::new(), String::new(), Vec::new(), 0),
                 };
-                
+
                 for metric in sm.metrics {
                     if let Some(data) = metric.data {
                         let mut meta = MetricsMeta {
