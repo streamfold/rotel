@@ -33,6 +33,7 @@ where
 
     req_builder: ReqBuilder,
     encoding_futures: FuturesOrdered<JoinHandle<Result<ReqBuilder::Output, BoxError>>>,
+    max_concurrent_encoders: usize,
 }
 
 impl<InStr, Resource, Payload, ReqBuilder>
@@ -43,9 +44,16 @@ where
     <ReqBuilder as BuildRequest<Resource, Payload>>::Output: IntoIterator<Item = Request<Payload>>,
 {
     pub fn new(input: InStr, req_builder: ReqBuilder) -> Self {
+        let max_concurrent_encoders = std::env::var("ROTEL_MAX_CONCURRENT_ENCODERS")
+                    .ok()
+                    .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(MAX_CONCURRENT_ENCODERS);
+        
         Self {
             input: input.fuse(),
             req_builder,
+            max_concurrent_encoders,
             encoding_futures: FuturesOrdered::new(),
         }
     }
@@ -69,7 +77,7 @@ where
         // start as many encoding futures as we can
         loop {
             // We are at the limit of encoding futures
-            if this.encoding_futures.len() >= MAX_CONCURRENT_ENCODERS {
+            if this.encoding_futures.len() >= *this.max_concurrent_encoders {
                 break;
             }
 
