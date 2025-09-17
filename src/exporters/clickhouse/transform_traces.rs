@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
@@ -39,10 +41,10 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         trace_state: span.trace_state,
                         span_name: span.name,
                         span_kind: span_kind_to_string(span.kind),
-                        service_name: service_name.clone(),
-                        resource_attributes: res_attrs_field.clone(),
-                        scope_name: scope_name.clone(),
-                        scope_version: scope_version.clone(),
+                        service_name: Cow::Borrowed(&service_name),
+                        resource_attributes: Cow::Borrowed(&res_attrs_field),
+                        scope_name: Cow::Borrowed(&scope_name),
+                        scope_version: Cow::Borrowed(&scope_version),
                         span_attributes: self.transform_attrs(&span_attrs),
                         duration: (span.end_time_unix_nano - span.start_time_unix_nano) as i64,
                         status_code,
