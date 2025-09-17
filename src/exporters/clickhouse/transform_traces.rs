@@ -20,6 +20,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
         for rs in input {
             let res_attrs = rs.resource.unwrap_or_default().attributes;
             let res_attrs = cvattr::convert(&res_attrs);
+            let res_attrs_field = self.transform_attrs(&res_attrs);
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
 
             for ss in rs.scope_spans {
@@ -39,7 +40,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         span_name: span.name,
                         span_kind: span_kind_to_string(span.kind),
                         service_name: service_name.clone(),
-                        resource_attributes: self.transform_attrs(&res_attrs),
+                        resource_attributes: res_attrs_field.clone(),
                         scope_name: scope_name.clone(),
                         scope_version: scope_version.clone(),
                         span_attributes: self.transform_attrs(&span_attrs),

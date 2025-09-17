@@ -360,7 +360,7 @@ pub fn get_metrics_summary_row_col_keys() -> String {
     fields.join(",")
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MapOrJson {
     Map(Vec<(String, String)>),
     Json(String),
