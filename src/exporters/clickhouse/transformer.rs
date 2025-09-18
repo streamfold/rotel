@@ -23,7 +23,7 @@ impl Transformer {
 }
 
 impl Transformer {
-    pub fn transform_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
+    pub(crate) fn transform_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
         match self.use_json {
             true => {
                 let hm: HashMap<Cow<'_, String>, String> = attrs
@@ -48,41 +48,6 @@ impl Transformer {
                     .collect(),
             ),
         }
-    }
-
-    pub fn transform_attrs_fast(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
-        match self.use_json {
-            true => MapOrJson::Json(self.build_json_direct(attrs)),
-            false => {
-                // Pre-allocate Vec with known capacity
-                let mut map = Vec::with_capacity(attrs.len());
-                for kv in attrs {
-                    map.push((kv.0.clone(), kv.1.to_string()));
-                }
-                MapOrJson::Map(map)
-            }
-        }
-    }
-
-    // High-performance JSON building that avoids intermediate HashMap
-    fn build_json_direct(&self, attrs: &[ConvertedAttrKeyValue]) -> String {
-        if attrs.is_empty() {
-            return "{}".to_string();
-        }
-
-        // Use optimized HashMap approach instead of manual JSON building for better maintainability
-        let mut hm = HashMap::with_capacity(attrs.len());
-
-        for kv in attrs {
-            let key = if self.use_json_underscore && kv.0.contains('.') {
-                Cow::Owned(kv.0.replace(".", "_"))
-            } else {
-                Cow::Borrowed(&kv.0)
-            };
-            hm.insert(key.into_owned(), kv.1.to_string());
-        }
-
-        json!(hm).to_string()
     }
 }
 
