@@ -61,6 +61,13 @@ impl TransformPayload<ResourceSpans> for Transformer {
                     let span_id = encode_id(&span.span_id, &mut span_id_ar);
                     let parent_span_id = encode_id(&span.parent_span_id, &mut parent_id_ar);
 
+                    // avoid overflow
+                    let duration = if span.end_time_unix_nano > span.start_time_unix_nano {
+                        (span.end_time_unix_nano - span.start_time_unix_nano) as i64
+                    } else {
+                        0
+                    };
+
                     let row = SpanRow {
                         timestamp: span.start_time_unix_nano,
                         trace_id,
@@ -74,7 +81,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         scope_name: &scope_name,
                         scope_version: &scope_version,
                         span_attributes: self.transform_attrs(&span_attrs),
-                        duration: (span.end_time_unix_nano - span.start_time_unix_nano) as i64,
+                        duration,
                         status_code,
                         status_message: Cow::Borrowed(status_message),
                         events_timestamp,
@@ -151,5 +158,81 @@ fn status_code<'a>(span: &Span) -> &'a str {
             2 => "Error",
             _ => "Unset",
         },
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exporters::clickhouse::transformer::Transformer;
+    use opentelemetry_proto::tonic::common::v1::AnyValue;
+    use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
+    use opentelemetry_proto::tonic::common::v1::KeyValue;
+    use opentelemetry_proto::tonic::resource::v1::Resource;
+    use opentelemetry_proto::tonic::trace::v1::{ScopeSpans, Status};
+
+    #[test]
+    fn test_negative_duration_handling() {
+        let transformer =
+            Transformer::new(crate::exporters::clickhouse::Compression::Lz4, true, false);
+
+        // Create a span where end_time is before start_time
+        let span = Span {
+            trace_id: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            parent_span_id: vec![],
+            name: "test_span".to_string(),
+            kind: SpanKind::Internal as i32,
+            start_time_unix_nano: 1000000000, // Later time
+            end_time_unix_nano: 500000000,    // Earlier time
+            attributes: vec![],
+            events: vec![],
+            links: vec![],
+            status: Some(Status {
+                code: 1,
+                message: "".to_string(),
+            }),
+            trace_state: "".to_string(),
+            ..Default::default()
+        };
+
+        let scope_spans = ScopeSpans {
+            scope: Some(InstrumentationScope {
+                name: "test_scope".to_string(),
+                version: "1.0".to_string(),
+                ..Default::default()
+            }),
+            spans: vec![span],
+            ..Default::default()
+        };
+
+        let resource_spans = ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: SERVICE_NAME.to_string(),
+                    value: Some(AnyValue {
+                        value: Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                                "test_service".to_string(),
+                            ),
+                        ),
+                    }),
+                }],
+                ..Default::default()
+            }),
+            scope_spans: vec![scope_spans],
+            ..Default::default()
+        };
+
+        // This should not panic and should handle the negative duration gracefully
+        let result = transformer.transform(vec![resource_spans]);
+
+        // Verify the transformation succeeded
+        assert!(
+            result.is_ok(),
+            "Transform should not panic with negative duration"
+        );
+
+        let payloads = result.unwrap();
+        assert_eq!(payloads.len(), 1);
     }
 }
