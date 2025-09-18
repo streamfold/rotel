@@ -117,8 +117,7 @@ fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {
     match hex::encode_to_slice(id, out) {
         Ok(_) => {
             // We can be pretty sure the encoded string is utf8 safe
-            let trace_id = std::str::from_utf8(out).unwrap_or_default();
-            trace_id
+            std::str::from_utf8(out).unwrap_or_default()
         }
         Err(_) => {
             // Trace and Span IDs are required to have a certain length (8 or 16 bytes), the only
