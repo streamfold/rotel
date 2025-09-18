@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::{Serialize, Serializer};
 
 //
@@ -15,22 +17,22 @@ use serde::{Serialize, Serializer};
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct SpanRow {
+pub struct SpanRow<'a> {
     pub(crate) timestamp: u64,
-    pub(crate) trace_id: String,
-    pub(crate) span_id: String,
-    pub(crate) parent_span_id: String,
+    pub(crate) trace_id: &'a str,
+    pub(crate) span_id: &'a str,
+    pub(crate) parent_span_id: &'a str,
     pub(crate) trace_state: String,
     pub(crate) span_name: String,
-    pub(crate) span_kind: String,
-    pub(crate) service_name: String,
-    pub(crate) resource_attributes: MapOrJson,
-    pub(crate) scope_name: String,
-    pub(crate) scope_version: String,
+    pub(crate) span_kind: &'a str,
+    pub(crate) service_name: &'a str,
+    pub(crate) resource_attributes: &'a MapOrJson,
+    pub(crate) scope_name: &'a str,
+    pub(crate) scope_version: &'a str,
     pub(crate) span_attributes: MapOrJson,
     pub(crate) duration: i64,
-    pub(crate) status_code: String,
-    pub(crate) status_message: String,
+    pub(crate) status_code: Cow<'a, str>,
+    pub(crate) status_message: Cow<'a, str>,
 
     #[serde(rename = "Events.Timestamp")]
     pub(crate) events_timestamp: Vec<u64>,
@@ -44,7 +46,7 @@ pub struct SpanRow {
     #[serde(rename = "Links.SpanId")]
     pub(crate) links_span_id: Vec<String>,
     #[serde(rename = "Links.TraceState")]
-    pub(crate) links_trace_state: Vec<String>,
+    pub(crate) links_trace_state: Vec<Cow<'a, str>>,
     #[serde(rename = "Links.Attributes")]
     pub(crate) links_attributes: Vec<MapOrJson>,
 }

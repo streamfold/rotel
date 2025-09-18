@@ -18,13 +18,12 @@ pub enum ConvertedAttrValue {
 
 impl Display for ConvertedAttrValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            ConvertedAttrValue::Int(i) => i.to_string(),
+        match self {
+            ConvertedAttrValue::Int(i) => write!(f, "{}", i),
             // todo: match to OTEL conversion at pdata/pcommon/value.go:404
-            ConvertedAttrValue::Double(d) => json!(d).to_string(),
-            ConvertedAttrValue::String(s) => s.clone(),
-        };
-        write!(f, "{}", str)
+            ConvertedAttrValue::Double(d) => write!(f, "{}", json!(d).to_string()),
+            ConvertedAttrValue::String(s) => write!(f, "{}", s),
+        }
     }
 }
 
@@ -44,7 +43,7 @@ impl From<Value> for ConvertedAttrValue {
 
 impl From<String> for ConvertedAttrValue {
     fn from(value: String) -> Self {
-        ConvertedAttrValue::String(value.clone())
+        ConvertedAttrValue::String(value)
     }
 }
 
@@ -65,6 +64,22 @@ impl TryInto<ConvertedAttrKeyValue> for KeyValue {
             Some(v) => match v.value {
                 None => return Err(ConvertedAttrError {}),
                 Some(v) => v,
+            },
+        };
+
+        Ok(ConvertedAttrKeyValue(self.key, value.into()))
+    }
+}
+
+impl TryInto<ConvertedAttrKeyValue> for &KeyValue {
+    type Error = ConvertedAttrError;
+
+    fn try_into(self) -> Result<ConvertedAttrKeyValue, Self::Error> {
+        let value = match &self.value {
+            None => return Err(ConvertedAttrError {}),
+            Some(v) => match &v.value {
+                None => return Err(ConvertedAttrError {}),
+                Some(v) => v.clone(),
             },
         };
 
@@ -100,10 +115,8 @@ where
 
 impl From<Vec<ConvertedAttrKeyValue>> for ConvertedAttrMap {
     fn from(value: Vec<ConvertedAttrKeyValue>) -> Self {
-        let data: HashMap<String, ConvertedAttrValue> = value
-            .iter()
-            .map(|cv| (cv.0.clone(), cv.1.clone()))
-            .collect();
+        let data: HashMap<String, ConvertedAttrValue> =
+            value.into_iter().map(|cv| (cv.0, cv.1)).collect();
         Self { data }
     }
 }
@@ -114,7 +127,17 @@ pub(crate) fn convert(attrs: &Vec<KeyValue>) -> Vec<ConvertedAttrKeyValue> {
     // Convert attributes to meta and metrics
     let converted: Vec<ConvertedAttrKeyValue> = attrs
         .iter()
-        .filter_map(|attr| attr.clone().try_into().ok())
+        .filter_map(|attr| attr.try_into().ok())
+        .collect();
+
+    converted
+}
+
+pub(crate) fn convert_into(attrs: Vec<KeyValue>) -> Vec<ConvertedAttrKeyValue> {
+    // Convert attributes to meta and metrics
+    let converted: Vec<ConvertedAttrKeyValue> = attrs
+        .into_iter()
+        .filter_map(|attr| attr.try_into().ok())
         .collect();
 
     converted

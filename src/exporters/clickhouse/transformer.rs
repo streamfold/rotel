@@ -1,8 +1,8 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::schema::MapOrJson;
 use crate::otlp::cvattr::ConvertedAttrKeyValue;
-use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
 use serde_json::json;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -22,32 +22,10 @@ impl Transformer {
     }
 }
 
-pub(crate) fn get_scope_properties(scope: Option<&InstrumentationScope>) -> (String, String) {
-    match scope {
-        None => ("".to_string(), "".to_string()),
-        Some(scope) => (scope.name.clone(), scope.version.clone()),
-    }
-}
-
 impl Transformer {
     pub(crate) fn transform_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
         match self.use_json {
-            true => {
-                let hm: HashMap<String, String> = attrs
-                    .iter()
-                    // periods(.) in key names will be converted into a nested format, so swap
-                    // them to underscores to avoid nesting
-                    .map(|kv| {
-                        if self.use_json_underscore {
-                            (kv.0.replace(".", "_"), kv.1.to_string())
-                        } else {
-                            (kv.0.clone(), kv.1.to_string())
-                        }
-                    })
-                    .collect();
-
-                MapOrJson::Json(json!(hm).to_string())
-            }
+            true => MapOrJson::Json(self.build_json_attrs(attrs)),
             false => MapOrJson::Map(
                 attrs
                     .iter()
@@ -56,6 +34,27 @@ impl Transformer {
             ),
         }
     }
+
+    fn build_json_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> String {
+        if attrs.is_empty() {
+            return "{}".to_string();
+        }
+
+        let hm: HashMap<Cow<'_, String>, String> = attrs
+            .iter()
+            // periods(.) in key names will be converted into a nested format, so swap
+            // them to underscores to avoid nesting
+            .map(|kv| {
+                if self.use_json_underscore {
+                    (Cow::Owned(kv.0.replace(".", "_")), kv.1.to_string())
+                } else {
+                    (Cow::Borrowed(&kv.0), kv.1.to_string())
+                }
+            })
+            .collect();
+
+        json!(hm).to_string()
+    }
 }
 
 pub(crate) fn find_attribute(attr: &str, attributes: &[ConvertedAttrKeyValue]) -> String {
@@ -63,5 +62,5 @@ pub(crate) fn find_attribute(attr: &str, attributes: &[ConvertedAttrKeyValue]) -
         .iter()
         .find(|kv| kv.0 == attr)
         .map(|kv| kv.1.to_string())
-        .unwrap_or("".to_string())
+        .unwrap_or(String::new())
 }
