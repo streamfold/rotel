@@ -16,6 +16,10 @@ impl TransformPayload<ResourceSpans> for Transformer {
         &self,
         input: Vec<ResourceSpans>,
     ) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError> {
+        let mut trace_id_ar = [0u8; 32];
+        let mut span_id_ar = [0u8; 16];
+        let mut parent_id_ar = [0u8; 16];
+
         let mut payload_builder = ClickhousePayloadBuilder::new(self.compression.clone());
         for rs in input {
             let res_attrs = rs.resource.unwrap_or_default().attributes;
@@ -52,11 +56,16 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         events_attributes.push(self.transform_attrs(&evt_attrs));
                     }
 
+                    // Encode these to stack arrays to reduce memory churn
+                    let trace_id = encode_id(&span.trace_id, &mut trace_id_ar);
+                    let span_id = encode_id(&span.span_id, &mut span_id_ar);
+                    let parent_span_id = encode_id(&span.parent_span_id, &mut parent_id_ar);
+
                     let row = SpanRow {
                         timestamp: span.start_time_unix_nano,
-                        trace_id: hex::encode(span.trace_id),
-                        span_id: hex::encode(span.span_id),
-                        parent_span_id: hex::encode(span.parent_span_id),
+                        trace_id,
+                        span_id,
+                        parent_span_id,
                         trace_state: span.trace_state,
                         span_name: span.name,
                         span_kind: span_kind_to_string(span.kind),
@@ -101,6 +110,21 @@ impl TransformPayload<ResourceSpans> for Transformer {
         payload_builder
             .finish()
             .map(|payload| vec![(RequestType::Traces, payload)])
+    }
+}
+
+fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {
+    match hex::encode_to_slice(id, out) {
+        Ok(_) => {
+            // We can be pretty sure the encoded string is utf8 safe
+            let trace_id = std::str::from_utf8(out).unwrap_or_default();
+            trace_id
+        }
+        Err(_) => {
+            // Trace and Span IDs are required to have a certain length (8 or 16 bytes), the only
+            // case this should fail is on an empty ID, like parent_span_id on a root span.
+            ""
+        }
     }
 }
 

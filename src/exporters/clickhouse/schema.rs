@@ -19,9 +19,9 @@ use serde::{Serialize, Serializer};
 #[serde(rename_all = "PascalCase")]
 pub struct SpanRow<'a> {
     pub(crate) timestamp: u64,
-    pub(crate) trace_id: String,
-    pub(crate) span_id: String,
-    pub(crate) parent_span_id: String,
+    pub(crate) trace_id: &'a str,
+    pub(crate) span_id: &'a str,
+    pub(crate) parent_span_id: &'a str,
     pub(crate) trace_state: String,
     pub(crate) span_name: String,
     pub(crate) span_kind: &'a str,
