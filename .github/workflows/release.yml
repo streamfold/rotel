@@ -20,6 +20,14 @@ jobs:
             runner: ubuntu-22.04-arm
             os: ubuntu
             cross: false
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+            os: ubuntu
+            cross: false
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-22.04-arm
+            os: ubuntu
+            cross: false
           - target: aarch64-apple-darwin
             runner: macos-latest
             os: macos
@@ -35,6 +43,16 @@ jobs:
       - name: install protoc macos
         if: matrix.os == 'macos'
         run: brew install protobuf
+      - name: install deps for musl aarch64 static build
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get install -y musl-dev libzstd-dev clang
+          sudo ln -s /usr/bin/aarch64-linux-gnu-g++ /usr/bin/aarch64-linux-musl-g++
+      - name: install deps for musl x86_64 static build
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get install -y musl-dev libzstd-dev clang
+          sudo ln -s /usr/bin/x86_64-linux-gnu-g++ /usr/bin/x86_64-linux-musl-g++
       - name: Set build env
         run: echo "BUILD_SHORT_SHA=$(echo -n $GITHUB_SHA | cut -c 1-7)" >> $GITHUB_ENV
       - uses: actions-rust-lang/setup-rust-toolchain@v1
