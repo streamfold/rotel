@@ -40,23 +40,17 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         cvattr::convert_into(span.attributes),
                     );
 
-                    let evt_props: Vec<_> = span
-                        .events
-                        .into_iter()
-                        .map(|e| {
-                            let timestamp = e.time_unix_nano;
-                            let name = Cow::Owned(e.name);
-                            let evt_attrs = cvattr::convert_into(e.attributes);
-                            let evt_attrs = self.transform_attrs(&evt_attrs);
+                    let events_count = span.events.len();
+                    let mut events_timestamp = Vec::with_capacity(events_count);
+                    let mut events_name = Vec::with_capacity(events_count);
+                    let mut events_attributes = Vec::with_capacity(events_count);
 
-                            (timestamp, (name, evt_attrs))
-                        })
-                        .collect();
-
-                    let (events_timestamp, name_and_attrs): (Vec<_>, Vec<_>) =
-                        evt_props.into_iter().unzip();
-                    let (events_name, events_attributes): (Vec<_>, Vec<_>) =
-                        name_and_attrs.into_iter().unzip();
+                    for event in span.events {
+                        events_timestamp.push(event.time_unix_nano);
+                        events_name.push(event.name);
+                        let evt_attrs = cvattr::convert_into(event.attributes);
+                        events_attributes.push(self.transform_attrs(&evt_attrs));
+                    }
 
                     let row = SpanRow {
                         timestamp: span.start_time_unix_nano,

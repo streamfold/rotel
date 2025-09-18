@@ -37,7 +37,7 @@ pub struct SpanRow<'a> {
     #[serde(rename = "Events.Timestamp")]
     pub(crate) events_timestamp: Vec<u64>,
     #[serde(rename = "Events.Name")]
-    pub(crate) events_name: Vec<Cow<'a, str>>,
+    pub(crate) events_name: Vec<String>,
     #[serde(rename = "Events.Attributes")]
     pub(crate) events_attributes: Vec<MapOrJson>,
 
