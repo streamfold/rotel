@@ -25,22 +25,7 @@ impl Transformer {
 impl Transformer {
     pub(crate) fn transform_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> MapOrJson {
         match self.use_json {
-            true => {
-                let hm: HashMap<Cow<'_, String>, String> = attrs
-                    .iter()
-                    // periods(.) in key names will be converted into a nested format, so swap
-                    // them to underscores to avoid nesting
-                    .map(|kv| {
-                        if self.use_json_underscore {
-                            (Cow::Owned(kv.0.replace(".", "_")), kv.1.to_string())
-                        } else {
-                            (Cow::Borrowed(&kv.0), kv.1.to_string())
-                        }
-                    })
-                    .collect();
-
-                MapOrJson::Json(json!(hm).to_string())
-            }
+            true => MapOrJson::Json(self.build_json_attrs(attrs)),
             false => MapOrJson::Map(
                 attrs
                     .iter()
@@ -48,6 +33,27 @@ impl Transformer {
                     .collect(),
             ),
         }
+    }
+
+    fn build_json_attrs(&self, attrs: &[ConvertedAttrKeyValue]) -> String {
+        if attrs.is_empty() {
+            return "{}".to_string();
+        }
+
+        let hm: HashMap<Cow<'_, String>, String> = attrs
+            .iter()
+            // periods(.) in key names will be converted into a nested format, so swap
+            // them to underscores to avoid nesting
+            .map(|kv| {
+                if self.use_json_underscore {
+                    (Cow::Owned(kv.0.replace(".", "_")), kv.1.to_string())
+                } else {
+                    (Cow::Borrowed(&kv.0), kv.1.to_string())
+                }
+            })
+            .collect();
+
+        json!(hm).to_string()
     }
 }
 
