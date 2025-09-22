@@ -47,14 +47,17 @@ impl TransformPayload<ResourceSpans> for Transformer {
                     let events_count = span.events.len();
                     let mut events_timestamp = Vec::with_capacity(events_count);
                     let mut events_name = Vec::with_capacity(events_count);
-                    let mut events_attributes = Vec::with_capacity(events_count);
+                    let mut events_attrs = Vec::with_capacity(events_count);
+                    //let mut events_attributes = Vec::with_capacity(events_count);
 
                     for event in span.events {
                         events_timestamp.push(event.time_unix_nano);
                         events_name.push(event.name);
                         let evt_attrs = cvattr::convert_into(event.attributes);
-                        events_attributes.push(self.transform_attrs(&evt_attrs));
+                        events_attrs.push(evt_attrs);
+                        //events_attributes.push(self.transform_attrs(&events_attrs[i]));
                     }
+                    let events_attributes = events_attrs.iter().map(|attr| self.transform_attrs(&attr)).collect();
 
                     // Encode these to stack arrays to reduce memory churn
                     let trace_id = encode_id(&span.trace_id, &mut trace_id_ar);
@@ -104,7 +107,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                             .iter()
                             .map(|l| {
                                 let link_attrs = cvattr::convert(&l.attributes);
-                                self.transform_attrs(&link_attrs)
+                                self.transform_attrs_owned(&link_attrs)
                             })
                             .collect(),
                     };

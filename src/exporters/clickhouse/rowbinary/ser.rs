@@ -189,7 +189,9 @@ impl<B: BufMut> Serializer for &'_ mut RowBinarySerializer<B> {
     }
 
     #[inline]
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap> {
+        let len = len.ok_or(Error::SequenceMustHaveLength)?;
+        put_unsigned_leb128(&mut self.buffer, len as u64);
         //panic!("maps are unsupported, use `Vec<(A, B)>` instead");
         Ok(self)
     }
@@ -238,11 +240,11 @@ impl<B: BufMut> SerializeMap for &mut RowBinarySerializer<B> {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_key<T>(&mut self, _key: &T) -> std::result::Result<(), Self::Error>
+    fn serialize_key<T>(&mut self, key: &T) -> std::result::Result<(), Self::Error>
     where
         T: ?Sized + Serialize,
     {
-        Ok(())
+        key.serialize(&mut **self)
     }
 
     fn serialize_value<T>(&mut self, value: &T) -> std::result::Result<(), Self::Error>
@@ -303,11 +305,16 @@ fn put_unsigned_leb128(mut buffer: impl BufMut, mut value: u64) {
     } {}
 }
 
-#[test]
-fn it_serializes_unsigned_leb128() {
-    let mut vec = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    put_unsigned_leb128(&mut vec, 624_485);
+    #[test]
+    fn it_serializes_unsigned_leb128() {
+        let mut vec = Vec::new();
 
-    assert_eq!(vec, [0xe5, 0x8e, 0x26]);
+        put_unsigned_leb128(&mut vec, 624_485);
+
+        assert_eq!(vec, [0xe5, 0x8e, 0x26]);
+    }
 }
