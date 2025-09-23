@@ -5,8 +5,8 @@ use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::Message;
-use opentelemetry::metrics::Counter;
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
     LogsService, LogsServiceServer,
 };
@@ -21,7 +21,7 @@ use opentelemetry_proto::tonic::collector::metrics::v1::{
 };
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::TraceServiceServer;
 use opentelemetry_proto::tonic::collector::trace::v1::{
-    trace_service_server::TraceService, ExportTraceServiceRequest, ExportTraceServiceResponse,
+    ExportTraceServiceRequest, ExportTraceServiceResponse, trace_service_server::TraceService,
 };
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -29,9 +29,9 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::default::Default;
 use std::error::Error;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::server::Router;
 use tonic::transport::Server;
-use tonic::{codec::CompressionEncoding, Request, Response, Status};
+use tonic::transport::server::Router;
+use tonic::{Request, Response, Status, codec::CompressionEncoding};
 
 #[derive(Default)]
 pub struct OTLPGrpcServerBuilder {

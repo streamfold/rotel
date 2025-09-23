@@ -2,9 +2,9 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
+use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
-use opentelemetry_sdk::metrics::Temporality;
 
 pub struct InternalOTLPMetricsExporter {
     pub metrics_output:
@@ -73,8 +73,8 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
     use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value;
-    use opentelemetry_sdk::metrics::Temporality;
     use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::metrics::Temporality;
 
     #[tokio::test]
     async fn test_internal_otlp_metrics_exporter() {
