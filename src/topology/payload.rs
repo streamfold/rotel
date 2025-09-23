@@ -7,8 +7,6 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct Message<T> {
@@ -17,6 +15,7 @@ pub struct Message<T> {
 }
 
 impl<T> Message<T> {
+    // Used in testing
     #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.payload.len()
@@ -30,14 +29,9 @@ pub enum MessageMetadata {
 
 #[derive(Clone)]
 pub struct KafkaMetadata {
-    // re: 'static, yes we know. However, if we introduce a lifetime here such as 'a, it will spiral out into
-    // the entire codebase. The topic name is in fact static existing for the lifetime of the program,
-    // so this is a nice convenience for us to avoid copying and dealing with a tremendous amount of lifetime
-    // related changes.
-    pub topic: Cow<'static, str>,
-    pub partition: u64,
-    pub begin_offset: u64,
-    pub index_to_offset: Option<BTreeMap<u64, u64>>,
+    pub offset: i64,
+    pub partition: i32,
+    pub topic_id: u8,
     pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
 }
 
@@ -47,20 +41,20 @@ pub enum KafkaAcknowledgement {
 }
 
 pub struct KafkaAck {
-    pub topic: Cow<'static, str>,
-    pub partition: u64,
-    pub begin_offset: u64,
-    pub index_to_offset: Option<BTreeMap<u64, u64>>,
+    pub offset: i64,
+    pub partition: i32,
+    pub topic_id: u8,
 }
 
 pub struct KafkaNack {
-    pub topic: Cow<'static, str>,
-    pub partition: u64,
-    pub begin_offset: u64,
-    pub index_to_offset: Option<BTreeMap<u64, u64>>,
+    pub offset: i64,
+    pub partition: i32,
+    pub topic_id: u8,
     pub reason: ExporterError,
 }
 
+// We'll likely want to have a single shared ExporterError type, perhaps residing outside of both
+// the payload and exporter modules that both can share. For now this is just serving as a placeholder
 pub enum ExporterError {}
 
 /// Trait for converting telemetry data into OTLP protocol format
