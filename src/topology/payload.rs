@@ -1,11 +1,60 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::bounded_channel::BoundedSender;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
+#[derive(Clone)]
+pub struct Message<T> {
+    pub metadata: Option<MessageMetadata>,
+    pub payload: Vec<T>,
+}
+
+#[derive(Clone)]
+pub enum MessageMetadata {
+    Kafka(KafkaMetadata),
+}
+
+#[derive(Clone)]
+pub struct KafkaMetadata {
+    // re: 'static, yes we know. However, if we introduce a lifetime here such as 'a, it will spiral out into
+    // the entire codebase. The topic name is in fact static existing for the lifetime of the program,
+    // so this is a nice convenience for us to avoid copying and dealing with a tremendous amount of lifetime
+    // related changes.
+    pub topic: Cow<'static, str>,
+    pub partition: u64,
+    pub begin_offset: u64,
+    pub index_to_offset: Option<BTreeMap<u64, u64>>,
+    pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
+}
+
+pub enum KafkaAcknowledgement {
+    Ack(KafkaAck),
+    Nack(KafkaNack),
+}
+
+pub struct KafkaAck {
+    pub topic: Cow<'static, str>,
+    pub partition: u64,
+    pub begin_offset: u64,
+    pub index_to_offset: Option<BTreeMap<u64, u64>>,
+}
+
+pub struct KafkaNack {
+    pub topic: Cow<'static, str>,
+    pub partition: u64,
+    pub begin_offset: u64,
+    pub index_to_offset: Option<BTreeMap<u64, u64>>,
+    pub reason: ExporterError,
+}
+
+pub enum ExporterError {}
 
 /// Trait for converting telemetry data into OTLP protocol format
 pub trait OTLPFrom<T> {

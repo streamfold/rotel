@@ -1,5 +1,5 @@
 use crate::aws_api::config::AwsConfig;
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
@@ -13,7 +13,7 @@ use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
 use crate::init::config::{
-    ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
+    get_exporters_config, get_receivers_config, ExporterConfig, ReceiverConfig,
 };
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
@@ -27,13 +27,14 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
 use crate::topology::flush_control::FlushSubscriber;
+use crate::topology::payload::Message;
 use crate::{telemetry, topology};
 use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
@@ -111,19 +112,19 @@ impl Agent {
         let exporters_cancel = CancellationToken::new();
 
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
-            bounded::<Vec<ResourceSpans>>(max(4, num_cpus));
+            bounded::<Message<ResourceSpans>>(max(4, num_cpus));
         let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
             bounded::<Vec<ResourceSpans>>(self.sending_queue_size);
         let trace_otlp_output = OTLPOutput::new(trace_pipeline_in_tx);
 
         let (metrics_pipeline_in_tx, metrics_pipeline_in_rx) =
-            bounded::<Vec<ResourceMetrics>>(max(4, num_cpus));
+            bounded::<Message<ResourceMetrics>>(max(4, num_cpus));
         let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
             bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let metrics_otlp_output = OTLPOutput::new(metrics_pipeline_in_tx);
 
         let (logs_pipeline_in_tx, logs_pipeline_in_rx) =
-            bounded::<Vec<ResourceLogs>>(max(4, num_cpus));
+            bounded::<Message<ResourceLogs>>(max(4, num_cpus));
         let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
             bounded::<Vec<ResourceLogs>>(self.sending_queue_size);
         let logs_otlp_output = OTLPOutput::new(logs_pipeline_in_tx);

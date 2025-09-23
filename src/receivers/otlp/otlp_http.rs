@@ -26,9 +26,9 @@ use tracing::{debug, error};
 use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
-use crate::topology::payload::OTLPInto;
-use opentelemetry::KeyValue;
+use crate::topology::payload::{Message, OTLPInto};
 use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -38,8 +38,8 @@ use opentelemetry_proto::tonic::collector::metrics::v1::{
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -62,9 +62,9 @@ const JSON_CT: &str = "application/json";
 
 #[derive(Default)]
 pub struct OTLPHttpServerBuilder {
-    trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     traces_path: String,
     metrics_path: String,
     logs_path: String,
@@ -74,21 +74,21 @@ pub struct OTLPHttpServerBuilder {
 impl OTLPHttpServerBuilder {
     pub fn with_traces_output(
         mut self,
-        output: Option<OTLPOutput<Vec<ResourceSpans>>>,
+        output: Option<OTLPOutput<Message<ResourceSpans>>>,
     ) -> OTLPHttpServerBuilder {
         self.trace_output = output;
         self
     }
     pub fn with_metrics_output(
         mut self,
-        output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
+        output: Option<OTLPOutput<Message<ResourceMetrics>>>,
     ) -> OTLPHttpServerBuilder {
         self.metrics_output = output;
         self
     }
     pub fn with_logs_output(
         mut self,
-        output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+        output: Option<OTLPOutput<Message<ResourceLogs>>>,
     ) -> OTLPHttpServerBuilder {
         self.logs_output = output;
         self
@@ -126,9 +126,9 @@ impl OTLPHttpServerBuilder {
 }
 
 pub struct OTLPHttpServer {
-    pub trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    pub metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    pub logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    pub trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    pub metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    pub logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     pub traces_path: String,
     pub metrics_path: String,
     pub logs_path: String,
@@ -243,9 +243,9 @@ impl<B> ValidateRequest<B> for ValidateOTLPContentType {
 }
 
 fn build_service(
-    trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     traces_path: String,
     metrics_path: String,
     logs_path: String,
@@ -607,23 +607,23 @@ fn compute_ok_resp<T: prost::Message + Serialize + Default>(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use flate2::Compression as GZCompression;
     use flate2::read::GzEncoder;
+    use flate2::Compression as GZCompression;
     use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
     use http::{Method, Request, StatusCode};
     use http_body_util::Full;
     use hyper::service::Service;
-    use hyper_util::client::legacy::Client;
     use hyper_util::client::legacy::connect::HttpConnector;
+    use hyper_util::client::legacy::Client;
     use hyper_util::rt::{TokioExecutor, TokioTimer};
     use std::io::Read;
     use std::time::Duration;
 
     extern crate utilities;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::listener::Listener;
     use crate::receivers::otlp::otlp_http::{
-        MAX_BODY_SIZE, OTLPHttpServer, OTLPService, ValidateOTLPContentType, build_service,
+        build_service, OTLPHttpServer, OTLPService, ValidateOTLPContentType, MAX_BODY_SIZE,
     };
     use crate::receivers::otlp_output::OTLPOutput;
     use hyper_util::service::TowerToHyperService;
@@ -954,13 +954,14 @@ mod tests {
                 HttpMakeClassifier,
             >,
         >,
-        BoundedReceiver<Vec<ResourceSpans>>,
-        BoundedReceiver<Vec<ResourceMetrics>>,
-        BoundedReceiver<Vec<ResourceLogs>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceSpans>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceMetrics>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceLogs>>,
     ) {
-        let (trace_tx, trace_rx) = bounded::<Vec<ResourceSpans>>(10);
-        let (metrics_tx, metrics_rx) = bounded::<Vec<ResourceMetrics>>(10);
-        let (logs_tx, logs_rx) = bounded::<Vec<ResourceLogs>>(10);
+        let (trace_tx, trace_rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(10);
+        let (metrics_tx, metrics_rx) =
+            bounded::<crate::topology::payload::Message<ResourceMetrics>>(10);
+        let (logs_tx, logs_rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(10);
         let trace_output = OTLPOutput::new(trace_tx);
         let metrics_output = OTLPOutput::new(metrics_tx);
         let logs_output = OTLPOutput::new(logs_tx);
