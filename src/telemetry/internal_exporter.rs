@@ -1,20 +1,21 @@
 use crate::receivers::otlp_output::OTLPOutput;
+use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
-use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
+use opentelemetry_sdk::metrics::Temporality;
 
 pub struct InternalOTLPMetricsExporter {
     pub metrics_output:
-        Option<OTLPOutput<Vec<opentelemetry_proto::tonic::metrics::v1::ResourceMetrics>>>,
+        Option<OTLPOutput<Message<opentelemetry_proto::tonic::metrics::v1::ResourceMetrics>>>,
     pub temporality: Temporality,
 }
 
 impl InternalOTLPMetricsExporter {
     pub fn new(
         metrics_output: Option<
-            OTLPOutput<Vec<opentelemetry_proto::tonic::metrics::v1::ResourceMetrics>>,
+            OTLPOutput<Message<opentelemetry_proto::tonic::metrics::v1::ResourceMetrics>>,
         >,
         temporality: Temporality,
     ) -> Self {
@@ -35,7 +36,12 @@ impl PushMetricExporter for InternalOTLPMetricsExporter {
             None => Ok(()),
             Some(mo) => {
                 let req = ExportMetricsServiceRequest::from(&*metrics);
-                let res = mo.send(req.resource_metrics).await;
+                let res = mo
+                    .send(crate::topology::payload::Message {
+                        metadata: None,
+                        payload: req.resource_metrics,
+                    })
+                    .await;
                 match res {
                     Ok(_) => Ok(()),
                     Err(e) => Err(OTelSdkError::InternalFailure(e.to_string())),
@@ -67,8 +73,8 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
     use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value;
-    use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::metrics::Temporality;
+    use opentelemetry_sdk::Resource;
 
     #[tokio::test]
     async fn test_internal_otlp_metrics_exporter() {
@@ -102,7 +108,7 @@ mod tests {
 
         let mut vrm = rx.next().await.unwrap();
         assert_eq!(vrm.len(), 1);
-        let resource_metrics = vrm.pop().unwrap();
+        let resource_metrics = vrm.payload.pop().unwrap();
         let resource = resource_metrics.resource;
         assert!(resource.is_some());
         let attributes = resource.unwrap().attributes;

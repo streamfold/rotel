@@ -2,9 +2,10 @@
 
 use crate::bounded_channel::{BoundedReceiver, BoundedSender};
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use flume::SendError;
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use crate::topology::payload::Message;
 use flume::r#async::SendFut;
+use flume::SendError;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -13,7 +14,7 @@ use opentelemetry_proto::tonic::metrics::v1::{ResourceMetrics, ScopeMetrics};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans};
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{PythonProcessable, register_processor};
+use rotel_sdk::model::{register_processor, PythonProcessable};
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
@@ -31,7 +32,7 @@ use tracing::{debug, error};
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
-    receiver: BoundedReceiver<Vec<T>>,
+    receiver: BoundedReceiver<Message<T>>,
     sender: BoundedSender<Vec<T>>,
     batch_config: BatchConfig,
     processors: Vec<String>,
@@ -152,7 +153,7 @@ where
     Vec<T>: Send,
 {
     pub fn new(
-        receiver: BoundedReceiver<Vec<T>>,
+        receiver: BoundedReceiver<Message<T>>,
         sender: BoundedSender<Vec<T>>,
         flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
@@ -284,7 +285,8 @@ where
                         return Ok(());
                     }
 
-                    let mut items = item.unwrap();
+                    let items = item.unwrap();
+                    let mut items = items.payload;
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
                     if len_processor_modules > 0 {

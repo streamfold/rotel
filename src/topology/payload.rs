@@ -16,6 +16,13 @@ pub struct Message<T> {
     pub payload: Vec<T>,
 }
 
+impl<T> Message<T> {
+    #[allow(dead_code)]
+    pub(crate) fn len(&self) -> usize {
+        self.payload.len()
+    }
+}
+
 #[derive(Clone)]
 pub enum MessageMetadata {
     Kafka(KafkaMetadata),

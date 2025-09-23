@@ -130,7 +130,7 @@ impl Agent {
         let logs_otlp_output = OTLPOutput::new(logs_pipeline_in_tx);
 
         let (internal_metrics_pipeline_in_tx, internal_metrics_pipeline_in_rx) =
-            bounded::<Vec<ResourceMetrics>>(max(4, num_cpus));
+            bounded::<Message<ResourceMetrics>>(max(4, num_cpus));
         let (internal_metrics_pipeline_out_tx, internal_metrics_pipeline_out_rx) =
             bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
@@ -773,7 +773,7 @@ impl Agent {
                                 None => break,
                                 Some(rl) => {
                                     if let Some(out) = &logs_output {
-                                        if let Err(e) = out.send(vec![rl]).await {
+                                        if let Err(e) = out.send(Message{metadata: None, payload: vec![rl]}).await {
                                             // todo: is this possibly in a logging loop path?
                                             warn!("Unable to send logs to logs output: {}", e)
                                         }

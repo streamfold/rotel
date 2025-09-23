@@ -10,8 +10,8 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use prost::Message as ProstMessage;
-use rdkafka::Message;
 use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::Message;
 use std::error::Error;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -19,9 +19,9 @@ use tracing::{debug, info, warn};
 
 pub struct KafkaReceiver {
     pub consumer: StreamConsumer,
-    pub traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    pub metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    pub logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    pub traces_output: Option<OTLPOutput<crate::topology::payload::Message<ResourceSpans>>>,
+    pub metrics_output: Option<OTLPOutput<crate::topology::payload::Message<ResourceMetrics>>>,
+    pub logs_output: Option<OTLPOutput<crate::topology::payload::Message<ResourceLogs>>>,
     pub traces_topic: String,
     pub metrics_topic: String,
     pub logs_topic: String,
@@ -33,9 +33,9 @@ impl KafkaReceiver {}
 impl KafkaReceiver {
     pub fn new(
         config: KafkaReceiverConfig,
-        traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-        metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-        logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+        traces_output: Option<OTLPOutput<crate::topology::payload::Message<ResourceSpans>>>,
+        metrics_output: Option<OTLPOutput<crate::topology::payload::Message<ResourceMetrics>>>,
+        logs_output: Option<OTLPOutput<crate::topology::payload::Message<ResourceLogs>>>,
     ) -> Result<Self> {
         // Get the list of topics to subscribe to
         let topics = config.get_topics();
@@ -82,10 +82,15 @@ impl KafkaReceiver {
     async fn send_to_pipeline<T>(
         &self,
         request: Vec<T>,
-        output: &Option<OTLPOutput<Vec<T>>>,
+        output: &Option<OTLPOutput<crate::topology::payload::Message<T>>>,
     ) -> std::result::Result<(), SendError> {
         if let Some(output) = output {
-            output.send(request).await?;
+            output
+                .send(crate::topology::payload::Message {
+                    metadata: None,
+                    payload: request,
+                })
+                .await?;
         }
         Ok(())
     }
@@ -250,10 +255,10 @@ mod tests {
     };
     use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
-    use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::producer::{FutureProducer, FutureRecord};
     use rdkafka::util::Timeout;
+    use rdkafka::ClientConfig;
     use std::time::Duration;
 
     fn create_test_topic_name(prefix: &str) -> String {
@@ -440,7 +445,7 @@ mod tests {
                 .with_traces(true)
                 .with_traces_topic("test-traces".to_string());
 
-        let (tx, _rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None);
@@ -477,7 +482,7 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Protobuf)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, mut rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
@@ -519,9 +524,12 @@ mod tests {
             .expect("Failed to receive traces");
 
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].scope_spans.len(), 1);
-        assert_eq!(received[0].scope_spans[0].spans.len(), 1);
-        assert_eq!(received[0].scope_spans[0].spans[0].name, "test-span");
+        assert_eq!(received.payload[0].scope_spans.len(), 1);
+        assert_eq!(received.payload[0].scope_spans[0].spans.len(), 1);
+        assert_eq!(
+            received.payload[0].scope_spans[0].spans[0].name,
+            "test-span"
+        );
 
         cancel_token.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
@@ -544,7 +552,7 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Json)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, mut rx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
@@ -583,9 +591,12 @@ mod tests {
             .expect("Failed to receive metrics");
 
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].scope_metrics.len(), 1);
-        assert_eq!(received[0].scope_metrics[0].metrics.len(), 1);
-        assert_eq!(received[0].scope_metrics[0].metrics[0].name, "test.metric");
+        assert_eq!(received.payload[0].scope_metrics.len(), 1);
+        assert_eq!(received.payload[0].scope_metrics[0].metrics.len(), 1);
+        assert_eq!(
+            received.payload[0].scope_metrics[0].metrics[0].name,
+            "test.metric"
+        );
 
         cancel_token.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
@@ -608,7 +619,7 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Protobuf)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, mut rx) = bounded::<Vec<ResourceLogs>>(100);
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, None, None, Some(logs_output))
@@ -648,8 +659,8 @@ mod tests {
             .expect("Failed to receive logs");
 
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].scope_logs.len(), 1);
-        assert_eq!(received[0].scope_logs[0].log_records.len(), 1);
+        assert_eq!(received.payload[0].scope_logs.len(), 1);
+        assert_eq!(received.payload[0].scope_logs[0].log_records.len(), 1);
 
         cancel_token.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
@@ -686,13 +697,16 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Protobuf)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (traces_tx, mut traces_rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (traces_tx, mut traces_rx) =
+            bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(traces_tx);
 
-        let (metrics_tx, mut metrics_rx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (metrics_tx, mut metrics_rx) =
+            bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(metrics_tx);
 
-        let (logs_tx, mut logs_rx) = bounded::<Vec<ResourceLogs>>(100);
+        let (logs_tx, mut logs_rx) =
+            bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(logs_tx);
 
         let receiver = KafkaReceiver::new(
@@ -810,7 +824,7 @@ mod tests {
                 .with_deserialization_format(DeserializationFormat::Protobuf)
                 .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, _rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
@@ -861,7 +875,7 @@ mod tests {
             .with_traces_topic(traces_topic.clone())
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, _rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
