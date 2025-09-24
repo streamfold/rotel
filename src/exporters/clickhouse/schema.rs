@@ -130,21 +130,18 @@ pub fn get_log_row_col_keys() -> String {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
-pub struct MetricsMeta {
-    pub(crate) resource_attributes: MapOrJson<'static>,
-    pub(crate) resource_schema_url: String,
-    pub(crate) scope_name: String,
-    pub(crate) scope_version: String,
-    pub(crate) scope_attributes: MapOrJson<'static>,
+pub struct MetricsMeta<'a> {
+    pub(crate) resource_attributes: &'a MapOrJson<'a>,
+    pub(crate) resource_schema_url: &'a str,
+    pub(crate) scope_name: &'a str,
+    pub(crate) scope_version: &'a str,
+    pub(crate) scope_attributes: &'a MapOrJson<'a>,
     pub(crate) scope_dropped_attr_count: u32,
-    pub(crate) scope_schema_url: String,
-    pub(crate) service_name: String,
-    pub(crate) metric_name: String,
-    pub(crate) metric_description: String,
-    pub(crate) metric_unit: String,
-    pub(crate) attributes: MapOrJson<'static>,
-    pub(crate) start_time_unix: u64,
-    pub(crate) time_unix: u64,
+    pub(crate) scope_schema_url: &'a str,
+    pub(crate) service_name: &'a str,
+    pub(crate) metric_name: &'a str,
+    pub(crate) metric_description: &'a str,
+    pub(crate) metric_unit: &'a str,
 }
 
 pub fn get_metrics_meta_col_keys<'a>() -> Vec<&'a str> {
@@ -160,9 +157,6 @@ pub fn get_metrics_meta_col_keys<'a>() -> Vec<&'a str> {
         "MetricName",
         "MetricDescription",
         "MetricUnit",
-        "Attributes",
-        "StartTimeUnix",
-        "TimeUnix",
     ]
 }
 
@@ -195,7 +189,11 @@ pub fn get_metrics_exemplars_col_keys<'a>() -> Vec<&'a str> {
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsSumRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: &'a MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta<'a>,
+
+    pub(crate) attributes: &'a MapOrJson<'a>,
+    pub(crate) start_time_unix: u64,
+    pub(crate) time_unix: u64,
 
     pub(crate) value: f64,
     pub(crate) flags: u32,
@@ -210,6 +208,7 @@ pub struct MetricsSumRow<'a> {
 pub fn get_metrics_sum_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
+        vec!["Attributes", "StartTimeUnix", "TimeUnix"],
         vec!["Value", "Flags", "AggregationTemporality", "IsMonotonic"],
         get_metrics_exemplars_col_keys(),
     ]
@@ -222,7 +221,11 @@ pub fn get_metrics_sum_row_col_keys() -> String {
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsGaugeRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: &'a MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta<'a>,
+
+    pub(crate) attributes: &'a MapOrJson<'a>,
+    pub(crate) start_time_unix: u64,
+    pub(crate) time_unix: u64,
 
     pub(crate) value: f64,
     pub(crate) flags: u32,
@@ -234,6 +237,7 @@ pub struct MetricsGaugeRow<'a> {
 pub fn get_metrics_gauge_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
+        vec!["Attributes", "StartTimeUnix", "TimeUnix"],
         vec!["Value", "Flags"],
         get_metrics_exemplars_col_keys(),
     ]
@@ -246,7 +250,11 @@ pub fn get_metrics_gauge_row_col_keys() -> String {
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsHistogramRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: &'a MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta<'a>,
+
+    pub(crate) attributes: &'a MapOrJson<'a>,
+    pub(crate) start_time_unix: u64,
+    pub(crate) time_unix: u64,
 
     pub(crate) count: u64,
     pub(crate) sum: f64,
@@ -265,6 +273,7 @@ pub struct MetricsHistogramRow<'a> {
 pub fn get_metrics_histogram_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
+        vec!["Attributes", "StartTimeUnix", "TimeUnix"],
         vec![
             "Count",
             "Sum",
@@ -286,7 +295,11 @@ pub fn get_metrics_histogram_row_col_keys() -> String {
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsExpHistogramRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: &'a MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta<'a>,
+
+    pub(crate) attributes: &'a MapOrJson<'a>,
+    pub(crate) start_time_unix: u64,
+    pub(crate) time_unix: u64,
 
     pub(crate) count: u64,
     pub(crate) sum: f64,
@@ -310,6 +323,7 @@ pub struct MetricsExpHistogramRow<'a> {
 pub fn get_metrics_exp_histogram_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
+        vec!["Attributes", "StartTimeUnix", "TimeUnix"],
         vec![
             "Count",
             "Sum",
@@ -335,7 +349,11 @@ pub fn get_metrics_exp_histogram_row_col_keys() -> String {
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsSummaryRow<'a> {
     #[serde(flatten)]
-    pub(crate) meta: &'a MetricsMeta,
+    pub(crate) meta: &'a MetricsMeta<'a>,
+
+    pub(crate) attributes: &'a MapOrJson<'a>,
+    pub(crate) start_time_unix: u64,
+    pub(crate) time_unix: u64,
 
     pub(crate) count: u64,
     pub(crate) sum: f64,
@@ -351,6 +369,7 @@ pub struct MetricsSummaryRow<'a> {
 pub fn get_metrics_summary_row_col_keys() -> String {
     let fields = [
         get_metrics_meta_col_keys(),
+        vec!["Attributes", "StartTimeUnix", "TimeUnix"],
         vec![
             "Count",
             "Sum",
