@@ -40,8 +40,6 @@ impl ApiRequestBuilder {
             }
             if config.use_json {
                 pairs.append_pair("allow_experimental_json_type", "1");
-                // This interprets Strings as JSON columns
-                pairs.append_pair("input_format_binary_read_json_as_string", "1");
             }
         }
 

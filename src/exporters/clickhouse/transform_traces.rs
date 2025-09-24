@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
@@ -39,22 +37,46 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         Some(s) => s.message.as_str(),
                     };
 
-                    let (status_code, span_attrs) = (
-                        Cow::Borrowed(status_code(&span)),
-                        cvattr::convert_into(span.attributes),
-                    );
+                    let (status_code, span_attrs) =
+                        (status_code(&span), cvattr::convert_into(span.attributes));
 
+                    //
+                    // Events
+                    //
                     let events_count = span.events.len();
                     let mut events_timestamp = Vec::with_capacity(events_count);
                     let mut events_name = Vec::with_capacity(events_count);
-                    let mut events_attributes = Vec::with_capacity(events_count);
+                    let mut events_attrs = Vec::with_capacity(events_count);
 
                     for event in span.events {
                         events_timestamp.push(event.time_unix_nano);
                         events_name.push(event.name);
-                        let evt_attrs = cvattr::convert_into(event.attributes);
-                        events_attributes.push(self.transform_attrs(&evt_attrs));
+                        events_attrs.push(cvattr::convert_into(event.attributes));
                     }
+                    let events_attributes = events_attrs
+                        .iter()
+                        .map(|attr| self.transform_attrs(&attr))
+                        .collect();
+
+                    //
+                    // Links
+                    //
+                    let links_count = span.links.len();
+                    let mut links_trace_id = Vec::with_capacity(links_count);
+                    let mut links_span_id = Vec::with_capacity(links_count);
+                    let mut links_trace_state = Vec::with_capacity(links_count);
+                    let mut links_attrs = Vec::with_capacity(links_count);
+
+                    for link in span.links {
+                        links_trace_id.push(hex::encode(&link.trace_id));
+                        links_span_id.push(hex::encode(&link.span_id));
+                        links_trace_state.push(link.trace_state);
+                        links_attrs.push(cvattr::convert_into(link.attributes));
+                    }
+                    let links_attributes = links_attrs
+                        .iter()
+                        .map(|attr| self.transform_attrs(&attr))
+                        .collect();
 
                     // Encode these to stack arrays to reduce memory churn
                     let trace_id = encode_id(&span.trace_id, &mut trace_id_ar);
@@ -83,30 +105,14 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         span_attributes: self.transform_attrs(&span_attrs),
                         duration,
                         status_code,
-                        status_message: Cow::Borrowed(status_message),
+                        status_message,
                         events_timestamp,
                         events_name,
                         events_attributes,
-                        // TODO: use into_iter() form for links too
-                        links_trace_id: span
-                            .links
-                            .iter()
-                            .map(|l| hex::encode(&l.trace_id))
-                            .collect(),
-                        links_span_id: span.links.iter().map(|l| hex::encode(&l.span_id)).collect(),
-                        links_trace_state: span
-                            .links
-                            .iter()
-                            .map(|l| Cow::Borrowed(l.trace_state.as_str()))
-                            .collect(),
-                        links_attributes: span
-                            .links
-                            .iter()
-                            .map(|l| {
-                                let link_attrs = cvattr::convert(&l.attributes);
-                                self.transform_attrs(&link_attrs)
-                            })
-                            .collect(),
+                        links_trace_id,
+                        links_span_id,
+                        links_trace_state,
+                        links_attributes,
                     };
 
                     payload_builder.add_row(&row)?;

@@ -41,11 +41,11 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                 for metric in sm.metrics {
                     if let Some(data) = metric.data {
                         let mut meta = MetricsMeta {
-                            resource_attributes: self.transform_attrs(&res_attrs),
+                            resource_attributes: self.transform_attrs_owned(&res_attrs),
                             resource_schema_url: rm.schema_url.clone(),
                             scope_name: scope_name.clone(),
                             scope_version: scope_version.clone(),
-                            scope_attributes: self.transform_attrs(&scope_attrs),
+                            scope_attributes: self.transform_attrs_owned(&scope_attrs),
                             scope_dropped_attr_count: dropped_attr_count,
                             scope_schema_url: sm.schema_url.clone(),
                             service_name: service_name.clone(),
@@ -53,7 +53,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                             metric_description: metric.description,
                             metric_unit: metric.unit,
                             // Placeholder values that will be replaced per data point
-                            attributes: MapOrJson::Json("".to_string()),
+                            attributes: MapOrJson::JsonOwned(HashMap::new()),
                             start_time_unix: 0,
                             time_unix: 0,
                         };
@@ -63,7 +63,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 for dp in s.data_points {
                                     let attrs = cvattr::convert(&dp.attributes);
 
-                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.attributes = self.transform_attrs_owned(&attrs);
                                     meta.start_time_unix = dp.start_time_unix_nano;
                                     meta.time_unix = dp.time_unix_nano;
 
@@ -88,7 +88,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 for dp in g.data_points {
                                     let attrs = cvattr::convert(&dp.attributes);
 
-                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.attributes = self.transform_attrs_owned(&attrs);
                                     meta.start_time_unix = dp.start_time_unix_nano;
                                     meta.time_unix = dp.time_unix_nano;
 
@@ -111,7 +111,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 for dp in h.data_points {
                                     let attrs = cvattr::convert(&dp.attributes);
 
-                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.attributes = self.transform_attrs_owned(&attrs);
                                     meta.start_time_unix = dp.start_time_unix_nano;
                                     meta.time_unix = dp.time_unix_nano;
 
@@ -141,7 +141,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 for dp in e.data_points {
                                     let attrs = cvattr::convert(&dp.attributes);
 
-                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.attributes = self.transform_attrs_owned(&attrs);
                                     meta.start_time_unix = dp.start_time_unix_nano;
                                     meta.time_unix = dp.time_unix_nano;
 
@@ -186,7 +186,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 for dp in s.data_points {
                                     let attrs = cvattr::convert(&dp.attributes);
 
-                                    meta.attributes = self.transform_attrs(&attrs);
+                                    meta.attributes = self.transform_attrs_owned(&attrs);
                                     meta.start_time_unix = dp.start_time_unix_nano;
                                     meta.time_unix = dp.time_unix_nano;
 
@@ -241,7 +241,7 @@ impl Transformer {
                 .iter()
                 .map(|e| {
                     let event_attrs = cvattr::convert(&e.filtered_attributes);
-                    self.transform_attrs(&event_attrs)
+                    self.transform_attrs_owned(&event_attrs)
                 })
                 .collect(),
             exemplars_time_unix: exemplars.iter().map(|e| e.time_unix_nano).collect(),

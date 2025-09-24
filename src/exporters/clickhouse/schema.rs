@@ -1,6 +1,8 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
-use serde::{Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::SerializeMap};
+
+use crate::exporters::clickhouse::rowbinary::json::JsonType;
 
 //
 // Trace spans
@@ -26,29 +28,29 @@ pub struct SpanRow<'a> {
     pub(crate) span_name: String,
     pub(crate) span_kind: &'a str,
     pub(crate) service_name: &'a str,
-    pub(crate) resource_attributes: &'a MapOrJson,
+    pub(crate) resource_attributes: &'a MapOrJson<'a>,
     pub(crate) scope_name: &'a str,
     pub(crate) scope_version: &'a str,
-    pub(crate) span_attributes: MapOrJson,
+    pub(crate) span_attributes: MapOrJson<'a>,
     pub(crate) duration: i64,
-    pub(crate) status_code: Cow<'a, str>,
-    pub(crate) status_message: Cow<'a, str>,
+    pub(crate) status_code: &'a str,
+    pub(crate) status_message: &'a str,
 
     #[serde(rename = "Events.Timestamp")]
     pub(crate) events_timestamp: Vec<u64>,
     #[serde(rename = "Events.Name")]
     pub(crate) events_name: Vec<String>,
     #[serde(rename = "Events.Attributes")]
-    pub(crate) events_attributes: Vec<MapOrJson>,
+    pub(crate) events_attributes: Vec<MapOrJson<'a>>,
 
     #[serde(rename = "Links.TraceId")]
     pub(crate) links_trace_id: Vec<String>,
     #[serde(rename = "Links.SpanId")]
     pub(crate) links_span_id: Vec<String>,
     #[serde(rename = "Links.TraceState")]
-    pub(crate) links_trace_state: Vec<Cow<'a, str>>,
+    pub(crate) links_trace_state: Vec<String>,
     #[serde(rename = "Links.Attributes")]
-    pub(crate) links_attributes: Vec<MapOrJson>,
+    pub(crate) links_attributes: Vec<MapOrJson<'a>>,
 }
 
 pub fn get_span_row_col_keys() -> String {
@@ -86,7 +88,7 @@ pub fn get_span_row_col_keys() -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct LogRecordRow {
+pub struct LogRecordRow<'a> {
     pub(crate) timestamp: u64,
     pub(crate) trace_id: String,
     pub(crate) span_id: String,
@@ -96,12 +98,12 @@ pub struct LogRecordRow {
     pub(crate) service_name: String,
     pub(crate) body: String,
     pub(crate) resource_schema_url: String,
-    pub(crate) resource_attributes: MapOrJson,
+    pub(crate) resource_attributes: MapOrJson<'a>,
     pub(crate) scope_schema_url: String,
     pub(crate) scope_name: String,
     pub(crate) scope_version: String,
-    pub(crate) scope_attributes: MapOrJson,
-    pub(crate) log_attributes: MapOrJson,
+    pub(crate) scope_attributes: MapOrJson<'a>,
+    pub(crate) log_attributes: MapOrJson<'a>,
 }
 
 pub fn get_log_row_col_keys() -> String {
@@ -129,18 +131,18 @@ pub fn get_log_row_col_keys() -> String {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsMeta {
-    pub(crate) resource_attributes: MapOrJson,
+    pub(crate) resource_attributes: MapOrJson<'static>,
     pub(crate) resource_schema_url: String,
     pub(crate) scope_name: String,
     pub(crate) scope_version: String,
-    pub(crate) scope_attributes: MapOrJson,
+    pub(crate) scope_attributes: MapOrJson<'static>,
     pub(crate) scope_dropped_attr_count: u32,
     pub(crate) scope_schema_url: String,
     pub(crate) service_name: String,
     pub(crate) metric_name: String,
     pub(crate) metric_description: String,
     pub(crate) metric_unit: String,
-    pub(crate) attributes: MapOrJson,
+    pub(crate) attributes: MapOrJson<'static>,
     pub(crate) start_time_unix: u64,
     pub(crate) time_unix: u64,
 }
@@ -168,7 +170,7 @@ pub fn get_metrics_meta_col_keys<'a>() -> Vec<&'a str> {
 #[serde(rename_all = "PascalCase")]
 pub struct MetricsExemplars {
     #[serde(rename = "Exemplars.FilteredAttributes")]
-    pub(crate) exemplars_filtered_attributes: Vec<MapOrJson>,
+    pub(crate) exemplars_filtered_attributes: Vec<MapOrJson<'static>>,
     #[serde(rename = "Exemplars.TimeUnix")]
     pub(crate) exemplars_time_unix: Vec<u64>,
     #[serde(rename = "Exemplars.Value")]
@@ -363,19 +365,35 @@ pub fn get_metrics_summary_row_col_keys() -> String {
 }
 
 #[derive(Debug)]
-pub enum MapOrJson {
+pub enum MapOrJson<'a> {
     Map(Vec<(String, String)>),
-    Json(String),
+    Json(HashMap<Cow<'a, str>, JsonType<'a>>),
+    JsonOwned(HashMap<String, JsonType<'static>>),
 }
 
-impl Serialize for MapOrJson {
+impl<'a> Serialize for MapOrJson<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         match self {
-            MapOrJson::Map(map) => map.serialize(serializer),
-            MapOrJson::Json(str) => str.serialize(serializer),
+            MapOrJson::Map(vec) => vec.serialize(serializer),
+            MapOrJson::Json(map) => {
+                let mut m = serializer.serialize_map(Some(map.len()))?;
+
+                for (k, v) in map {
+                    m.serialize_entry(k, v)?;
+                }
+                m.end()
+            }
+            MapOrJson::JsonOwned(map) => {
+                let mut m = serializer.serialize_map(Some(map.len()))?;
+
+                for (k, v) in map {
+                    m.serialize_entry(k, v)?;
+                }
+                m.end()
+            }
         }
     }
 }
