@@ -90,19 +90,19 @@ pub fn get_span_row_col_keys() -> String {
 #[serde(rename_all = "PascalCase")]
 pub struct LogRecordRow<'a> {
     pub(crate) timestamp: u64,
-    pub(crate) trace_id: String,
-    pub(crate) span_id: String,
+    pub(crate) trace_id: &'a str,
+    pub(crate) span_id: &'a str,
     pub(crate) trace_flags: u8,
     pub(crate) severity_text: String,
     pub(crate) severity_number: u8,
-    pub(crate) service_name: String,
+    pub(crate) service_name: &'a str,
     pub(crate) body: String,
-    pub(crate) resource_schema_url: String,
-    pub(crate) resource_attributes: MapOrJson<'a>,
-    pub(crate) scope_schema_url: String,
-    pub(crate) scope_name: String,
-    pub(crate) scope_version: String,
-    pub(crate) scope_attributes: MapOrJson<'a>,
+    pub(crate) resource_schema_url: &'a str,
+    pub(crate) resource_attributes: &'a MapOrJson<'a>,
+    pub(crate) scope_schema_url: &'a str,
+    pub(crate) scope_name: &'a str,
+    pub(crate) scope_version: &'a str,
+    pub(crate) scope_attributes: &'a MapOrJson<'a>,
     pub(crate) log_attributes: MapOrJson<'a>,
 }
 

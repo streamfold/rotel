@@ -2,7 +2,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
-use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
+use crate::exporters::clickhouse::transformer::{encode_id, find_attribute, Transformer};
 use crate::otlp::cvattr;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
@@ -123,20 +123,6 @@ impl TransformPayload<ResourceSpans> for Transformer {
         payload_builder
             .finish()
             .map(|payload| vec![(RequestType::Traces, payload)])
-    }
-}
-
-fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {
-    match hex::encode_to_slice(id, out) {
-        Ok(_) => {
-            // We can be pretty sure the encoded string is utf8 safe
-            std::str::from_utf8(out).unwrap_or_default()
-        }
-        Err(_) => {
-            // Trace and Span IDs are required to have a certain length (8 or 16 bytes), the only
-            // case this should fail is on an empty ID, like parent_span_id on a root span.
-            ""
-        }
     }
 }
 
