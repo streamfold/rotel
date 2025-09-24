@@ -1,11 +1,61 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::bounded_channel::BoundedSender;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+
+#[derive(Clone)]
+pub struct Message<T> {
+    pub metadata: Option<MessageMetadata>,
+    pub payload: Vec<T>,
+}
+
+impl<T> Message<T> {
+    // Used in testing
+    #[allow(dead_code)]
+    pub(crate) fn len(&self) -> usize {
+        self.payload.len()
+    }
+}
+
+#[derive(Clone)]
+pub enum MessageMetadata {
+    Kafka(KafkaMetadata),
+}
+
+#[derive(Clone)]
+pub struct KafkaMetadata {
+    pub offset: i64,
+    pub partition: i32,
+    pub topic_id: u8,
+    pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
+}
+
+pub enum KafkaAcknowledgement {
+    Ack(KafkaAck),
+    Nack(KafkaNack),
+}
+
+pub struct KafkaAck {
+    pub offset: i64,
+    pub partition: i32,
+    pub topic_id: u8,
+}
+
+pub struct KafkaNack {
+    pub offset: i64,
+    pub partition: i32,
+    pub topic_id: u8,
+    pub reason: ExporterError,
+}
+
+// We'll likely want to have a single shared ExporterError type, perhaps residing outside of both
+// the payload and exporter modules that both can share. For now this is just serving as a placeholder
+pub enum ExporterError {}
 
 /// Trait for converting telemetry data into OTLP protocol format
 pub trait OTLPFrom<T> {

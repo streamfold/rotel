@@ -4,6 +4,7 @@ use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
+use crate::topology::payload::Message;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
@@ -35,9 +36,9 @@ use tonic::{Request, Response, Status, codec::CompressionEncoding};
 #[derive(Default)]
 pub struct OTLPGrpcServerBuilder {
     max_recv_msg_size_mib: Option<usize>,
-    traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    traces_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
 }
 
 impl OTLPGrpcServerBuilder {}
@@ -48,17 +49,23 @@ impl OTLPGrpcServerBuilder {
         self
     }
 
-    pub fn with_traces_output(mut self, output: Option<OTLPOutput<Vec<ResourceSpans>>>) -> Self {
+    pub fn with_traces_output(
+        mut self,
+        output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    ) -> Self {
         self.traces_output = output;
         self
     }
 
-    pub fn with_metrics_output(mut self, output: Option<OTLPOutput<Vec<ResourceMetrics>>>) -> Self {
+    pub fn with_metrics_output(
+        mut self,
+        output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    ) -> Self {
         self.metrics_output = output;
         self
     }
 
-    pub fn with_logs_output(mut self, output: Option<OTLPOutput<Vec<ResourceLogs>>>) -> Self {
+    pub fn with_logs_output(mut self, output: Option<OTLPOutput<Message<ResourceLogs>>>) -> Self {
         self.logs_output = output;
         self
     }
@@ -74,9 +81,9 @@ impl OTLPGrpcServerBuilder {
 }
 
 pub struct OTLPGrpcServer {
-    traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    traces_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     max_recv_msg_size_mib: Option<usize>,
 }
 
@@ -157,9 +164,9 @@ impl OTLPGrpcServer {
 
 #[derive(Clone)]
 struct CollectorService {
-    traces_tx: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_tx: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_tx: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    traces_tx: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_tx: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_tx: Option<OTLPOutput<Message<ResourceLogs>>>,
     accepted_spans_records_counter: Counter<u64>,
     accepted_metric_points_counter: Counter<u64>,
     accepted_log_records_counter: Counter<u64>,
@@ -171,9 +178,9 @@ struct CollectorService {
 
 impl CollectorService {
     fn new(
-        traces_tx: Option<OTLPOutput<Vec<ResourceSpans>>>,
-        metrics_tx: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-        logs_tx: Option<OTLPOutput<Vec<ResourceLogs>>>,
+        traces_tx: Option<OTLPOutput<Message<ResourceSpans>>>,
+        metrics_tx: Option<OTLPOutput<Message<ResourceMetrics>>>,
+        logs_tx: Option<OTLPOutput<Message<ResourceLogs>>>,
     ) -> Self {
         Self {
             traces_tx,
@@ -233,7 +240,13 @@ impl TraceService for CollectorService {
             None => Err(Status::unavailable("OTLP trace receiver is disabled")),
             Some(traces_tx) => {
                 let count = BatchSizer::size_of(trace_request.resource_spans.as_slice()) as u64;
-                match traces_tx.send(trace_request.resource_spans).await {
+                match traces_tx
+                    .send(Message {
+                        metadata: None,
+                        payload: trace_request.resource_spans,
+                    })
+                    .await
+                {
                     Ok(_) => {
                         self.accepted_spans_records_counter.add(count, &self.tags);
                         Ok(Response::new(ExportTraceServiceResponse {
@@ -261,7 +274,13 @@ impl MetricsService for CollectorService {
             None => Err(Status::unavailable("OTLP metrics receiver is disabled")),
             Some(metrics_tx) => {
                 let count = BatchSizer::size_of(metrics_request.resource_metrics.as_slice()) as u64;
-                match metrics_tx.send(metrics_request.resource_metrics).await {
+                match metrics_tx
+                    .send(Message {
+                        metadata: None,
+                        payload: metrics_request.resource_metrics,
+                    })
+                    .await
+                {
                     Ok(_) => {
                         self.accepted_metric_points_counter.add(count, &self.tags);
                         Ok(Response::new(ExportMetricsServiceResponse {
@@ -289,7 +308,13 @@ impl LogsService for CollectorService {
             None => Err(Status::unavailable("OTLP logs receiver is disabled")),
             Some(logs_tx) => {
                 let count = BatchSizer::size_of(logs_request.resource_logs.as_slice()) as u64;
-                match logs_tx.send(logs_request.resource_logs).await {
+                match logs_tx
+                    .send(Message {
+                        metadata: None,
+                        payload: logs_request.resource_logs,
+                    })
+                    .await
+                {
                     Ok(_) => {
                         self.accepted_log_records_counter.add(count, &self.tags);
                         Ok(Response::new(ExportLogsServiceResponse {
@@ -312,6 +337,7 @@ mod tests {
     use crate::listener::Listener;
     use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
     use crate::receivers::otlp_output::OTLPOutput;
+    use crate::topology::payload::Message;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::{
         ExportLogsServiceRequest, ExportLogsServiceResponse,
@@ -335,7 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_trace_size() {
-        let (trace_in_tx, _traces_in_rx) = bounded::<Vec<ResourceSpans>>(10);
+        let (trace_in_tx, _traces_in_rx) = bounded::<Message<ResourceSpans>>(10);
         let trace_output = OTLPOutput::new(trace_in_tx);
         let cancel = CancellationToken::new();
 
@@ -395,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_metrics_size() {
-        let (metrics_in_tx, _metrics_in_rx) = bounded::<Vec<ResourceMetrics>>(10);
+        let (metrics_in_tx, _metrics_in_rx) = bounded::<Message<ResourceMetrics>>(10);
         let metrics_output = OTLPOutput::new(metrics_in_tx.clone());
         let cancel = CancellationToken::new();
 
@@ -455,7 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_log_size() {
-        let (logs_in_tx, _logs_in_rx) = bounded::<Vec<ResourceLogs>>(10);
+        let (logs_in_tx, _logs_in_rx) = bounded::<Message<ResourceLogs>>(10);
         let logs_output = OTLPOutput::new(logs_in_tx.clone());
         let cancel = CancellationToken::new();
 

@@ -2,6 +2,8 @@ use crate::bounded_channel::SendError;
 use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig};
 use crate::receivers::kafka::error::{KafkaReceiverError, Result};
 use crate::receivers::otlp_output::OTLPOutput;
+use crate::topology::payload;
+use crate::topology::payload::KafkaMetadata;
 use bytes::Bytes;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
@@ -9,7 +11,6 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use prost::Message as ProstMessage;
 use rdkafka::Message;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use std::error::Error;
@@ -17,11 +18,24 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+// In the future if we support arbitrary topics with non OTLP data we might replace these
+// with a map.
+const TRACES_TOPIC_ID: u8 = 0;
+const METRICS_TOPIC_ID: u8 = 1;
+const LOGS_TOPIC_ID: u8 = 2;
+
+// Struct to hold topic processing configuration
+struct TopicConfig<'a, T> {
+    name: &'static str,
+    topic_id: u8,
+    output: &'a Option<OTLPOutput<payload::Message<T>>>,
+}
+
 pub struct KafkaReceiver {
     pub consumer: StreamConsumer,
-    pub traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    pub metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    pub logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    pub traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
+    pub metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
+    pub logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     pub traces_topic: String,
     pub metrics_topic: String,
     pub logs_topic: String,
@@ -33,9 +47,9 @@ impl KafkaReceiver {}
 impl KafkaReceiver {
     pub fn new(
         config: KafkaReceiverConfig,
-        traces_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-        metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-        logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+        traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
+        metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
+        logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     ) -> Result<Self> {
         // Get the list of topics to subscribe to
         let topics = config.get_topics();
@@ -81,12 +95,78 @@ impl KafkaReceiver {
 
     async fn send_to_pipeline<T>(
         &self,
+        kafka_metadata: KafkaMetadata,
         request: Vec<T>,
-        output: &Option<OTLPOutput<Vec<T>>>,
+        output: &Option<OTLPOutput<payload::Message<T>>>,
     ) -> std::result::Result<(), SendError> {
         if let Some(output) = output {
-            output.send(request).await?;
+            output
+                .send(payload::Message {
+                    metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                    payload: request,
+                })
+                .await?;
         }
+        Ok(())
+    }
+
+    // Generic function to handle deserialization and pipeline sending
+    async fn process_kafka_message<T>(
+        &self,
+        data: &[u8],
+    ) -> std::result::Result<T, Box<dyn Error + Send + Sync>>
+    where
+        T: serde::de::DeserializeOwned + prost::Message + Default,
+    {
+        let request = match self.format {
+            DeserializationFormat::Json => serde_json::from_slice::<T>(data).map_err(|e| {
+                debug!("Failed to decode {}", e);
+                e
+            })?,
+            DeserializationFormat::Protobuf => {
+                T::decode(Bytes::from(data.to_vec())).map_err(|e| {
+                    debug!("Failed to decode {}", e);
+                    e
+                })?
+            }
+        };
+        Ok(request)
+    }
+
+    // Helper function to process payload data for any topic type
+    async fn process_payload<T, R>(
+        &self,
+        data: &[u8],
+        offset: i64,
+        partition: i32,
+        config: TopicConfig<'_, R>,
+        extract_resources: impl Fn(T) -> Vec<R>,
+    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>>
+    where
+        T: serde::de::DeserializeOwned + prost::Message + Default,
+    {
+        debug!(
+            "Processing {} message with {} bytes",
+            config.name,
+            data.len()
+        );
+        let req = self.process_kafka_message::<T>(data).await?;
+        let resources = extract_resources(req);
+
+        let metadata = KafkaMetadata {
+            offset,
+            partition,
+            topic_id: config.topic_id,
+            ack_chan: None,
+        };
+
+        if let Err(e) = self
+            .send_to_pipeline(metadata, resources, config.output)
+            .await
+        {
+            warn!("error sending {} to pipeline {}", config.name, e);
+        }
+
         Ok(())
     }
 
@@ -103,131 +183,76 @@ impl KafkaReceiver {
 
         loop {
             select! {
-                     record = self.consumer.recv() => {
-                         match record {
-                             Ok(m) => {
-                                let topic = m.topic();
-                                let partition = m.partition();
-                                let offset = m.offset();
+                record = self.consumer.recv() => {
+                    match record {
+                        Ok(m) => {
+                            let topic = m.topic();
+                            let partition = m.partition();
+                            let offset = m.offset();
 
-                                debug!("Message received - topic: {}, partition: {}, offset: {}", topic, partition, offset);
+                            debug!("Message received - topic: {}, partition: {}, offset: {}", topic, partition, offset);
 
-                                if topic == self.traces_topic {
-                                    let data = m.payload();
-                                    match data {
-                                        None => {
-                                            debug!("Empty payload from Kafka")
+                            match m.payload() {
+                                None => debug!("Empty payload from Kafka"),
+                                Some(data) => {
+                                    let result = match topic {
+                                        t if t == self.traces_topic => {
+                                            let config = TopicConfig {
+                                                name: "traces",
+                                                topic_id: TRACES_TOPIC_ID,
+                                                output: &self.traces_output,
+                                            };
+                                            self.process_payload(
+                                                data,
+                                                offset,
+                                                partition,
+                                                config,
+                                                |req: ExportTraceServiceRequest| req.resource_spans,
+                                            ).await
                                         }
-                                        Some(d) => {
-                                            debug!("Processing traces message with {} bytes", d.len());
-                                            let d = d.to_vec();
-                                            match self.format {
-                                                DeserializationFormat::Json => {
-                                                    match serde_json::from_slice::<ExportTraceServiceRequest>(&*d) {
-                                                        Ok(request) => {
-                                                            if let Err(e) = self.send_to_pipeline(request.resource_spans, &self.traces_output).await {
-                                                                warn!("error sending traces to pipeline {}", e);
-                                                            }
-                                                        },
-                                                        Err(e) => {
-                                                            debug!("Failed to decode traces message: {}", e);
-                                                        }
-                                                    }
-                                                }
-                                                DeserializationFormat::Protobuf => {
-                                                    match ExportTraceServiceRequest::decode(Bytes::from(d)) {
-                                                        Ok(request) => {
-                                                            if let Err(e) = self.send_to_pipeline(request.resource_spans, &self.traces_output).await {
-                                                                warn!("error sending traces to pipeline {}", e);
-                                                            }
-                                                        },
-                                                        Err(e) => {
-                                                            debug!("Failed to decode traces message: {}", e);
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                        t if t == self.metrics_topic => {
+                                            let config = TopicConfig {
+                                                name: "metrics",
+                                                topic_id: METRICS_TOPIC_ID,
+                                                output: &self.metrics_output,
+                                            };
+                                            self.process_payload(
+                                                data,
+                                                offset,
+                                                partition,
+                                                config,
+                                                |req: ExportMetricsServiceRequest| req.resource_metrics,
+                                            ).await
                                         }
-                                     }
-                                 } else if topic == self.metrics_topic {
-                                    let data = m.payload();
-                                    match data {
-                                        None => {
-                                            debug!("Empty payload from Kafka")
+                                        t if t == self.logs_topic => {
+                                            let config = TopicConfig {
+                                                name: "logs",
+                                                topic_id: LOGS_TOPIC_ID,
+                                                output: &self.logs_output,
+                                            };
+                                            self.process_payload(
+                                                data,
+                                                offset,
+                                                partition,
+                                                config,
+                                                |req: ExportLogsServiceRequest| req.resource_logs,
+                                            ).await
                                         }
-                                        Some(d) => {
-                                            debug!("Processing metrics message with {} bytes", d.len());
-                                            let d = d.to_vec();
-                                            match self.format {
-                                                DeserializationFormat::Json => {
-                                                    match serde_json::from_slice::<ExportMetricsServiceRequest>(&*d) {
-                                                        Ok(request) => {
-                                                            if let Err(e) = self.send_to_pipeline(request.resource_metrics, &self.metrics_output).await {
-                                                                warn!("error sending metrics to pipeline {}", e);
-                                                            }
-                                                        },
-                                                        Err(e) => {
-                                                            debug!("Failed to decode metrics message: {}", e);
-                                                        }
-                                                    }
-                                                }
-                                                DeserializationFormat::Protobuf => {
-                                                    match ExportMetricsServiceRequest::decode(Bytes::from(d)) {
-                                                        Ok(request) => {
-                                                            if let Err(e) = self.send_to_pipeline(request.resource_metrics, &self.metrics_output).await {
-                                                                warn!("error sending metrics to pipeline {}", e);
-                                                            }
-                                                        },
-                                                        Err(e) => {
-                                                            debug!("Failed to decode metrics message: {}", e);
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                        _ => {
+                                            debug!("Unknown topic: {}", topic);
+                                            Ok(())
                                         }
-                                     }
-                                 } else if topic == self.logs_topic {
-                                    let data = m.payload();
-                                    match data {
-                                        None => {
-                                            debug!("Empty payload from Kafka")
-                                        }
-                                        Some(d) => {
-                                            debug!("Processing logs message with {} bytes", d.len());
-                                            let d = d.to_vec();
-                                            match self.format {
-                                                DeserializationFormat::Json => {
-                                                    match serde_json::from_slice::<ExportLogsServiceRequest>(&*d) {
-                                                        Ok(request) => {
-                                                            if let Err(e) = self.send_to_pipeline(request.resource_logs, &self.logs_output).await {
-                                                                warn!("error sending logs to pipeline {}", e);
-                                                            }
-                                                        },
-                                                        Err(e) => {
-                                                            debug!("Failed to decode logs message: {}", e);
-                                                        }
-                                                    }
-                                                }
-                                                DeserializationFormat::Protobuf => {
-                                                    match ExportLogsServiceRequest::decode(Bytes::from(d)) {
-                                                        Ok(request) => {
-                                                            if let Err(e) = self.send_to_pipeline(request.resource_logs, &self.logs_output).await {
-                                                                warn!("error sending logs to pipeline {}", e);
-                                                            }
-                                                        },
-                                                        Err(e) => {
-                                                            debug!("Failed to decode logs message: {}", e);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                     }
-                                 }
-                             }
-                             Err(e) => info!("Error reading from Kafka: {:?}", e),
-                         }
-                    },
+                                    };
+
+                                    if let Err(e) = result {
+                                        warn!("Error processing message from topic {}: {}", topic, e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => info!("Error reading from Kafka: {:?}", e),
+                    }
+                },
                 _ = receivers_cancel.cancelled() => {
                     debug!("Kafka receiver cancelled, shutting down");
                     break;
@@ -250,6 +275,7 @@ mod tests {
     };
     use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
+    use prost::Message;
     use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::producer::{FutureProducer, FutureRecord};
@@ -440,7 +466,7 @@ mod tests {
                 .with_traces(true)
                 .with_traces_topic("test-traces".to_string());
 
-        let (tx, _rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None);
@@ -477,7 +503,7 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Protobuf)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, mut rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
@@ -519,9 +545,12 @@ mod tests {
             .expect("Failed to receive traces");
 
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].scope_spans.len(), 1);
-        assert_eq!(received[0].scope_spans[0].spans.len(), 1);
-        assert_eq!(received[0].scope_spans[0].spans[0].name, "test-span");
+        assert_eq!(received.payload[0].scope_spans.len(), 1);
+        assert_eq!(received.payload[0].scope_spans[0].spans.len(), 1);
+        assert_eq!(
+            received.payload[0].scope_spans[0].spans[0].name,
+            "test-span"
+        );
 
         cancel_token.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
@@ -544,7 +573,7 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Json)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, mut rx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
@@ -583,9 +612,12 @@ mod tests {
             .expect("Failed to receive metrics");
 
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].scope_metrics.len(), 1);
-        assert_eq!(received[0].scope_metrics[0].metrics.len(), 1);
-        assert_eq!(received[0].scope_metrics[0].metrics[0].name, "test.metric");
+        assert_eq!(received.payload[0].scope_metrics.len(), 1);
+        assert_eq!(received.payload[0].scope_metrics[0].metrics.len(), 1);
+        assert_eq!(
+            received.payload[0].scope_metrics[0].metrics[0].name,
+            "test.metric"
+        );
 
         cancel_token.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
@@ -608,7 +640,7 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Protobuf)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, mut rx) = bounded::<Vec<ResourceLogs>>(100);
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, None, None, Some(logs_output))
@@ -648,8 +680,8 @@ mod tests {
             .expect("Failed to receive logs");
 
         assert_eq!(received.len(), 1);
-        assert_eq!(received[0].scope_logs.len(), 1);
-        assert_eq!(received[0].scope_logs[0].log_records.len(), 1);
+        assert_eq!(received.payload[0].scope_logs.len(), 1);
+        assert_eq!(received.payload[0].scope_logs[0].log_records.len(), 1);
 
         cancel_token.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
@@ -686,13 +718,16 @@ mod tests {
             .with_deserialization_format(DeserializationFormat::Protobuf)
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (traces_tx, mut traces_rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (traces_tx, mut traces_rx) =
+            bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(traces_tx);
 
-        let (metrics_tx, mut metrics_rx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (metrics_tx, mut metrics_rx) =
+            bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(metrics_tx);
 
-        let (logs_tx, mut logs_rx) = bounded::<Vec<ResourceLogs>>(100);
+        let (logs_tx, mut logs_rx) =
+            bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(logs_tx);
 
         let receiver = KafkaReceiver::new(
@@ -810,7 +845,7 @@ mod tests {
                 .with_deserialization_format(DeserializationFormat::Protobuf)
                 .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, _rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
@@ -861,7 +896,7 @@ mod tests {
             .with_traces_topic(traces_topic.clone())
             .with_auto_offset_reset(AutoOffsetReset::Earliest);
 
-        let (tx, _rx) = bounded::<Vec<ResourceSpans>>(100);
+        let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
         let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)

@@ -26,7 +26,7 @@ use tracing::{debug, error};
 use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
-use crate::topology::payload::OTLPInto;
+use crate::topology::payload::{Message, OTLPInto};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -62,9 +62,9 @@ const JSON_CT: &str = "application/json";
 
 #[derive(Default)]
 pub struct OTLPHttpServerBuilder {
-    trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     traces_path: String,
     metrics_path: String,
     logs_path: String,
@@ -74,21 +74,21 @@ pub struct OTLPHttpServerBuilder {
 impl OTLPHttpServerBuilder {
     pub fn with_traces_output(
         mut self,
-        output: Option<OTLPOutput<Vec<ResourceSpans>>>,
+        output: Option<OTLPOutput<Message<ResourceSpans>>>,
     ) -> OTLPHttpServerBuilder {
         self.trace_output = output;
         self
     }
     pub fn with_metrics_output(
         mut self,
-        output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
+        output: Option<OTLPOutput<Message<ResourceMetrics>>>,
     ) -> OTLPHttpServerBuilder {
         self.metrics_output = output;
         self
     }
     pub fn with_logs_output(
         mut self,
-        output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+        output: Option<OTLPOutput<Message<ResourceLogs>>>,
     ) -> OTLPHttpServerBuilder {
         self.logs_output = output;
         self
@@ -126,9 +126,9 @@ impl OTLPHttpServerBuilder {
 }
 
 pub struct OTLPHttpServer {
-    pub trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    pub metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    pub logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    pub trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    pub metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    pub logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     pub traces_path: String,
     pub metrics_path: String,
     pub logs_path: String,
@@ -233,7 +233,9 @@ impl<B> ValidateRequest<B> for ValidateOTLPContentType {
         }
 
         let ct = request.headers().get(CONTENT_TYPE);
-        if ct.is_none_or(|ct| ct != PROTOBUF_CT && ct != JSON_CT) {
+        if ct
+            .is_none_or(|ct| ct.to_str().unwrap() != PROTOBUF_CT && ct.to_str().unwrap() != JSON_CT)
+        {
             debug!(content_type = ?ct, "Unsupported content-type");
             Err(response_4xx(StatusCode::BAD_REQUEST).unwrap())
         } else {
@@ -243,9 +245,9 @@ impl<B> ValidateRequest<B> for ValidateOTLPContentType {
 }
 
 fn build_service(
-    trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     traces_path: String,
     metrics_path: String,
     logs_path: String,
@@ -279,9 +281,9 @@ fn build_service(
 
 #[derive(Clone)]
 struct OTLPService {
-    trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-    logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+    trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+    metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+    logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     traces_path: String,
     metrics_path: String,
     logs_path: String,
@@ -296,9 +298,9 @@ struct OTLPService {
 
 impl OTLPService {
     fn new(
-        trace_output: Option<OTLPOutput<Vec<ResourceSpans>>>,
-        metrics_output: Option<OTLPOutput<Vec<ResourceMetrics>>>,
-        logs_output: Option<OTLPOutput<Vec<ResourceLogs>>>,
+        trace_output: Option<OTLPOutput<Message<ResourceSpans>>>,
+        metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
+        logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
         traces_path: String,
         metrics_path: String,
         logs_path: String,
@@ -486,7 +488,7 @@ async fn handle<
     T: prost::Message,
 >(
     req: Request<H>,
-    output: OTLPOutput<Vec<T>>,
+    output: OTLPOutput<Message<T>>,
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
     tags: [KeyValue; 1],
@@ -545,7 +547,13 @@ where
     let otlp_payload = ExpReq::otlp_into(req);
     let count = BatchSizer::size_of(otlp_payload.as_slice());
 
-    match output.send(otlp_payload).await {
+    match output
+        .send(Message {
+            metadata: None,
+            payload: otlp_payload,
+        })
+        .await
+    {
         Ok(_) => {
             // No partial success at the moment
             let body = compute_ok_resp::<ExpResp>(json_resp).unwrap();
@@ -954,13 +962,14 @@ mod tests {
                 HttpMakeClassifier,
             >,
         >,
-        BoundedReceiver<Vec<ResourceSpans>>,
-        BoundedReceiver<Vec<ResourceMetrics>>,
-        BoundedReceiver<Vec<ResourceLogs>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceSpans>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceMetrics>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceLogs>>,
     ) {
-        let (trace_tx, trace_rx) = bounded::<Vec<ResourceSpans>>(10);
-        let (metrics_tx, metrics_rx) = bounded::<Vec<ResourceMetrics>>(10);
-        let (logs_tx, logs_rx) = bounded::<Vec<ResourceLogs>>(10);
+        let (trace_tx, trace_rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(10);
+        let (metrics_tx, metrics_rx) =
+            bounded::<crate::topology::payload::Message<ResourceMetrics>>(10);
+        let (logs_tx, logs_rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(10);
         let trace_output = OTLPOutput::new(trace_tx);
         let metrics_output = OTLPOutput::new(metrics_tx);
         let logs_output = OTLPOutput::new(logs_tx);
