@@ -1,5 +1,6 @@
+use crate::exporters::clickhouse::rowbinary::json::JsonType;
 use crate::exporters::clickhouse::Compression;
-use crate::exporters::clickhouse::schema::{JsonType, MapOrJson};
+use crate::exporters::clickhouse::schema::MapOrJson;
 use crate::otlp::cvattr::ConvertedAttrKeyValue;
 use std::borrow::Cow;
 use std::collections::HashMap;

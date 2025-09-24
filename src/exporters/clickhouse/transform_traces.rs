@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayloadBuilder};
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
