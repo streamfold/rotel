@@ -33,8 +33,8 @@ pub struct SpanRow<'a> {
     pub(crate) scope_version: &'a str,
     pub(crate) span_attributes: MapOrJson<'a>,
     pub(crate) duration: i64,
-    pub(crate) status_code: Cow<'a, str>,
-    pub(crate) status_message: Cow<'a, str>,
+    pub(crate) status_code: &'a str,
+    pub(crate) status_message: &'a str,
 
     #[serde(rename = "Events.Timestamp")]
     pub(crate) events_timestamp: Vec<u64>,
@@ -48,7 +48,7 @@ pub struct SpanRow<'a> {
     #[serde(rename = "Links.SpanId")]
     pub(crate) links_span_id: Vec<String>,
     #[serde(rename = "Links.TraceState")]
-    pub(crate) links_trace_state: Vec<Cow<'a, str>>,
+    pub(crate) links_trace_state: Vec<String>,
     #[serde(rename = "Links.Attributes")]
     pub(crate) links_attributes: Vec<MapOrJson<'a>>,
 }
