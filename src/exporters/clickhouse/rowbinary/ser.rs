@@ -202,7 +202,7 @@ impl<'a, B: BufMut> Serializer for &'a mut RowBinarySerializer<B> {
             Some(l) => {
                 // Must write the number of JSON paths
                 put_unsigned_leb128(&mut self.buffer, l as u64);
-                
+
                 Ok(RowBinaryMapSerializer {
                     flattened_struct: false,
                     row_binary_serde: self,
