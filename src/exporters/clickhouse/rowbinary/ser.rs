@@ -20,6 +20,11 @@ struct RowBinarySerializer<B> {
     buffer: B,
 }
 
+struct RowBinaryMapSerializer<'a, B> {
+    flattened_struct: bool,
+    row_binary_serde: &'a mut RowBinarySerializer<B>,
+}
+
 macro_rules! impl_num {
     ($ty:ty, $ser_method:ident, $writer_method:ident) => {
         #[inline]
@@ -30,10 +35,10 @@ macro_rules! impl_num {
     };
 }
 
-impl<B: BufMut> Serializer for &'_ mut RowBinarySerializer<B> {
+impl<'a, B: BufMut> Serializer for &'a mut RowBinarySerializer<B> {
     type Error = Error;
     type Ok = ();
-    type SerializeMap = Self;
+    type SerializeMap = RowBinaryMapSerializer<'a, B>;
     type SerializeSeq = Self;
     type SerializeStruct = Self;
     type SerializeStructVariant = Impossible<(), Error>;
@@ -190,10 +195,24 @@ impl<B: BufMut> Serializer for &'_ mut RowBinarySerializer<B> {
 
     #[inline]
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap> {
-        let len = len.ok_or(Error::SequenceMustHaveLength)?;
-        put_unsigned_leb128(&mut self.buffer, len as u64);
-        //panic!("maps are unsupported, use `Vec<(A, B)>` instead");
-        Ok(self)
+        // For JSON maps len will be set, for flattened structs (eg Metrics), the
+        // length will not be set. We skip serializing the key name for flattened
+        // structures.
+        match len {
+            Some(l) => {
+                // Must write the number of JSON paths
+                put_unsigned_leb128(&mut self.buffer, l as u64);
+                
+                Ok(RowBinaryMapSerializer {
+                    flattened_struct: false,
+                    row_binary_serde: self,
+                })
+            }
+            None => Ok(RowBinaryMapSerializer {
+                flattened_struct: true,
+                row_binary_serde: self,
+            }),
+        }
     }
 
     #[inline]
@@ -233,10 +252,7 @@ impl<B: BufMut> SerializeStruct for &mut RowBinarySerializer<B> {
     }
 }
 
-// We don't fully support serializing maps, but we must implement this to support
-// flattened serde structs. We skip any serializing of the size or keys, we just rely
-// on the value serializers.
-impl<B: BufMut> SerializeMap for &mut RowBinarySerializer<B> {
+impl<B: BufMut> SerializeMap for RowBinaryMapSerializer<'_, B> {
     type Ok = ();
     type Error = Error;
 
@@ -244,14 +260,19 @@ impl<B: BufMut> SerializeMap for &mut RowBinarySerializer<B> {
     where
         T: ?Sized + Serialize,
     {
-        key.serialize(&mut **self)
+        if !self.flattened_struct {
+            key.serialize(&mut *self.row_binary_serde)
+        } else {
+            // For flattened structs, we skip key serialization
+            Ok(())
+        }
     }
 
     fn serialize_value<T>(&mut self, value: &T) -> std::result::Result<(), Self::Error>
     where
         T: ?Sized + Serialize,
     {
-        value.serialize(&mut **self)
+        value.serialize(&mut *self.row_binary_serde)
     }
 
     fn end(self) -> std::result::Result<Self::Ok, Self::Error> {
