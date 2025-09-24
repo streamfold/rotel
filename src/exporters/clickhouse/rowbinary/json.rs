@@ -39,7 +39,7 @@ impl<'a> Serialize for JsonType<'a> {
     {
         match self {
             JsonType::Int(i) => {
-                let jsonint = JsonInt {
+                let jsonint = JsonInt64 {
                     code: 0x0a,
                     value: *i,
                 };
@@ -60,7 +60,7 @@ impl<'a> Serialize for JsonType<'a> {
                 jsonstr.serialize(serializer)
             }
             JsonType::Double(d) => {
-                let jsondouble = JsonDouble {
+                let jsondouble = JsonFloat64 {
                     code: 0x0e,
                     value: *d,
                 };
@@ -77,13 +77,13 @@ struct JsonStr<'a> {
 }
 
 #[derive(Serialize)]
-struct JsonInt {
+struct JsonInt64 {
     code: u8,
     value: i64,
 }
 
 #[derive(Serialize)]
-struct JsonDouble {
+struct JsonFloat64 {
     code: u8,
     value: f64,
 }
