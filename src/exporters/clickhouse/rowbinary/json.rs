@@ -30,6 +30,8 @@ impl From<ConvertedAttrValue> for JsonType<'static> {
     }
 }
 
+// See the docs here for interpretation of the code values:
+// https://clickhouse.com/docs/sql-reference/data-types/data-types-binary-encoding
 impl<'a> Serialize for JsonType<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
