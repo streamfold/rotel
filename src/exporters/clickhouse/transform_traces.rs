@@ -2,7 +2,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
-use crate::exporters::clickhouse::transformer::{encode_id, find_attribute, Transformer};
+use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_attribute};
 use crate::otlp::cvattr;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};

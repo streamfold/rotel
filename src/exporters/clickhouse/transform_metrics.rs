@@ -76,8 +76,8 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         exemplars: self.parse_exemplars(&dp.exemplars),
                                     };
 
-                                    let e = payloads.entry(RequestType::MetricsSum).or_insert(
-                                        ClickhousePayloadBuilder::new(self.compression.clone()),
+                                    let e = payloads.entry(RequestType::MetricsSum).or_insert_with(
+                                        || ClickhousePayloadBuilder::new(self.compression.clone()),
                                     );
 
                                     e.add_row(&row)?;
@@ -99,9 +99,11 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         exemplars: self.parse_exemplars(&dp.exemplars),
                                     };
 
-                                    let e = payloads.entry(RequestType::MetricsGauge).or_insert(
-                                        ClickhousePayloadBuilder::new(self.compression.clone()),
-                                    );
+                                    let e = payloads
+                                        .entry(RequestType::MetricsGauge)
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
@@ -128,10 +130,11 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         exemplars: self.parse_exemplars(&dp.exemplars),
                                     };
 
-                                    let e =
-                                        payloads.entry(RequestType::MetricsHistogram).or_insert(
-                                            ClickhousePayloadBuilder::new(self.compression.clone()),
-                                        );
+                                    let e = payloads
+                                        .entry(RequestType::MetricsHistogram)
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
@@ -174,9 +177,9 @@ impl TransformPayload<ResourceMetrics> for Transformer {
 
                                     let e = payloads
                                         .entry(RequestType::MetricsExponentialHistogram)
-                                        .or_insert(ClickhousePayloadBuilder::new(
-                                            self.compression.clone(),
-                                        ));
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
@@ -207,9 +210,11 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         flags: dp.flags,
                                     };
 
-                                    let e = payloads.entry(RequestType::MetricsSummary).or_insert(
-                                        ClickhousePayloadBuilder::new(self.compression.clone()),
-                                    );
+                                    let e = payloads
+                                        .entry(RequestType::MetricsSummary)
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
