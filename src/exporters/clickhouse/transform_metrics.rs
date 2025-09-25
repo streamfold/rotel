@@ -2,8 +2,8 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::{
-    MapOrJson, MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow,
-    MetricsMeta, MetricsSumRow, MetricsSummaryRow,
+    MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow, MetricsMeta,
+    MetricsSumRow, MetricsSummaryRow,
 };
 use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
 use crate::otlp::cvattr;
@@ -24,52 +24,51 @@ impl TransformPayload<ResourceMetrics> for Transformer {
 
         for rm in input {
             let res_attrs = rm.resource.unwrap_or_default().attributes;
-            let res_attrs = cvattr::convert(&res_attrs);
+            let res_attrs = cvattr::convert_into(res_attrs);
             let service_name = find_attribute(SERVICE_NAME, &res_attrs);
+            let res_attrs_field = self.transform_attrs(&res_attrs);
 
             for sm in rm.scope_metrics {
                 let (scope_name, scope_version, scope_attrs, dropped_attr_count) = match sm.scope {
                     Some(scope) => (
                         scope.name,
                         scope.version,
-                        cvattr::convert(&scope.attributes),
+                        cvattr::convert_into(scope.attributes),
                         scope.dropped_attributes_count,
                     ),
                     None => (String::new(), String::new(), Vec::new(), 0),
                 };
 
+                let scope_attrs = self.transform_attrs(&scope_attrs);
+
                 for metric in sm.metrics {
                     if let Some(data) = metric.data {
-                        let mut meta = MetricsMeta {
-                            resource_attributes: self.transform_attrs_owned(&res_attrs),
-                            resource_schema_url: rm.schema_url.clone(),
-                            scope_name: scope_name.clone(),
-                            scope_version: scope_version.clone(),
-                            scope_attributes: self.transform_attrs_owned(&scope_attrs),
+                        let meta = MetricsMeta {
+                            resource_attributes: &res_attrs_field,
+                            resource_schema_url: &rm.schema_url,
+                            scope_name: &scope_name,
+                            scope_version: &scope_version,
+                            scope_attributes: &scope_attrs,
                             scope_dropped_attr_count: dropped_attr_count,
-                            scope_schema_url: sm.schema_url.clone(),
-                            service_name: service_name.clone(),
-                            metric_name: metric.name,
-                            metric_description: metric.description,
-                            metric_unit: metric.unit,
-                            // Placeholder values that will be replaced per data point
-                            attributes: MapOrJson::JsonOwned(HashMap::new()),
-                            start_time_unix: 0,
-                            time_unix: 0,
+                            scope_schema_url: &sm.schema_url,
+                            service_name: &service_name,
+                            metric_name: &metric.name,
+                            metric_description: &metric.description,
+                            metric_unit: &metric.unit,
                         };
 
                         match data {
                             Data::Sum(s) => {
                                 for dp in s.data_points {
-                                    let attrs = cvattr::convert(&dp.attributes);
-
-                                    meta.attributes = self.transform_attrs_owned(&attrs);
-                                    meta.start_time_unix = dp.start_time_unix_nano;
-                                    meta.time_unix = dp.time_unix_nano;
+                                    let attrs = cvattr::convert_into(dp.attributes);
+                                    let attrs = self.transform_attrs(&attrs);
 
                                     let row = MetricsSumRow {
                                         meta: &meta,
 
+                                        attributes: &attrs,
+                                        start_time_unix: dp.start_time_unix_nano,
+                                        time_unix: dp.time_unix_nano,
                                         value: get_metric_value(dp.value),
                                         flags: dp.flags,
                                         aggregation_temporality: s.aggregation_temporality,
@@ -77,8 +76,8 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         exemplars: self.parse_exemplars(&dp.exemplars),
                                     };
 
-                                    let e = payloads.entry(RequestType::MetricsSum).or_insert(
-                                        ClickhousePayloadBuilder::new(self.compression.clone()),
+                                    let e = payloads.entry(RequestType::MetricsSum).or_insert_with(
+                                        || ClickhousePayloadBuilder::new(self.compression.clone()),
                                     );
 
                                     e.add_row(&row)?;
@@ -86,38 +85,40 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                             }
                             Data::Gauge(g) => {
                                 for dp in g.data_points {
-                                    let attrs = cvattr::convert(&dp.attributes);
-
-                                    meta.attributes = self.transform_attrs_owned(&attrs);
-                                    meta.start_time_unix = dp.start_time_unix_nano;
-                                    meta.time_unix = dp.time_unix_nano;
+                                    let attrs = cvattr::convert_into(dp.attributes);
+                                    let attrs = self.transform_attrs(&attrs);
 
                                     let row = MetricsGaugeRow {
                                         meta: &meta,
 
+                                        attributes: &attrs,
+                                        start_time_unix: dp.start_time_unix_nano,
+                                        time_unix: dp.time_unix_nano,
                                         value: get_metric_value(dp.value),
                                         flags: dp.flags,
                                         exemplars: self.parse_exemplars(&dp.exemplars),
                                     };
 
-                                    let e = payloads.entry(RequestType::MetricsGauge).or_insert(
-                                        ClickhousePayloadBuilder::new(self.compression.clone()),
-                                    );
+                                    let e = payloads
+                                        .entry(RequestType::MetricsGauge)
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
                             }
                             Data::Histogram(h) => {
                                 for dp in h.data_points {
-                                    let attrs = cvattr::convert(&dp.attributes);
-
-                                    meta.attributes = self.transform_attrs_owned(&attrs);
-                                    meta.start_time_unix = dp.start_time_unix_nano;
-                                    meta.time_unix = dp.time_unix_nano;
+                                    let attrs = cvattr::convert_into(dp.attributes);
+                                    let attrs = self.transform_attrs(&attrs);
 
                                     let row = MetricsHistogramRow {
                                         meta: &meta,
 
+                                        attributes: &attrs,
+                                        start_time_unix: dp.start_time_unix_nano,
+                                        time_unix: dp.time_unix_nano,
                                         count: dp.count,
                                         sum: dp.sum.unwrap_or(0.0),
                                         bucket_counts: dp.bucket_counts,
@@ -129,25 +130,26 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         exemplars: self.parse_exemplars(&dp.exemplars),
                                     };
 
-                                    let e =
-                                        payloads.entry(RequestType::MetricsHistogram).or_insert(
-                                            ClickhousePayloadBuilder::new(self.compression.clone()),
-                                        );
+                                    let e = payloads
+                                        .entry(RequestType::MetricsHistogram)
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
                             }
                             Data::ExponentialHistogram(e) => {
                                 for dp in e.data_points {
-                                    let attrs = cvattr::convert(&dp.attributes);
-
-                                    meta.attributes = self.transform_attrs_owned(&attrs);
-                                    meta.start_time_unix = dp.start_time_unix_nano;
-                                    meta.time_unix = dp.time_unix_nano;
+                                    let attrs = cvattr::convert_into(dp.attributes);
+                                    let attrs = self.transform_attrs(&attrs);
 
                                     let mut row = MetricsExpHistogramRow {
                                         meta: &meta,
 
+                                        attributes: &attrs,
+                                        start_time_unix: dp.start_time_unix_nano,
+                                        time_unix: dp.time_unix_nano,
                                         count: dp.count,
                                         sum: dp.sum.unwrap_or(0.0),
                                         scale: dp.scale,
@@ -175,24 +177,24 @@ impl TransformPayload<ResourceMetrics> for Transformer {
 
                                     let e = payloads
                                         .entry(RequestType::MetricsExponentialHistogram)
-                                        .or_insert(ClickhousePayloadBuilder::new(
-                                            self.compression.clone(),
-                                        ));
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
                             }
                             Data::Summary(s) => {
                                 for dp in s.data_points {
-                                    let attrs = cvattr::convert(&dp.attributes);
-
-                                    meta.attributes = self.transform_attrs_owned(&attrs);
-                                    meta.start_time_unix = dp.start_time_unix_nano;
-                                    meta.time_unix = dp.time_unix_nano;
+                                    let attrs = cvattr::convert_into(dp.attributes);
+                                    let attrs = self.transform_attrs(&attrs);
 
                                     let row = MetricsSummaryRow {
                                         meta: &meta,
 
+                                        attributes: &attrs,
+                                        start_time_unix: dp.start_time_unix_nano,
+                                        time_unix: dp.time_unix_nano,
                                         count: dp.count,
                                         sum: dp.sum,
                                         value_at_quantiles_quantile: dp
@@ -208,9 +210,11 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                         flags: dp.flags,
                                     };
 
-                                    let e = payloads.entry(RequestType::MetricsSummary).or_insert(
-                                        ClickhousePayloadBuilder::new(self.compression.clone()),
-                                    );
+                                    let e = payloads
+                                        .entry(RequestType::MetricsSummary)
+                                        .or_insert_with(|| {
+                                            ClickhousePayloadBuilder::new(self.compression.clone())
+                                        });
 
                                     e.add_row(&row)?;
                                 }
