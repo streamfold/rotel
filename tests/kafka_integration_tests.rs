@@ -22,7 +22,7 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rotel::bounded_channel::bounded;
-use rotel::exporters::kafka::config::{KafkaExporterConfig, SerializationFormat};
+use rotel::exporters::kafka::config::{Compression, KafkaExporterConfig, SerializationFormat};
 use rotel::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -211,7 +211,7 @@ async fn test_kafka_exporter_logs_with_compression() {
     let config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
         .with_logs_topic(topic.to_string())
         .with_serialization_format(SerializationFormat::Json)
-        .with_compression("gzip".to_string());
+        .with_compression(Compression::Gzip);
 
     let mut exporter =
         build_logs_exporter(config, logs_rx).expect("Failed to create Kafka logs exporter");
@@ -410,6 +410,7 @@ fn create_test_logs_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec<Re
         .map(|attrs| ResourceLogs {
             resource: Some(Resource {
                 attributes: attrs,
+                entity_refs: vec![],
                 dropped_attributes_count: 0,
             }),
             scope_logs: vec![ScopeLogs {
@@ -436,6 +437,7 @@ fn create_test_metrics_with_resources(resource_attrs: Vec<Vec<KeyValue>>) -> Vec
         .map(|attrs| ResourceMetrics {
             resource: Some(Resource {
                 attributes: attrs,
+                entity_refs: vec![],
                 dropped_attributes_count: 0,
             }),
             scope_metrics: vec![ScopeMetrics {

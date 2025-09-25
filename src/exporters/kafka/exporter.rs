@@ -14,6 +14,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use rdkafka::producer::future_producer::Delivery;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::util::Timeout;
 use serde::Serialize;
@@ -33,7 +34,7 @@ const MAX_CONCURRENT_SENDS: usize = 1000;
 #[rustfmt::skip]
 type EncodingFuture = Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
 #[rustfmt::skip]
-type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<(i32, i64), (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
+type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<Delivery, (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
 
 /// Encoded Kafka message ready to be sent
 #[derive(Debug)]
@@ -384,10 +385,10 @@ where
                 // Process completed sends
                 Some(send_result) = self.send_futures.next() => {
                     match send_result {
-                        Ok((partition, offset)) => {
+                        Ok(d) => {
                             debug!(
                                 "{} sent successfully to partition {} at offset {}",
-                                telemetry_type, partition, offset
+                                telemetry_type, d.partition, d.offset
                             );
                         }
                         Err((e, _)) => {
@@ -516,10 +517,10 @@ where
         while !self.send_futures.is_empty() {
             if let Some(result) = self.send_futures.next().await {
                 match result {
-                    Ok((partition, offset)) => {
+                    Ok(d) => {
                         debug!(
                             "{} sent successfully to partition {} at offset {} during drain",
-                            telemetry_type, partition, offset
+                            telemetry_type, d.partition, d.offset
                         );
                     }
                     Err((e, _)) => {
