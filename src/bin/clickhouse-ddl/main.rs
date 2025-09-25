@@ -8,7 +8,7 @@ use crate::ddl_metrics::get_metrics_ddl;
 use crate::ddl_traces::get_traces_ddl;
 use bytes::Bytes;
 use clap::{Args, Parser, ValueEnum};
-use http::{HeaderName, Method};
+use http::{HeaderName, Method, Uri};
 use http_body_util::{BodyExt, Full};
 use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -127,6 +127,18 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
+            let mut endpoint = ddl.endpoint.clone();
+            if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+                endpoint = format!("http://{}", endpoint);
+            }
+            let endpoint: Uri = match endpoint.parse() {
+                Ok(uri) => uri,
+                Err(e) => {
+                    eprintln!("Failed to parse endpoint: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
             if let Err(e) = init_crypto_provider() {
                 eprintln!("Failed to initialize crypto: {}", e);
                 return ExitCode::FAILURE;
@@ -153,7 +165,7 @@ async fn main() -> ExitCode {
                 );
 
                 for q in sql {
-                    if let Err(e) = execute_ddl(&client, &ddl, q).await {
+                    if let Err(e) = execute_ddl(&client, &ddl, &endpoint, q).await {
                         eprintln!("Can not execute DDL: {}", e);
                         return ExitCode::FAILURE;
                     }
@@ -171,7 +183,7 @@ async fn main() -> ExitCode {
                 );
 
                 for q in sql {
-                    if let Err(e) = execute_ddl(&client, &ddl, q).await {
+                    if let Err(e) = execute_ddl(&client, &ddl, &endpoint, q).await {
                         eprintln!("Can not execute DDL: {}", e);
                         return ExitCode::FAILURE;
                     }
@@ -189,7 +201,7 @@ async fn main() -> ExitCode {
                 );
 
                 for q in sql {
-                    if let Err(e) = execute_ddl(&client, &ddl, q).await {
+                    if let Err(e) = execute_ddl(&client, &ddl, &endpoint, q).await {
                         eprintln!("Can not execute DDL: {}", e);
                         return ExitCode::FAILURE;
                     }
@@ -212,11 +224,12 @@ async fn main() -> ExitCode {
 async fn execute_ddl(
     client: &Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
     ddl: &CreateDDLArgs,
+    endpoint: &Uri,
     query: String,
 ) -> Result<(), BoxError> {
     let mut req = hyper::Request::builder()
         .method(Method::POST)
-        .uri(ddl.endpoint.clone());
+        .uri(endpoint.clone());
 
     let headers = req.headers_mut().unwrap();
     if let Some(user) = &ddl.user {
