@@ -14,6 +14,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use rdkafka::producer::future_producer::Delivery;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::util::Timeout;
 use serde::Serialize;
@@ -33,7 +34,7 @@ const MAX_CONCURRENT_SENDS: usize = 1000;
 #[rustfmt::skip]
 type EncodingFuture = Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
 #[rustfmt::skip]
-type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<(i32, i64), (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
+type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<Delivery, (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
 
 /// Encoded Kafka message ready to be sent
 #[derive(Debug)]
@@ -384,10 +385,10 @@ where
                 // Process completed sends
                 Some(send_result) = self.send_futures.next() => {
                     match send_result {
-                        Ok((partition, offset)) => {
+                        Ok(d) => {
                             debug!(
                                 "{} sent successfully to partition {} at offset {}",
-                                telemetry_type, partition, offset
+                                telemetry_type, d.partition, d.offset
                             );
                         }
                         Err((e, _)) => {
@@ -516,10 +517,10 @@ where
         while !self.send_futures.is_empty() {
             if let Some(result) = self.send_futures.next().await {
                 match result {
-                    Ok((partition, offset)) => {
+                    Ok(d) => {
                         debug!(
                             "{} sent successfully to partition {} at offset {} during drain",
-                            telemetry_type, partition, offset
+                            telemetry_type, d.partition, d.offset
                         );
                     }
                     Err((e, _)) => {
@@ -656,7 +657,7 @@ mod tests {
     #[test]
     fn test_calculate_resource_attributes_hash_all_value_types() {
         use opentelemetry_proto::tonic::common::v1::{
-            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+            any_value, AnyValue, ArrayValue, KeyValue, KeyValueList,
         };
 
         // Create a comprehensive set of attributes with all value types
@@ -751,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_order_independence() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
 
         // Create attributes in one order
         let attrs_order1 = vec![
@@ -805,7 +806,7 @@ mod tests {
     #[test]
     fn test_calculate_resource_attributes_hash_deep_recursion() {
         use opentelemetry_proto::tonic::common::v1::{
-            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+            any_value, AnyValue, ArrayValue, KeyValue, KeyValueList,
         };
 
         // Create deeply nested structure with arrays containing kvlists containing arrays
@@ -885,7 +886,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_kvlist_order_independence() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, KeyValueList, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue, KeyValueList};
 
         // KvList with keys in one order
         let attrs1 = vec![KeyValue {
@@ -958,7 +959,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_array_order_dependence() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, ArrayValue, KeyValue};
 
         // Array with elements in one order
         let attrs1 = vec![KeyValue {
@@ -1009,7 +1010,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_slight_key_difference() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
 
         // First set of attributes
         let attrs1 = vec![
@@ -1091,7 +1092,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_type_differences() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
 
         // Same key and "value" but different types
         let attrs_string = vec![KeyValue {
