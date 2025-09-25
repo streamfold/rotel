@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::bounded_channel::{BoundedReceiver, BoundedSender};
+use crate::bounded_channel::BoundedReceiver;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
+use crate::topology::fanout::Fanout;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::Message;
-use flume::SendError;
-use flume::r#async::SendFut;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{ResourceLogs, ScopeLogs};
@@ -33,7 +32,7 @@ use tracing::{debug, error};
 #[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
     receiver: BoundedReceiver<Message<T>>,
-    sender: BoundedSender<Vec<T>>,
+    fanout: Fanout<T>,
     batch_config: BatchConfig,
     processors: Vec<String>,
     flush_listener: Option<FlushReceiver>,
@@ -149,12 +148,12 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
 
 impl<T> Pipeline<T>
 where
-    T: BatchSizer + BatchSplittable + PythonProcessable + ResourceAttributeSettable,
+    T: BatchSizer + BatchSplittable + PythonProcessable + ResourceAttributeSettable + Clone,
     Vec<T>: Send,
 {
     pub fn new(
         receiver: BoundedReceiver<Message<T>>,
-        sender: BoundedSender<Vec<T>>,
+        fanout: Fanout<T>,
         flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
         processors: Vec<String>,
@@ -172,7 +171,7 @@ where
 
         Self {
             receiver,
-            sender,
+            fanout,
             flush_listener,
             batch_config,
             processors,
@@ -266,8 +265,10 @@ where
                             .collect();
                         debug!(batch_size = to_send.len(), "Flushing a batch in timout handler");
 
-                        let fut = self.sender.send_async(to_send);
-                        send_fut = Some(fut);
+                        if let Err(e) = self.fanout.async_send(to_send).await {
+                            error!(error = ?e, "Unable to send item, exiting.");
+                            return Err(format!("Pipeline was unable to send downstream: {}", e).into())
+                        }
                     }
                 },
 
@@ -287,7 +288,7 @@ where
                             .collect();
 
                         // We are exiting, so we just want to log the failure to send
-                        if let Err(e) = self.sender.send_async(remain_batch).await {
+                        if let Err(e) = self.fanout.async_send(remain_batch).await {
                             error!(error = ?e, "Unable to send item while exiting, will drop data.");
                         }
 
@@ -372,7 +373,7 @@ where
                                     .collect();
                                 debug!(batch_size = to_send.len(), "Flushing a batch on flush message");
 
-                                if let Err(e) = self.sender.send_async(to_send).await {
+                                if let Err(e) = self.fanout.async_send(to_send).await {
                                     error!(error = ?e, "Unable to send item, exiting.");
                                     return Err(format!("Pipeline was unable to send downstream: {}", e).into())
                                 }

@@ -26,6 +26,7 @@ use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
+use crate::topology::fanout::FanoutBuilder;
 use crate::topology::flush_control::FlushSubscriber;
 use crate::topology::payload::Message;
 use crate::{telemetry, topology};
@@ -610,9 +611,14 @@ impl Agent {
         }
 
         if traces_output.is_some() {
+            let trace_fanout = FanoutBuilder::new()
+                .add_tx(trace_pipeline_out_tx)
+                .build()
+                .expect("Failed to build trace fanout with single consumer");
+
             let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
                 trace_pipeline_in_rx.clone(),
-                trace_pipeline_out_tx,
+                trace_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 trace_batch_config,
                 config.otlp_with_trace_processor.clone(),
@@ -632,9 +638,14 @@ impl Agent {
         }
 
         if metrics_output.is_some() {
+            let metrics_fanout = FanoutBuilder::new()
+                .add_tx(metrics_pipeline_out_tx)
+                .build()
+                .expect("Failed to build metrics fanout with single consumer");
+
             let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
                 metrics_pipeline_in_rx.clone(),
-                metrics_pipeline_out_tx,
+                metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
                 config.otlp_with_metrics_processor.clone(),
@@ -654,9 +665,14 @@ impl Agent {
         }
 
         if logs_output.is_some() {
+            let logs_fanout = FanoutBuilder::new()
+                .add_tx(logs_pipeline_out_tx)
+                .build()
+                .expect("Failed to build logs fanout with single consumer");
+
             let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
                 logs_pipeline_in_rx.clone(),
-                logs_pipeline_out_tx,
+                logs_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_logs_batch_config(config.batch.clone()),
                 config.otlp_with_logs_processor.clone(),
@@ -676,9 +692,14 @@ impl Agent {
         }
 
         if internal_metrics_output.is_some() {
+            let internal_metrics_fanout = FanoutBuilder::new()
+                .add_tx(internal_metrics_pipeline_out_tx)
+                .build()
+                .expect("Failed to build internal metrics fanout with single consumer");
+
             let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
                 internal_metrics_pipeline_in_rx.clone(),
-                internal_metrics_pipeline_out_tx,
+                internal_metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
                 vec![],
