@@ -2,7 +2,7 @@
 
 use crate::bounded_channel::BoundedReceiver;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
-use crate::topology::fanout::Fanout;
+use crate::topology::fanout::{Fanout, FanoutFuture};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -240,7 +240,7 @@ where
         let len_processor_modules = processor_modules.len();
         let mut flush_listener = self.flush_listener.take();
 
-        let mut send_fut: Option<SendFut<Vec<T>>> = None;
+        let mut send_fut: Option<FanoutFuture<T>> = None;
 
         loop {
             select! {
@@ -265,10 +265,8 @@ where
                             .collect();
                         debug!(batch_size = to_send.len(), "Flushing a batch in timout handler");
 
-                        if let Err(e) = self.fanout.async_send(to_send).await {
-                            error!(error = ?e, "Unable to send item, exiting.");
-                            return Err(format!("Pipeline was unable to send downstream: {}", e).into())
-                        }
+                        let fut = self.fanout.async_send(to_send);
+                        send_fut = Some(fut);
                     }
                 },
 
@@ -339,7 +337,7 @@ where
                             let to_send: Vec<T> = popped.into_iter()
                                 .flat_map(|msg| msg.payload)
                                 .collect();
-                            let fut = self.sender.send_async(to_send);
+                            let fut = self.fanout.async_send(to_send);
                             send_fut = Some(fut);
                         }
                         Ok(None) => {},
@@ -398,8 +396,11 @@ where
 }
 
 pub async fn conditional_wait<T>(
-    send_fut: &mut Option<SendFut<'_, Vec<T>>>,
-) -> Option<Result<(), SendError<Vec<T>>>> {
+    send_fut: &mut Option<crate::topology::fanout::FanoutFuture<'_, T>>,
+) -> Option<Result<(), crate::topology::fanout::FanoutError>>
+where
+    T: Clone,
+{
     match send_fut {
         None => None,
         Some(fut) => Some(fut.await),

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedSender;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// A fanout component that distributes messages to multiple consumers.
 ///
@@ -68,6 +71,17 @@ pub struct FanoutBuilder<T> {
     consumers: Vec<BoundedSender<Vec<T>>>,
 }
 
+/// Future returned by `async_send` that manages sequential sending to consumers
+pub struct FanoutFuture<'a, T> {
+    consumers: &'a [BoundedSender<Vec<T>>],
+    message: Option<Vec<T>>,
+    current_index: usize,
+    current_send: Option<flume::r#async::SendFut<'a, Vec<T>>>,
+}
+
+// FanoutFuture is Unpin because all its fields are Unpin
+impl<'a, T> Unpin for FanoutFuture<'a, T> {}
+
 impl<T> Fanout<T>
 where
     T: Clone,
@@ -87,7 +101,7 @@ where
         Self { consumers }
     }
 
-    /// Asynchronously sends a message to all consumers sequentially.
+    /// Creates a future that will send a message to all consumers sequentially.
     ///
     /// The message will be cloned for all consumers except the last one.
     /// Sends to each consumer one at a time, waiting for success before
@@ -101,22 +115,89 @@ where
     /// A future that resolves to `Result<(), FanoutError>` when all sends complete.
     /// On failure, returns `FanoutError::Disconnected` containing the index of the
     /// first consumer that failed to receive the message.
-    pub async fn async_send(&self, message: Vec<T>) -> Result<(), FanoutError> {
-        let consumer_count = self.consumers.len();
+    pub fn async_send(&self, message: Vec<T>) -> FanoutFuture<'_, T> {
+        FanoutFuture::new(&self.consumers, message)
+    }
+}
 
-        // Send to all consumers except the last one (with cloned messages)
-        for i in 0..consumer_count - 1 {
-            match self.consumers[i].send(message.clone()).await {
-                Ok(()) => continue,
-                Err(_) => return Err(FanoutError::Disconnected(vec![i])),
-            }
+impl<'a, T> FanoutFuture<'a, T>
+where
+    T: Clone,
+{
+    fn new(consumers: &'a [BoundedSender<Vec<T>>], message: Vec<T>) -> Self {
+        Self {
+            consumers,
+            message: Some(message),
+            current_index: 0,
+            current_send: None,
         }
+    }
+}
 
-        // Send to the last consumer with the original message (no clone needed)
-        let last_index = consumer_count - 1;
-        match self.consumers[last_index].send(message).await {
-            Ok(()) => Ok(()),
-            Err(_) => Err(FanoutError::Disconnected(vec![last_index])),
+impl<'a, T> Future for FanoutFuture<'a, T>
+where
+    T: Clone,
+{
+    type Output = Result<(), FanoutError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut(); // Safe because FanoutFuture is Unpin
+
+        loop {
+            // If we have a pending send, poll it
+            if let Some(ref mut send_fut) = this.current_send {
+                let send_result = {
+                    // SAFETY: We never move the SendFut after creating it
+                    let pinned_fut = unsafe { Pin::new_unchecked(send_fut) };
+                    pinned_fut.poll(cx)
+                };
+
+                match send_result {
+                    Poll::Ready(Ok(())) => {
+                        // Send completed successfully
+                        this.current_send = None;
+                        this.current_index += 1;
+
+                        // Check if we've sent to all consumers
+                        if this.current_index >= this.consumers.len() {
+                            return Poll::Ready(Ok(()));
+                        }
+                        // Continue to next consumer
+                    }
+                    Poll::Ready(Err(_)) => {
+                        // Send failed
+                        return Poll::Ready(Err(FanoutError::Disconnected(vec![
+                            this.current_index,
+                        ])));
+                    }
+                    Poll::Pending => {
+                        // Send is still in progress
+                        return Poll::Pending;
+                    }
+                }
+            } else {
+                // No pending send, start sending to current consumer
+                if this.current_index >= this.consumers.len() {
+                    // All consumers processed
+                    return Poll::Ready(Ok(()));
+                }
+
+                let message_to_send = if this.current_index == this.consumers.len() - 1 {
+                    // Last consumer gets the original message (no clone needed)
+                    this.message.take().expect("Message should be available")
+                } else {
+                    // All other consumers get a clone
+                    this.message
+                        .as_ref()
+                        .expect("Message should be available")
+                        .clone()
+                };
+
+                // Start the send operation
+                let send_fut = this.consumers[this.current_index].send_async(message_to_send);
+                this.current_send = Some(send_fut);
+                // Loop back to poll the new send future
+            }
         }
     }
 }
