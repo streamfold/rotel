@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::topology::payload::{Message, MessageMetadata};
+use crate::topology::payload::Message;
 use std::fmt;
 use std::time::Duration;
 use tokio::time::Instant;
