@@ -8,7 +8,7 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Message<T> {
     pub metadata: Option<MessageMetadata>,
     pub payload: Vec<T>,
@@ -22,7 +22,7 @@ impl<T> Message<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MessageMetadata {
     Kafka(KafkaMetadata),
 }
@@ -33,6 +33,28 @@ pub struct KafkaMetadata {
     pub partition: i32,
     pub topic_id: u8,
     pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
+}
+
+// Manual Debug for KafkaMetadata since BoundedSender doesn't implement Debug
+impl std::fmt::Debug for KafkaMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaMetadata")
+            .field("offset", &self.offset)
+            .field("partition", &self.partition)
+            .field("topic_id", &self.topic_id)
+            .field("ack_chan", &self.ack_chan.is_some())
+            .finish()
+    }
+}
+
+// Manual PartialEq for KafkaMetadata since BoundedSender can't be compared
+impl PartialEq for KafkaMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.offset == other.offset
+            && self.partition == other.partition
+            && self.topic_id == other.topic_id
+        // We don't compare ack_chan as it's not meaningful for equality
+    }
 }
 
 pub enum KafkaAcknowledgement {
