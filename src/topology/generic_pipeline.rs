@@ -218,7 +218,7 @@ where
         inspector: impl Inspect<T>,
         pipeline_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        let mut batch = NestedBatch::<T>::new(
+        let mut batch = NestedBatch::<Message<T>>::new(
             self.batch_config.max_size,
             self.batch_config.timeout,
             self.batch_config.disabled,
@@ -259,7 +259,11 @@ where
                 // flush batches as they time out
                 _ = batch_timer.tick(), if send_fut.is_none() => {
                     if batch.should_flush(Instant::now()) {
-                        let to_send = batch.take_batch();
+                        let messages = batch.take_batch();
+                        // Extract payloads from messages for now (future: send full Message<T>)
+                        let to_send: Vec<T> = messages.into_iter()
+                            .flat_map(|msg| msg.payload)
+                            .collect();
                         debug!(batch_size = to_send.len(), "Flushing a batch in timout handler");
 
                         let fut = self.sender.send_async(to_send);
@@ -272,10 +276,15 @@ where
                     if item.is_none() {
                         debug!("Pipeline receiver has closed, flushing batch and exiting");
 
-                        let remain_batch = batch.take_batch();
-                        if remain_batch.is_empty() {
+                        let remain_messages = batch.take_batch();
+                        if remain_messages.is_empty() {
                             return Ok(());
                         }
+
+                        // Extract payloads from messages for now (future: send full Message<T>)
+                        let remain_batch: Vec<T> = remain_messages.into_iter()
+                            .flat_map(|msg| msg.payload)
+                            .collect();
 
                         // We are exiting, so we just want to log the failure to send
                         if let Err(e) = self.sender.send_async(remain_batch).await {
@@ -285,8 +294,9 @@ where
                         return Ok(());
                     }
 
-                    let items = item.unwrap();
-                    let mut items = items.payload;
+                    let message = item.unwrap();
+                    let mut items = message.payload;
+
                     // invoke current middleware layer
                     // todo: expand support for observability or transforms
                     if len_processor_modules > 0 {
@@ -316,9 +326,19 @@ where
                         inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
                     }
 
-                    match batch.offer(items) {
+                    // Wrap the processed items back into a Message
+                    let processed_message = Message {
+                        metadata: message.metadata,
+                        payload: items,
+                    };
+
+                    match batch.offer(vec![processed_message]) {
                         Ok(Some(popped)) => {
-                            let fut = self.sender.send_async(popped);
+                            // Extract payloads from messages for now (future: send full Message<T>)
+                            let to_send: Vec<T> = popped.into_iter()
+                                .flat_map(|msg| msg.payload)
+                                .collect();
+                            let fut = self.sender.send_async(to_send);
                             send_fut = Some(fut);
                         }
                         Ok(None) => {},
@@ -344,8 +364,12 @@ where
                                 }
                             }
 
-                            let to_send = batch.take_batch();
-                            if !to_send.is_empty() {
+                            let messages = batch.take_batch();
+                            if !messages.is_empty() {
+                                // Extract payloads from messages for now (future: send full Message<T>)
+                                let to_send: Vec<T> = messages.into_iter()
+                                    .flat_map(|msg| msg.payload)
+                                    .collect();
                                 debug!(batch_size = to_send.len(), "Flushing a batch on flush message");
 
                                 if let Err(e) = self.sender.send_async(to_send).await {
