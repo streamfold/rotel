@@ -419,7 +419,12 @@ impl Agent {
                 .metrics
                 .into_iter()
                 .map(|cfg| (cfg, false))
-                .chain(exp_config.internal_metrics.into_iter().map(|cfg| (cfg, true)));
+                .chain(
+                    exp_config
+                        .internal_metrics
+                        .into_iter()
+                        .map(|cfg| (cfg, true)),
+                );
 
             for (cfg, is_internal_metrics) in combined_metrics_configs {
                 let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =

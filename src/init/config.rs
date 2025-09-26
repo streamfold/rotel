@@ -851,18 +851,15 @@ mod tests {
         let mut env_manager = EnvManager::new();
         env_manager.set_var("ROTEL_EXPORTER_DD_API_KEY", "test-api-key");
         env_manager.set_var("ROTEL_EXPORTER_DD_REGION", "us1");
-        
+
         let config = AgentRun {
             exporters_traces: Some("bh,dd".to_string()),
             ..AgentRun::default()
         };
 
-        let result = get_multi_exporter_config(
-            &config,
-            "dd:datadog,bh:blackhole".to_string(),
-            "production",
-        );
-        
+        let result =
+            get_multi_exporter_config(&config, "dd:datadog,bh:blackhole".to_string(), "production");
+
         assert!(result.is_ok());
         let exporters = result.unwrap();
 
