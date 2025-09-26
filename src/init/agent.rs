@@ -114,26 +114,18 @@ impl Agent {
 
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
             bounded::<Message<ResourceSpans>>(max(4, num_cpus));
-        let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
-            bounded::<Vec<ResourceSpans>>(self.sending_queue_size);
         let trace_otlp_output = OTLPOutput::new(trace_pipeline_in_tx);
 
         let (metrics_pipeline_in_tx, metrics_pipeline_in_rx) =
             bounded::<Message<ResourceMetrics>>(max(4, num_cpus));
-        let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
-            bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let metrics_otlp_output = OTLPOutput::new(metrics_pipeline_in_tx);
 
         let (logs_pipeline_in_tx, logs_pipeline_in_rx) =
             bounded::<Message<ResourceLogs>>(max(4, num_cpus));
-        let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
-            bounded::<Vec<ResourceLogs>>(self.sending_queue_size);
         let logs_otlp_output = OTLPOutput::new(logs_pipeline_in_tx);
 
         let (internal_metrics_pipeline_in_tx, internal_metrics_pipeline_in_rx) =
             bounded::<Message<ResourceMetrics>>(max(4, num_cpus));
-        let (internal_metrics_pipeline_out_tx, internal_metrics_pipeline_out_rx) =
-            bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
         let rec_config = get_receivers_config(&config)?;
@@ -235,7 +227,14 @@ impl Agent {
 
         // AWS-XRay only supports a batch size of 50 segments
         let mut trace_batch_config = build_traces_batch_config(config.batch.clone());
-        if let Some(ExporterConfig::Xray(_)) = exp_config.traces {
+        // Check if AWS X-Ray is configured for traces
+        let has_xray_exporter = exp_config
+            .traces
+            .iter()
+            .any(|cfg| matches!(cfg, ExporterConfig::Xray(_)));
+
+        if has_xray_exporter {
+            // TODO: This splitting can move to the xray exporter: https://github.com/streamfold/rotel/issues/210
             if trace_batch_config.max_size > 50 {
                 info!(
                     "AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50"
@@ -272,131 +271,142 @@ impl Agent {
         // Build the exporters now
         //
 
+        let mut trace_fanout = FanoutBuilder::new();
+        let mut metrics_fanout = FanoutBuilder::new();
+        let mut logs_fanout = FanoutBuilder::new();
+        let mut internal_metrics_fanout = FanoutBuilder::new();
+
         //
         // TRACES
         //
         if activation.traces == TelemetryState::Active {
-            match exp_config.traces {
-                Some(ExporterConfig::Otlp(exp_config)) => {
-                    let traces = otlp::exporter::build_traces_exporter(
-                        exp_config,
-                        trace_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
+            for cfg in exp_config.traces {
+                let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
+                    bounded::<Vec<ResourceSpans>>(self.sending_queue_size);
+                trace_fanout = trace_fanout.add_tx(trace_pipeline_out_tx);
 
-                    start_otlp_exporter(
-                        &mut exporters_task_set,
-                        "otlp_traces",
-                        traces,
-                        exporters_cancel.clone(),
-                    );
-                }
-                Some(ExporterConfig::Clickhouse(cfg_builder)) => {
-                    let builder = cfg_builder.build()?;
-
-                    let exp = builder.build_traces_exporter(
-                        trace_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exp.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = e,
-                                exporter_type = "clickhouse_traces",
-                                "Clickhouse exporter returned from run loop with error."
-                            );
-                        }
-
-                        Ok(())
-                    });
-                }
-                Some(ExporterConfig::Datadog(cfg_builder)) => {
-                    let builder = cfg_builder.build();
-
-                    let exp = builder.build(
-                        trace_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exp.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = e,
-                                "Datadog exporter returned from run loop with error."
-                            );
-                        }
-
-                        Ok(())
-                    });
-                }
-                Some(ExporterConfig::Xray(cfg_builder)) => {
-                    let config = AwsConfig::from_env();
-                    let builder = cfg_builder.build();
-                    let exp = builder.build(
-                        trace_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                        "production".to_string(),
-                        config,
-                    )?;
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exp.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = e,
-                                "AWS X-Ray exporter returned from run loop with error."
-                            );
-                        }
-                        Ok(())
-                    });
-                }
-                Some(ExporterConfig::Blackhole) => {
-                    let mut exp = BlackholeExporter::new(trace_pipeline_out_rx);
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        exp.start(token).await;
-                        Ok(())
-                    });
-                }
-                #[cfg(feature = "rdkafka")]
-                Some(ExporterConfig::Kafka(kafka_config)) => {
-                    let mut traces_exporter =
-                        build_traces_exporter(kafka_config, trace_pipeline_out_rx)?;
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        traces_exporter.start(token).await;
-                        Ok(())
-                    });
-                }
-                #[cfg(feature = "file_exporter")]
-                Some(ExporterConfig::File(config)) => {
-                    let exporter =
-                        crate::exporters::file::FileExporterBuilder::build_traces_exporter(
-                            &config,
+                match cfg {
+                    ExporterConfig::Otlp(exp_config) => {
+                        let traces = otlp::exporter::build_traces_exporter(
+                            exp_config,
                             trace_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                         )?;
 
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exporter.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = %e,
-                                exporter_type = "file_traces",
-                                "File exporter returned from run loop with error."
-                            );
-                        }
-                        Ok(())
-                    });
+                        start_otlp_exporter(
+                            &mut exporters_task_set,
+                            "otlp_traces",
+                            traces,
+                            exporters_cancel.clone(),
+                        );
+                    }
+                    ExporterConfig::Clickhouse(cfg_builder) => {
+                        let builder = cfg_builder.build()?;
+
+                        let exp = builder.build_traces_exporter(
+                            trace_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exp.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = e,
+                                    exporter_type = "clickhouse_traces",
+                                    "Clickhouse exporter returned from run loop with error."
+                                );
+                            }
+
+                            Ok(())
+                        });
+                    }
+                    ExporterConfig::Datadog(cfg_builder) => {
+                        let builder = cfg_builder.build();
+
+                        let exp = builder.build(
+                            trace_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exp.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = e,
+                                    "Datadog exporter returned from run loop with error."
+                                );
+                            }
+
+                            Ok(())
+                        });
+                    }
+                    ExporterConfig::Xray(cfg_builder) => {
+                        let config = AwsConfig::from_env();
+                        let builder = cfg_builder.build();
+                        let exp = builder.build(
+                            trace_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                            "production".to_string(),
+                            config,
+                        )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exp.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = e,
+                                    "AWS X-Ray exporter returned from run loop with error."
+                                );
+                            }
+                            Ok(())
+                        });
+                    }
+                    ExporterConfig::Blackhole => {
+                        let mut exp = BlackholeExporter::new(trace_pipeline_out_rx);
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            exp.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "rdkafka")]
+                    ExporterConfig::Kafka(kafka_config) => {
+                        let mut traces_exporter =
+                            build_traces_exporter(kafka_config, trace_pipeline_out_rx)?;
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            traces_exporter.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "file_exporter")]
+                    ExporterConfig::File(config) => {
+                        let exporter =
+                            crate::exporters::file::FileExporterBuilder::build_traces_exporter(
+                                &config,
+                                trace_pipeline_out_rx,
+                            )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exporter.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = %e,
+                                    exporter_type = "file_traces",
+                                    "File exporter returned from run loop with error."
+                                );
+                            }
+                            Ok(())
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -404,124 +414,143 @@ impl Agent {
         // METRICS
         //
         if activation.metrics == TelemetryState::Active {
-            match exp_config.metrics {
-                Some(ExporterConfig::Otlp(exp_config)) => {
-                    let metrics = otlp::exporter::build_metrics_exporter(
-                        exp_config.clone(),
-                        metrics_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
+            // Combine both metrics and internal_metrics exporters into single pass
+            let combined_metrics_configs = exp_config
+                .metrics
+                .into_iter()
+                .map(|cfg| (cfg, false))
+                .chain(
+                    exp_config
+                        .internal_metrics
+                        .into_iter()
+                        .map(|cfg| (cfg, true)),
+                );
 
-                    start_otlp_exporter(
-                        &mut exporters_task_set,
-                        "otlp_metrics",
-                        metrics,
-                        exporters_cancel.clone(),
-                    );
+            for (cfg, is_internal_metrics) in combined_metrics_configs {
+                let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
+                    bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
 
-                    // TODO: Allow internal metrics pipeline to be configured separately?
-                    if config.enable_internal_telemetry {
-                        let internal_metrics = otlp::exporter::build_internal_metrics_exporter(
-                            exp_config,
-                            internal_metrics_pipeline_out_rx,
-                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                        )?;
+                if is_internal_metrics {
+                    internal_metrics_fanout =
+                        internal_metrics_fanout.add_tx(metrics_pipeline_out_tx);
+                } else {
+                    metrics_fanout = metrics_fanout.add_tx(metrics_pipeline_out_tx);
+                }
+
+                let telemetry_type = match is_internal_metrics {
+                    true => "internal_metrics",
+                    false => "metrics",
+                };
+
+                match cfg {
+                    ExporterConfig::Otlp(exp_config) => {
+                        let metrics = match is_internal_metrics {
+                            true => otlp::exporter::build_internal_metrics_exporter(
+                                exp_config.clone(),
+                                metrics_pipeline_out_rx,
+                                self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                            )?,
+                            false => otlp::exporter::build_metrics_exporter(
+                                exp_config.clone(),
+                                metrics_pipeline_out_rx,
+                                self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                            )?,
+                        };
 
                         start_otlp_exporter(
                             &mut exporters_task_set,
-                            "otlp_internal_metrics",
-                            internal_metrics,
+                            telemetry_type,
+                            metrics,
                             exporters_cancel.clone(),
                         );
                     }
-                }
-                Some(ExporterConfig::Clickhouse(cfg_builder)) => {
-                    let builder = cfg_builder.build()?;
+                    ExporterConfig::Clickhouse(cfg_builder) => {
+                        let builder = cfg_builder.build()?;
 
-                    let exp = builder.build_metrics_exporter(
-                        metrics_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exp.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = e,
-                                exporter_type = "clickhouse_metrics",
-                                "Clickhouse exporter returned from run loop with error."
-                            );
-                        }
-
-                        Ok(())
-                    });
-                }
-                Some(ExporterConfig::Blackhole) => {
-                    let mut exp = BlackholeExporter::new(metrics_pipeline_out_rx);
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        exp.start(token).await;
-                        Ok(())
-                    });
-                }
-                #[cfg(feature = "rdkafka")]
-                Some(ExporterConfig::Kafka(kafka_config)) => {
-                    let mut metrics_exporter =
-                        build_metrics_exporter(kafka_config, metrics_pipeline_out_rx)?;
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        metrics_exporter.start(token).await;
-                        Ok(())
-                    });
-                }
-                #[cfg(feature = "file_exporter")]
-                Some(ExporterConfig::File(config)) => {
-                    let exporter =
-                        crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
-                            &config,
+                        let exp = builder.build_metrics_exporter(
                             metrics_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                         )?;
 
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exporter.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = %e,
-                                exporter_type = "file_metrics",
-                                "File exporter returned from run loop with error."
-                            );
-                        }
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exp.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = e,
+                                    exporter_type = "clickhouse_metrics",
+                                    "Clickhouse exporter returned from run loop with error."
+                                );
+                            }
 
-                        Ok(())
-                    });
+                            Ok(())
+                        });
+                    }
+                    ExporterConfig::Blackhole => {
+                        let mut exp = BlackholeExporter::new(metrics_pipeline_out_rx);
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            exp.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "rdkafka")]
+                    ExporterConfig::Kafka(kafka_config) => {
+                        let mut metrics_exporter =
+                            build_metrics_exporter(kafka_config, metrics_pipeline_out_rx)?;
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            metrics_exporter.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "file_exporter")]
+                    ExporterConfig::File(config) => {
+                        let exporter =
+                            crate::exporters::file::FileExporterBuilder::build_metrics_exporter(
+                                &config,
+                                metrics_pipeline_out_rx,
+                            )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exporter.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = %e,
+                                    exporter_type = "file_metrics",
+                                    "File exporter returned from run loop with error."
+                                );
+                            }
+
+                            Ok(())
+                        });
+                    }
+                    ExporterConfig::Awsemf(cfg_builder) => {
+                        let config = AwsConfig::from_env();
+                        let builder = cfg_builder.build();
+                        let exp = builder.build(
+                            metrics_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                            config,
+                        )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exp.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = e,
+                                    "AWS EMF exporter returned from run loop with error."
+                                );
+                            }
+
+                            Ok(())
+                        });
+                    }
+                    _ => {}
                 }
-
-                Some(ExporterConfig::Awsemf(cfg_builder)) => {
-                    let config = AwsConfig::from_env();
-                    let builder = cfg_builder.build();
-                    let exp = builder.build(
-                        metrics_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                        config,
-                    )?;
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exp.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = e,
-                                "AWS EMF exporter returned from run loop with error."
-                            );
-                        }
-
-                        Ok(())
-                    });
-                }
-                _ => {}
             }
         }
 
@@ -529,90 +558,95 @@ impl Agent {
         // LOGS
         //
         if activation.logs == TelemetryState::Active {
-            match exp_config.logs {
-                Some(ExporterConfig::Otlp(exp_config)) => {
-                    let logs = otlp::exporter::build_logs_exporter(
-                        exp_config,
-                        logs_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
+            for cfg in exp_config.logs {
+                let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
+                    bounded::<Vec<ResourceLogs>>(self.sending_queue_size);
+                logs_fanout = logs_fanout.add_tx(logs_pipeline_out_tx);
 
-                    start_otlp_exporter(
-                        &mut exporters_task_set,
-                        "otlp_logs",
-                        logs,
-                        exporters_cancel.clone(),
-                    );
-                }
-                Some(ExporterConfig::Clickhouse(cfg_builder)) => {
-                    let builder = cfg_builder.build()?;
-
-                    let exp = builder.build_logs_exporter(
-                        logs_pipeline_out_rx,
-                        self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                    )?;
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exp.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = e,
-                                exporter_type = "clickhouse_logs",
-                                "Clickhouse exporter returned from run loop with error."
-                            );
-                        }
-
-                        Ok(())
-                    });
-                }
-                Some(ExporterConfig::Blackhole) => {
-                    let mut exp = BlackholeExporter::new(logs_pipeline_out_rx);
-
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        exp.start(token).await;
-                        Ok(())
-                    });
-                }
-                #[cfg(feature = "rdkafka")]
-                Some(ExporterConfig::Kafka(kafka_config)) => {
-                    let mut logs_exporter =
-                        build_logs_exporter(kafka_config, logs_pipeline_out_rx)?;
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        logs_exporter.start(token).await;
-                        Ok(())
-                    });
-                }
-                #[cfg(feature = "file_exporter")]
-                Some(ExporterConfig::File(config)) => {
-                    let exporter =
-                        crate::exporters::file::FileExporterBuilder::build_logs_exporter(
-                            &config,
+                match cfg {
+                    ExporterConfig::Otlp(exp_config) => {
+                        let logs = otlp::exporter::build_logs_exporter(
+                            exp_config,
                             logs_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                         )?;
 
-                    let token = exporters_cancel.clone();
-                    exporters_task_set.spawn(async move {
-                        let res = exporter.start(token).await;
-                        if let Err(e) = res {
-                            error!(
-                                error = %e,
-                                exporter_type = "file_logs",
-                                "File exporter returned from run loop with error."
-                            );
-                        }
-                        Ok(())
-                    });
+                        start_otlp_exporter(
+                            &mut exporters_task_set,
+                            "otlp_logs",
+                            logs,
+                            exporters_cancel.clone(),
+                        );
+                    }
+                    ExporterConfig::Clickhouse(cfg_builder) => {
+                        let builder = cfg_builder.build()?;
+
+                        let exp = builder.build_logs_exporter(
+                            logs_pipeline_out_rx,
+                            self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                        )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exp.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = e,
+                                    exporter_type = "clickhouse_logs",
+                                    "Clickhouse exporter returned from run loop with error."
+                                );
+                            }
+
+                            Ok(())
+                        });
+                    }
+                    ExporterConfig::Blackhole => {
+                        let mut exp = BlackholeExporter::new(logs_pipeline_out_rx);
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            exp.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "rdkafka")]
+                    ExporterConfig::Kafka(kafka_config) => {
+                        let mut logs_exporter =
+                            build_logs_exporter(kafka_config, logs_pipeline_out_rx)?;
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            logs_exporter.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "file_exporter")]
+                    ExporterConfig::File(config) => {
+                        let exporter =
+                            crate::exporters::file::FileExporterBuilder::build_logs_exporter(
+                                &config,
+                                logs_pipeline_out_rx,
+                            )?;
+
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            let res = exporter.start(token).await;
+                            if let Err(e) = res {
+                                error!(
+                                    error = %e,
+                                    exporter_type = "file_logs",
+                                    "File exporter returned from run loop with error."
+                                );
+                            }
+                            Ok(())
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
         if traces_output.is_some() {
-            let trace_fanout = FanoutBuilder::new()
-                .add_tx(trace_pipeline_out_tx)
+            let trace_fanout = trace_fanout
                 .build()
                 .expect("Failed to build trace fanout with single consumer");
 
@@ -638,8 +672,7 @@ impl Agent {
         }
 
         if metrics_output.is_some() {
-            let metrics_fanout = FanoutBuilder::new()
-                .add_tx(metrics_pipeline_out_tx)
+            let metrics_fanout = metrics_fanout
                 .build()
                 .expect("Failed to build metrics fanout with single consumer");
 
@@ -665,8 +698,7 @@ impl Agent {
         }
 
         if logs_output.is_some() {
-            let logs_fanout = FanoutBuilder::new()
-                .add_tx(logs_pipeline_out_tx)
+            let logs_fanout = logs_fanout
                 .build()
                 .expect("Failed to build logs fanout with single consumer");
 
@@ -692,8 +724,7 @@ impl Agent {
         }
 
         if internal_metrics_output.is_some() {
-            let internal_metrics_fanout = FanoutBuilder::new()
-                .add_tx(internal_metrics_pipeline_out_tx)
+            let internal_metrics_fanout = internal_metrics_fanout
                 .build()
                 .expect("Failed to build internal metrics fanout with single consumer");
 

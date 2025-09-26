@@ -25,13 +25,13 @@ impl TelemetryActivation {
         let mut activation = TelemetryActivation::default();
 
         // Update based on exporters
-        if exporter_config.traces.is_none() {
+        if exporter_config.traces.is_empty() {
             activation.traces = TelemetryState::NoListeners;
         }
-        if exporter_config.metrics.is_none() {
+        if exporter_config.metrics.is_empty() {
             activation.metrics = TelemetryState::NoListeners;
         }
-        if exporter_config.logs.is_none() {
+        if exporter_config.logs.is_empty() {
             activation.logs = TelemetryState::NoListeners;
         }
 

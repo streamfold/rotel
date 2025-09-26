@@ -100,6 +100,10 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_EXPORTERS_LOGS")]
     pub exporters_logs: Option<String>,
 
+    /// Internal metrics exporters
+    #[arg(long, env = "ROTEL_EXPORTERS_INTERNAL_METRICS")]
+    pub exporters_internal_metrics: Option<String>,
+
     #[command(flatten)]
     pub otlp_exporter: OTLPExporterArgs,
 
@@ -152,6 +156,7 @@ impl Default for AgentRun {
             exporters_traces: None,
             exporters_metrics: None,
             exporters_logs: None,
+            exporters_internal_metrics: None,
             otlp_exporter: OTLPExporterArgs::default(),
             datadog_exporter: DatadogExporterArgs::default(),
             clickhouse_exporter: ClickhouseExporterArgs::default(),
