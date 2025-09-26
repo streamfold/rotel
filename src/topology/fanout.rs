@@ -1,0 +1,277 @@
+// SPDX-License-Identifier: Apache-2.0
+
+use futures::FutureExt;
+
+use crate::bounded_channel::BoundedSender;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+/// A fanout component that distributes messages to multiple consumers.
+///
+/// The fanout component takes a message and sends it to all configured consumers.
+/// The message is cloned for all consumers except the last one to avoid unnecessary cloning.
+///
+pub struct Fanout<T> {
+    consumers: Vec<BoundedSender<T>>,
+}
+
+#[derive(Default)]
+pub struct FanoutBuilder<T> {
+    consumers: Vec<BoundedSender<T>>,
+}
+
+pub struct FanoutFuture<'a, T> {
+    consumers: &'a [BoundedSender<T>],
+    message: Option<T>,
+    current_index: usize,
+    current_send: Option<flume::r#async::SendFut<'a, T>>,
+}
+
+// FanoutFuture is Unpin because all its fields are Unpin
+impl<'a, T> Unpin for FanoutFuture<'a, T> {}
+
+impl<T> Fanout<T>
+where
+    T: Clone,
+{
+    /// Creates a new fanout component with the given consumers.
+    ///
+    /// # Arguments
+    /// * `consumers` - A vector of BoundedSender consumers that will receive the messages
+    ///
+    /// # Panics
+    /// Panics if the consumers vector is empty.
+    pub fn new(consumers: Vec<BoundedSender<T>>) -> Self {
+        if consumers.is_empty() {
+            panic!("Fanout requires at least one consumer");
+        }
+
+        Self { consumers }
+    }
+
+    /// Creates a future that will send a message to all consumers sequentially.
+    ///
+    /// The message will be cloned for all consumers except the last one.
+    /// Sends to each consumer one at a time, waiting for success before
+    /// proceeding to the next consumer. If any consumer fails, the operation
+    /// stops immediately and returns an error with the index of the failed consumer.
+    ///
+    /// # Arguments
+    /// * `message` - The message to send to all consumers
+    ///
+    /// # Returns
+    /// A future that resolves to `Result<(), FanoutError>` when all sends complete.
+    /// On failure, returns `FanoutError::Disconnected` containing the index of the
+    /// first consumer that failed to receive the message.
+    pub fn send_async(&self, message: T) -> FanoutFuture<'_, T> {
+        FanoutFuture::new(&self.consumers, message)
+    }
+}
+
+impl<'a, T> FanoutFuture<'a, T>
+where
+    T: Clone,
+{
+    fn new(consumers: &'a [BoundedSender<T>], message: T) -> Self {
+        Self {
+            consumers,
+            message: Some(message),
+            current_index: 0,
+            current_send: None,
+        }
+    }
+}
+
+impl<'a, T> Future for FanoutFuture<'a, T>
+where
+    T: Clone,
+{
+    type Output = Result<(), FanoutError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut(); // Safe because FanoutFuture is Unpin
+
+        loop {
+            if let Some(send_fut) = &mut this.current_send {
+                match send_fut.poll_unpin(cx) {
+                    Poll::Ready(Ok(())) => {
+                        // Send completed successfully
+                        this.current_send = None;
+                        this.current_index += 1;
+
+                        // Check if we've sent to all consumers
+                        if this.current_index >= this.consumers.len() {
+                            return Poll::Ready(Ok(()));
+                        }
+                        // Continue to next consumer
+                    }
+                    Poll::Ready(Err(_)) => {
+                        return Poll::Ready(Err(FanoutError::Disconnected(this.current_index)));
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
+                }
+            } else {
+                // No pending send, start sending to current consumer
+                if this.current_index >= this.consumers.len() {
+                    return Poll::Ready(Ok(()));
+                }
+
+                let message_to_send = if this.current_index == this.consumers.len() - 1 {
+                    // Last consumer gets the original message (no clone needed)
+                    this.message.take().expect("Message should be available")
+                } else {
+                    // All other consumers get a clone
+                    this.message
+                        .as_ref()
+                        .expect("Message should be available")
+                        .clone()
+                };
+
+                let send_fut = this.consumers[this.current_index].send_async(message_to_send);
+                this.current_send = Some(send_fut);
+            }
+        }
+    }
+}
+
+impl<T> FanoutBuilder<T> {
+    /// Creates a new FanoutBuilder.
+    pub fn new() -> Self {
+        Self {
+            consumers: Vec::new(),
+        }
+    }
+
+    /// Adds a consumer to the fanout.
+    ///
+    /// # Arguments
+    /// * `tx` - A BoundedSender that will receive messages from the fanout
+    ///
+    /// # Returns
+    /// Returns self for method chaining
+    pub fn add_tx(mut self, tx: BoundedSender<T>) -> Self {
+        self.consumers.push(tx);
+        self
+    }
+
+    /// Builds the Fanout instance.
+    ///
+    /// # Returns
+    /// Returns `Ok(Fanout<T>)` if at least one consumer has been added,
+    /// otherwise returns `Err(FanoutBuilderError::NoConsumers)`
+    pub fn build(self) -> Result<Fanout<T>, FanoutBuilderError> {
+        if self.consumers.is_empty() {
+            Err(FanoutBuilderError::NoConsumers)
+        } else {
+            Ok(Fanout {
+                consumers: self.consumers,
+            })
+        }
+    }
+}
+
+/// Error type for fanout builder operations
+#[derive(Debug, PartialEq, Eq)]
+pub enum FanoutBuilderError {
+    /// No consumers were added to the builder
+    NoConsumers,
+}
+
+impl std::fmt::Display for FanoutBuilderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FanoutBuilderError::NoConsumers => {
+                write!(f, "At least one consumer must be added to the fanout")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FanoutBuilderError {}
+
+/// Error type for fanout operations
+#[derive(Debug, PartialEq, Eq)]
+pub enum FanoutError {
+    /// A consumer is disconnected. Contains the index of the first consumer that failed.
+    /// Due to sequential processing, only the first failure is reported.
+    Disconnected(usize),
+}
+
+impl std::fmt::Display for FanoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FanoutError::Disconnected(index) => {
+                write!(f, "Consumer at index {} is disconnected", index)
+            }
+        }
+    }
+}
+
+impl std::error::Error for FanoutError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bounded_channel::bounded;
+
+    #[tokio::test]
+    async fn test_fanout_single_consumer() {
+        let (tx, mut rx) = bounded(10);
+        let fanout = Fanout::new(vec![tx]);
+
+        let message = vec![1, 2, 3];
+        let send_result = fanout.send_async(message.clone()).await;
+
+        assert!(send_result.is_ok());
+
+        let received = rx.next().await;
+        assert_eq!(Some(message), received);
+    }
+
+    #[tokio::test]
+    async fn test_fanout_multiple_consumers() {
+        let (tx1, mut rx1) = bounded(10);
+        let (tx2, mut rx2) = bounded(10);
+        let (tx3, mut rx3) = bounded(10);
+
+        let fanout = Fanout::new(vec![tx1, tx2, tx3]);
+
+        let message = vec![1, 2, 3];
+        let send_result = fanout.send_async(message.clone()).await;
+
+        assert!(send_result.is_ok());
+
+        // All consumers should receive the same message
+        assert_eq!(Some(message.clone()), rx1.next().await);
+        assert_eq!(Some(message.clone()), rx2.next().await);
+        assert_eq!(Some(message), rx3.next().await);
+    }
+
+    #[tokio::test]
+    async fn test_fanout_disconnected_consumer() {
+        let (tx1, mut rx1) = bounded(10);
+        let (tx2, _rx2) = bounded(10); // rx2 will be dropped
+
+        let fanout = Fanout::new(vec![tx1, tx2]);
+
+        // Drop rx2 to simulate disconnection
+        drop(_rx2);
+
+        let message = vec![1, 2, 3];
+        let send_result = fanout.send_async(message.clone()).await;
+
+        // Should get an error indicating consumer 1 (index) is disconnected
+        match send_result {
+            Err(FanoutError::Disconnected(index)) => {
+                assert_eq!(1, index);
+            }
+            _ => panic!("Expected disconnected error"),
+        }
+
+        // First consumer should still receive the message
+        assert_eq!(Some(message), rx1.next().await);
+    }
+}
