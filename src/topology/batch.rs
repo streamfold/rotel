@@ -167,18 +167,9 @@ where
             }
         }
 
-        // CRITICAL: For Kafka metadata, we only keep it on the last (remaining) part
-        // The split-off part gets no metadata to ensure at-least-once semantics
-        let split_metadata = if let Some(MessageMetadata::Kafka(_)) = &self.metadata {
-            // If this is Kafka metadata and we're splitting, the first part gets no metadata
-            None
-        } else {
-            // For non-Kafka metadata (or no metadata), we can clone it
-            self.metadata.clone()
-        };
-
+        // Clone metadata for both parts - future reference counting will handle proper ack semantics
         Message {
-            metadata: split_metadata,
+            metadata: self.metadata.clone(),
             payload: split_payload,
         }
     }
@@ -438,20 +429,25 @@ mod tests {
             panic!("Expected Kafka metadata in first message");
         }
 
-        // Second message in flushed batch should NOT have Kafka metadata (split message, first part)
-        assert!(
-            flushed_batch[1].metadata.is_none(),
-            "Split message first part should not have Kafka metadata"
-        );
+        // Second message in flushed batch should ALSO have Kafka metadata (cloned for both parts)
+        if let Some(MessageMetadata::Kafka(meta)) = &flushed_batch[1].metadata {
+            assert_eq!(meta.offset, 101);
+            assert_eq!(meta.partition, 0);
+            assert_eq!(meta.topic_id, 1);
+        } else {
+            panic!("Expected Kafka metadata in split message first part");
+        }
 
         // Get remaining batch
         let remaining = batch.take_batch();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining.size_of(), 2);
 
-        // The remaining part should have the original Kafka metadata
+        // The remaining part should also have the Kafka metadata (cloned)
         if let Some(MessageMetadata::Kafka(meta)) = &remaining[0].metadata {
             assert_eq!(meta.offset, 101);
+            assert_eq!(meta.partition, 0);
+            assert_eq!(meta.topic_id, 1);
         } else {
             panic!("Expected Kafka metadata in remaining message");
         }
@@ -479,15 +475,18 @@ mod tests {
         assert!(resp.is_ok());
         let flushed = resp.unwrap().unwrap();
 
-        // First batch should have 10 items in one message without metadata
+        // First batch should have 10 items in one message WITH metadata (cloned)
         assert_eq!(flushed.size_of(), 10);
         assert_eq!(flushed.len(), 1);
-        assert!(
-            flushed[0].metadata.is_none(),
-            "First split should not have metadata"
-        );
+        if let Some(MessageMetadata::Kafka(meta)) = &flushed[0].metadata {
+            assert_eq!(meta.offset, 200);
+            assert_eq!(meta.partition, 1);
+            assert_eq!(meta.topic_id, 2);
+        } else {
+            panic!("Expected Kafka metadata in first split");
+        }
 
-        // Remaining should have 5 items with the original metadata
+        // Remaining should have 5 items with the same metadata (cloned)
         let remaining = batch.take_batch();
         assert_eq!(remaining.size_of(), 5);
         assert_eq!(remaining.len(), 1);
@@ -652,16 +651,20 @@ mod tests {
         let flushed = resp.unwrap().unwrap();
 
         assert_eq!(flushed.size_of(), 10);
-        // First message should have no metadata, second split part should have no metadata
+        // First message should have no metadata (it wasn't given any)
         assert!(flushed[0].metadata.is_none());
+        // Second message (split part) should have Kafka metadata (cloned)
         if flushed.len() > 1 {
-            assert!(
-                flushed[1].metadata.is_none(),
-                "Split part should not have Kafka metadata"
-            );
+            if let Some(MessageMetadata::Kafka(meta)) = &flushed[1].metadata {
+                assert_eq!(meta.offset, 700);
+                assert_eq!(meta.partition, 0);
+                assert_eq!(meta.topic_id, 3);
+            } else {
+                panic!("Expected Kafka metadata in split part");
+            }
         }
 
-        // Remaining should have the Kafka metadata
+        // Remaining should also have the Kafka metadata (cloned)
         let leftover = batch.take_batch();
         assert_eq!(leftover.size_of(), 2);
         if let Some(MessageMetadata::Kafka(meta)) = &leftover[0].metadata {
@@ -705,15 +708,18 @@ mod tests {
         let flushed = resp.unwrap().unwrap();
 
         assert_eq!(flushed.size_of(), 10);
-        // Split part should not have Kafka metadata
+        // Split part should have Kafka metadata (cloned)
         if flushed.len() > 1 {
-            assert!(
-                flushed[1].metadata.is_none(),
-                "Split part should not have Kafka metadata"
-            );
+            if let Some(MessageMetadata::Kafka(meta)) = &flushed[1].metadata {
+                assert_eq!(meta.offset, 800);
+                assert_eq!(meta.partition, 2);
+                assert_eq!(meta.topic_id, 4);
+            } else {
+                panic!("Expected Kafka metadata in split part");
+            }
         }
 
-        // Remaining should have the Kafka metadata
+        // Remaining should also have the Kafka metadata (cloned)
         let leftover = batch.take_batch();
         assert_eq!(leftover.size_of(), 2);
         if let Some(MessageMetadata::Kafka(meta)) = &leftover[0].metadata {
@@ -787,10 +793,16 @@ mod tests {
         // Second message should have no metadata (originally had none)
         assert!(flushed[1].metadata.is_none());
 
-        // Third message is split, so first part should have no metadata
-        assert!(flushed[2].metadata.is_none());
+        // Third message is split, first part should have metadata (cloned)
+        if let Some(MessageMetadata::Kafka(meta)) = &flushed[2].metadata {
+            assert_eq!(meta.offset, 301);
+            assert_eq!(meta.partition, 2);
+            assert_eq!(meta.topic_id, 3);
+        } else {
+            panic!("Expected Kafka metadata in split part");
+        }
 
-        // Remaining batch should have the rest with original metadata
+        // Remaining batch should have the rest with metadata (cloned)
         let remaining = batch.take_batch();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining.size_of(), 2);
