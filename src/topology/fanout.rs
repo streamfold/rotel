@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::FutureExt;
+
 use crate::bounded_channel::BoundedSender;
 use std::future::Future;
 use std::pin::Pin;
@@ -91,14 +93,8 @@ where
         let this = self.get_mut(); // Safe because FanoutFuture is Unpin
 
         loop {
-            if let Some(ref mut send_fut) = this.current_send {
-                let send_result = {
-                    // SAFETY: We never move the SendFut after creating it
-                    let pinned_fut = unsafe { Pin::new_unchecked(send_fut) };
-                    pinned_fut.poll(cx)
-                };
-
-                match send_result {
+            if let Some(send_fut) = &mut this.current_send {
+                match send_fut.poll_unpin(cx) {
                     Poll::Ready(Ok(())) => {
                         // Send completed successfully
                         this.current_send = None;
