@@ -81,10 +81,12 @@ impl ExporterMap {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct ExporterConfigs {
-    pub(crate) metrics: Option<ExporterConfig>,
-    pub(crate) logs: Option<ExporterConfig>,
-    pub(crate) traces: Option<ExporterConfig>,
+    pub(crate) metrics: Vec<ExporterConfig>,
+    pub(crate) logs: Vec<ExporterConfig>,
+    pub(crate) traces: Vec<ExporterConfig>,
+    pub(crate) internal_metrics: Vec<ExporterConfig>,
 }
 
 #[derive(Debug)]
@@ -106,6 +108,7 @@ enum PipelineType {
     Metrics,
     Logs,
     Traces,
+    InternalMetrics,
 }
 
 impl Display for PipelineType {
@@ -114,6 +117,7 @@ impl Display for PipelineType {
             PipelineType::Metrics => write!(f, "metrics"),
             PipelineType::Logs => write!(f, "logs"),
             PipelineType::Traces => write!(f, "traces"),
+            PipelineType::InternalMetrics => write!(f, "internal_metrics"),
         }
     }
 }
@@ -159,7 +163,7 @@ impl TryIntoConfig for ExporterArgs {
 
                 let endpoint = otlp.endpoint.as_ref();
                 match pipeline_type {
-                    PipelineType::Metrics => {
+                    PipelineType::Metrics | PipelineType::InternalMetrics => {
                         if endpoint.is_none() && otlp.metrics_endpoint.is_none() {
                             return Err("must specify an endpoint for OTLP metrics".into());
                         }
@@ -169,9 +173,15 @@ impl TryIntoConfig for ExporterArgs {
                             .map(|e| Endpoint::Full(e.clone()))
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
-                        Ok(ExporterConfig::Otlp(
-                            otlp.into_exporter_config("otlp_metrics", endpoint),
-                        ))
+                        if pipeline_type == PipelineType::Metrics {
+                            Ok(ExporterConfig::Otlp(
+                                otlp.into_exporter_config("otlp_metrics", endpoint),
+                            ))
+                        } else {
+                            Ok(ExporterConfig::Otlp(
+                                otlp.into_exporter_config("otlp_internal_metrics", endpoint),
+                            ))
+                        }
                     }
                     PipelineType::Logs => {
                         if endpoint.is_none() && otlp.logs_endpoint.is_none() {
@@ -286,7 +296,9 @@ impl TryIntoConfig for ExporterArgs {
                 Ok(ExporterConfig::File(config))
             }
             ExporterArgs::Awsemf(awsemf) => {
-                if pipeline_type != PipelineType::Metrics {
+                if pipeline_type != PipelineType::Metrics
+                    && pipeline_type != PipelineType::InternalMetrics
+                {
                     return Err(format!(
                         "AWS EMF exporter only supports metrics, not {}",
                         pipeline_type
@@ -389,84 +401,76 @@ fn get_multi_exporter_config(
 ) -> Result<ExporterConfigs, BoxError> {
     let exporter_map = exporters.parse::<ExporterMap>()?;
 
-    let mut cfg = ExporterConfigs {
-        metrics: None,
-        logs: None,
-        traces: None,
-    };
+    let mut cfg = ExporterConfigs::default();
 
     if let Some(traces_exps) = &config.exporters_traces {
         let sp: Vec<&str> = traces_exps.split(",").collect();
-        if sp.len() != 1 {
-            return Err(format!(
-                "Only one exporter supported for ROTEL_EXPORTERS_TRACES: {}",
-                traces_exps
-            )
-            .into());
-        }
 
-        let args = match exporter_map.get(&sp[0].to_string()) {
-            Some(args) => args,
-            None => {
-                return Err(format!("Can not find exporter {} for traces exporters", sp[0]).into());
-            }
-        };
-
-        cfg.traces = Some(
-            args.try_into_config(PipelineType::Traces, environment)
-                .map_err(|err| format!("Exporter[{}]: {}", sp[0], err))?,
-        );
+        cfg.traces = sp
+            .into_iter()
+            .map(|exp| match exporter_map.get(&exp.to_string()) {
+                Some(args) => match args.try_into_config(PipelineType::Traces, environment) {
+                    Ok(config) => Ok(config),
+                    Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
+                },
+                None => Err(format!("Can not find exporter {} for traces exporters", exp).into()),
+            })
+            .collect::<Result<Vec<ExporterConfig>, BoxError>>()?;
     }
 
     if let Some(metrics_exps) = &config.exporters_metrics {
         let sp: Vec<&str> = metrics_exps.split(",").collect();
-        if sp.len() != 1 {
-            return Err(format!(
-                "Only one exporter supported for ROTEL_EXPORTERS_METRICS: {}",
-                metrics_exps
-            )
-            .into());
-        }
 
-        let args = match exporter_map.get(&sp[0].to_string()) {
-            Some(args) => args,
-            None => {
-                return Err(
-                    format!("Can not find exporter {} for metrics exporters", sp[0]).into(),
-                );
-            }
-        };
-
-        cfg.metrics = Some(
-            args.try_into_config(PipelineType::Metrics, environment)
-                .map_err(|err| format!("Exporter[{}]: {}", sp[0], err))?,
-        );
+        cfg.metrics = sp
+            .into_iter()
+            .map(|exp| match exporter_map.get(&exp.to_string()) {
+                Some(args) => match args.try_into_config(PipelineType::Metrics, environment) {
+                    Ok(config) => Ok(config),
+                    Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
+                },
+                None => Err(format!("Can not find exporter {} for metrics exporters", exp).into()),
+            })
+            .collect::<Result<Vec<ExporterConfig>, BoxError>>()?;
     }
 
     if let Some(logs_exps) = &config.exporters_logs {
         let sp: Vec<&str> = logs_exps.split(",").collect();
-        if sp.len() != 1 {
-            return Err(format!(
-                "Only one exporter supported for ROTEL_EXPORTERS_LOGS: {}",
-                logs_exps
-            )
-            .into());
-        }
 
-        let args = match exporter_map.get(&sp[0].to_string()) {
-            Some(args) => args,
-            None => {
-                return Err(format!("Can not find exporter {} for logs exporters", sp[0]).into());
-            }
-        };
-
-        cfg.logs = Some(
-            args.try_into_config(PipelineType::Logs, environment)
-                .map_err(|err| format!("Exporter[{}]: {}", sp[0], err))?,
-        );
+        cfg.logs = sp
+            .into_iter()
+            .map(|exp| match exporter_map.get(&exp.to_string()) {
+                Some(args) => match args.try_into_config(PipelineType::Logs, environment) {
+                    Ok(config) => Ok(config),
+                    Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
+                },
+                None => Err(format!("Can not find exporter {} for logs exporters", exp).into()),
+            })
+            .collect::<Result<Vec<ExporterConfig>, BoxError>>()?;
     }
 
-    if cfg.traces.is_none() && cfg.metrics.is_none() && cfg.logs.is_none() {
+    if let Some(internal_metrics_exps) = &config.exporters_internal_metrics {
+        let sp: Vec<&str> = internal_metrics_exps.split(",").collect();
+
+        cfg.internal_metrics = sp
+            .into_iter()
+            .map(|exp| match exporter_map.get(&exp.to_string()) {
+                Some(args) => {
+                    match args.try_into_config(PipelineType::InternalMetrics, environment) {
+                        Ok(config) => Ok(config),
+                        Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
+                    }
+                }
+                None => Err(format!(
+                    "Can not find exporter {} for internal metrics exporters",
+                    exp
+                )
+                .into()),
+            })
+            .collect::<Result<Vec<ExporterConfig>, BoxError>>()?;
+    }
+
+    // Internal metrics do not count here, we need at least one actual pipeline
+    if cfg.traces.is_empty() && cfg.metrics.is_empty() && cfg.logs.is_empty() {
         return Err(
             "No telemetry pipeline exporters, did you set --exporters-{traces,metrics,logs}?"
                 .into(),
@@ -550,11 +554,7 @@ fn get_single_exporter_config(
     exporter: Exporter,
     environment: &str,
 ) -> Result<ExporterConfigs, BoxError> {
-    let mut cfg = ExporterConfigs {
-        metrics: None,
-        logs: None,
-        traces: None,
-    };
+    let mut cfg = ExporterConfigs::default();
 
     // We convert these into ExporterArgs so that we can use the `try_into_config` method
     // above to DRY this out.
@@ -563,51 +563,68 @@ fn get_single_exporter_config(
             // Because the single exporter configuration has custom overrides per type, we
             // must build new args here that'll override with the custom type variations.
             let args = ExporterArgs::Otlp(build_traces_config(config.otlp_exporter.clone()));
-            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.traces
+                .push(args.try_into_config(PipelineType::Traces, environment)?);
 
             let args = ExporterArgs::Otlp(build_metrics_config(config.otlp_exporter.clone()));
-            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.metrics
+                .push(args.try_into_config(PipelineType::Metrics, environment)?);
 
             let args = ExporterArgs::Otlp(build_logs_config(config.otlp_exporter.clone()));
-            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.logs
+                .push(args.try_into_config(PipelineType::Logs, environment)?);
+
+            let args = ExporterArgs::Otlp(build_metrics_config(config.otlp_exporter.clone()));
+            cfg.internal_metrics
+                .push(args.try_into_config(PipelineType::InternalMetrics, environment)?);
         }
         Exporter::Blackhole => {
-            cfg.traces = Some(ExporterConfig::Blackhole {});
-            cfg.metrics = Some(ExporterConfig::Blackhole {});
-            cfg.logs = Some(ExporterConfig::Blackhole {});
+            cfg.traces.push(ExporterConfig::Blackhole {});
+            cfg.metrics.push(ExporterConfig::Blackhole {});
+            cfg.logs.push(ExporterConfig::Blackhole {});
         }
         Exporter::Datadog => {
             let args = ExporterArgs::Datadog(config.datadog_exporter.clone());
-            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.traces
+                .push(args.try_into_config(PipelineType::Traces, environment)?);
         }
         Exporter::Clickhouse => {
             let args = ExporterArgs::Clickhouse(config.clickhouse_exporter.clone());
-            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
-            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
-            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.logs
+                .push(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.traces
+                .push(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.metrics
+                .push(args.try_into_config(PipelineType::Metrics, environment)?);
         }
         Exporter::AwsXray => {
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
-            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.traces
+                .push(args.try_into_config(PipelineType::Traces, environment)?);
         }
         Exporter::AwsEmf => {
             let args = ExporterArgs::Awsemf(config.aws_emf_exporter.clone());
-            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.metrics
+                .push(args.try_into_config(PipelineType::Metrics, environment)?);
         }
 
         #[cfg(feature = "rdkafka")]
         Exporter::Kafka => {
             let kafka_config = config.kafka_exporter.build_config();
-            cfg.traces = Some(ExporterConfig::Kafka(kafka_config.clone()));
-            cfg.metrics = Some(ExporterConfig::Kafka(kafka_config.clone()));
-            cfg.logs = Some(ExporterConfig::Kafka(kafka_config));
+            cfg.traces.push(ExporterConfig::Kafka(kafka_config.clone()));
+            cfg.metrics
+                .push(ExporterConfig::Kafka(kafka_config.clone()));
+            cfg.logs.push(ExporterConfig::Kafka(kafka_config));
         }
         #[cfg(feature = "file_exporter")]
         Exporter::File => {
             let args = ExporterArgs::File(config.file_exporter.clone());
-            cfg.logs = Some(args.try_into_config(PipelineType::Logs, environment)?);
-            cfg.traces = Some(args.try_into_config(PipelineType::Traces, environment)?);
-            cfg.metrics = Some(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.logs
+                .push(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.traces
+                .push(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.metrics
+                .push(args.try_into_config(PipelineType::Metrics, environment)?);
         }
     }
 
@@ -689,11 +706,11 @@ mod tests {
 
         assert!(result.is_ok());
         let exporters = result.unwrap();
-        assert!(exporters.traces.is_some());
-        assert!(exporters.metrics.is_none());
-        assert!(exporters.logs.is_none());
+        assert_eq!(1, exporters.traces.len());
+        assert!(exporters.metrics.is_empty());
+        assert!(exporters.logs.is_empty());
 
-        match exporters.traces.unwrap() {
+        match exporters.traces[0] {
             ExporterConfig::Blackhole => {}
             _ => panic!("Expected Blackhole exporter"),
         }
@@ -716,19 +733,19 @@ mod tests {
 
         assert!(result.is_ok());
         let exporters = result.unwrap();
-        assert!(exporters.traces.is_some());
-        assert!(exporters.metrics.is_some());
-        assert!(exporters.logs.is_some());
+        assert_eq!(1, exporters.traces.len());
+        assert_eq!(1, exporters.metrics.len());
+        assert_eq!(1, exporters.logs.len());
 
-        match exporters.traces.unwrap() {
+        match exporters.traces[0] {
             ExporterConfig::Blackhole => {}
             _ => panic!("Expected Blackhole exporter for traces"),
         }
-        match exporters.metrics.unwrap() {
+        match exporters.metrics[0] {
             ExporterConfig::Blackhole => {}
             _ => panic!("Expected Blackhole exporter for metrics"),
         }
-        match exporters.logs.unwrap() {
+        match exporters.logs[0] {
             ExporterConfig::Blackhole => {}
             _ => panic!("Expected Blackhole exporter for logs"),
         }
@@ -748,11 +765,11 @@ mod tests {
 
         assert!(result.is_ok());
         let exporters = result.unwrap();
-        assert!(exporters.traces.is_some());
-        assert!(exporters.metrics.is_none());
-        assert!(exporters.logs.is_none());
+        assert_eq!(1, exporters.traces.len());
+        assert!(exporters.metrics.is_empty());
+        assert!(exporters.logs.is_empty());
 
-        match exporters.traces.unwrap() {
+        match &exporters.traces[0] {
             ExporterConfig::Otlp(otlp) => assert_eq!(
                 Endpoint::Base("http://localhost:4317".to_string()),
                 otlp.endpoint
@@ -776,9 +793,9 @@ mod tests {
 
         assert!(result.is_ok());
         let exporters = result.unwrap();
-        assert!(exporters.traces.is_some());
+        assert_eq!(1, exporters.traces.len());
 
-        match exporters.traces.unwrap() {
+        match exporters.traces[0] {
             ExporterConfig::Datadog(_) => {}
             _ => panic!("Expected Datadog exporter"),
         }
@@ -831,26 +848,33 @@ mod tests {
 
     #[test]
     fn test_get_multi_exporter_config_multiple_exporters_error() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_DD_API_KEY", "test-api-key");
+        env_manager.set_var("ROTEL_EXPORTER_DD_REGION", "us1");
+        
         let config = AgentRun {
-            exporters_traces: Some("exp1,exp2".to_string()),
+            exporters_traces: Some("bh,dd".to_string()),
             ..AgentRun::default()
         };
 
         let result = get_multi_exporter_config(
             &config,
-            "exp1:blackhole,exp2:blackhole".to_string(),
+            "dd:datadog,bh:blackhole".to_string(),
             "production",
         );
+        
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
 
-        match result {
-            Ok(_) => panic!("should have failed"),
-            Err(err) => {
-                assert!(
-                    err.to_string()
-                        .contains("Only one exporter supported for ROTEL_EXPORTERS_TRACES")
-                );
-            }
-        };
+        assert_eq!(2, exporters.traces.len());
+        match exporters.traces[0] {
+            ExporterConfig::Blackhole => {}
+            _ => panic!("Expected Blackhole exporter"),
+        }
+        match exporters.traces[1] {
+            ExporterConfig::Datadog(_) => {}
+            _ => panic!("Expected Datadog exporter"),
+        }
     }
 
     #[test]
@@ -907,19 +931,19 @@ mod tests {
 
         assert!(result.is_ok());
         let exporters = result.unwrap();
-        assert!(exporters.traces.is_some());
-        assert!(exporters.metrics.is_some());
-        assert!(exporters.logs.is_some());
+        assert_eq!(1, exporters.traces.len());
+        assert_eq!(1, exporters.metrics.len());
+        assert_eq!(1, exporters.logs.len());
 
-        match exporters.traces.unwrap() {
+        match exporters.traces[0] {
             ExporterConfig::Datadog(_) => {}
             _ => panic!("Expected Datadog exporter for traces"),
         }
-        match exporters.metrics.unwrap() {
+        match exporters.metrics[0] {
             ExporterConfig::Clickhouse(_) => {}
             _ => panic!("Expected Clickhouse exporter for metrics"),
         }
-        match exporters.logs.unwrap() {
+        match exporters.logs[0] {
             ExporterConfig::Blackhole => {}
             _ => panic!("Expected Blackhole exporter for logs"),
         }
