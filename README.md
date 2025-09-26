@@ -57,19 +57,19 @@ To quickly get started with Rotel you can leverage the bundled [Python](https://
 follow these steps:
 
 1. **Running Rotel**
-    - We use the prebuilt docker image for this example, but you can also download a binary from the
-      [releases](https://github.com/streamfold/rotel/releases) page.
-    - Execute Rotel with the following arguments. To debug metrics or logs, add
-      an additional `--debug-log metrics|logs`.
+   - We use the prebuilt docker image for this example, but you can also download a binary from the
+     [releases](https://github.com/streamfold/rotel/releases) page.
+   - Execute Rotel with the following arguments. To debug metrics or logs, add
+     an additional `--debug-log metrics|logs`.
 
    ```bash
    docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
    ```
 
-    - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+   - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
 2. **Verify**
-    - Send OTLP traces to Rotel and verify that it is receiving data:
+   - Send OTLP traces to Rotel and verify that it is receiving data:
 
    ```bash
    go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
@@ -77,7 +77,7 @@ follow these steps:
    telemetrygen traces --otlp-insecure --duration 5s
    ```
 
-    - Check the output from Rotel and you should see several "Received traces" log lines.
+   - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
 
@@ -95,7 +95,7 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 Any option above that does not contain a default is considered false or unset by default.
 
 | Option                            | Default              | Options                                                            |
-|-----------------------------------|----------------------|--------------------------------------------------------------------|
+| --------------------------------- | -------------------- | ------------------------------------------------------------------ |
 | --daemon                          |                      |                                                                    |
 | --log-format                      | text                 | json                                                               |
 | --pid-file                        | /tmp/rotel-agent.pid |                                                                    |
@@ -124,7 +124,7 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
 | Option                                 | Default | Options    |
-|----------------------------------------|---------|------------|
+| -------------------------------------- | ------- | ---------- |
 | --otlp-exporter-endpoint               |         |            |
 | --otlp-exporter-protocol               | grpc    | grpc, http |
 | --otlp-exporter-custom-headers         |         |            |
@@ -192,7 +192,7 @@ The Datadog exporter can be selected by passing `--exporter datadog`. The Datado
 moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
 
 | Option                             | Default | Options                |
-|------------------------------------|---------|------------------------|
+| ---------------------------------- | ------- | ---------------------- |
 | --datadog-exporter-region          | us1     | us1, us3, us5, eu, ap1 |
 | --datadog-exporter-custom-endpoint |         |                        |
 | --datadog-exporter-api-key         |         |                        |
@@ -206,7 +206,7 @@ logs,
 and traces.
 
 | Option                                | Default | Options     |
-|---------------------------------------|---------|-------------|
+| ------------------------------------- | ------- | ----------- |
 | --clickhouse-exporter-endpoint        |         |             |
 | --clickhouse-exporter-database        | otel    |             |
 | --clickhouse-exporter-table-prefix    | otel    |             |
@@ -259,7 +259,7 @@ are
 automatically sourced from Rotel's environment on startup.
 
 | Option                             | Default   | Options          |
-|------------------------------------|-----------|------------------|
+| ---------------------------------- | --------- | ---------------- |
 | --awsxray-exporter-region          | us-east-1 | aws region codes |
 | --awsxray-exporter-custom-endpoint |           |                  |
 
@@ -277,7 +277,7 @@ AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_
 are automatically sourced from Rotel's environment on startup.
 
 | Option                                                 | Default          | Options          |
-|--------------------------------------------------------|------------------|------------------|
+| ------------------------------------------------------ | ---------------- | ---------------- |
 | --awsemf-exporter-region                               | us-east-1        | aws region codes |
 | --awsemf-exporter-custom-endpoint                      |                  |                  |
 | --awsemf-exporter-log-group-name                       | /metrics/default |                  |
@@ -335,7 +335,7 @@ The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka expo
 logs, and traces.
 
 | Option                                                    | Default           | Options                                                                     |
-|-----------------------------------------------------------|-------------------|-----------------------------------------------------------------------------|
+| --------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
 | --kafka-exporter-brokers                                  | localhost:9092    |                                                                             |
 | --kafka-exporter-traces-topic                             | otlp_traces       |                                                                             |
 | --kafka-exporter-metrics-topic                            | otlp_metrics      |                                                                             |
@@ -482,7 +482,7 @@ out as periodic files on the local filesystem. Currently **Parquet** and
 **JSON** formats are supported.
 
 | Option                              | Default    | Description                                                                                                  |
-|-------------------------------------|------------|--------------------------------------------------------------------------------------------------------------|
+| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | --file-exporter-format              | parquet    | `parquet` or `json`                                                                                          |
 | --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                              |
 | --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)   |
@@ -509,7 +509,7 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 - `--kafka-receiver-logs` to consume logs
 
 | Option                                     | Default        | Options                                              |
-|--------------------------------------------|----------------|------------------------------------------------------|
+| ------------------------------------------ | -------------- | ---------------------------------------------------- |
 | --kafka-receiver-brokers                   | localhost:9092 | Kafka broker addresses (comma-separated)             |
 | --kafka-receiver-traces-topic              | otlp_traces    | Topic name for traces                                |
 | --kafka-receiver-metrics-topic             | otlp_metrics   | Topic name for metrics                               |
@@ -557,9 +557,9 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 **Offset Management:**
 
 - `--kafka-receiver-auto-offset-reset`: Controls behavior when no initial offset exists or the current offset is invalid
-    - `earliest`: Start consuming from the beginning of the topic
-    - `latest`: Start consuming from the end of the topic (default)
-    - `error`: Throw an error if no offset is found
+  - `earliest`: Start consuming from the beginning of the topic
+  - `latest`: Start consuming from the end of the topic (default)
+  - `error`: Throw an error if no offset is found
 
 **Session and Heartbeat Configuration:**
 
@@ -577,8 +577,8 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 
 - `--kafka-receiver-check-crcs`: Enables CRC32 checking of consumed messages for data integrity
 - `--kafka-receiver-isolation-level`: Controls which messages are visible to the consumer
-    - `read-uncommitted`: Read all messages including those from uncommitted transactions
-    - `read-committed`: Only read messages from committed transactions (default)
+  - `read-uncommitted`: Read all messages including those from uncommitted transactions
+  - `read-committed`: Only read messages from committed transactions (default)
 
 #### Security Configuration
 
@@ -663,7 +663,7 @@ logs,
 or traces). For example, `--traces-batch-max-size` will override the batch max size for traces only.
 
 | Option           | Default | Options |
-|------------------|---------|---------|
+| ---------------- | ------- | ------- |
 | --batch-max-size | 8192    |         |
 | --batch-timeout  | 200ms   |         |
 
@@ -702,8 +702,8 @@ All options should be represented as string time durations.
 ### Internal telemetry
 
 Rotel records a number of internal metrics that can help observe Rotel behavior during runtime. This telemetry is
-opt-in and must be enabled with `--enable-internal-telemetry`. Telemetry is sent to the OTLP exporter metric endpoint
-that you have configured.
+opt-in and must be enabled with `--enable-internal-telemetry`. Telemetry is sent to the exporters configured
+with the `--exporters-internal-metrics` option.
 
 **NOTE**: Internal telemetry is not sent to any outside sources and you are in full control of where this data is
 exported to.
@@ -717,7 +717,7 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 The following configuration parameters enable multiple receivers:
 
 | Option      | Default | Options                           |
-|-------------|---------|-----------------------------------|
+| ----------- | ------- | --------------------------------- |
 | --receiver  | otlp    | otlp, kafka                       |
 | --receivers |         | comma-separated list (otlp,kafka) |
 
@@ -798,17 +798,18 @@ rotel start --exporter otlp --otlp-exporter-endpoint localhost:4317
 
 Rotel can be configured to support exporting to multiple destinations across multiple exporter types.
 
-The following additional configuration parameters set up support for multiple exporters. Similar to the options above,
-all
-CLI arguments can be passed as environment variables as well. It is not possible to set `--exporter` and `--exporters`
-at the same time.
+The following additional configuration parameters set up support for multiple
+exporters. Similar to the options above, all CLI arguments can be passed as
+environment variables as well. It is not possible to set `--exporter` and
+`--exporters` at the same time.
 
-| Option              | Default | Options                          |
-|---------------------|---------|----------------------------------|
-| --exporters         |         | name:type pairs, comma-separated |
-| --exporters-traces  |         | exporter name                    |
-| --exporters-metrics |         | exporter name                    |
-| --exporters-logs    |         | exporter name                    |
+| Option                       | Default | Options                          |
+| ---------------------------- | ------- | -------------------------------- |
+| --exporters                  |         | name:type pairs, comma-separated |
+| --exporters-traces           |         | exporter name                    |
+| --exporters-metrics          |         | exporter name                    |
+| --exporters-logs             |         | exporter name                    |
+| --exporters-internal-metrics |         | exporter name                    |
 
 First start by defining the set of exporters that you would like to use, optionally specifying a custom name for them
 to differentiate their configuration options. For example, to export logs and metrics to two separate ClickHouse nodes
@@ -818,19 +819,17 @@ while exporting traces to Datadog, we'll use the following `--exporters` argumen
 --exporters logging:clickhouse,stats:clickhouse,datadog
 ```
 
-The argument form of `--exporters` takes `name:type` pairs separated by commas, where the first part is a custom name
-and
-the second part is the type of exporter. You can exclude the name if there is a single exporter by that name, which
-means
-the name is the same as the exporter type.
+The argument form of `--exporters` takes `name:type` pairs separated by commas,
+where the first part is a custom name and the second part is the type of
+exporter. You can exclude the name if there is a single exporter by that name,
+which means the name is the same as the exporter type.
 
-Second, you then must set environment variables of the form `ROTEL_EXPORTER_{NAME}_{PARAMETER}` to configure the
-multiple
-exporters. These variable names are dynamic and use the custom name to differentiate settings for similar exporter
-types.
-Therefore, there are no CLI argument alternatives for them at the moment. The `{PARAMETER}` fields match the
-configuration
-options for the given exporter type.
+Second, you then must set environment variables of the form
+`ROTEL_EXPORTER_{NAME}_{PARAMETER}` to configure the multiple exporters. These
+variable names are dynamic and use the custom name to differentiate settings for
+similar exporter types. Therefore, there are no CLI argument alternatives for
+them at the moment. The `{PARAMETER}` fields match the configuration options for
+the given exporter type.
 
 Using our example above, the user must set, at a minimum, the following environment variables. (For ClickHouse Cloud you
 would need to include a username/password, but we are skipping those for brevity.)
@@ -852,8 +851,19 @@ Alternatively, the following environment variables would do the same:
 - `ROTEL_EXPORTERS_METRICS=stats`
 - `ROTEL_EXPORTERS_LOGS=logging`
 
-_NOTE: At the moment, only a single exporter can be set for any telemetry type. This constraint will be relaxed in the
-future._
+You can send telemetry to multiple exporters by listing multiple comma-separated in the exporters configuration. Telemetry
+is sent sequentially to the sending queues for each exporter in-order. That means if one exporter is generating back pressure
+it may impact the other exporters.
+
+For example, to send logs to both the stats and logging clickhouse exporters,
+you would instead set the `ROTEL_EXPORTERS_LOGS` environment variable to:
+
+- `ROTEL_EXPORTERS_LOGS=stats,logging`
+
+>[!NOTE]
+> Sending telemetry to multiple exporters at once is currently in alpha. The telemetry is copied between the
+> multiple exporter queues which may cause additional memory use under large volumes. This is an area of
+> improvement as we expand on this capability.
 
 ### Full example
 
@@ -917,7 +927,7 @@ rotel_python_processor_sdk directory.
 Current prebuilt processors include...
 
 | Name                 | Supported telemetry types |
-|----------------------|---------------------------|
+| -------------------- | ------------------------- |
 | Attributes Processor | logs, metrics, traces,    |
 | Redaction Processor  | logs, metrics, traces     |
 
