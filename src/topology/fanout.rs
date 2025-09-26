@@ -13,19 +13,19 @@ use std::task::{Context, Poll};
 /// The message is cloned for all consumers except the last one to avoid unnecessary cloning.
 ///
 pub struct Fanout<T> {
-    consumers: Vec<BoundedSender<Vec<T>>>,
+    consumers: Vec<BoundedSender<T>>,
 }
 
 #[derive(Default)]
 pub struct FanoutBuilder<T> {
-    consumers: Vec<BoundedSender<Vec<T>>>,
+    consumers: Vec<BoundedSender<T>>,
 }
 
 pub struct FanoutFuture<'a, T> {
-    consumers: &'a [BoundedSender<Vec<T>>],
-    message: Option<Vec<T>>,
+    consumers: &'a [BoundedSender<T>],
+    message: Option<T>,
     current_index: usize,
-    current_send: Option<flume::r#async::SendFut<'a, Vec<T>>>,
+    current_send: Option<flume::r#async::SendFut<'a, T>>,
 }
 
 // FanoutFuture is Unpin because all its fields are Unpin
@@ -42,7 +42,7 @@ where
     ///
     /// # Panics
     /// Panics if the consumers vector is empty.
-    pub fn new(consumers: Vec<BoundedSender<Vec<T>>>) -> Self {
+    pub fn new(consumers: Vec<BoundedSender<T>>) -> Self {
         if consumers.is_empty() {
             panic!("Fanout requires at least one consumer");
         }
@@ -64,7 +64,7 @@ where
     /// A future that resolves to `Result<(), FanoutError>` when all sends complete.
     /// On failure, returns `FanoutError::Disconnected` containing the index of the
     /// first consumer that failed to receive the message.
-    pub fn send_async(&self, message: Vec<T>) -> FanoutFuture<'_, T> {
+    pub fn send_async(&self, message: T) -> FanoutFuture<'_, T> {
         FanoutFuture::new(&self.consumers, message)
     }
 }
@@ -73,7 +73,7 @@ impl<'a, T> FanoutFuture<'a, T>
 where
     T: Clone,
 {
-    fn new(consumers: &'a [BoundedSender<Vec<T>>], message: Vec<T>) -> Self {
+    fn new(consumers: &'a [BoundedSender<T>], message: T) -> Self {
         Self {
             consumers,
             message: Some(message),
@@ -152,7 +152,7 @@ impl<T> FanoutBuilder<T> {
     ///
     /// # Returns
     /// Returns self for method chaining
-    pub fn add_tx(mut self, tx: BoundedSender<Vec<T>>) -> Self {
+    pub fn add_tx(mut self, tx: BoundedSender<T>) -> Self {
         self.consumers.push(tx);
         self
     }

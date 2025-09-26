@@ -31,7 +31,7 @@ use tracing::{debug, error};
 #[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
     receiver: BoundedReceiver<Message<T>>,
-    fanout: Fanout<T>,
+    fanout: Fanout<Vec<T>>,
     batch_config: BatchConfig,
     processors: Vec<String>,
     flush_listener: Option<FlushReceiver>,
@@ -152,7 +152,7 @@ where
 {
     pub fn new(
         receiver: BoundedReceiver<Message<T>>,
-        fanout: Fanout<T>,
+        fanout: Fanout<Vec<T>>,
         flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
         processors: Vec<String>,
@@ -239,7 +239,7 @@ where
         let len_processor_modules = processor_modules.len();
         let mut flush_listener = self.flush_listener.take();
 
-        let mut send_fut: Option<FanoutFuture<T>> = None;
+        let mut send_fut: Option<FanoutFuture<Vec<T>>> = None;
 
         loop {
             select! {
