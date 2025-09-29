@@ -69,10 +69,13 @@ pub struct RequestBuilderConfig {
     default_headers: HeaderMap,
 }
 
+use crate::topology::payload::MessageMetadata;
+
 #[derive(Clone)]
 pub struct EncodedRequest {
     pub request: Request<Full<Bytes>>,
     pub size: usize,
+    pub metadata: Option<Vec<MessageMetadata>>,
 }
 
 /// Creates a new RequestBuilder for trace exports.
@@ -264,10 +267,19 @@ impl<T: prost::Message, Signer: RequestSigner + Clone> RequestBuilder<T, Signer>
     ///
     /// # Returns
     /// * `Result<Request<Full<Bytes>>, ExporterError>`
-    pub fn encode(&self, message: T, size: usize) -> Result<EncodedRequest, ExporterError> {
+    pub fn encode(
+        &self,
+        message: T,
+        size: usize,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<EncodedRequest, ExporterError> {
         let res = self.new_request(message);
         match res {
-            Ok(request) => Ok(EncodedRequest { request, size }),
+            Ok(request) => Ok(EncodedRequest {
+                request,
+                size,
+                metadata,
+            }),
             Err(e) => {
                 self.send_failed
                     .add(size as u64, &[KeyValue::new("error", "request.encode")]);

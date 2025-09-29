@@ -31,7 +31,7 @@ use tracing::{debug, error};
 #[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
     receiver: BoundedReceiver<Message<T>>,
-    fanout: Fanout<Vec<T>>,
+    fanout: Fanout<Vec<Message<T>>>,
     batch_config: BatchConfig,
     processors: Vec<String>,
     flush_listener: Option<FlushReceiver>,
@@ -152,7 +152,7 @@ where
 {
     pub fn new(
         receiver: BoundedReceiver<Message<T>>,
-        fanout: Fanout<Vec<T>>,
+        fanout: Fanout<Vec<Message<T>>>,
         flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
         processors: Vec<String>,
@@ -239,7 +239,7 @@ where
         let len_processor_modules = processor_modules.len();
         let mut flush_listener = self.flush_listener.take();
 
-        let mut send_fut: Option<FanoutFuture<Vec<T>>> = None;
+        let mut send_fut: Option<FanoutFuture<Vec<Message<T>>>> = None;
 
         loop {
             select! {
@@ -258,13 +258,10 @@ where
                 _ = batch_timer.tick(), if send_fut.is_none() => {
                     if batch.should_flush(Instant::now()) {
                         let messages = batch.take_batch();
-                        // Extract payloads from messages for now (future: send full Message<T>)
-                        let to_send: Vec<T> = messages.into_iter()
-                            .flat_map(|msg| msg.payload)
-                            .collect();
-                        debug!(batch_size = to_send.len(), "Flushing a batch in timout handler");
+                        let item_count: usize = messages.iter().map(|msg| msg.payload.len()).sum();
+                        debug!(batch_size = item_count, "Flushing a batch in timeout handler");
 
-                        let fut = self.fanout.send_async(to_send);
+                        let fut = self.fanout.send_async(messages);
                         send_fut = Some(fut);
                     }
                 },
@@ -279,13 +276,8 @@ where
                             return Ok(());
                         }
 
-                        // Extract payloads from messages for now (future: send full Message<T>)
-                        let remain_batch: Vec<T> = remain_messages.into_iter()
-                            .flat_map(|msg| msg.payload)
-                            .collect();
-
                         // We are exiting, so we just want to log the failure to send
-                        if let Err(e) = self.fanout.send_async(remain_batch).await {
+                        if let Err(e) = self.fanout.send_async(remain_messages).await {
                             error!(error = ?e, "Unable to send item while exiting, will drop data.");
                         }
 
@@ -332,11 +324,7 @@ where
 
                     match batch.offer(vec![processed_message]) {
                         Ok(Some(popped)) => {
-                            // Extract payloads from messages for now (future: send full Message<T>)
-                            let to_send: Vec<T> = popped.into_iter()
-                                .flat_map(|msg| msg.payload)
-                                .collect();
-                            let fut = self.fanout.send_async(to_send);
+                            let fut = self.fanout.send_async(popped);
                             send_fut = Some(fut);
                         }
                         Ok(None) => {},
@@ -364,13 +352,10 @@ where
 
                             let messages = batch.take_batch();
                             if !messages.is_empty() {
-                                // Extract payloads from messages for now (future: send full Message<T>)
-                                let to_send: Vec<T> = messages.into_iter()
-                                    .flat_map(|msg| msg.payload)
-                                    .collect();
-                                debug!(batch_size = to_send.len(), "Flushing a batch on flush message");
+                                let item_count: usize = messages.iter().map(|msg| msg.payload.len()).sum();
+                                debug!(batch_size = item_count, "Flushing a batch on flush message");
 
-                                if let Err(e) = self.fanout.send_async(to_send).await {
+                                if let Err(e) = self.fanout.send_async(messages).await {
                                     error!(error = ?e, "Unable to send item, exiting.");
                                     return Err(format!("Pipeline was unable to send downstream: {}", e).into())
                                 }
@@ -395,7 +380,7 @@ where
 }
 
 pub async fn conditional_wait<T>(
-    send_fut: &mut Option<crate::topology::fanout::FanoutFuture<'_, T>>,
+    send_fut: &mut Option<crate::topology::fanout::FanoutFuture<'_, Vec<Message<T>>>>,
 ) -> Option<Result<(), crate::topology::fanout::FanoutError>>
 where
     T: Clone,
