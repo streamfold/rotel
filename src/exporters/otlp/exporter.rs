@@ -544,11 +544,15 @@ where
                     Some(r) => match r {
                         Ok(Ok(encoded_req)) => {
                             // we could exceed the previous limit on export_futures here?
-                            let EncodedRequest { request, size: _, metadata } = encoded_req;
+                            let EncodedRequest {
+                                request,
+                                size: _,
+                                metadata,
+                            } = encoded_req;
                             let fut = self.svc.call(EncodedRequest {
                                 request,
-                                size: 0,  // size is no longer used after encoding
-                                metadata: None
+                                size: 0, // size is no longer used after encoding
+                                metadata: None,
                             });
                             let wrapped_fut = async move {
                                 let result = fut.await;
@@ -619,8 +623,14 @@ where
     }
 
     // Log if the request failed and return true, otherwise return false
-    fn log_if_failed(&self, resp: (Result<HttpResponse<Response>, BoxError>, Option<Vec<MessageMetadata>>)) -> bool {
-        let (res, _metadata) = resp;  // metadata will be used for ack/nack in the future
+    fn log_if_failed(
+        &self,
+        resp: (
+            Result<HttpResponse<Response>, BoxError>,
+            Option<Vec<MessageMetadata>>,
+        ),
+    ) -> bool {
+        let (res, _metadata) = resp; // metadata will be used for ack/nack in the future
         let type_name = self.type_name.to_string();
 
         match res {
