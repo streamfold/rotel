@@ -1,3 +1,4 @@
+use crate::topology::payload::Message;
 use parquet::ParquetExporter;
 use thiserror::Error;
 
@@ -66,7 +67,7 @@ use tokio_util::sync::CancellationToken;
 /// File exporter for traces
 pub struct TracesFileExporter {
     output_dir: std::path::PathBuf,
-    receiver: BoundedReceiver<Vec<ResourceSpans>>,
+    receiver: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     format: FileExporterFormat,
     flush_interval: std::time::Duration,
     parquet_compression: crate::init::file_exporter::ParquetCompression,
@@ -111,7 +112,7 @@ impl TracesFileExporter {
 /// File exporter for metrics
 pub struct MetricsFileExporter {
     output_dir: std::path::PathBuf,
-    receiver: BoundedReceiver<Vec<ResourceMetrics>>,
+    receiver: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     format: FileExporterFormat,
     flush_interval: std::time::Duration,
     parquet_compression: crate::init::file_exporter::ParquetCompression,
@@ -156,7 +157,7 @@ impl MetricsFileExporter {
 /// File exporter for logs
 pub struct LogsFileExporter {
     output_dir: std::path::PathBuf,
-    receiver: BoundedReceiver<Vec<ResourceLogs>>,
+    receiver: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     format: FileExporterFormat,
     flush_interval: std::time::Duration,
     parquet_compression: crate::init::file_exporter::ParquetCompression,
@@ -205,7 +206,7 @@ impl FileExporterBuilder {
     /// Create a traces file exporter
     pub fn build_traces_exporter(
         config: &FileExporterConfig,
-        receiver: BoundedReceiver<Vec<ResourceSpans>>,
+        receiver: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> std::result::Result<TracesFileExporter, Box<dyn Error + Send + Sync>> {
         let output_dir = config.output_dir.join("spans");
         std::fs::create_dir_all(&output_dir)
@@ -223,7 +224,7 @@ impl FileExporterBuilder {
     /// Create a metrics file exporter
     pub fn build_metrics_exporter(
         config: &FileExporterConfig,
-        receiver: BoundedReceiver<Vec<ResourceMetrics>>,
+        receiver: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     ) -> std::result::Result<MetricsFileExporter, Box<dyn Error + Send + Sync>> {
         let output_dir = config.output_dir.join("metrics");
         std::fs::create_dir_all(&output_dir)
@@ -241,7 +242,7 @@ impl FileExporterBuilder {
     /// Create a logs file exporter
     pub fn build_logs_exporter(
         config: &FileExporterConfig,
-        receiver: BoundedReceiver<Vec<ResourceLogs>>,
+        receiver: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     ) -> std::result::Result<LogsFileExporter, Box<dyn Error + Send + Sync>> {
         let output_dir = config.output_dir.join("logs");
         std::fs::create_dir_all(&output_dir)

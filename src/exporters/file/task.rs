@@ -1,5 +1,6 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::file::{Result, TypedFileExporter};
+use crate::topology::payload::Message;
 use chrono::Utc;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -11,7 +12,7 @@ use tracing::{debug, info};
 pub async fn run_generic_loop<E, Resource>(
     exporter: std::sync::Arc<E>,
     output_dir: std::path::PathBuf,
-    mut receiver: BoundedReceiver<Vec<Resource>>,
+    mut receiver: BoundedReceiver<Vec<Message<Resource>>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
     telemetry_type: &str,
@@ -28,11 +29,13 @@ where
         tokio::select! {
             result = receiver.next() => {
                 match result {
-                    Some(resources) => {
+                    Some(messages) => {
                         // Process incoming telemetry data
-                        for resource in resources {
-                            let mut converted_data = exporter.convert(&resource)?;
-                            buffer.append(&mut converted_data);
+                        for message in messages {
+                            for resource in &message.payload {
+                                let mut converted_data = exporter.convert(resource)?;
+                                buffer.append(&mut converted_data);
+                            }
                         }
                     }
                     None => {
@@ -58,7 +61,7 @@ where
 pub async fn run_traces_loop<E>(
     exporter: std::sync::Arc<E>,
     traces_dir: std::path::PathBuf,
-    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    traces_rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
 ) -> Result<()>
@@ -80,7 +83,7 @@ where
 pub async fn run_metrics_loop<E>(
     exporter: std::sync::Arc<E>,
     metrics_dir: std::path::PathBuf,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
 ) -> Result<()>
@@ -102,7 +105,7 @@ where
 pub async fn run_logs_loop<E>(
     exporter: std::sync::Arc<E>,
     logs_dir: std::path::PathBuf,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    logs_rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     flush_interval: std::time::Duration,
     token: CancellationToken,
 ) -> Result<()>
