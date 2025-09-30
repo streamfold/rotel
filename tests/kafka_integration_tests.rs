@@ -24,6 +24,7 @@ use rdkafka::message::Message;
 use rotel::bounded_channel::bounded;
 use rotel::exporters::kafka::config::{Compression, KafkaExporterConfig, SerializationFormat};
 use rotel::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
+use rotel::topology::payload::Message as PayloadMessage;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -106,9 +107,12 @@ async fn test_kafka_exporter_traces_json() {
     });
 
     // Send test trace data
-    let trace_data = vec![FakeOTLP::trace_service_request().resource_spans[0].clone()];
+    let trace_data = FakeOTLP::trace_service_request().resource_spans[0].clone();
     traces_tx
-        .send(trace_data)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![trace_data],
+        }])
         .await
         .expect("Failed to send trace data");
 
@@ -170,9 +174,12 @@ async fn test_kafka_exporter_metrics_protobuf() {
     });
 
     // Send test metrics data
-    let metrics_data = vec![FakeOTLP::metrics_service_request().resource_metrics[0].clone()];
+    let metrics_data = FakeOTLP::metrics_service_request().resource_metrics[0].clone();
     metrics_tx
-        .send(metrics_data)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![metrics_data],
+        }])
         .await
         .expect("Failed to send metrics data");
 
@@ -225,9 +232,12 @@ async fn test_kafka_exporter_logs_with_compression() {
     });
 
     // Send test logs data
-    let logs_data = vec![FakeOTLP::logs_service_request().resource_logs[0].clone()];
+    let logs_data = FakeOTLP::logs_service_request().resource_logs[0].clone();
     logs_tx
-        .send(logs_data)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![logs_data],
+        }])
         .await
         .expect("Failed to send logs data");
 
@@ -316,20 +326,29 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
     });
 
     // Send all types of telemetry data
-    let trace_data = vec![FakeOTLP::trace_service_request().resource_spans[0].clone()];
-    let metrics_data = vec![FakeOTLP::metrics_service_request().resource_metrics[0].clone()];
-    let logs_data = vec![FakeOTLP::logs_service_request().resource_logs[0].clone()];
+    let trace_data = FakeOTLP::trace_service_request().resource_spans[0].clone();
+    let metrics_data = FakeOTLP::metrics_service_request().resource_metrics[0].clone();
+    let logs_data = FakeOTLP::logs_service_request().resource_logs[0].clone();
 
     traces_tx
-        .send(trace_data)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![trace_data],
+        }])
         .await
         .expect("Failed to send trace data");
     metrics_tx
-        .send(metrics_data)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![metrics_data],
+        }])
         .await
         .expect("Failed to send metrics data");
     logs_tx
-        .send(logs_data)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![logs_data],
+        }])
         .await
         .expect("Failed to send logs data");
 
@@ -517,15 +536,24 @@ async fn test_logs_partitioning_by_resource_attributes() {
 
     // Send logs
     logs_tx
-        .send(logs_data_1)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: logs_data_1,
+        }])
         .await
         .expect("Failed to send logs data 1");
     logs_tx
-        .send(logs_data_2)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: logs_data_2,
+        }])
         .await
         .expect("Failed to send logs data 2");
     logs_tx
-        .send(logs_data_3)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: logs_data_3,
+        }])
         .await
         .expect("Failed to send logs data 3");
 
@@ -644,7 +672,10 @@ async fn test_logs_partitioning_distribution_across_partitions() {
     for attrs in &resource_attr_sets {
         let logs_data = create_test_logs_with_resources(vec![attrs.clone()]);
         logs_tx
-            .send(logs_data)
+            .send(vec![PayloadMessage {
+                metadata: None,
+                payload: logs_data,
+            }])
             .await
             .expect("Failed to send logs data");
     }
@@ -787,15 +818,24 @@ async fn test_metrics_partitioning_by_resource_attributes() {
 
     // Send metrics
     metrics_tx
-        .send(metrics_data_1)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: metrics_data_1,
+        }])
         .await
         .expect("Failed to send metrics data 1");
     metrics_tx
-        .send(metrics_data_2)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: metrics_data_2,
+        }])
         .await
         .expect("Failed to send metrics data 2");
     metrics_tx
-        .send(metrics_data_3)
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: metrics_data_3,
+        }])
         .await
         .expect("Failed to send metrics data 3");
 
@@ -904,7 +944,10 @@ async fn test_metrics_partitioning_distribution_across_partitions() {
     for attrs in &resource_attr_sets {
         let metrics_data = create_test_metrics_with_resources(vec![attrs.clone()]);
         metrics_tx
-            .send(metrics_data)
+            .send(vec![PayloadMessage {
+                metadata: None,
+                payload: metrics_data,
+            }])
             .await
             .expect("Failed to send metrics data");
     }
