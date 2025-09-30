@@ -84,6 +84,7 @@ parquet = { version = "55.1.0", optional = true }
 arrow = { version = "55.1.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 wildcard = "0.3.0"
+aws-config = { version = "1.8.6" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
