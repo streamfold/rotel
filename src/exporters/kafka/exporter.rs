@@ -701,7 +701,7 @@ mod tests {
             KeyValue {
                 key: "double_attr".to_string(),
                 value: Some(AnyValue {
-                    value: Some(any_value::Value::DoubleValue(3.14159)),
+                    value: Some(any_value::Value::DoubleValue(std::f64::consts::PI)),
                 }),
             },
             KeyValue {
@@ -865,7 +865,7 @@ mod tests {
                                                                                     value: Some(any_value::Value::BoolValue(true)),
                                                                                 },
                                                                                 AnyValue {
-                                                                                    value: Some(any_value::Value::DoubleValue(2.718)),
+                                                                                    value: Some(any_value::Value::DoubleValue(std::f64::consts::E)),
                                                                                 },
                                                                             ],
                                                                         })),

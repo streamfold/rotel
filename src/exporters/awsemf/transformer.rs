@@ -2059,7 +2059,7 @@ mod tests {
         metrics.insert(
             "test_metric".to_string(),
             MetricInfo {
-                value: MetricValue::Double(3.14),
+                value: MetricValue::Double(std::f64::consts::PI),
                 unit: "ratio".to_string(),
             },
         );
