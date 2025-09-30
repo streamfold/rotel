@@ -93,8 +93,8 @@ pub fn config_builder(
 
 #[cfg(test)]
 mod tests {
-    use crate::bounded_channel::{bounded, BoundedSender};
-    use crate::exporters::otlp::{config_builder, Endpoint, Protocol};
+    use crate::bounded_channel::{BoundedSender, bounded};
+    use crate::exporters::otlp::{Endpoint, Protocol, config_builder};
     extern crate utilities;
     use utilities::otlp::FakeOTLP;
 
@@ -806,7 +806,8 @@ mod tests {
         assert!(res.is_none());
         //
         // Fails because missing key
-        let (_trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
+        let (_trace_btx, trace_brx) =
+            bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -818,7 +819,8 @@ mod tests {
         assert!(otlp_res.is_err());
 
         // Fails because missing cert
-        let (_trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
+        let (_trace_btx, trace_brx) =
+            bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -830,7 +832,8 @@ mod tests {
         assert!(otlp_res.is_err());
 
         // Succeeds because no identity but provides a CA and a correct domain
-        let (_trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
+        let (_trace_btx, trace_brx) =
+            bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -986,7 +989,8 @@ mod tests {
                 .body(resp_buf);
         });
 
-        let (metrics_btx, metrics_brx) = bounded::<Vec<topology::payload::Message<ResourceMetrics>>>(100);
+        let (metrics_btx, metrics_brx) =
+            bounded::<Vec<topology::payload::Message<ResourceMetrics>>>(100);
         let metrics_config = metrics_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
@@ -1147,10 +1151,12 @@ mod tests {
         let exp_fut = async move { traces.start(shut_token).await };
         for payload in payloads {
             // Send a request for the server to process
-            let res = btx.send(vec![topology::payload::Message {
-                payload,
-                metadata: None,
-            }]).await;
+            let res = btx
+                .send(vec![topology::payload::Message {
+                    payload,
+                    metadata: None,
+                }])
+                .await;
             if let Err(e) = res {
                 cancel_token.cancel();
                 return Err(format!("error: {:?}", e).into());
@@ -1179,10 +1185,12 @@ mod tests {
         let exp_fut = async move { metrics.start(shut_token).await };
         for payload in payloads {
             // Send a request for the server to process
-            let res = btx.send(vec![topology::payload::Message {
-                payload,
-                metadata: None,
-            }]).await;
+            let res = btx
+                .send(vec![topology::payload::Message {
+                    payload,
+                    metadata: None,
+                }])
+                .await;
             if let Err(e) = res {
                 cancel_token.cancel();
                 return Err(format!("error: {:?}", e).into());
@@ -1211,10 +1219,12 @@ mod tests {
         let exp_fut = async move { logs.start(shut_token).await };
         for payload in payloads {
             // Send a request for the server to process
-            let res = btx.send(vec![topology::payload::Message {
-                payload,
-                metadata: None,
-            }]).await;
+            let res = btx
+                .send(vec![topology::payload::Message {
+                    payload,
+                    metadata: None,
+                }])
+                .await;
             if let Err(e) = res {
                 cancel_token.cancel();
                 return Err(format!("error: {:?}", e).into());

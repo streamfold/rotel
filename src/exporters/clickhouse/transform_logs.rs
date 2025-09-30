@@ -2,7 +2,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::LogRecordRow;
-use crate::exporters::clickhouse::transformer::{encode_id, find_attribute, Transformer};
+use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_attribute};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrValue;
 use crate::topology::payload::Message;

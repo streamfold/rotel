@@ -157,10 +157,10 @@ mod tests {
 
     use crate::aws_api::config::AwsConfig;
     use crate::bounded_channel::{BoundedReceiver, bounded};
-    use crate::topology::payload::Message;
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::xray::{ExporterType, Region, XRayExporterConfigBuilder};
+    use crate::topology::payload::Message;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
@@ -195,7 +195,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: traces.resource_spans,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -225,7 +227,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: traces.resource_spans,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap()); // failed to drain

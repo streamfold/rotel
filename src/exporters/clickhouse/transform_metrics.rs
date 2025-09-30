@@ -5,7 +5,7 @@ use crate::exporters::clickhouse::schema::{
     MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow, MetricsMeta,
     MetricsSumRow, MetricsSummaryRow,
 };
-use crate::exporters::clickhouse::transformer::{find_attribute, Transformer};
+use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
 use crate::otlp::cvattr;
 use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::metrics::v1::exemplar::Value;

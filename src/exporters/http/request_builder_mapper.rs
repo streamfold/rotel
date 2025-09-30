@@ -2,8 +2,8 @@
 
 use crate::topology::payload::Message;
 use futures_util::{
-    ready, stream::{Fuse, FuturesOrdered}, Stream,
-    StreamExt,
+    Stream, StreamExt, ready,
+    stream::{Fuse, FuturesOrdered},
 };
 use http::Request;
 use pin_project::pin_project;

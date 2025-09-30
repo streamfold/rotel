@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn test_calculate_resource_attributes_hash_all_value_types() {
         use opentelemetry_proto::tonic::common::v1::{
-            any_value, AnyValue, ArrayValue, KeyValue, KeyValueList,
+            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
         };
 
         // Create a comprehensive set of attributes with all value types
@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_order_independence() {
-        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 
         // Create attributes in one order
         let attrs_order1 = vec![
@@ -824,7 +824,7 @@ mod tests {
     #[test]
     fn test_calculate_resource_attributes_hash_deep_recursion() {
         use opentelemetry_proto::tonic::common::v1::{
-            any_value, AnyValue, ArrayValue, KeyValue, KeyValueList,
+            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
         };
 
         // Create deeply nested structure with arrays containing kvlists containing arrays
@@ -904,7 +904,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_kvlist_order_independence() {
-        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue, KeyValueList};
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, KeyValueList, any_value};
 
         // KvList with keys in one order
         let attrs1 = vec![KeyValue {
@@ -977,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_array_order_dependence() {
-        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, ArrayValue, KeyValue};
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, any_value};
 
         // Array with elements in one order
         let attrs1 = vec![KeyValue {
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_slight_key_difference() {
-        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 
         // First set of attributes
         let attrs1 = vec![
@@ -1110,7 +1110,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_type_differences() {
-        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 
         // Same key and "value" but different types
         let attrs_string = vec![KeyValue {

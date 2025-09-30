@@ -326,7 +326,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;

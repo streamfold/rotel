@@ -487,10 +487,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceSpans::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_spans,
-        }]);
+        let result = ResourceSpans::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_spans,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -514,10 +518,13 @@ mod tests {
         }];
 
         // Test that splitting is disabled
-        let split_result = ResourceSpans::split_for_partitioning(&config, vec![Message {
-            metadata: None,
-            payload: resource_spans.clone(),
-        }]);
+        let split_result = ResourceSpans::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_spans.clone(),
+            }],
+        );
 
         // Should return original data unchanged
         assert_eq!(split_result.len(), 1);
@@ -548,10 +555,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceLogs::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_logs,
-        }]);
+        let result = ResourceLogs::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -581,10 +592,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceLogs::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_logs,
-        }]);
+        let result = ResourceLogs::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -609,10 +624,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceLogs::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_logs,
-        }]);
+        let result = ResourceLogs::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -658,10 +677,13 @@ mod tests {
         ];
 
         // Test splitting
-        let split_result = ResourceLogs::split_for_partitioning(&config, vec![Message {
-            metadata: None,
-            payload: resource_logs,
-        }]);
+        let split_result = ResourceLogs::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
 
         // Should be split into 2 groups (one for each ResourceLogs)
         assert_eq!(split_result.len(), 2);
@@ -690,10 +712,13 @@ mod tests {
         }];
 
         // Test that splitting is disabled
-        let split_result = ResourceLogs::split_for_partitioning(&config, vec![Message {
-            metadata: None,
-            payload: resource_logs.clone(),
-        }]);
+        let split_result = ResourceLogs::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs.clone(),
+            }],
+        );
 
         // Should return original data unchanged
         assert_eq!(split_result.len(), 1);
@@ -724,10 +749,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceMetrics::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_metrics,
-        }]);
+        let result = ResourceMetrics::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -757,10 +786,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceMetrics::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_metrics,
-        }]);
+        let result = ResourceMetrics::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -785,10 +818,14 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceMetrics::build_kafka_message(&builder, &config, vec![Message {
-            metadata: None,
-            payload: resource_metrics,
-        }]);
+        let result = ResourceMetrics::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
         assert!(result.is_ok());
 
         let (key, _) = result.unwrap();
@@ -834,10 +871,13 @@ mod tests {
         ];
 
         // Test splitting
-        let split_result = ResourceMetrics::split_for_partitioning(&config, vec![Message {
-            metadata: None,
-            payload: resource_metrics,
-        }]);
+        let split_result = ResourceMetrics::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
 
         // Should be split into 2 groups (one for each ResourceMetrics)
         assert_eq!(split_result.len(), 2);
@@ -866,10 +906,13 @@ mod tests {
         }];
 
         // Test that splitting is disabled
-        let split_result = ResourceMetrics::split_for_partitioning(&config, vec![Message {
-            metadata: None,
-            payload: resource_metrics.clone(),
-        }]);
+        let split_result = ResourceMetrics::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics.clone(),
+            }],
+        );
 
         // Should return original data unchanged
         assert_eq!(split_result.len(), 1);

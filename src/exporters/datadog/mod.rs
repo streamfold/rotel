@@ -237,7 +237,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: traces.resource_spans,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -266,7 +268,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: traces.resource_spans,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap()); // failed to drain

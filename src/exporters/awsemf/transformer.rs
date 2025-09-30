@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::event::Event;
 use super::DimensionFilter;
-use crate::exporters::awsemf::request_builder::TransformPayload;
+use super::event::Event;
 use crate::exporters::awsemf::AwsEmfExporterConfig;
+use crate::exporters::awsemf::request_builder::TransformPayload;
 use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_NAMESPACE};
-use serde_json::json;
 use serde_json::Error as JsonError;
+use serde_json::json;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{
     collections::HashMap,
@@ -917,8 +917,8 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
     use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value as NumberValue;
     use opentelemetry_proto::tonic::metrics::v1::{
-        metric, Gauge, Histogram, HistogramDataPoint, Metric, NumberDataPoint, Sum,
-        Summary, SummaryDataPoint,
+        Gauge, Histogram, HistogramDataPoint, Metric, NumberDataPoint, Sum, Summary,
+        SummaryDataPoint, metric,
     };
     use std::collections::HashMap;
 

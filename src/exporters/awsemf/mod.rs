@@ -16,7 +16,7 @@ use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 
 use dim_filter::DimensionFilter;
-use errors::{is_retryable_error, AwsEmfDecoder, AwsEmfResponse};
+use errors::{AwsEmfDecoder, AwsEmfResponse, is_retryable_error};
 use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
@@ -236,7 +236,7 @@ mod tests {
     extern crate utilities;
 
     use crate::aws_api::config::AwsConfig;
-    use crate::bounded_channel::{bounded, BoundedReceiver};
+    use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::awsemf::{AwsEmfExporterConfigBuilder, ExporterType};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
@@ -276,7 +276,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: metrics.resource_metrics,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0.unwrap());
@@ -307,7 +309,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: metrics.resource_metrics,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap()); // failed to drain
@@ -376,7 +380,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: metrics.resource_metrics,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -437,7 +443,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: metrics.resource_metrics,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -507,7 +515,9 @@ mod tests {
         btx.send(vec![Message {
             metadata: None,
             payload: metrics.resource_metrics,
-        }]).await.unwrap();
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
