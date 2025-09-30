@@ -1,8 +1,8 @@
-use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::{ResponseDecode, build_hyper_client};
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
+use crate::exporters::shared::aws_signing_service::AwsSigningServiceBuilder;
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::bufread::GzEncoder;
@@ -14,18 +14,18 @@ use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
 use serde_json::json;
 use std::io::Read;
-use tower::BoxError;
+use tower::{BoxError, Service, ServiceExt};
 use tracing::{debug, error, warn};
 
 use super::{AwsEmfDecoder, AwsEmfResponse};
 
 pub(crate) struct Cloudwatch {
-    signer: AwsRequestSigner<SystemClock>,
     endpoint: Uri,
     base_headers: HeaderMap,
     log_group: String,
     log_stream: String,
     log_retention: u16,
+    signing_builder: AwsSigningServiceBuilder,
     client: HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>,
 }
 
@@ -44,9 +44,6 @@ impl Cloudwatch {
             .parse()
             .map_err(|e| format!("Invalid CloudWatch endpoint: {}", e))?;
 
-        let region = aws_config.region.clone();
-        let signer = AwsRequestSigner::new("logs", &region, aws_config, SystemClock);
-
         let mut base_headers = HeaderMap::new();
         base_headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         base_headers.insert(
@@ -54,16 +51,19 @@ impl Cloudwatch {
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
 
+        let signing_builder =
+            AwsSigningServiceBuilder::new("logs", &aws_config.region.clone(), aws_config);
+
         // Use the existing HTTP client builder
         let client = build_hyper_client(Config::default(), false)?;
 
         Ok(Self {
-            signer,
             endpoint,
             base_headers,
             log_group,
             log_stream,
             log_retention,
+            signing_builder,
             client,
         })
     }
@@ -183,34 +183,54 @@ impl Cloudwatch {
             .map_err(|e| format!("Failed to compress request body: {}", e))?;
         let compressed_body = Bytes::from(gz_vec);
 
-        // Sign the request
-        let signed_request = self.signer.sign(
-            self.endpoint.clone(),
-            Method::POST,
-            headers,
-            compressed_body,
-        )?;
+        // Build the unsigned request
+        let mut req_builder = Request::builder()
+            .uri(self.endpoint.clone())
+            .method(Method::POST);
 
-        // Make the HTTP request
-        self.send_request(signed_request, AwsEmfDecoder::default())
+        let builder_headers = req_builder.headers_mut().unwrap();
+        for (k, v) in headers.iter() {
+            builder_headers.insert(k, v.clone());
+        }
+
+        let unsigned_request = req_builder.body(Full::from(compressed_body))?;
+
+        // Create a signing service on-demand for this request
+        // Wrap the hyper client in a Tower service using service_fn
+        let client = self.client.clone();
+        let client_service = tower::service_fn(move |req: Request<Full<Bytes>>| {
+            let client = client.clone();
+            async move {
+                client
+                    .request(req)
+                    .await
+                    .map_err(|e| -> BoxError { format!("Hyper client error: {}", e).into() })
+            }
+        });
+
+        // Wrap with AWS signing service
+        let mut signing_service = self.signing_builder.clone().build(client_service);
+
+        // Sign and send the request through the signing service
+        let response = signing_service
+            .ready()
+            .await?
+            .call(unsigned_request)
+            .await?;
+
+        // Decode and handle the response
+        self.handle_response(response, AwsEmfDecoder::default())
             .await
     }
 
-    async fn send_request<Dec>(
+    async fn handle_response<Dec>(
         &self,
-        request: Request<Full<Bytes>>,
+        response: hyper::Response<hyper::body::Incoming>,
         decoder: Dec,
     ) -> Result<(), BoxError>
     where
-        Dec: ResponseDecode<AwsEmfResponse>, // Reuse for decoding here, may want to abstract later
+        Dec: ResponseDecode<AwsEmfResponse>,
     {
-        // Send the request using the hyper client
-        let response = self
-            .client
-            .request(request)
-            .await
-            .map_err(|e| format!("Failed to send request: {}", e))?;
-
         // Check the response status
         let status = response.status();
         if status.is_success() {

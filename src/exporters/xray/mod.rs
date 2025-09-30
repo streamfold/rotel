@@ -3,6 +3,7 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::http::acknowledger::DefaultHTTPAcknowledger;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
+use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSigningServiceBuilder};
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 
@@ -37,8 +38,10 @@ use crate::exporters::http::metadata_extractor::MessagePayload;
 use http_body_util::Full;
 pub type XRayPayload = MessagePayload<Full<Bytes>>;
 
-type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<XRayPayload, RespBody, XRayTraceDecoder>>>;
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    AwsSigningService<Timeout<Client<XRayPayload, RespBody, XRayTraceDecoder>>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -109,23 +112,25 @@ impl XRayExporterBuilder {
         rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
         flush_receiver: Option<FlushReceiver>,
         environment: String,
-        config: AwsConfig,
+        aws_config: AwsConfig,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let transformer = Transformer::new(environment);
 
-        let req_builder = RequestBuilder::new(
-            transformer,
-            config,
-            self.region,
-            self.custom_endpoint.clone(),
-        )?;
+        let req_builder =
+            RequestBuilder::new(transformer, self.region, self.custom_endpoint.clone())?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
         let retry_broadcast = retry_layer.retry_broadcast();
 
+        let region = self.region.to_string();
+
         let svc = ServiceBuilder::new()
             .retry(retry_layer)
+            .layer_fn(|inner| {
+                AwsSigningServiceBuilder::new("xray", region.as_str(), aws_config.clone())
+                    .build(inner)
+            })
             .timeout(Duration::from_secs(5))
             .service(client);
 

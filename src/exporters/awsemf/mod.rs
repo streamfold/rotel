@@ -12,6 +12,7 @@ use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
+use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSigningServiceBuilder};
 use crate::topology::flush_control::FlushReceiver;
 
 use bytes::Bytes;
@@ -49,7 +50,7 @@ pub type AwsEmfPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,
-    ResponseInterceptor<Timeout<Client<AwsEmfPayload, RespBody, AwsEmfDecoder>>>,
+    ResponseInterceptor<AwsSigningService<Timeout<Client<AwsEmfPayload, RespBody, AwsEmfDecoder>>>>,
 >;
 
 type ExporterType<'a, Resource, Ack> = Exporter<
@@ -192,8 +193,7 @@ impl AwsEmfExporterBuilder {
         )?);
         let transformer = Transformer::new(self.config.clone(), dim_filter);
 
-        let req_builder =
-            RequestBuilder::new(transformer, aws_config.clone(), self.config.clone())?;
+        let req_builder = RequestBuilder::new(transformer, self.config.clone())?;
 
         let retry_layer = RetryPolicy::new(self.config.retry_config, Some(is_retryable_error));
         let retry_broadcast = retry_layer.retry_broadcast();
@@ -207,8 +207,14 @@ impl AwsEmfExporterBuilder {
             self.config.log_retention,
         )?);
 
+        let region = self.config.region.to_string();
+
         // Build service stack: retry -> response_interceptor -> timeout -> client
         let timeout_client = ServiceBuilder::new()
+            .layer_fn(|inner| {
+                AwsSigningServiceBuilder::new("logs", region.as_str(), aws_config.clone())
+                    .build(inner)
+            })
             .timeout(Duration::from_secs(5))
             .service(client);
 

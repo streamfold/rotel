@@ -6,7 +6,6 @@ use crate::exporters::datadog::Region;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
 use crate::exporters::otlp;
-use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Receiver};
 use crate::init::batch::{
@@ -963,7 +962,7 @@ impl Agent {
 fn start_otlp_exporter<Resource, Request, Response>(
     exporters_task_set: &mut JoinSet<Result<(), Box<dyn Error + Send + Sync>>>,
     telemetry_type: &'static str,
-    exporter: otlp::exporter::Exporter<Resource, Request, AwsSigv4RequestSigner, Response>,
+    exporter: otlp::exporter::Exporter<Resource, Request, Response>,
     cancel_token: CancellationToken,
 ) where
     Request: prost::Message + topology::payload::OTLPFrom<Vec<Resource>> + Clone,

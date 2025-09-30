@@ -7,6 +7,7 @@ use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
 use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
+use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSigningServiceBuilder};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
 use http::{Request, StatusCode};
@@ -90,8 +91,8 @@ where
 /// decoder types from the client type
 #[derive(Clone)]
 enum UnifiedClientType<T> {
-    Grpc(Client<OtlpPayload, T, GrpcDecoder<T>>),
-    Http(Client<OtlpPayload, T, HttpDecoder<T>>),
+    Grpc(AwsSigningService<Client<OtlpPayload, T, GrpcDecoder<T>>>),
+    Http(AwsSigningService<Client<OtlpPayload, T, HttpDecoder<T>>>),
 }
 
 /// Client struct for handling OTLP exports.
@@ -183,17 +184,26 @@ where
         protocol: Protocol,
         sent: RotelCounter<u64>,
         send_failed: RotelCounter<u64>,
+        signing_builder: Option<AwsSigningServiceBuilder>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = match protocol {
             Protocol::Grpc => {
                 let decoder: GrpcDecoder<T> = GrpcDecoder::new(send_failed.clone());
-                let client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
-                UnifiedClientType::Grpc(client)
+                let http_client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
+                // Wrap the HTTP client with signing service if provided, otherwise use disabled mode
+                let signing_service = signing_builder
+                    .unwrap_or_else(|| AwsSigningServiceBuilder::disabled())
+                    .build(http_client);
+                UnifiedClientType::Grpc(signing_service)
             }
             Protocol::Http => {
                 let decoder: HttpDecoder<T> = HttpDecoder::new(send_failed.clone());
-                let client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
-                UnifiedClientType::Http(client)
+                let http_client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
+                // Wrap the HTTP client with signing service if provided, otherwise use disabled mode
+                let signing_service = signing_builder
+                    .unwrap_or_else(|| AwsSigningServiceBuilder::disabled())
+                    .build(http_client);
+                UnifiedClientType::Http(signing_service)
             }
         };
 
