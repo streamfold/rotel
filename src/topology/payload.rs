@@ -97,6 +97,14 @@ impl OTLPFrom<Vec<ResourceSpans>> for ExportTraceServiceRequest {
     }
 }
 
+impl OTLPFrom<Vec<Message<ResourceSpans>>> for ExportTraceServiceRequest {
+    fn otlp_from(value: Vec<Message<ResourceSpans>>) -> Self {
+        ExportTraceServiceRequest {
+            resource_spans: value.into_iter().flat_map(|m| m.payload).collect(),
+        }
+    }
+}
+
 impl OTLPFrom<Vec<ResourceMetrics>> for ExportMetricsServiceRequest {
     fn otlp_from(value: Vec<ResourceMetrics>) -> Self {
         ExportMetricsServiceRequest {
@@ -105,10 +113,26 @@ impl OTLPFrom<Vec<ResourceMetrics>> for ExportMetricsServiceRequest {
     }
 }
 
+impl OTLPFrom<Vec<Message<ResourceMetrics>>> for ExportMetricsServiceRequest {
+    fn otlp_from(value: Vec<Message<ResourceMetrics>>) -> Self {
+        ExportMetricsServiceRequest {
+            resource_metrics: value.into_iter().flat_map(|m| m.payload).collect(),
+        }
+    }
+}
+
 impl OTLPFrom<Vec<ResourceLogs>> for ExportLogsServiceRequest {
     fn otlp_from(value: Vec<ResourceLogs>) -> Self {
         ExportLogsServiceRequest {
             resource_logs: value,
+        }
+    }
+}
+
+impl OTLPFrom<Vec<Message<ResourceLogs>>> for ExportLogsServiceRequest {
+    fn otlp_from(value: Vec<Message<ResourceLogs>>) -> Self {
+        ExportLogsServiceRequest {
+            resource_logs: value.into_iter().flat_map(|m| m.payload).collect(),
         }
     }
 }

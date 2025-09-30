@@ -3,13 +3,17 @@
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_mapper::{RequestMapper, RequestType};
 use crate::exporters::http::request_builder_mapper::BuildRequest;
+use crate::topology::payload::Message;
 use http::Request;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tower::BoxError;
 
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<T>) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError>;
+    fn transform(
+        &self,
+        input: Vec<Message<T>>,
+    ) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError>;
 }
 
 // todo: identify the cost of recursively cloning these
@@ -46,7 +50,7 @@ where
 {
     type Output = Vec<Request<ClickhousePayload>>;
 
-    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
+    fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError> {
         let payloads = self.transformer.transform(input)?;
 
         let requests: Result<Self::Output, BoxError> = payloads

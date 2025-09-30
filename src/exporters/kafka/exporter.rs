@@ -4,7 +4,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::kafka::errors::{KafkaExportError, Result};
 use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
-use crate::topology::payload::OTLPFrom;
+use crate::topology::payload::{Message, OTLPFrom};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures_util::stream::FuturesOrdered;
@@ -48,7 +48,7 @@ pub trait KafkaExportable:
     Debug + Send + Sized + 'static + prost::Message + Serialize + Clone
 {
     /// The OTLP request type for this telemetry type
-    type Request: prost::Message + OTLPFrom<Vec<Self>> + Serialize + Clone;
+    type Request: prost::Message + OTLPFrom<Vec<Message<Self>>> + Serialize + Clone;
 
     /// Create a new request builder for this telemetry type
     fn create_request_builder(
@@ -59,7 +59,7 @@ pub trait KafkaExportable:
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
-        data: &[Self],
+        data: Vec<Message<Self>>,
     ) -> Result<(String, Bytes)>;
 
     /// Get the telemetry type name
@@ -67,7 +67,10 @@ pub trait KafkaExportable:
 
     /// Split data for partition-based processing if needed
     /// Default implementation returns data unchanged
-    fn split_for_partitioning(_config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        _config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         vec![data]
     }
 }
@@ -177,20 +180,26 @@ fn hash_any_value<H: std::hash::Hasher>(
 }
 
 /// Extract resource attributes hash from the first ResourceLogs
-fn extract_resource_attributes_hash_from_logs(logs: &[ResourceLogs]) -> Option<Vec<u8>> {
-    for resource_log in logs {
-        if let Some(resource) = &resource_log.resource {
-            return Some(calculate_resource_attributes_hash(&resource.attributes));
+fn extract_resource_attributes_hash_from_logs(logs: &[Message<ResourceLogs>]) -> Option<Vec<u8>> {
+    for message in logs {
+        for resource_log in &message.payload {
+            if let Some(resource) = &resource_log.resource {
+                return Some(calculate_resource_attributes_hash(&resource.attributes));
+            }
         }
     }
     None
 }
 
 /// Extract resource attributes hash from the first ResourceMetrics
-fn extract_resource_attributes_hash_from_metrics(metrics: &[ResourceMetrics]) -> Option<Vec<u8>> {
-    for resource_metric in metrics {
-        if let Some(resource) = &resource_metric.resource {
-            return Some(calculate_resource_attributes_hash(&resource.attributes));
+fn extract_resource_attributes_hash_from_metrics(
+    metrics: &[Message<ResourceMetrics>],
+) -> Option<Vec<u8>> {
+    for message in metrics {
+        for resource_metric in &message.payload {
+            if let Some(resource) = &resource_metric.resource {
+                return Some(calculate_resource_attributes_hash(&resource.attributes));
+            }
         }
     }
     None
@@ -208,7 +217,7 @@ impl KafkaExportable for ResourceSpans {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         _config: &KafkaExporterConfig,
-        spans: &[Self],
+        spans: Vec<Message<Self>>,
     ) -> Result<(String, Bytes)> {
         // Use empty message key and send all spans together
         let key = String::new();
@@ -221,7 +230,10 @@ impl KafkaExportable for ResourceSpans {
     }
 
     /// Split for partitioning - traces are not split
-    fn split_for_partitioning(_config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        _config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         vec![data]
     }
 }
@@ -238,7 +250,7 @@ impl KafkaExportable for ResourceMetrics {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
-        metrics: &[Self],
+        metrics: Vec<Message<Self>>,
     ) -> Result<(String, Bytes)> {
         let key = if !config.partition_metrics_by_resource_attributes {
             // Default: empty message key
@@ -246,7 +258,7 @@ impl KafkaExportable for ResourceMetrics {
         } else {
             // When partition_metrics_by_resource_attributes is enabled, use hash of resource attributes as key
             // Expect metrics to contain only one ResourceMetrics after splitting
-            let hash = extract_resource_attributes_hash_from_metrics(metrics);
+            let hash = extract_resource_attributes_hash_from_metrics(metrics.as_slice());
             hash.map_or(String::new(), hex::encode)
         };
         let payload = builder.build_message(metrics)?;
@@ -259,7 +271,10 @@ impl KafkaExportable for ResourceMetrics {
 
     /// Split metrics by resource attributes when partition_metrics_by_resource_attributes is enabled
     /// Each ResourceMetrics becomes its own message, matching the Go implementation
-    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         if config.partition_metrics_by_resource_attributes {
             // Split each ResourceMetrics into separate groups, one per ResourceMetrics
             // This matches the Go implementation where each resourceMetrics becomes a separate message
@@ -282,7 +297,7 @@ impl KafkaExportable for ResourceLogs {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
-        logs: &[Self],
+        logs: Vec<Message<Self>>,
     ) -> Result<(String, Bytes)> {
         let key = if !config.partition_logs_by_resource_attributes {
             // Default: empty message key
@@ -290,7 +305,7 @@ impl KafkaExportable for ResourceLogs {
         } else {
             // When partition_logs_by_resource_attributes is enabled, use hash of resource attributes as key
             // Expect logs to contain only one ResourceLogs after splitting
-            let hash = extract_resource_attributes_hash_from_logs(logs);
+            let hash = extract_resource_attributes_hash_from_logs(logs.as_slice());
             hash.map_or(String::new(), hex::encode)
         };
         let payload = builder.build_message(logs)?;
@@ -303,7 +318,10 @@ impl KafkaExportable for ResourceLogs {
 
     /// Split logs by resource attributes when partition_logs_by_resource_attributes is enabled
     /// Each ResourceLogs becomes its own message, matching the Go implementation
-    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         if config.partition_logs_by_resource_attributes {
             // Split each ResourceLogs into separate groups, one per ResourceLogs
             // This matches the Go implementation where each resourceLogs becomes a separate message
@@ -322,7 +340,7 @@ where
     config: KafkaExporterConfig,
     producer: FutureProducer,
     request_builder: KafkaRequestBuilder<Resource, Resource::Request>,
-    rx: BoundedReceiver<Vec<Resource>>,
+    rx: BoundedReceiver<Vec<Message<Resource>>>,
     topic: String,
     encoding_futures: FuturesOrdered<EncodingFuture>,
     send_futures: FuturesUnordered<SendFuture>,
@@ -348,7 +366,7 @@ where
     /// Create a new Kafka exporter
     pub fn new(
         config: KafkaExporterConfig,
-        rx: BoundedReceiver<Vec<Resource>>,
+        rx: BoundedReceiver<Vec<Message<Resource>>>,
         topic: String,
     ) -> Result<Self> {
         // Build Kafka producer
@@ -442,7 +460,7 @@ where
                                 let req_builder = self.request_builder.clone();
                                 let config = self.config.clone();
                                 let encoding_future = tokio::task::spawn_blocking(move || {
-                                    Resource::build_kafka_message(&req_builder, &config, &single_payload)
+                                    Resource::build_kafka_message(&req_builder, &config, single_payload)
                                         .map(|(key, payload)| EncodedMessage {
                                             key,
                                             payload,
@@ -537,7 +555,7 @@ where
 /// Creates a Kafka traces exporter
 pub fn build_traces_exporter(
     config: KafkaExporterConfig,
-    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    traces_rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
 ) -> Result<KafkaExporter<ResourceSpans>> {
     let topic = config
         .traces_topic
@@ -550,7 +568,7 @@ pub fn build_traces_exporter(
 /// Creates a Kafka metrics exporter
 pub fn build_metrics_exporter(
     config: KafkaExporterConfig,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
 ) -> Result<KafkaExporter<ResourceMetrics>> {
     let topic = config
         .metrics_topic
@@ -563,7 +581,7 @@ pub fn build_metrics_exporter(
 /// Creates a Kafka logs exporter
 pub fn build_logs_exporter(
     config: KafkaExporterConfig,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    logs_rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
 ) -> Result<KafkaExporter<ResourceLogs>> {
     let topic = config
         .logs_topic
@@ -657,7 +675,7 @@ mod tests {
     #[test]
     fn test_calculate_resource_attributes_hash_all_value_types() {
         use opentelemetry_proto::tonic::common::v1::{
-            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+            any_value, AnyValue, ArrayValue, KeyValue, KeyValueList,
         };
 
         // Create a comprehensive set of attributes with all value types
@@ -752,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_order_independence() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
 
         // Create attributes in one order
         let attrs_order1 = vec![
@@ -806,7 +824,7 @@ mod tests {
     #[test]
     fn test_calculate_resource_attributes_hash_deep_recursion() {
         use opentelemetry_proto::tonic::common::v1::{
-            AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+            any_value, AnyValue, ArrayValue, KeyValue, KeyValueList,
         };
 
         // Create deeply nested structure with arrays containing kvlists containing arrays
@@ -886,7 +904,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_kvlist_order_independence() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, KeyValueList, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue, KeyValueList};
 
         // KvList with keys in one order
         let attrs1 = vec![KeyValue {
@@ -959,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_array_order_dependence() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, ArrayValue, KeyValue};
 
         // Array with elements in one order
         let attrs1 = vec![KeyValue {
@@ -1010,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_slight_key_difference() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
 
         // First set of attributes
         let attrs1 = vec![
@@ -1092,7 +1110,7 @@ mod tests {
 
     #[test]
     fn test_calculate_resource_attributes_hash_type_differences() {
-        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, KeyValue};
 
         // Same key and "value" but different types
         let attrs_string = vec![KeyValue {

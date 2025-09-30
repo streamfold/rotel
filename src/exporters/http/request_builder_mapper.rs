@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::topology::payload::Message;
 use futures_util::{
-    Stream, StreamExt, ready,
-    stream::{Fuse, FuturesOrdered},
+    ready, stream::{Fuse, FuturesOrdered}, Stream,
+    StreamExt,
 };
 use http::Request;
 use pin_project::pin_project;
@@ -18,13 +19,13 @@ const MAX_CONCURRENT_ENCODERS: usize = 8;
 pub trait BuildRequest<Resource, Payload> {
     type Output: IntoIterator<Item = Request<Payload>>;
 
-    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError>;
+    fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError>;
 }
 
 #[pin_project]
 pub struct RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
-    InStr: Stream<Item = Vec<Resource>>,
+    InStr: Stream<Item = Vec<Message<Resource>>>,
     ReqBuilder: BuildRequest<Resource, Payload>,
     <ReqBuilder as BuildRequest<Resource, Payload>>::Output: IntoIterator<Item = Request<Payload>>,
 {
@@ -39,7 +40,7 @@ where
 impl<InStr, Resource, Payload, ReqBuilder>
     RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
-    InStr: Stream<Item = Vec<Resource>>,
+    InStr: Stream<Item = Vec<Message<Resource>>>,
     ReqBuilder: BuildRequest<Resource, Payload>,
     <ReqBuilder as BuildRequest<Resource, Payload>>::Output: IntoIterator<Item = Request<Payload>>,
 {
@@ -62,7 +63,7 @@ where
 impl<InStr, Resource, Payload, ReqBuilder> Stream
     for RequestBuilderMapper<InStr, Resource, Payload, ReqBuilder>
 where
-    InStr: Stream<Item = Vec<Resource>>,
+    InStr: Stream<Item = Vec<Message<Resource>>>,
     Resource: Send + Clone + 'static,
     ReqBuilder: BuildRequest<Resource, Payload> + Send + Sync + Clone + 'static,
     <ReqBuilder as BuildRequest<Resource, Payload>>::Output:

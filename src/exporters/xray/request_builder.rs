@@ -2,9 +2,10 @@
 
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
-use crate::exporters::xray::Region;
 use crate::exporters::xray::transformer::ExportError;
 use crate::exporters::xray::xray_request::XRayRequestBuilder;
+use crate::exporters::xray::Region;
+use crate::topology::payload::Message;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
@@ -13,7 +14,7 @@ use std::marker::PhantomData;
 use tower::BoxError;
 
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<T>) -> Result<Vec<Value>, ExportError>;
+    fn transform(&self, input: Vec<Message<T>>) -> Result<Vec<Value>, ExportError>;
 }
 
 // todo: identify the cost of recursively cloning these
@@ -58,7 +59,7 @@ where
 {
     type Output = Vec<Request<Full<Bytes>>>;
 
-    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
+    fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError> {
         let payload = self.transformer.transform(input);
         match payload {
             Ok(p) => self.api_req_builder.build(p),

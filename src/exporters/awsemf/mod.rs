@@ -16,7 +16,7 @@ use crate::topology::flush_control::FlushReceiver;
 use bytes::Bytes;
 
 use dim_filter::DimensionFilter;
-use errors::{AwsEmfDecoder, AwsEmfResponse, is_retryable_error};
+use errors::{is_retryable_error, AwsEmfDecoder, AwsEmfResponse};
 use flume::r#async::RecvStream;
 use http::Request;
 use http_body_util::Full;
@@ -39,6 +39,7 @@ mod request_builder;
 mod response_interceptor;
 mod transformer;
 
+use crate::topology::payload::Message;
 use cloudwatch::Cloudwatch;
 
 type SvcType<RespBody> = TowerRetry<
@@ -49,7 +50,7 @@ type SvcType<RespBody> = TowerRetry<
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
-            RecvStream<'a, Vec<Resource>>,
+            RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
             Full<Bytes>,
             RequestBuilder<Resource, Transformer>,
@@ -174,7 +175,7 @@ pub struct AwsEmfExporterBuilder {
 impl AwsEmfExporterBuilder {
     pub(crate) fn build<'a>(
         self,
-        rx: BoundedReceiver<Vec<ResourceMetrics>>,
+        rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
         aws_config: AwsConfig,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
@@ -235,11 +236,12 @@ mod tests {
     extern crate utilities;
 
     use crate::aws_api::config::AwsConfig;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::awsemf::{AwsEmfExporterConfigBuilder, ExporterType};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::shared::aws::Region;
+    use crate::topology::payload::Message;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
     use std::time::Duration;
@@ -261,7 +263,7 @@ mod tests {
                 .body("{}");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -271,7 +273,10 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }]).await.unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0.unwrap());
@@ -289,7 +294,7 @@ mod tests {
                 .body(r#"{"__type":"ServiceUnavailableException","message":"Rate exceeded"}"#);
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -299,7 +304,10 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }]).await.unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap()); // failed to drain
@@ -355,7 +363,7 @@ mod tests {
                 .body(r#"{"nextSequenceToken":"12345"}"#);
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -365,7 +373,10 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }]).await.unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -413,7 +424,7 @@ mod tests {
                 .body("{}");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -423,7 +434,10 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }]).await.unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -480,7 +494,7 @@ mod tests {
                 .body(r#"{"nextSequenceToken":"12345"}"#);
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, Some(3));
 
@@ -490,7 +504,10 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }]).await.unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -504,7 +521,7 @@ mod tests {
 
     fn new_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceMetrics>>,
+        brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         aws_config: AwsConfig,
         log_retention: Option<u16>,
     ) -> ExporterType<'a, ResourceMetrics> {

@@ -1,5 +1,5 @@
 use crate::aws_api::config::AwsConfig;
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{bounded, BoundedReceiver};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
@@ -13,7 +13,7 @@ use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
 use crate::init::config::{
-    ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
+    get_exporters_config, get_receivers_config, ExporterConfig, ReceiverConfig,
 };
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
@@ -34,8 +34,8 @@ use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
+use opentelemetry_sdk::Resource;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::error::Error;
@@ -282,7 +282,7 @@ impl Agent {
         if activation.traces == TelemetryState::Active {
             for cfg in exp_config.traces {
                 let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
-                    bounded::<Vec<ResourceSpans>>(self.sending_queue_size);
+                    bounded::<Vec<Message<ResourceSpans>>>(self.sending_queue_size);
                 trace_fanout = trace_fanout.add_tx(trace_pipeline_out_tx);
 
                 match cfg {
@@ -428,7 +428,7 @@ impl Agent {
 
             for (cfg, is_internal_metrics) in combined_metrics_configs {
                 let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
-                    bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
+                    bounded::<Vec<Message<ResourceMetrics>>>(self.sending_queue_size);
 
                 if is_internal_metrics {
                     internal_metrics_fanout =
@@ -560,7 +560,7 @@ impl Agent {
         if activation.logs == TelemetryState::Active {
             for cfg in exp_config.logs {
                 let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
-                    bounded::<Vec<ResourceLogs>>(self.sending_queue_size);
+                    bounded::<Vec<Message<ResourceLogs>>>(self.sending_queue_size);
                 logs_fanout = logs_fanout.add_tx(logs_pipeline_out_tx);
 
                 match cfg {

@@ -20,10 +20,10 @@ use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
 use crate::exporters::otlp::signer::{
     AwsSigv4RequestSigner, AwsSigv4RequestSignerBuilder, RequestSigner,
 };
-use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
+use crate::exporters::otlp::{errors, get_meter, request, Authenticator};
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
 use crate::topology::payload::{Message, MessageMetadata, OTLPFrom};
 use futures::stream::FuturesUnordered;
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -46,7 +46,7 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::broadcast::Sender;
 use tokio::task::JoinError;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{timeout_at, Instant};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tower::retry::{Retry, RetryLayer};
@@ -281,7 +281,7 @@ fn _build_metrics_exporter(
     sent: RotelCounter<u64>,
     send_failed: RotelCounter<u64>,
     metrics_config: OTLPExporterMetricsConfig,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<

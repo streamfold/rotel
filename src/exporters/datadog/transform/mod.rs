@@ -3,6 +3,7 @@
 use crate::exporters::datadog::request_builder::TransformPayload;
 use crate::exporters::datadog::transform::transformer::TraceTransformer;
 use crate::exporters::datadog::types::pb::AgentPayload;
+use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 mod attributes;
@@ -34,7 +35,7 @@ impl Transformer {
 }
 
 impl TransformPayload<ResourceSpans> for Transformer {
-    fn transform(&self, res_spans: Vec<ResourceSpans>) -> AgentPayload {
+    fn transform(&self, messages: Vec<Message<ResourceSpans>>) -> AgentPayload {
         let mut payload = AgentPayload {
             host_name: self.hostname.clone(),
             env: self.environment.clone(),
@@ -46,9 +47,11 @@ impl TransformPayload<ResourceSpans> for Transformer {
             rare_sampler_enabled: false,
         };
 
-        for rs in res_spans {
-            let tp = self.transformer.apply(rs);
-            payload.tracer_payloads.push(tp);
+        for message in messages {
+            for rs in message.payload {
+                let tp = self.transformer.apply(rs);
+                payload.tracer_payloads.push(tp);
+            }
         }
 
         payload

@@ -12,6 +12,7 @@ mod transform_metrics;
 mod transform_traces;
 mod transformer;
 
+use super::http::finalizer::ResultFinalizer;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ConnectionConfig;
 use crate::exporters::clickhouse::exception::extract_exception;
@@ -28,6 +29,7 @@ use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
+use crate::topology::payload::Message;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use http::Request;
@@ -42,8 +44,6 @@ use std::{fmt, str};
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
-
-use super::http::finalizer::ResultFinalizer;
 
 // Buffer sizes from Clickhouse driver
 pub(crate) const BUFFER_SIZE: usize = 256 * 1024;
@@ -81,7 +81,7 @@ type SvcType<RespBody> = TowerRetry<
 pub type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
-            RecvStream<'a, Vec<Resource>>,
+            RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
             ClickhousePayload,
             RequestBuilder<Resource, Transformer>,
@@ -177,7 +177,7 @@ pub struct ClickhouseExporterBuilder {
 impl ClickhouseExporterBuilder {
     pub fn build_traces_exporter<'a>(
         &self,
-        rx: BoundedReceiver<Vec<ResourceSpans>>,
+        rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         self.build_exporter("traces", rx, flush_receiver)
@@ -185,7 +185,7 @@ impl ClickhouseExporterBuilder {
 
     pub fn build_logs_exporter<'a>(
         &self,
-        rx: BoundedReceiver<Vec<ResourceLogs>>,
+        rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
         self.build_exporter("logs", rx, flush_receiver)
@@ -193,7 +193,7 @@ impl ClickhouseExporterBuilder {
 
     pub fn build_metrics_exporter<'a>(
         &self,
-        rx: BoundedReceiver<Vec<ResourceMetrics>>,
+        rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
         self.build_exporter("metrics", rx, flush_receiver)
@@ -202,7 +202,7 @@ impl ClickhouseExporterBuilder {
     fn build_exporter<'a, Resource>(
         &self,
         telemetry_type: &'static str,
-        rx: BoundedReceiver<Vec<Resource>>,
+        rx: BoundedReceiver<Vec<Message<Resource>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, Resource>, BoxError>
     where
@@ -326,7 +326,7 @@ mod tests {
     extern crate utilities;
 
     use super::*;
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -346,7 +346,7 @@ mod tests {
             then.status(200).body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
         let exporter = new_traces_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -355,7 +355,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let traces = FakeOTLP::trace_service_request();
-        btx.send(traces.resource_spans).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -374,7 +379,7 @@ mod tests {
             then.status(200).body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceLogs>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceLogs>>>(100);
         let exporter = new_logs_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -383,7 +388,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let logs = FakeOTLP::logs_service_request();
-        btx.send(logs.resource_logs).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: logs.resource_logs,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -402,7 +412,7 @@ mod tests {
             then.status(200).body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let exporter = new_metrics_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -411,7 +421,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            payload: metrics.resource_metrics,
+            metadata: None,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -421,7 +436,7 @@ mod tests {
 
     fn new_traces_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceSpans>>,
+        brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
@@ -433,7 +448,7 @@ mod tests {
 
     fn new_logs_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceLogs>>,
+        brx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     ) -> ExporterType<'a, ResourceLogs> {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
@@ -445,7 +460,7 @@ mod tests {
 
     fn new_metrics_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceMetrics>>,
+        brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     ) -> ExporterType<'a, ResourceMetrics> {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())

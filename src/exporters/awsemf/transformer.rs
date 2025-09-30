@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::awsemf::AwsEmfExporterConfig;
+use super::event::Event;
+use super::DimensionFilter;
 use crate::exporters::awsemf::request_builder::TransformPayload;
+use crate::exporters::awsemf::AwsEmfExporterConfig;
+use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_NAMESPACE};
-use serde_json::Error as JsonError;
 use serde_json::json;
+use serde_json::Error as JsonError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{
     collections::HashMap,
@@ -13,9 +16,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
-
-use super::DimensionFilter;
-use super::event::Event;
 
 // Only value supported at the moment
 const STORAGE_RESOLUTION: usize = 60;
@@ -36,19 +36,24 @@ impl Transformer {
 }
 
 impl TransformPayload<ResourceMetrics> for Transformer {
-    fn transform(&self, resource_metrics: Vec<ResourceMetrics>) -> Result<Vec<Event>, ExportError> {
+    fn transform(
+        &self,
+        resource_metrics: Vec<Message<ResourceMetrics>>,
+    ) -> Result<Vec<Event>, ExportError> {
         let mut grouped_metrics: HashMap<GroupKey, GroupedMetric> = HashMap::new();
 
-        for rm in resource_metrics {
-            let resource_attrs = extract_resource_attributes(&rm);
+        for message in resource_metrics {
+            for rm in message.payload {
+                let resource_attrs = extract_resource_attributes(&rm);
 
-            for sm in rm.scope_metrics {
-                for metric in sm.metrics {
-                    self.metric_transformer.add_to_grouped_metrics(
-                        &metric,
-                        &resource_attrs,
-                        &mut grouped_metrics,
-                    )?;
+                for sm in rm.scope_metrics {
+                    for metric in sm.metrics {
+                        self.metric_transformer.add_to_grouped_metrics(
+                            &metric,
+                            &resource_attrs,
+                            &mut grouped_metrics,
+                        )?;
+                    }
                 }
             }
         }
@@ -912,8 +917,8 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
     use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value as NumberValue;
     use opentelemetry_proto::tonic::metrics::v1::{
-        Gauge, Histogram, HistogramDataPoint, Metric, NumberDataPoint, Sum, Summary,
-        SummaryDataPoint, metric,
+        metric, Gauge, Histogram, HistogramDataPoint, Metric, NumberDataPoint, Sum,
+        Summary, SummaryDataPoint,
     };
     use std::collections::HashMap;
 

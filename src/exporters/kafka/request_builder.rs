@@ -2,6 +2,7 @@
 
 use crate::exporters::kafka::config::SerializationFormat;
 use crate::exporters::kafka::errors::Result;
+use crate::topology;
 use crate::topology::payload::OTLPFrom;
 use bytes::Bytes;
 use prost::Message;
@@ -28,10 +29,17 @@ where
     }
 
     /// Build message from telemetry resources
-    pub fn build_message(&self, resources: &[Resource]) -> Result<Bytes> {
+    pub fn build_message(
+        &self,
+        resources: Vec<topology::payload::Message<Resource>>,
+    ) -> Result<Bytes> {
+        let d = resources
+            .into_iter()
+            .flat_map(|m| m.payload)
+            .collect::<Vec<Resource>>();
         let payload = match self.serialization_format {
-            SerializationFormat::Json => self.serialize_json(resources)?,
-            SerializationFormat::Protobuf => self.serialize_protobuf(resources)?,
+            SerializationFormat::Json => self.serialize_json(d.as_slice())?,
+            SerializationFormat::Protobuf => self.serialize_protobuf(d.as_slice())?,
         };
         Ok(payload)
     }
@@ -66,7 +74,10 @@ mod tests {
             KafkaRequestBuilder::new(SerializationFormat::Json);
         let spans: Vec<ResourceSpans> = vec![];
 
-        let result = builder.build_message(&spans);
+        let result = builder.build_message(vec![topology::payload::Message {
+            payload: spans,
+            metadata: None,
+        }]);
         assert!(result.is_ok());
 
         let payload = result.unwrap();

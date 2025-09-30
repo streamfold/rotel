@@ -93,8 +93,8 @@ pub fn config_builder(
 
 #[cfg(test)]
 mod tests {
-    use crate::bounded_channel::{BoundedSender, bounded};
-    use crate::exporters::otlp::{Endpoint, Protocol, config_builder};
+    use crate::bounded_channel::{bounded, BoundedSender};
+    use crate::exporters::otlp::{config_builder, Endpoint, Protocol};
     extern crate utilities;
     use utilities::otlp::FakeOTLP;
 
@@ -126,6 +126,7 @@ mod tests {
     use crate::exporters::otlp::config::OTLPExporterConfig;
     use crate::exporters::otlp::exporter::Exporter;
     use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
+    use crate::topology;
     use crate::topology::flush_control::FlushBroadcast;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
@@ -466,7 +467,7 @@ mod tests {
         });
 
         // Full client auth should succeed
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(1);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(1);
 
         let cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-cert.pem");
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
@@ -495,7 +496,10 @@ mod tests {
         let jh = spawn(async move { traces.start(shut_token).await });
         // Send a request for the server to process
         let res = trace_btx
-            .send(FakeOTLP::trace_service_request().resource_spans)
+            .send(vec![topology::payload::Message {
+                metadata: None,
+                payload: FakeOTLP::trace_service_request().resource_spans,
+            }])
             .await;
         assert!(&res.is_ok());
         flush_pipeline_tx.broadcast().await.unwrap();
@@ -541,7 +545,8 @@ mod tests {
         });
 
         // Full client auth should succeed
-        let (metrics_btx, metrics_brx) = bounded::<Vec<ResourceMetrics>>(1);
+        let (metrics_btx, metrics_brx) =
+            bounded::<Vec<topology::payload::Message<ResourceMetrics>>>(1);
         let cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-cert.pem");
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
@@ -569,7 +574,10 @@ mod tests {
         let jh = spawn(async move { metrics.start(shut_token).await });
         // Send a request for the server to process
         let res = metrics_btx
-            .send(FakeOTLP::metrics_service_request().resource_metrics)
+            .send(vec![topology::payload::Message {
+                metadata: None,
+                payload: FakeOTLP::metrics_service_request().resource_metrics,
+            }])
             .await;
         assert!(&res.is_ok());
 
@@ -616,7 +624,7 @@ mod tests {
         });
 
         // Full client auth should succeed
-        let (logs_btx, logs_brx) = bounded::<Vec<ResourceLogs>>(1);
+        let (logs_btx, logs_brx) = bounded::<Vec<topology::payload::Message<ResourceLogs>>>(1);
         let cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-cert.pem");
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
@@ -644,7 +652,10 @@ mod tests {
         let jh = spawn(async move { logs.start(shut_token).await });
         // Send a request for the server to process
         let res = logs_btx
-            .send(FakeOTLP::logs_service_request().resource_logs)
+            .send(vec![topology::payload::Message {
+                payload: FakeOTLP::logs_service_request().resource_logs,
+                metadata: None,
+            }])
             .await;
         assert!(&res.is_ok());
 
@@ -688,7 +699,7 @@ mod tests {
         spawn(async move { mock.serve(tcp_listener, shut_rx).await });
 
         // Full client auth should succeed
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(1);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(1);
 
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("localhost:{}", port)),
@@ -711,7 +722,10 @@ mod tests {
         let jh = spawn(async move { traces.start(shut_token).await });
         // Send a request for the server to process
         let res = trace_btx
-            .send(FakeOTLP::trace_service_request().resource_spans)
+            .send(vec![topology::payload::Message {
+                payload: FakeOTLP::trace_service_request().resource_spans,
+                metadata: None,
+            }])
             .await;
         assert!(&res.is_ok());
 
@@ -760,7 +774,7 @@ mod tests {
         });
 
         // Full client auth should succeed
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-cert.pem");
         let key_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/client-key.pem");
         let server_root_ca_cert_file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/tls/ca.pem");
@@ -779,7 +793,7 @@ mod tests {
         assert!(res.is_some());
 
         // Fails because CA is missing
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -792,7 +806,7 @@ mod tests {
         assert!(res.is_none());
         //
         // Fails because missing key
-        let (_trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (_trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -804,7 +818,7 @@ mod tests {
         assert!(otlp_res.is_err());
 
         // Fails because missing cert
-        let (_trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (_trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -816,7 +830,7 @@ mod tests {
         assert!(otlp_res.is_err());
 
         // Succeeds because no identity but provides a CA and a correct domain
-        let (_trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (_trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -827,7 +841,7 @@ mod tests {
         assert!(otlp_res.is_ok());
 
         // Fails because we have a CA but incorrect domain
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("https://[::1]:{}", port)),
             Protocol::Grpc,
@@ -863,7 +877,7 @@ mod tests {
                 .body(resp_buf);
         });
 
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
@@ -892,7 +906,7 @@ mod tests {
                 .body(resp_buf);
         });
 
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
@@ -930,7 +944,7 @@ mod tests {
                 .body(resp_buf);
         });
 
-        let (trace_btx, trace_brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
         let traces_config = trace_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
@@ -972,7 +986,7 @@ mod tests {
                 .body(resp_buf);
         });
 
-        let (metrics_btx, metrics_brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (metrics_btx, metrics_brx) = bounded::<Vec<topology::payload::Message<ResourceMetrics>>>(100);
         let metrics_config = metrics_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
@@ -1007,7 +1021,7 @@ mod tests {
                 .body(resp_buf);
         });
 
-        let (logs_btx, logs_brx) = bounded::<Vec<ResourceLogs>>(100);
+        let (logs_btx, logs_brx) = bounded::<Vec<topology::payload::Message<ResourceLogs>>>(100);
         let logs_config = logs_config_builder(
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
@@ -1031,7 +1045,7 @@ mod tests {
             AwsSigv4RequestSigner,
             ExportTraceServiceResponse,
         >,
-        btx: BoundedSender<Vec<ResourceSpans>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceSpans>>>,
         server_rx: &mut tokio::sync::mpsc::Receiver<()>,
     ) -> Option<()> {
         let cancel_token = CancellationToken::new();
@@ -1039,7 +1053,10 @@ mod tests {
         let exp_fut = async move { traces.start(shut_token).await };
         // Send a request for the server to process
         let res = btx
-            .send(FakeOTLP::trace_service_request().resource_spans)
+            .send(vec![topology::payload::Message {
+                payload: FakeOTLP::trace_service_request().resource_spans,
+                metadata: None,
+            }])
             .await;
         if let Err(e) = res {
             println!("error: {:?}", e);
@@ -1068,7 +1085,7 @@ mod tests {
             AwsSigv4RequestSigner,
             ExportTraceServiceResponse,
         >,
-        btx: BoundedSender<Vec<ResourceSpans>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceSpans>>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut payloads = Vec::with_capacity(how_many);
@@ -1086,7 +1103,7 @@ mod tests {
             AwsSigv4RequestSigner,
             ExportMetricsServiceResponse,
         >,
-        btx: BoundedSender<Vec<ResourceMetrics>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceMetrics>>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut payloads = Vec::with_capacity(how_many);
@@ -1104,7 +1121,7 @@ mod tests {
             AwsSigv4RequestSigner,
             ExportLogsServiceResponse,
         >,
-        btx: BoundedSender<Vec<ResourceLogs>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceLogs>>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut payloads = Vec::with_capacity(how_many);
@@ -1123,14 +1140,17 @@ mod tests {
             ExportTraceServiceResponse,
         >,
         payloads: Vec<Vec<ResourceSpans>>,
-        btx: BoundedSender<Vec<ResourceSpans>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceSpans>>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
         let exp_fut = async move { traces.start(shut_token).await };
         for payload in payloads {
             // Send a request for the server to process
-            let res = btx.send(payload).await;
+            let res = btx.send(vec![topology::payload::Message {
+                payload,
+                metadata: None,
+            }]).await;
             if let Err(e) = res {
                 cancel_token.cancel();
                 return Err(format!("error: {:?}", e).into());
@@ -1152,14 +1172,17 @@ mod tests {
             ExportMetricsServiceResponse,
         >,
         payloads: Vec<Vec<ResourceMetrics>>,
-        btx: BoundedSender<Vec<ResourceMetrics>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceMetrics>>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
         let exp_fut = async move { metrics.start(shut_token).await };
         for payload in payloads {
             // Send a request for the server to process
-            let res = btx.send(payload).await;
+            let res = btx.send(vec![topology::payload::Message {
+                payload,
+                metadata: None,
+            }]).await;
             if let Err(e) = res {
                 cancel_token.cancel();
                 return Err(format!("error: {:?}", e).into());
@@ -1181,14 +1204,17 @@ mod tests {
             ExportLogsServiceResponse,
         >,
         payloads: Vec<Vec<ResourceLogs>>,
-        btx: BoundedSender<Vec<ResourceLogs>>,
+        btx: BoundedSender<Vec<topology::payload::Message<ResourceLogs>>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let cancel_token = CancellationToken::new();
         let shut_token = cancel_token.clone();
         let exp_fut = async move { logs.start(shut_token).await };
         for payload in payloads {
             // Send a request for the server to process
-            let res = btx.send(payload).await;
+            let res = btx.send(vec![topology::payload::Message {
+                payload,
+                metadata: None,
+            }]).await;
             if let Err(e) = res {
                 cancel_token.cancel();
                 return Err(format!("error: {:?}", e).into());

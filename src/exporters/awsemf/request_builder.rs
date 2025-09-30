@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use super::event::Event;
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::awsemf::AwsEmfExporterConfig;
 use crate::exporters::awsemf::emf_request::AwsEmfRequestBuilder;
 use crate::exporters::awsemf::transformer::ExportError;
+use crate::exporters::awsemf::AwsEmfExporterConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
+use crate::topology::payload::Message;
 use bytes::Bytes;
 use http::Request;
 use http_body_util::Full;
 use std::marker::PhantomData;
 use tower::BoxError;
 
-use super::event::Event;
-
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<T>) -> Result<Vec<Event>, ExportError>;
+    fn transform(&self, input: Vec<Message<T>>) -> Result<Vec<Event>, ExportError>;
 }
 
 #[derive(Clone)]
@@ -64,7 +64,7 @@ where
 {
     type Output = Vec<Request<Full<Bytes>>>;
 
-    fn build(&self, input: Vec<Resource>) -> Result<Self::Output, BoxError> {
+    fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError> {
         let payload = self.transformer.transform(input);
         match payload {
             Ok(p) => self.api_req_builder.build(p),
