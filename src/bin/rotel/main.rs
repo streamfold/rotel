@@ -140,7 +140,7 @@ fn main() -> ExitCode {
             match run_agent(agent, port_map, &opt.environment) {
                 Ok(_) => {}
                 Err(e) => {
-                    error!(error = ?e, "Failed to run agent.");
+                    error!(error = e, "Failed to run agent.");
                     return ExitCode::from(1);
                 }
             }
