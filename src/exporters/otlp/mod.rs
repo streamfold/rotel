@@ -486,6 +486,7 @@ mod tests {
             traces_config,
             trace_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -560,6 +561,7 @@ mod tests {
             metrics_config,
             metrics_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -635,6 +637,7 @@ mod tests {
             logs_config,
             logs_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -702,6 +705,7 @@ mod tests {
             traces_config,
             trace_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -772,7 +776,7 @@ mod tests {
         .with_key_file(key_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
 
         let res = send_test_msg(traces, trace_btx, &mut server_rx).await;
         assert!(res.is_some());
@@ -786,7 +790,7 @@ mod tests {
         .with_cert_file(cert_file)
         .with_key_file(key_file);
 
-        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
         let res = send_test_msg(traces, trace_btx.clone(), &mut server_rx).await;
         assert!(res.is_none());
         //
@@ -799,7 +803,7 @@ mod tests {
         .with_cert_file(cert_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_err());
 
         // Fails because missing cert
@@ -811,7 +815,7 @@ mod tests {
         .with_key_file(key_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_err());
 
         // Succeeds because no identity but provides a CA and a correct domain
@@ -822,7 +826,7 @@ mod tests {
         )
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         // Fails because we have a CA but incorrect domain
@@ -833,7 +837,7 @@ mod tests {
         )
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_msg(otlp_res.unwrap(), trace_btx.clone(), &mut server_rx).await;
@@ -868,7 +872,7 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_traces_msgs_and_stop(otlp_res.unwrap(), trace_btx, 1).await;
@@ -900,7 +904,7 @@ mod tests {
         .with_initial_backoff(Duration::from_millis(5))
         .with_max_elapsed_time(Duration::from_millis(20));
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_traces_msgs_and_stop(otlp_res.unwrap(), trace_btx, 1).await;
@@ -938,7 +942,7 @@ mod tests {
         .with_max_elapsed_time(Duration::from_millis(20))
         .with_encode_drain_max_time(Duration::from_millis(10));
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let otlp_exp = otlp_res.unwrap();
@@ -977,7 +981,7 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None);
+        let otlp_res = otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_metrics_msg_and_stop(otlp_res.unwrap(), metrics_btx, 1).await;
@@ -1012,7 +1016,7 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_logs_exporter(logs_config, logs_brx, None);
+        let otlp_res = otlp::exporter::build_logs_exporter(logs_config, logs_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_logs_msg_and_stop(otlp_res.unwrap(), logs_btx, 1).await;
