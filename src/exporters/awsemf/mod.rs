@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::aws_api::creds::AwsCredsProvider;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::awsemf::request_builder::RequestBuilder;
 use crate::exporters::awsemf::response_interceptor::ResponseInterceptor;
 use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
-use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
@@ -177,7 +177,7 @@ impl AwsEmfExporterBuilder {
         self,
         rx: BoundedReceiver<Vec<ResourceMetrics>>,
         flush_receiver: Option<FlushReceiver>,
-        aws_config: AwsConfig,
+        aws_creds_provider: AwsCredsProvider,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let dim_filter = Arc::new(DimensionFilter::new(
@@ -191,23 +191,24 @@ impl AwsEmfExporterBuilder {
         let retry_layer = RetryPolicy::new(self.config.retry_config, Some(is_retryable_error));
         let retry_broadcast = retry_layer.retry_broadcast();
 
+        let region = self.config.region.to_string();
+
+        let signing_builder =
+            AwsSigningServiceBuilder::new("logs", region.as_str(), aws_creds_provider);
+
         // Create CloudWatch API instance
         let cloudwatch_api = Arc::new(Cloudwatch::new(
-            aws_config.clone(),
+            signing_builder.clone(),
+            region.clone(),
             self.config.custom_endpoint.clone(),
             self.config.log_group_name.clone(),
             self.config.log_stream_name.clone(),
             self.config.log_retention,
         )?);
 
-        let region = self.config.region.to_string();
-
         // Build service stack: retry -> response_interceptor -> timeout -> client
         let timeout_client = ServiceBuilder::new()
-            .layer_fn(|inner| {
-                AwsSigningServiceBuilder::new("logs", region.as_str(), aws_config.clone())
-                    .build(inner)
-            })
+            .layer_fn(|inner| signing_builder.clone().build(inner))
             .timeout(Duration::from_secs(5))
             .service(client);
 
@@ -240,7 +241,7 @@ impl AwsEmfExporterBuilder {
 mod tests {
     extern crate utilities;
 
-    use crate::aws_api::config::AwsConfig;
+    use crate::aws_api::creds::{AwsCreds, AwsCredsProvider};
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::awsemf::{AwsEmfExporterConfigBuilder, ExporterType};
     use crate::exporters::crypto_init_tests::init_crypto;
@@ -268,8 +269,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config, None);
+        let exporter = new_exporter(addr, brx, None);
 
         let cancellation_token = CancellationToken::new();
 
@@ -296,8 +296,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config, None);
+        let exporter = new_exporter(addr, brx, None);
 
         let cancellation_token = CancellationToken::new();
 
@@ -362,8 +361,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config, None);
+        let exporter = new_exporter(addr, brx, None);
 
         let cancellation_token = CancellationToken::new();
 
@@ -420,8 +418,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config, None);
+        let exporter = new_exporter(addr, brx, None);
 
         let cancellation_token = CancellationToken::new();
 
@@ -487,8 +484,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config, Some(3));
+        let exporter = new_exporter(addr, brx, Some(3));
 
         let cancellation_token = CancellationToken::new();
 
@@ -511,7 +507,6 @@ mod tests {
     fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceMetrics>>,
-        aws_config: AwsConfig,
         log_retention: Option<u16>,
     ) -> ExporterType<'a, ResourceMetrics> {
         let mut builder = AwsEmfExporterConfigBuilder::new()
@@ -529,6 +524,9 @@ mod tests {
             builder = builder.with_log_retention(*log_retention);
         }
 
-        builder.build().build(brx, None, aws_config).unwrap()
+        let creds_provider =
+            AwsCredsProvider::new_static(AwsCreds::new("".to_string(), "".to_string(), None));
+
+        builder.build().build(brx, None, creds_provider).unwrap()
     }
 }

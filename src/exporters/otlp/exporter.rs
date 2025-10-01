@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::aws_api::config::AwsConfig;
+use crate::aws_api::creds::AwsCredsProvider;
 /// Provides functionality for exporting telemetry data via OTLP protocol
 ///
 /// This module contains the core OTLP exporter implementation that handles:
@@ -72,6 +72,7 @@ pub fn build_traces_exporter(
     traces_config: OTLPExporterTracesConfig,
     trace_rx: BoundedReceiver<Vec<ResourceSpans>>,
     flush_receiver: Option<FlushReceiver>,
+    creds_provider: Option<AwsCredsProvider>,
 ) -> Result<
     Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -93,10 +94,10 @@ pub fn build_traces_exporter(
     let req_builder = request::build_traces(&traces_config, send_failed.clone())?;
 
     let aws_signing = match traces_config.authenticator {
-        Some(Authenticator::Sigv4auth) => {
-            let cfg = AwsConfig::from_env();
-            Some(get_signing_service_builder(&req_builder, cfg)?)
-        }
+        Some(Authenticator::Sigv4auth) => Some(get_signing_service_builder(
+            &req_builder,
+            creds_provider.expect("requires credentials provider"),
+        )?),
         None => None,
     };
 
@@ -142,6 +143,7 @@ pub fn build_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     flush_receiver: Option<FlushReceiver>,
+    creds_provider: Option<AwsCredsProvider>,
 ) -> Result<
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -164,6 +166,7 @@ pub fn build_metrics_exporter(
         metrics_config,
         metrics_rx,
         flush_receiver,
+        creds_provider,
     )
 }
 
@@ -179,6 +182,7 @@ pub fn build_logs_exporter(
     logs_config: OTLPExporterLogsConfig,
     logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
     flush_receiver: Option<FlushReceiver>,
+    creds_provider: Option<AwsCredsProvider>,
 ) -> Result<
     Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -200,10 +204,10 @@ pub fn build_logs_exporter(
     let req_builder = request::build_logs(&logs_config, send_failed.clone())?;
 
     let aws_signing = match logs_config.authenticator {
-        Some(Authenticator::Sigv4auth) => {
-            let cfg = AwsConfig::from_env();
-            Some(get_signing_service_builder(&req_builder, cfg)?)
-        }
+        Some(Authenticator::Sigv4auth) => Some(get_signing_service_builder(
+            &req_builder,
+            creds_provider.expect("requires credentials provider"),
+        )?),
         None => None,
     };
 
@@ -249,6 +253,7 @@ pub fn build_internal_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     flush_receiver: Option<FlushReceiver>,
+    creds_provider: Option<AwsCredsProvider>,
 ) -> Result<
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -261,6 +266,7 @@ pub fn build_internal_metrics_exporter(
         metrics_config,
         metrics_rx,
         flush_receiver,
+        creds_provider,
     )
 }
 
@@ -270,6 +276,7 @@ fn _build_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
     metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
     flush_receiver: Option<FlushReceiver>,
+    creds_provider: Option<AwsCredsProvider>,
 ) -> Result<
     Exporter<ResourceMetrics, ExportMetricsServiceRequest, ExportMetricsServiceResponse>,
     Box<dyn Error + Send + Sync>,
@@ -279,10 +286,10 @@ fn _build_metrics_exporter(
     let req_builder = request::build_metrics(&metrics_config, send_failed.clone())?;
 
     let aws_signing = match metrics_config.authenticator {
-        Some(Authenticator::Sigv4auth) => {
-            let cfg = AwsConfig::from_env();
-            Some(get_signing_service_builder(&req_builder, cfg)?)
-        }
+        Some(Authenticator::Sigv4auth) => Some(get_signing_service_builder(
+            &req_builder,
+            creds_provider.expect("requires credentials provider"),
+        )?),
         None => None,
     };
 
