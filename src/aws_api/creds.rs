@@ -55,7 +55,7 @@ pub enum AwsCredsError {
     #[error("No credentials provider configured")]
     NoProvider,
 
-    #[error("Unable to locate the AWS region")]
+    #[error("Unable to identify the AWS region, try setting AWS_DEFAULT_REGION")]
     NoRegion,
 
     #[error("Failed to provide credentials: {0}")]
