@@ -635,7 +635,7 @@ where
 
         match res {
             Ok(r) => match r {
-                HttpResponse::Http(parts, _) => match parts.status.as_u16() {
+                HttpResponse::Http(parts, _, _) => match parts.status.as_u16() {
                     200..=202 => return false,
                     _ => {
                         error!(
@@ -646,7 +646,7 @@ where
                         return true;
                     }
                 },
-                HttpResponse::Grpc(status, _) => {
+                HttpResponse::Grpc(status, _, _) => {
                     if status.code() == tonic::Code::Ok {
                         return false;
                     }

@@ -3,7 +3,7 @@
 use crate::exporters::datadog::request_builder::TransformPayload;
 use crate::exporters::datadog::transform::transformer::TraceTransformer;
 use crate::exporters::datadog::types::pb::AgentPayload;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 mod attributes;
@@ -35,7 +35,10 @@ impl Transformer {
 }
 
 impl TransformPayload<ResourceSpans> for Transformer {
-    fn transform(&self, messages: Vec<Message<ResourceSpans>>) -> AgentPayload {
+    fn transform(
+        &self,
+        messages: Vec<Message<ResourceSpans>>,
+    ) -> (AgentPayload, Option<Vec<MessageMetadata>>) {
         let mut payload = AgentPayload {
             host_name: self.hostname.clone(),
             env: self.environment.clone(),
@@ -47,13 +50,24 @@ impl TransformPayload<ResourceSpans> for Transformer {
             rare_sampler_enabled: false,
         };
 
-        for message in messages {
-            for rs in message.payload {
-                let tp = self.transformer.apply(rs);
-                payload.tracer_payloads.push(tp);
-            }
-        }
+        // Move metadata out of messages without cloning
+        let metadata: Vec<MessageMetadata> = messages
+            .into_iter()
+            .filter_map(|message| {
+                for rs in message.payload {
+                    let tp = self.transformer.apply(rs);
+                    payload.tracer_payloads.push(tp);
+                }
+                message.metadata
+            })
+            .collect();
 
-        payload
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+
+        (payload, metadata)
     }
 }

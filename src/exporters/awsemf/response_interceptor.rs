@@ -73,8 +73,8 @@ async fn process_response(
     response: &Response<AwsEmfResponse>,
 ) -> Result<(), BoxError> {
     let body = match response {
-        crate::exporters::http::response::Response::Http(_, Some(body)) => body,
-        crate::exporters::http::response::Response::Grpc(_, Some(body)) => body,
+        crate::exporters::http::response::Response::Http(_, Some(body), _) => body,
+        crate::exporters::http::response::Response::Grpc(_, Some(body), _) => body,
         _ => return Ok(()), // No body to process
     };
 

@@ -135,7 +135,7 @@ where
 
             match result {
                 Ok(resp) => match &resp {
-                    HttpResponse::Http(parts, _) => {
+                    HttpResponse::Http(parts, _, _) => {
                         if parts.status == StatusCode::OK {
                             sent.add(req_size as u64, &[]);
                         } else {
@@ -150,7 +150,7 @@ where
 
                         Ok(resp)
                     }
-                    HttpResponse::Grpc(status, _) => {
+                    HttpResponse::Grpc(status, _, _) => {
                         if status.code() != tonic::Code::Ok {
                             send_failed.add(
                                 req_size as u64,

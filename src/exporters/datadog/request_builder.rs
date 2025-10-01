@@ -2,17 +2,16 @@
 
 use crate::exporters::datadog::Region;
 use crate::exporters::datadog::api_request::ApiRequestBuilder;
+use crate::exporters::datadog::payload::DatadogPayload;
 use crate::exporters::datadog::types::pb::AgentPayload;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
-use crate::topology::payload::Message;
-use bytes::Bytes;
+use crate::topology::payload::{Message, MessageMetadata};
 use http::Request;
-use http_body_util::Full;
 use std::marker::PhantomData;
 use tower::BoxError;
 
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<Message<T>>) -> AgentPayload;
+    fn transform(&self, input: Vec<Message<T>>) -> (AgentPayload, Option<Vec<MessageMetadata>>);
 }
 
 // todo: identify the cost of recursively cloning these
@@ -51,16 +50,16 @@ where
     }
 }
 
-impl<Resource, Transform> BuildRequest<Resource, Full<Bytes>>
+impl<Resource, Transform> BuildRequest<Resource, DatadogPayload>
     for RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
-    type Output = Vec<Request<Full<Bytes>>>;
+    type Output = Vec<Request<DatadogPayload>>;
 
     fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError> {
-        let payload = self.transformer.transform(input);
+        let (payload, metadata) = self.transformer.transform(input);
 
-        self.api_req_builder.build(payload)
+        self.api_req_builder.build(payload, metadata)
     }
 }

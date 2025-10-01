@@ -82,7 +82,7 @@ impl<Resp> RetryPolicy<Resp> {
         // Fall back to the HTTP/GRPC status
         if let Ok(resp) = result {
             return match resp {
-                Response::Http(parts, _) => {
+                Response::Http(parts, _, _) => {
                     match parts.status.as_u16() {
                         // No need to retry success
                         200..=202 => false,
@@ -91,7 +91,7 @@ impl<Resp> RetryPolicy<Resp> {
                         _ => false,
                     }
                 }
-                Response::Grpc(status, _) => {
+                Response::Grpc(status, _, _) => {
                     matches!(
                         status.code(),
                         tonic::Code::Unavailable |     // Service temporarily unavailable

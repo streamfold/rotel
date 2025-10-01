@@ -3,6 +3,7 @@
 pub mod client;
 pub mod exporter;
 pub mod finalizer;
+pub mod metadata_extractor;
 pub mod request;
 pub mod request_builder_mapper;
 pub mod request_iter;

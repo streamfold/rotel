@@ -42,11 +42,11 @@ where
     fn finalize(&self, result: Result<Response<T>, Err>) -> Result<(), BoxError> {
         match result {
             Ok(r) => match r {
-                Response::Http(parts, body) => match parts.status.as_u16() {
+                Response::Http(parts, body, _metadata) => match parts.status.as_u16() {
                     200..=202 => Ok(()),
                     _ => Err(FinalizerError::HttpStatus(parts.status, body).into()),
                 },
-                Response::Grpc(status, body) => {
+                Response::Grpc(status, body, _metadata) => {
                     if status.code() == tonic::Code::Ok {
                         Ok(())
                     } else {

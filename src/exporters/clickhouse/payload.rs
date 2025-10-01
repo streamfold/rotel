@@ -1,6 +1,8 @@
 use crate::exporters::clickhouse::ch_error::Error;
 use crate::exporters::clickhouse::rowbinary::serialize_into;
 use crate::exporters::clickhouse::{BUFFER_SIZE, Compression, MIN_CHUNK_SIZE, compression};
+use crate::exporters::http::metadata_extractor::MetadataExtractor;
+use crate::topology::payload::MessageMetadata;
 use bytes::{Bytes, BytesMut};
 use hyper::body::{Body, Frame};
 use serde::Serialize;
@@ -115,6 +117,14 @@ impl Body for ClickhousePayload {
         inner.current += 1;
 
         Poll::Ready(Some(Ok(Frame::data(inner.chunks[curr].clone()))))
+    }
+}
+
+impl MetadataExtractor for ClickhousePayload {
+    fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
+        // ClickhousePayload doesn't currently support metadata
+        // This can be enhanced later when needed
+        None
     }
 }
 

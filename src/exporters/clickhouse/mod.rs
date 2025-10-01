@@ -304,7 +304,7 @@ where
     fn finalize(&self, result: Result<Response<ClickhouseResponse>, Err>) -> Result<(), BoxError> {
         match result {
             Ok(r) => match r {
-                Response::Http(parts, body) => {
+                Response::Http(parts, body, _) => {
                     match parts.status.as_u16() {
                         200..=202 => Ok(()),
                         404 => Err(format!("Received a 404 when exporting to Clickhouse, does the table exist? (type = {})", self.telemetry_type).into()),
@@ -314,7 +314,7 @@ where
                         }
                     }
                 },
-                Response::Grpc(_, _) => Err(format!("Clickhouse invalid response type").into()),
+                Response::Grpc(_, _, _) => Err(format!("Clickhouse invalid response type").into()),
             },
             Err(e) => Err(e.into())
         }

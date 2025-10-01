@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::datadog::payload::DatadogPayload;
 use crate::exporters::datadog::request_builder::RequestBuilder;
 use crate::exporters::datadog::transform::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
@@ -17,7 +18,6 @@ use crate::topology::payload::Message;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use http::Request;
-use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
@@ -27,26 +27,29 @@ use tower::{BoxError, ServiceBuilder};
 use super::http::finalizer::SuccessStatusFinalizer;
 
 mod api_request;
+mod payload;
 mod request_builder;
 mod transform;
 mod types;
 
-type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<Full<Bytes>, RespBody, DatadogTraceDecoder>>>;
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    Timeout<Client<DatadogPayload, RespBody, DatadogTraceDecoder>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
             RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
-            Full<Bytes>,
+            DatadogPayload,
             RequestBuilder<Resource, Transformer>,
         >,
-        Vec<Request<Full<Bytes>>>,
-        Full<Bytes>,
+        Vec<Request<DatadogPayload>>,
+        DatadogPayload,
     >,
     SvcType<String>,
-    Full<Bytes>,
+    DatadogPayload,
     SuccessStatusFinalizer,
 >;
 
