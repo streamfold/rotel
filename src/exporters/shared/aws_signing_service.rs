@@ -98,7 +98,7 @@ where
                     let creds = creds_provider.get_creds().await?;
 
                     let signed_req =
-                        signer.sign(parts.uri, parts.method, parts.headers, body_bytes, creds)?;
+                        signer.sign(parts.uri, parts.method, parts.headers, body_bytes, &creds)?;
 
                     inner.call(signed_req).await.map_err(Into::into)
                 }
@@ -112,7 +112,10 @@ mod tests {
     use crate::aws_api::creds::AwsCreds;
 
     use super::*;
-    use http::{header::{AUTHORIZATION, HOST}, Method, Response, StatusCode};
+    use http::{
+        Method, Response, StatusCode,
+        header::{AUTHORIZATION, HOST},
+    };
     use std::convert::Infallible;
     use tower::service_fn;
 
