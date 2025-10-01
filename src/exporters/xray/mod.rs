@@ -166,7 +166,7 @@ impl ResponseDecode<String> for XRayTraceDecoder {
 mod tests {
     extern crate utilities;
 
-    use crate::aws_api::config::AwsConfig;
+    use crate::aws_api::creds::{AwsCreds, AwsCredsProvider};
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
@@ -194,8 +194,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config);
+        let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -226,8 +225,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config);
+        let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -277,8 +275,7 @@ mod tests {
         let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
 
         // Use DefaultHTTPAcknowledger to test real acknowledgment flow
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config);
+        let exporter = new_exporter(addr, brx);
 
         // Start exporter
         let cancellation_token = CancellationToken::new();
@@ -321,8 +318,8 @@ mod tests {
     fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
-        config: AwsConfig,
     ) -> ExporterType<'a, ResourceSpans> {
+        let creds = AwsCreds::new("".to_string(), "".to_string(), None);
         XRayExporterConfigBuilder::new(Region::UsEast1, Some(addr))
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
@@ -330,7 +327,7 @@ mod tests {
                 max_elapsed_time: Duration::from_millis(50),
             })
             .build()
-            .build(brx, None, "production".to_string(), config)
+            .build(brx, None, "production".to_string(), AwsCredsProvider::from_static(creds))
             .unwrap()
     }
 }

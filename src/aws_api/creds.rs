@@ -45,6 +45,17 @@ impl AwsCreds {
     pub fn session_token(&self) -> &Option<String> {
         &self.session_token
     }
+
+    #[cfg(not(feature = "aws_iam"))]
+    fn from_env() -> Self {
+        Self {
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default(),
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default(),
+            session_token: std::env::var("AWS_SESSION_TOKEN")
+                .map(|s| Some(s))
+                .unwrap_or(None),
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -80,15 +91,13 @@ impl AwsCredsProvider {
 
     #[cfg(not(feature = "aws_iam"))]
     pub async fn new() -> Result<Self, AwsCredsError> {
-        use crate::aws_api::config::AwsConfig;
+        let creds = AwsCreds::from_env();
 
-        let cfg = AwsConfig::from_env();
-
-        Ok(AwsCredsProvider::Environ(cfg))
+        Ok(AwsCredsProvider::Static(creds))
     }
 
     // Mostly for testing
-    pub fn new_static(creds: AwsCreds) -> Self {
+    pub fn from_static(creds: AwsCreds) -> Self {
         AwsCredsProvider::Static(creds)
     }
 
@@ -102,8 +111,6 @@ impl AwsCredsProvider {
                     .provide_credentials()
                     .await
                     .map_err(|e| AwsCredsError::ProviderError(e.to_string()))?;
-
-                println!("got creds {:?}", credentials);
 
                 Ok(AwsCreds::new(
                     credentials.access_key_id().to_string(),
@@ -142,20 +149,4 @@ fn region_provider() -> impl ProvideRegion {
             .configure(&config)
             .build(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::aws_api::creds::AwsCredsProvider;
-
-    #[tokio::test]
-    async fn test_aws_creds() {
-        let provider = AwsCredsProvider::new().await.unwrap();
-
-        let creds = provider.get_creds().await.unwrap();
-
-        println!("creds: {:?}", creds.access_key_id());
-
-        assert!(false);
-    }
 }

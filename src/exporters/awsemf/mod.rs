@@ -633,7 +633,7 @@ mod tests {
         }
 
         let creds_provider =
-            AwsCredsProvider::new_static(AwsCreds::new("".to_string(), "".to_string(), None));
+            AwsCredsProvider::from_static(AwsCreds::new("".to_string(), "".to_string(), None));
 
         builder.build().build(brx, None, creds_provider).unwrap()
     }
