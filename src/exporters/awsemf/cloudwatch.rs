@@ -1,4 +1,3 @@
-use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::{ResponseDecode, build_hyper_client};
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
@@ -31,14 +30,15 @@ pub(crate) struct Cloudwatch {
 
 impl Cloudwatch {
     pub(crate) fn new(
-        aws_config: AwsConfig,
+        signing_builder: AwsSigningServiceBuilder,
+        region: String,
         endpoint: Option<String>,
         log_group: String,
         log_stream: String,
         log_retention: u16,
     ) -> Result<Self, BoxError> {
         let endpoint_url =
-            endpoint.unwrap_or_else(|| format!("https://logs.{}.amazonaws.com", aws_config.region));
+            endpoint.unwrap_or_else(|| format!("https://logs.{}.amazonaws.com", region));
 
         let endpoint: Uri = endpoint_url
             .parse()
@@ -50,9 +50,6 @@ impl Cloudwatch {
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
-
-        let signing_builder =
-            AwsSigningServiceBuilder::new("logs", &aws_config.region.clone(), aws_config);
 
         // Use the existing HTTP client builder
         let client = build_hyper_client(Config::default(), false)?;
@@ -280,23 +277,20 @@ impl Cloudwatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aws_api::config::AwsConfig;
     use crate::crypto::init_crypto_provider;
-
-    fn sample_aws_config() -> AwsConfig {
-        AwsConfig {
-            region: "us-east-1".to_string(),
-            aws_access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-            aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
-            aws_session_token: None,
-        }
-    }
 
     #[test]
     fn test_is_resource_not_found_error() {
         init_crypto_provider().expect("Failed to init crypto");
-        let config = sample_aws_config();
-        let cw = Cloudwatch::new(config, None, String::new(), String::new(), 0).unwrap();
+        let cw = Cloudwatch::new(
+            AwsSigningServiceBuilder::disabled(),
+            "us-east-1".to_string(),
+            None,
+            String::new(),
+            String::new(),
+            0,
+        )
+        .unwrap();
 
         let error: BoxError = "ResourceNotFoundException: Log group does not exist".into();
         assert!(cw.is_resource_not_found_error(&error));

@@ -443,7 +443,6 @@ mod tests {
 
     fn sample_config() -> AwsConfig {
         AwsConfig {
-            region: "us-east-1".to_string(),
             aws_access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
             aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
             aws_session_token: None,
@@ -452,7 +451,6 @@ mod tests {
 
     fn sample_config_with_session(session: &str) -> AwsConfig {
         AwsConfig {
-            region: "us-east-1".to_string(),
             aws_access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
             aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
             aws_session_token: Some(session.to_string()),

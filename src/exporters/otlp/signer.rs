@@ -1,4 +1,4 @@
-use crate::aws_api::config::AwsConfig;
+use crate::aws_api::creds::AwsCredsProvider;
 use crate::aws_api::host::parse_aws_hostname;
 use crate::exporters::otlp::request::RequestBuilder;
 use crate::exporters::shared::aws_signing_service::AwsSigningServiceBuilder;
@@ -7,7 +7,7 @@ use tower::BoxError;
 
 pub fn get_signing_service_builder<T: prost::Message>(
     req_builder: &RequestBuilder<T>,
-    aws_cfg: AwsConfig,
+    creds_provider: AwsCredsProvider,
 ) -> Result<AwsSigningServiceBuilder, BoxError> {
     let uri = req_builder.uri();
 
@@ -31,6 +31,6 @@ pub fn get_signing_service_builder<T: prost::Message>(
     Ok(AwsSigningServiceBuilder::new(
         &svc.service,
         &svc.region,
-        aws_cfg,
+        creds_provider,
     ))
 }

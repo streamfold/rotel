@@ -3959,6 +3959,7 @@ version = "0.0.1-alpha27"
 dependencies = [
  "arrow",
  "aws-config",
+ "aws-credential-types",
  "base64 0.22.1",
  "bstr",
  "bytes",

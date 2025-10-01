@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::aws_api::creds::AwsCredsProvider;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::http::acknowledger::DefaultHTTPAcknowledger;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
@@ -7,7 +8,6 @@ use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSignin
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 
-use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -112,7 +112,7 @@ impl XRayExporterBuilder {
         rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
         flush_receiver: Option<FlushReceiver>,
         environment: String,
-        aws_config: AwsConfig,
+        creds_provider: AwsCredsProvider,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let transformer = Transformer::new(environment);
@@ -124,13 +124,12 @@ impl XRayExporterBuilder {
         let retry_broadcast = retry_layer.retry_broadcast();
 
         let region = self.region.to_string();
+        let signing_builder =
+            AwsSigningServiceBuilder::new("xray", region.as_str(), creds_provider);
 
         let svc = ServiceBuilder::new()
             .retry(retry_layer)
-            .layer_fn(|inner| {
-                AwsSigningServiceBuilder::new("xray", region.as_str(), aws_config.clone())
-                    .build(inner)
-            })
+            .layer_fn(|inner| signing_builder.clone().build(inner))
             .timeout(Duration::from_secs(5))
             .service(client);
 

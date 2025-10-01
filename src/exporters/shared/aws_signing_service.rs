@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use crate::aws_api::config::AwsConfig;
+use crate::aws_api::creds::{AwsCreds, AwsCredsProvider};
 use bytes::Bytes;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -32,7 +32,7 @@ pub enum SigningConfig {
     Enabled {
         service: String,
         region: String,
-        config: AwsConfig,
+        creds_provider: AwsCredsProvider,
     },
     Disabled,
 }
@@ -43,12 +43,12 @@ pub struct AwsSigningServiceBuilder {
 }
 
 impl AwsSigningServiceBuilder {
-    pub fn new(service: &str, region: &str, config: AwsConfig) -> Self {
+    pub fn new(service: &str, region: &str, creds_provider: AwsCredsProvider) -> Self {
         Self {
             config: Arc::new(SigningConfig::Enabled {
                 service: service.to_string(),
                 region: region.to_string(),
-                config,
+                creds_provider,
             }),
         }
     }
@@ -79,7 +79,7 @@ impl<S> AwsSigningService<S> {
         body_bytes: Bytes,
         service: &str,
         region: &str,
-        config: &AwsConfig,
+        creds: AwsCreds,
     ) -> Result<Request<Full<Bytes>>, BoxError> {
         // AWS SigV4 signing logic (inlined from auth.rs for performance)
         let now = Utc::now();
@@ -102,7 +102,7 @@ impl<S> AwsSigningService<S> {
         }
 
         // Add session token if provided
-        if let Some(token) = &config.aws_session_token {
+        if let Some(token) = creds.session_token() {
             if !token.is_empty() {
                 headers.insert(
                     "X-Amz-Security-Token",
@@ -192,7 +192,7 @@ impl<S> AwsSigningService<S> {
 
         // Step 3: Calculate the signature
         let signature = {
-            let k_secret = format!("AWS4{}", config.aws_secret_access_key);
+            let k_secret = format!("AWS4{}", creds.secret_access_key());
 
             let k_date = Self::sign_hmac(k_secret.as_bytes(), date_stamp.as_bytes())?;
             // let k_date = {
@@ -238,7 +238,11 @@ impl<S> AwsSigningService<S> {
         // Step 4: Add authorization header
         let authorization_header = format!(
             "{} Credential={}/{}, SignedHeaders={}, Signature={}",
-            algorithm, config.aws_access_key_id, credential_scope, signed_headers_str, signature
+            algorithm,
+            creds.access_key_id(),
+            credential_scope,
+            signed_headers_str,
+            signature
         );
 
         headers.insert(
@@ -278,8 +282,7 @@ where
 {
     type Response = S::Response;
     type Error = BoxError;
-    type Future =
-        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
@@ -295,7 +298,7 @@ where
                 SigningConfig::Enabled {
                     service,
                     region,
-                    config,
+                    creds_provider,
                 } => {
                     let (parts, body) = req.into_parts();
 
@@ -306,6 +309,8 @@ where
                         }
                     };
 
+                    let creds = creds_provider.get_creds().await?;
+
                     let signed_req = Self::sign_request(
                         parts.uri,
                         parts.method,
@@ -313,7 +318,7 @@ where
                         body_bytes,
                         &service,
                         &region,
-                        &config,
+                        creds,
                     )?;
 
                     inner.call(signed_req).await.map_err(Into::into)
@@ -326,27 +331,32 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aws_api::config::AwsConfig;
     use http::{Method, Response, StatusCode};
     use std::convert::Infallible;
     use tower::service_fn;
 
-    fn test_config() -> AwsConfig {
-        AwsConfig::new(
-            "us-east-1".to_string(),
+    fn test_creds() -> AwsCreds {
+        AwsCreds::new(
             "AKIAIOSFODNN7EXAMPLE".to_string(),
             "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
             None,
         )
     }
 
-    fn test_config_with_session() -> AwsConfig {
-        AwsConfig::new(
-            "us-east-1".to_string(),
+    fn test_provider() -> AwsCredsProvider {
+        AwsCredsProvider::new_static(test_creds())
+    }
+
+    fn test_creds_with_session() -> AwsCreds {
+        AwsCreds::new(
             "AKIAIOSFODNN7EXAMPLE".to_string(),
             "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
             Some("SESSION_TOKEN_EXAMPLE".to_string()),
         )
+    }
+
+    fn test_provider_with_session() -> AwsCredsProvider {
+        AwsCredsProvider::new_static(test_creds_with_session())
     }
 
     #[tokio::test]
@@ -371,7 +381,7 @@ mod tests {
         });
 
         let mut signing_service =
-            AwsSigningServiceBuilder::new("s3", "us-east-1", test_config()).build(inner_service);
+            AwsSigningServiceBuilder::new("s3", "us-east-1", test_provider()).build(inner_service);
 
         let request = Request::builder()
             .uri("https://s3.amazonaws.com/bucket/key")
@@ -401,7 +411,7 @@ mod tests {
         });
 
         let mut signing_service =
-            AwsSigningServiceBuilder::new("s3", "us-east-1", test_config_with_session())
+            AwsSigningServiceBuilder::new("s3", "us-east-1", test_provider_with_session())
                 .build(inner_service);
 
         let request = Request::builder()
@@ -434,7 +444,7 @@ mod tests {
         });
 
         let mut signing_service =
-            AwsSigningServiceBuilder::new("s3", "us-east-1", test_config()).build(inner_service);
+            AwsSigningServiceBuilder::new("s3", "us-east-1", test_provider()).build(inner_service);
 
         let request = Request::builder()
             .uri("https://s3.amazonaws.com/bucket/key")
@@ -465,7 +475,7 @@ mod tests {
         });
 
         let mut signing_service =
-            AwsSigningServiceBuilder::new("s3", "us-east-1", test_config()).build(inner_service);
+            AwsSigningServiceBuilder::new("s3", "us-east-1", test_provider()).build(inner_service);
 
         let request = Request::builder()
             .uri("https://s3.amazonaws.com/bucket?prefix=test&delimiter=%2F")
@@ -491,7 +501,7 @@ mod tests {
             body_bytes,
             "s3",
             "us-east-1",
-            &test_config(),
+            test_creds(),
         )
         .unwrap();
 
@@ -527,7 +537,7 @@ mod tests {
             body_bytes,
             "s3",
             "us-east-1",
-            &test_config(),
+            test_creds(),
         )
         .unwrap();
 
@@ -561,7 +571,7 @@ mod tests {
             body_bytes,
             "s3",
             "us-east-1",
-            &test_config_with_session(),
+            test_creds_with_session(),
         )
         .unwrap();
 
@@ -590,7 +600,7 @@ mod tests {
             body_bytes,
             "s3",
             "us-east-1",
-            &test_config(),
+            test_creds(),
         )
         .unwrap();
 
@@ -629,7 +639,7 @@ mod tests {
             body_bytes,
             "s3",
             "us-east-1",
-            &test_config(),
+            test_creds(),
         )
         .unwrap();
 
@@ -654,7 +664,7 @@ mod tests {
             body_bytes,
             "s3",
             "us-east-1",
-            &test_config(),
+            test_creds(),
         )
         .unwrap();
 
@@ -680,7 +690,7 @@ mod tests {
             )
         });
 
-        let builder = AwsSigningServiceBuilder::new("s3", "us-east-1", test_config());
+        let builder = AwsSigningServiceBuilder::new("s3", "us-east-1", test_provider());
         let mut signing_service = builder.build(inner_service);
 
         let request = Request::builder()
@@ -770,7 +780,8 @@ mod tests {
             )
         });
 
-        let builder = AwsSigningServiceBuilder::new("s3", "us-east-1", test_config_with_session());
+        let builder =
+            AwsSigningServiceBuilder::new("s3", "us-east-1", test_provider_with_session());
         let mut signing_service = builder.build(inner_service);
 
         let request = Request::builder()
