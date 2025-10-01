@@ -21,6 +21,7 @@ use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::request::RequestBuilder;
 use crate::exporters::otlp::signer::get_signing_service_builder;
 use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
+use crate::exporters::shared::aws_signing_service::AwsSigningServiceBuilder;
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
@@ -97,11 +98,11 @@ pub fn build_traces_exporter(
     let req_builder = request::build_traces(&traces_config, send_failed.clone())?;
 
     let aws_signing = match traces_config.authenticator {
-        Some(Authenticator::Sigv4auth) => Some(get_signing_service_builder(
+        Some(Authenticator::Sigv4auth) => get_signing_service_builder(
             &req_builder,
             creds_provider.expect("requires credentials provider"),
-        )?),
-        None => None,
+        )?,
+        None => AwsSigningServiceBuilder::disabled(),
     };
 
     let client = OTLPClient::new(
@@ -207,11 +208,11 @@ pub fn build_logs_exporter(
     let req_builder = request::build_logs(&logs_config, send_failed.clone())?;
 
     let aws_signing = match logs_config.authenticator {
-        Some(Authenticator::Sigv4auth) => Some(get_signing_service_builder(
+        Some(Authenticator::Sigv4auth) => get_signing_service_builder(
             &req_builder,
             creds_provider.expect("requires credentials provider"),
-        )?),
-        None => None,
+        )?,
+        None => AwsSigningServiceBuilder::disabled(),
     };
 
     let client = OTLPClient::new(
@@ -289,11 +290,11 @@ fn _build_metrics_exporter(
     let req_builder = request::build_metrics(&metrics_config, send_failed.clone())?;
 
     let aws_signing = match metrics_config.authenticator {
-        Some(Authenticator::Sigv4auth) => Some(get_signing_service_builder(
+        Some(Authenticator::Sigv4auth) => get_signing_service_builder(
             &req_builder,
             creds_provider.expect("requires credentials provider"),
-        )?),
-        None => None,
+        )?,
+        None => AwsSigningServiceBuilder::disabled(),
     };
 
     let client = OTLPClient::new(
