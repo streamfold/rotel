@@ -104,13 +104,11 @@ where
 {
     /// The underlying unified HTTP client
     client: UnifiedClientType<T>,
-    /// PhantomData to handle generic type T
     _phantom: PhantomData<T>,
     send_failed: RotelCounter<u64>,
     sent: RotelCounter<u64>,
 }
 
-/// Implementation of Tower's Service trait for OTLPClient
 impl<T> Service<EncodedRequest> for OTLPClient<T>
 where
     T: prost::Message + Default + Clone + Send + Sync + 'static,
@@ -119,12 +117,10 @@ where
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    /// Checks if the service is ready to process requests
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
-    /// Processes the request and returns a Future containing the response
     fn call(&mut self, req: EncodedRequest) -> Self::Future {
         let mut client = self.client.clone();
         let send_failed = self.send_failed.clone();
@@ -184,26 +180,18 @@ where
         protocol: Protocol,
         sent: RotelCounter<u64>,
         send_failed: RotelCounter<u64>,
-        signing_builder: Option<AwsSigningServiceBuilder>,
+        signing_builder: AwsSigningServiceBuilder,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = match protocol {
             Protocol::Grpc => {
                 let decoder: GrpcDecoder<T> = GrpcDecoder::new(send_failed.clone());
                 let http_client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
-                // Wrap the HTTP client with signing service if provided, otherwise use disabled mode
-                let signing_service = signing_builder
-                    .unwrap_or_else(|| AwsSigningServiceBuilder::disabled())
-                    .build(http_client);
-                UnifiedClientType::Grpc(signing_service)
+                UnifiedClientType::Grpc(signing_builder.build(http_client))
             }
             Protocol::Http => {
                 let decoder: HttpDecoder<T> = HttpDecoder::new(send_failed.clone());
                 let http_client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
-                // Wrap the HTTP client with signing service if provided, otherwise use disabled mode
-                let signing_service = signing_builder
-                    .unwrap_or_else(|| AwsSigningServiceBuilder::disabled())
-                    .build(http_client);
-                UnifiedClientType::Http(signing_service)
+                UnifiedClientType::Http(signing_builder.build(http_client))
             }
         };
 
