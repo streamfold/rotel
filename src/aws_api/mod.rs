@@ -1,8 +1,8 @@
 pub mod arn;
 pub mod auth;
+pub mod creds;
 pub mod error;
 pub mod host;
-pub mod creds;
 
 pub const SECRETS_MANAGER_SERVICE: &str = "secretsmanager";
 pub const PARAM_STORE_SERVICE: &str = "ssm";

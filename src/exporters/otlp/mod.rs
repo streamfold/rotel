@@ -790,7 +790,8 @@ mod tests {
         .with_key_file(key_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
+        let traces =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
 
         let res = send_test_msg(traces, trace_btx, &mut server_rx).await;
         assert!(res.is_some());
@@ -804,7 +805,8 @@ mod tests {
         .with_cert_file(cert_file)
         .with_key_file(key_file);
 
-        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
+        let traces =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
         let res = send_test_msg(traces, trace_btx.clone(), &mut server_rx).await;
         assert!(res.is_none());
         //
@@ -999,7 +1001,8 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None, None);
+        let otlp_res =
+            otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_metrics_msg_and_stop(otlp_res.unwrap(), metrics_btx, 1).await;

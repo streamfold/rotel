@@ -50,7 +50,7 @@ where
         method: Method,
         mut headers_mut: HeaderMap,
         payload: Bytes,
-        creds: AwsCreds,
+        creds: &AwsCreds,
     ) -> Result<Request<Full<Bytes>>, Error> {
         let now = self.clock.now();
 
@@ -271,7 +271,9 @@ mod tests {
         let headers = HeaderMap::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, Bytes::new(), sample_creds()).unwrap();
+        let signed_request = signer
+            .sign(uri, method, headers, Bytes::new(), &sample_creds())
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -296,7 +298,9 @@ mod tests {
         let headers = HeaderMap::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, Bytes::new(), sample_creds()).unwrap();
+        let signed_request = signer
+            .sign(uri, method, headers, Bytes::new(), &sample_creds())
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -308,11 +312,7 @@ mod tests {
     #[test]
     fn test_sign_with_session_token() {
         // Arrange
-        let signer = AwsRequestSigner::new(
-            "s3",
-            "us-east-1",
-            SystemClock {},
-        );
+        let signer = AwsRequestSigner::new("s3", "us-east-1", SystemClock {});
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-object"
             .parse::<Uri>()
@@ -321,7 +321,15 @@ mod tests {
         let headers = HeaderMap::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, Bytes::new(), sample_creds_with_session("SESSION_TOKEN_EXAMPLE")).unwrap();
+        let signed_request = signer
+            .sign(
+                uri,
+                method,
+                headers,
+                Bytes::new(),
+                &sample_creds_with_session("SESSION_TOKEN_EXAMPLE"),
+            )
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -348,7 +356,7 @@ mod tests {
 
         // Act
         let signed_request = signer
-            .sign(uri, method, headers, Bytes::from(payload), sample_creds())
+            .sign(uri, method, headers, Bytes::from(payload), &sample_creds())
             .unwrap();
 
         // Assert
@@ -375,7 +383,9 @@ mod tests {
         headers.insert(HOST, "custom-host.com".parse().unwrap());
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, Bytes::new(), sample_creds()).unwrap();
+        let signed_request = signer
+            .sign(uri, method, headers, Bytes::new(), &sample_creds())
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);
@@ -387,8 +397,7 @@ mod tests {
         // Arrange - use a fixed time to generate a deterministic signature
         let fixed_time = Utc.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap();
 
-        let signer =
-            AwsRequestSigner::new("s3", "us-east-1", MockClock(fixed_time));
+        let signer = AwsRequestSigner::new("s3", "us-east-1", MockClock(fixed_time));
 
         let uri = "https://s3.amazonaws.com/test-bucket/test-key"
             .parse::<Uri>()
@@ -404,7 +413,7 @@ mod tests {
 
         // Act
         let signed_request = signer
-            .sign(uri, method, headers, Bytes::from(payload), sample_creds())
+            .sign(uri, method, headers, Bytes::from(payload), &sample_creds())
             .unwrap();
 
         // Assert
@@ -433,7 +442,9 @@ mod tests {
         let headers = HeaderMap::new();
 
         // Act
-        let signed_request = signer.sign(uri, method, headers, Bytes::new(), sample_creds()).unwrap();
+        let signed_request = signer
+            .sign(uri, method, headers, Bytes::new(), &sample_creds())
+            .unwrap();
 
         // Assert
         let headers = extract_headers(&signed_request);

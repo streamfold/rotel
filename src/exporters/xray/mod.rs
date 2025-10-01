@@ -327,7 +327,12 @@ mod tests {
                 max_elapsed_time: Duration::from_millis(50),
             })
             .build()
-            .build(brx, None, "production".to_string(), AwsCredsProvider::from_static(creds))
+            .build(
+                brx,
+                None,
+                "production".to_string(),
+                AwsCredsProvider::from_static(creds),
+            )
             .unwrap()
     }
 }

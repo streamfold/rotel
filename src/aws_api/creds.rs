@@ -47,7 +47,7 @@ impl AwsCreds {
     }
 
     #[cfg(not(feature = "aws_iam"))]
-    fn from_env() -> Self {
+    pub fn from_env() -> Self {
         Self {
             access_key_id: std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default(),
             secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default(),
@@ -118,13 +118,6 @@ impl AwsCredsProvider {
                     credentials.session_token().map(|s| s.to_string()),
                 ))
             }
-
-            #[cfg(not(feature = "aws_iam"))]
-            AwsCredsProvider::Environ(cfg) => Ok(AwsCreds::new(
-                cfg.aws_access_key_id.clone(),
-                cfg.secret_access_key.clone(),
-                cfg.session_token.clone(),
-            )),
 
             AwsCredsProvider::Static(creds) => Ok(creds.clone()),
         }
