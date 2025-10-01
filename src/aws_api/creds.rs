@@ -11,9 +11,6 @@ pub enum AwsCredsProvider {
     #[cfg(feature = "aws_iam")]
     Dynamic(SharedCredentialsProvider),
 
-    #[cfg(not(feature = "aws_iam"))]
-    Environ(AwsConfig),
-
     Static(AwsCreds),
 }
 
@@ -105,6 +102,8 @@ impl AwsCredsProvider {
                     .provide_credentials()
                     .await
                     .map_err(|e| AwsCredsError::ProviderError(e.to_string()))?;
+
+                println!("got creds {:?}", credentials);
 
                 Ok(AwsCreds::new(
                     credentials.access_key_id().to_string(),
