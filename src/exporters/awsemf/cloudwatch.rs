@@ -192,7 +192,7 @@ impl Cloudwatch {
 
         let unsigned_request = req_builder.body(Full::from(compressed_body))?;
 
-        // Create a signing service on-demand for this request
+        // Create a signing service on-demand for this request (this shouldn't be a hotpath, so should be fine)
         // Wrap the hyper client in a Tower service using service_fn
         let client = self.client.clone();
         let client_service = tower::service_fn(move |req: Request<Full<Bytes>>| {
