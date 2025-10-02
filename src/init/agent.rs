@@ -427,6 +427,11 @@ impl Agent {
                 );
 
             for (cfg, is_internal_metrics) in combined_metrics_configs {
+                // Skip internal metrics if not enabled
+                if is_internal_metrics && !config.enable_internal_telemetry {
+                    continue;
+                }
+
                 let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
                     bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
 
