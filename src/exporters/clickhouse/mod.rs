@@ -19,6 +19,7 @@ use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
+use crate::exporters::http::acknowledger::NoOpAcknowledger;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -92,6 +93,7 @@ pub type ExporterType<'a, Resource> = Exporter<
     SvcType<ClickhouseResponse>,
     ClickhousePayload,
     ClickhouseResultFinalizer,
+    NoOpAcknowledger,
 >;
 
 impl ClickhouseExporterConfigBuilder {
@@ -238,6 +240,7 @@ impl ClickhouseExporterBuilder {
             ClickhouseResultFinalizer {
                 telemetry_type: telemetry_type.to_string(),
             },
+            NoOpAcknowledger,
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),

@@ -7,6 +7,7 @@ use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::aws_api::config::AwsConfig;
+use crate::exporters::http::acknowledger::NoOpAcknowledger;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
@@ -61,6 +62,7 @@ type ExporterType<'a, Resource> = Exporter<
     SvcType<AwsEmfResponse>,
     Full<Bytes>,
     SuccessStatusFinalizer,
+    NoOpAcknowledger,
 >;
 
 #[derive(Clone)]
@@ -221,6 +223,7 @@ impl AwsEmfExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
+            NoOpAcknowledger,
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),

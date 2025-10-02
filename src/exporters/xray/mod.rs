@@ -6,6 +6,7 @@ use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 
 use crate::aws_api::config::AwsConfig;
+use crate::exporters::http::acknowledger::NoOpAcknowledger;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -49,6 +50,7 @@ type ExporterType<'a, Resource> = Exporter<
     SvcType<String>,
     Full<Bytes>,
     SuccessStatusFinalizer,
+    NoOpAcknowledger,
 >;
 
 pub struct XRayExporterConfigBuilder {
@@ -132,6 +134,7 @@ impl XRayExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
+            NoOpAcknowledger,
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),

@@ -24,6 +24,7 @@ use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
+use super::http::acknowledger::DefaultAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 
 mod api_request;
@@ -51,6 +52,7 @@ type ExporterType<'a, Resource> = Exporter<
     SvcType<String>,
     DatadogPayload,
     SuccessStatusFinalizer,
+    DefaultAcknowledger,
 >;
 
 #[derive(Copy, Clone)]
@@ -178,6 +180,7 @@ impl DatadogExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
+            DefaultAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -214,6 +217,76 @@ mod tests {
     use tokio_test::{assert_err, assert_ok};
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Set up mock endpoint that returns success
+        let _success_mock = server.mock(|when, then| {
+            when.method(POST).path("/api/v0.2/traces");
+            then.status(200)
+                .header("content-type", "application/x-protobuf")
+                .body("ok");
+        });
+
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+        let exporter = new_exporter(addr, brx);
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded::<crate::topology::payload::KafkaAcknowledgement>(10);
+
+        // Create fake traces with Kafka metadata for acknowledgment
+        let traces = FakeOTLP::trace_service_request();
+        let kafka_metadata = crate::topology::payload::KafkaMetadata {
+            offset: 12345,
+            partition: 2,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        };
+
+        let message = Message {
+            metadata: Some(crate::topology::payload::MessageMetadata::Kafka(
+                kafka_metadata.clone(),
+            )),
+            payload: traces.resource_spans,
+        };
+
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+
+        // Start the exporter
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send the message with metadata
+        btx.send(vec![message]).await.unwrap();
+        drop(btx); // Close the sender to allow exporter to finish
+
+        // Wait for the acknowledgment
+        let ack_result = tokio::time::timeout(Duration::from_secs(5), ack_rx.next()).await;
+
+        assert_ok!(&ack_result, "Should receive acknowledgment within timeout");
+
+        let ack = ack_result.unwrap().unwrap();
+        match ack {
+            crate::topology::payload::KafkaAcknowledgement::Ack(kafka_ack) => {
+                assert_eq!(kafka_ack.offset, 12345);
+                assert_eq!(kafka_ack.partition, 2);
+                assert_eq!(kafka_ack.topic_id, 1);
+            }
+            crate::topology::payload::KafkaAcknowledgement::Nack(_) => {
+                panic!("Expected Ack but got Nack");
+            }
+        }
+
+        // Clean up - cancel the exporter
+        cancellation_token.cancel();
+        let exporter_result = exporter_handle.await;
+        assert_ok!(exporter_result);
+    }
 
     #[tokio::test]
     async fn success_and_retry() {

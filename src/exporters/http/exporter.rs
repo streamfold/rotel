@@ -1,3 +1,5 @@
+use super::acknowledger::Acknowledger;
+use super::response::Response;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt, poll};
@@ -30,11 +32,12 @@ struct Meta {
     telemetry_type: String,
 }
 
-pub struct Exporter<InStr, Svc, Payload, Finalizer> {
+pub struct Exporter<InStr, Svc, Payload, Finalizer, Ack> {
     meta: Meta,
     input: Pin<Box<InStr>>,
     svc: Svc,
     result_finalizer: Finalizer,
+    acknowledger: Ack,
     flush_receiver: Option<FlushReceiver>,
     retry_broadcast: BroadcastSender<bool>,
     encode_drain_max_time: Duration,
@@ -43,13 +46,14 @@ pub struct Exporter<InStr, Svc, Payload, Finalizer> {
     _phantom: PhantomData<Payload>,
 }
 
-impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer> {
+impl<InStr, Svc, Payload, Finalizer, Ack> Exporter<InStr, Svc, Payload, Finalizer, Ack> {
     pub fn new(
         exporter_name: &'static str,
         telemetry_type: &'static str,
         input: InStr,
         svc: Svc,
         result_finalizer: Finalizer,
+        acknowledger: Ack,
         flush_receiver: Option<FlushReceiver>,
         retry_broadcast: BroadcastSender<bool>,
         encode_drain_max_time: Duration,
@@ -69,6 +73,7 @@ impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer> {
             input: Box::pin(input),
             svc,
             result_finalizer,
+            acknowledger,
             flush_receiver,
             retry_broadcast,
             encode_drain_max_time,
@@ -79,18 +84,14 @@ impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer> {
     }
 }
 
-impl<InStr, Svc, Payload, Finalizer> Exporter<InStr, Svc, Payload, Finalizer>
+impl<InStr, Svc, Payload, Finalizer, Ack, T> Exporter<InStr, Svc, Payload, Finalizer, Ack>
 where
     InStr: Stream<Item = Result<Request<Payload>, BoxError>>,
-    Svc: Service<Request<Payload>>,
+    Svc: Service<Request<Payload>, Response = Response<T>>,
     <Svc as Service<Request<Payload>>>::Error: Debug,
-    <Svc as Service<Request<Payload>>>::Response: Debug,
-    Finalizer: ResultFinalizer<
-        Result<
-            <Svc as Service<Request<Payload>>>::Response,
-            <Svc as Service<Request<Payload>>>::Error,
-        >,
-    >,
+    T: Debug + Send + Sync,
+    Finalizer: ResultFinalizer<Result<Response<T>, <Svc as Service<Request<Payload>>>::Error>>,
+    Ack: Acknowledger<T>,
     Payload: Clone,
 {
     pub async fn start(mut self, token: CancellationToken) -> Result<(), BoxError> {
@@ -105,12 +106,31 @@ where
                 biased;
 
                 Some(resp) = export_futures.next() => {
-                  match self.result_finalizer.finalize(resp) {
-                        Err(e) => {
-                            error!(error = ?e, ?meta, "Exporting failed, dropping data.")
+                    match resp {
+                        Ok(response) => {
+                            // First, run the acknowledger with a reference (no cloning)
+                            self.acknowledger.acknowledge(&response).await;
+
+                            // Then finalize, giving ownership to the finalizer
+                            match self.result_finalizer.finalize(Ok(response)) {
+                                Err(e) => {
+                                    error!(error = ?e, ?meta, "Finalization failed after acknowledgment.")
+                                },
+                                Ok(rs) => {
+                                    debug!(rs = ?rs, futures_size = export_futures.len(), ?meta, "Exporter sent response");
+                                }
+                            }
                         },
-                        Ok(rs) => {
-                            debug!(rs = ?rs, futures_size = export_futures.len(), ?meta, "Exporter sent response");
+                        Err(e) => {
+                            // On error, just pass to finalizer (no acknowledgment)
+                            match self.result_finalizer.finalize(Err(e)) {
+                                Err(e) => {
+                                    error!(error = ?e, ?meta, "Exporting failed, dropping data.")
+                                },
+                                Ok(rs) => {
+                                    debug!(rs = ?rs, futures_size = export_futures.len(), ?meta, "Exporter handled error");
+                                }
+                            }
                         }
                     }
                 },
@@ -252,13 +272,30 @@ where
                         break;
                     }
                     Some(r) => {
-                        if let Err(e) = self.result_finalizer.finalize(r) {
-                            error!(meta = ?self.meta,
-                                error = ?e,
-                                "Error from exporter endpoint."
-                            );
+                        match r {
+                            Ok(response) => {
+                                // First, acknowledge with a reference
+                                self.acknowledger.acknowledge(&response).await;
 
-                            drain_errors += 1;
+                                // Then finalize, giving ownership
+                                if let Err(e) = self.result_finalizer.finalize(Ok(response)) {
+                                    error!(meta = ?self.meta,
+                                        error = ?e,
+                                        "Finalization failed after acknowledgment during drain."
+                                    );
+                                    drain_errors += 1;
+                                }
+                            }
+                            Err(e) => {
+                                // On error, just finalize (no acknowledgment)
+                                if let Err(e) = self.result_finalizer.finalize(Err(e)) {
+                                    error!(meta = ?self.meta,
+                                        error = ?e,
+                                        "Error from exporter endpoint during drain."
+                                    );
+                                    drain_errors += 1;
+                                }
+                            }
                         }
                     }
                 },
