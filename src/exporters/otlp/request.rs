@@ -266,33 +266,23 @@ impl<T: prost::Message> RequestBuilder<T> {
             .map_err(|e| format!("failed to build request: {}", e).into())
     }
 
-    /// Creates a request from encoded bytes.
+    /// Creates an HTTP request from raw bytes.
+    ///
+    /// Constructs a POST request with the configured URI and default headers,
+    /// using the provided bytes as the request body.
     ///
     /// # Arguments
-    /// * `body` - The encoded request body
-    /// * `uri` - The URI for the request
-    /// * `header_map` - Headers to include in the request
+    /// * `body` - The raw bytes to use as the request body
     ///
     /// # Returns
-    /// * `Result<Request<Full<Bytes>>, BoxError>`
+    /// * `Result<Request<Full<Bytes>>, BoxError>` - The constructed HTTP request or an error
     fn request_from_bytes(&self, body: Bytes) -> Result<Request<Full<Bytes>>, BoxError> {
-        self.unsigned_request_from_bytes(
-            body,
-            self.config.uri.clone(),
-            &self.config.default_headers,
-        )
-    }
-
-    fn unsigned_request_from_bytes(
-        &self,
-        body: Bytes,
-        uri: String,
-        header_map: &HeaderMap,
-    ) -> Result<Request<Full<Bytes>>, BoxError> {
-        let mut builder = hyper::Request::builder().method(Method::POST).uri(uri);
+        let mut builder = hyper::Request::builder()
+            .method(Method::POST)
+            .uri(&self.config.uri);
 
         let hdrs = builder.headers_mut().unwrap();
-        for (k, v) in header_map {
+        for (k, v) in &self.config.default_headers {
             hdrs.insert(k, v.clone());
         }
 
