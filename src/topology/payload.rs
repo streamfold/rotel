@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::bounded_channel::BoundedSender;
+use crate::bounded_channel::{BoundedSender, SendError};
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -57,6 +57,35 @@ impl PartialEq for KafkaMetadata {
     }
 }
 
+// TODO: consider whether we want a generic reason or enum.
+pub trait Ack {
+    #[allow(async_fn_in_trait)]
+    async fn ack(&mut self) -> Result<(), SendError>;
+    fn nack(&mut self);
+}
+
+impl Ack for MessageMetadata {
+    async fn ack(&mut self) -> Result<(), SendError> {
+        match self {
+            MessageMetadata::Kafka(km) => {
+                if let Some(ack_chan) = &km.ack_chan {
+                    ack_chan
+                        .send(KafkaAcknowledgement::Ack(KafkaAck {
+                            offset: km.offset,
+                            partition: km.partition,
+                            topic_id: km.topic_id,
+                        }))
+                        .await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn nack(&mut self) {
+        todo!()
+    }
+}
 pub enum KafkaAcknowledgement {
     Ack(KafkaAck),
     Nack(KafkaNack),
