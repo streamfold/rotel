@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn test_export_traces_empty() {
         // Ensure exporter can handle empty slice (writes []).
-        let exporter = JsonExporter::new();
+        let exporter = JsonExporter::default();
         let dir = tempdir().unwrap();
         let path = dir.path().join("traces.json");
         let traces: Vec<ResourceSpans> = Vec::new();
