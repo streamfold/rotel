@@ -15,15 +15,12 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
-            cross: false
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
-            cross: false
           - target: aarch64-apple-darwin
             runner: macos-latest
             os: macos
-            cross: false
     steps:
       - uses: actions/checkout@v4
       - name: update apt cache on linux
@@ -41,19 +38,16 @@ jobs:
         with:
           target: ${{ matrix.target }}
           rustflags: ""
-      - name: install cross
-        if: matrix.cross == true
-        run: |
-          cargo install cross
-          echo "CARGO_BIN=cross" >> $GITHUB_ENV
-      - name: set CARGO bin
-        if: matrix.cross == false
-        run: |
-          echo "CARGO_BIN=cargo" >> $GITHUB_ENV
       - name: build
-        run: $CARGO_BIN build --release --locked --target ${{ matrix.target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --locked --target ${{ matrix.target }}
       - name: build clickhouse-ddl
-        run: $CARGO_BIN build --release --locked --target ${{ matrix.target }} --bin clickhouse-ddl
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --locked --target ${{ matrix.target }} --bin clickhouse-ddl
       - name: upload build
         uses: actions/upload-artifact@v4
         with:
