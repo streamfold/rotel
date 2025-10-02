@@ -140,7 +140,7 @@ fn main() -> ExitCode {
             match run_agent(agent, port_map, &opt.environment) {
                 Ok(_) => {}
                 Err(e) => {
-                    error!(error = ?e, "Failed to run agent.");
+                    error!(error = e, "Failed to run agent.");
                     return ExitCode::from(1);
                 }
             }
@@ -224,7 +224,8 @@ fn setup_logging(log_format: &LogFormatArg) -> Result<LoggerGuard, BoxError> {
         .with_default_directive(LevelFilter::INFO.into())
         .from_env()?
         .add_directive("opentelemetry=warn".parse()?)
-        .add_directive("opentelemetry_sdk=warn".parse()?);
+        .add_directive("opentelemetry_sdk=warn".parse()?)
+        .add_directive("aws_config=warn".parse()?);
 
     if *log_format == LogFormatArg::Json {
         let app_name = format!("{}-{}", env!("CARGO_PKG_NAME"), get_version());

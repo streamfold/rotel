@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
-use crate::aws_api::config::AwsConfig;
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::bufread::GzEncoder;
@@ -21,7 +19,6 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 
 #[derive(Clone)]
 pub struct AwsEmfRequestBuilder {
-    signer: AwsRequestSigner<SystemClock>,
     base_headers: HeaderMap,
     uri: Uri,
     log_group_name: String,
@@ -31,7 +28,6 @@ pub struct AwsEmfRequestBuilder {
 impl AwsEmfRequestBuilder {
     pub fn new(
         endpoint: String,
-        config: AwsConfig,
         log_group_name: String,
         log_stream_name: String,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -53,13 +49,9 @@ impl AwsEmfRequestBuilder {
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
 
-        let signer =
-            AwsRequestSigner::new("logs", config.region.clone().as_str(), config, SystemClock);
-
         let s = Self {
             uri,
             base_headers,
-            signer,
             log_group_name,
             log_stream_name,
         };
@@ -106,14 +98,18 @@ impl AwsEmfRequestBuilder {
 
             let body = Bytes::from(gz_vec);
 
-            let signed_request = self.signer.sign(
-                self.uri.clone(),
-                Method::POST,
-                self.base_headers.clone(),
-                body,
-            );
+            let mut req_builder = Request::builder()
+                .uri(self.uri.clone())
+                .method(Method::POST);
 
-            let r = match signed_request {
+            let builder_headers = req_builder.headers_mut().unwrap();
+            for (k, v) in self.base_headers.iter() {
+                builder_headers.insert(k, v.clone());
+            }
+
+            let req = req_builder.body(Full::from(body));
+
+            let r = match req {
                 Ok(r) => r,
                 Err(e) => return Err(Box::new(e)),
             };

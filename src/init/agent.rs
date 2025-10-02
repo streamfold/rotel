@@ -1,12 +1,11 @@
-use crate::aws_api::config::AwsConfig;
+use crate::aws_api::creds::AwsCredsProvider;
 use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
-use crate::exporters::otlp;
-use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
+use crate::exporters::otlp::{self, Authenticator};
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Receiver};
 use crate::init::batch::{
@@ -287,10 +286,15 @@ impl Agent {
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
+                        let creds_provider = match exp_config.authenticator {
+                            Some(Authenticator::Sigv4auth) => Some(AwsCredsProvider::new().await?),
+                            _ => None,
+                        };
                         let traces = otlp::exporter::build_traces_exporter(
                             exp_config,
                             trace_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                            creds_provider,
                         )?;
 
                         start_otlp_exporter(
@@ -344,13 +348,13 @@ impl Agent {
                         });
                     }
                     ExporterConfig::Xray(cfg_builder) => {
-                        let config = AwsConfig::from_env();
+                        let creds_provider = AwsCredsProvider::new().await?;
                         let builder = cfg_builder.build();
                         let exp = builder.build(
                             trace_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
                             "production".to_string(),
-                            config,
+                            creds_provider,
                         )?;
 
                         let token = exporters_cancel.clone();
@@ -449,16 +453,23 @@ impl Agent {
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
+                        let creds_provider = match exp_config.authenticator {
+                            Some(Authenticator::Sigv4auth) => Some(AwsCredsProvider::new().await?),
+                            _ => None,
+                        };
+
                         let metrics = match is_internal_metrics {
                             true => otlp::exporter::build_internal_metrics_exporter(
                                 exp_config.clone(),
                                 metrics_pipeline_out_rx,
                                 self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                                creds_provider,
                             )?,
                             false => otlp::exporter::build_metrics_exporter(
                                 exp_config.clone(),
                                 metrics_pipeline_out_rx,
                                 self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                                creds_provider,
                             )?,
                         };
 
@@ -533,12 +544,12 @@ impl Agent {
                         });
                     }
                     ExporterConfig::Awsemf(cfg_builder) => {
-                        let config = AwsConfig::from_env();
+                        let creds_provider = AwsCredsProvider::new().await?;
                         let builder = cfg_builder.build();
                         let exp = builder.build(
                             metrics_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                            config,
+                            creds_provider,
                         )?;
 
                         let token = exporters_cancel.clone();
@@ -570,10 +581,16 @@ impl Agent {
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
+                        let creds_provider = match exp_config.authenticator {
+                            Some(Authenticator::Sigv4auth) => Some(AwsCredsProvider::new().await?),
+                            _ => None,
+                        };
+
                         let logs = otlp::exporter::build_logs_exporter(
                             exp_config,
                             logs_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                            creds_provider,
                         )?;
 
                         start_otlp_exporter(
@@ -963,7 +980,7 @@ impl Agent {
 fn start_otlp_exporter<Resource, Request, Response>(
     exporters_task_set: &mut JoinSet<Result<(), Box<dyn Error + Send + Sync>>>,
     telemetry_type: &'static str,
-    exporter: otlp::exporter::Exporter<Resource, Request, AwsSigv4RequestSigner, Response>,
+    exporter: otlp::exporter::Exporter<Resource, Request, Response>,
     cancel_token: CancellationToken,
 ) where
     Request: prost::Message + topology::payload::OTLPFrom<Vec<Resource>> + Clone,

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::aws_api::creds::AwsCredsProvider;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
+use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSigningServiceBuilder};
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 
-use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -31,8 +32,10 @@ mod request_builder;
 mod transformer;
 mod xray_request;
 
-type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<Full<Bytes>, RespBody, XRayTraceDecoder>>>;
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    AwsSigningService<Timeout<Client<Full<Bytes>, RespBody, XRayTraceDecoder>>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
@@ -102,23 +105,24 @@ impl XRayExporterBuilder {
         rx: BoundedReceiver<Vec<ResourceSpans>>,
         flush_receiver: Option<FlushReceiver>,
         environment: String,
-        config: AwsConfig,
+        creds_provider: AwsCredsProvider,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let transformer = Transformer::new(environment);
 
-        let req_builder = RequestBuilder::new(
-            transformer,
-            config,
-            self.region,
-            self.custom_endpoint.clone(),
-        )?;
+        let req_builder =
+            RequestBuilder::new(transformer, self.region, self.custom_endpoint.clone())?;
 
         let retry_layer = RetryPolicy::new(self.retry_config, None);
         let retry_broadcast = retry_layer.retry_broadcast();
 
+        let region = self.region.to_string();
+        let signing_builder =
+            AwsSigningServiceBuilder::new("xray", region.as_str(), creds_provider);
+
         let svc = ServiceBuilder::new()
             .retry(retry_layer)
+            .layer_fn(|inner| signing_builder.clone().build(inner))
             .timeout(Duration::from_secs(5))
             .service(client);
 
@@ -154,7 +158,7 @@ impl ResponseDecode<String> for XRayTraceDecoder {
 mod tests {
     extern crate utilities;
 
-    use crate::aws_api::config::AwsConfig;
+    use crate::aws_api::creds::{AwsCreds, AwsCredsProvider};
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
@@ -181,8 +185,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config);
+        let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -208,8 +211,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config);
+        let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
 
@@ -228,8 +230,8 @@ mod tests {
     fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<ResourceSpans>>,
-        config: AwsConfig,
     ) -> ExporterType<'a, ResourceSpans> {
+        let creds = AwsCreds::new("".to_string(), "".to_string(), None);
         XRayExporterConfigBuilder::new(Region::UsEast1, Some(addr))
             .with_retry_config(RetryConfig {
                 initial_backoff: Duration::from_millis(10),
@@ -237,7 +239,12 @@ mod tests {
                 max_elapsed_time: Duration::from_millis(50),
             })
             .build()
-            .build(brx, None, "production".to_string(), config)
+            .build(
+                brx,
+                None,
+                "production".to_string(),
+                AwsCredsProvider::from_static(creds),
+            )
             .unwrap()
     }
 }
