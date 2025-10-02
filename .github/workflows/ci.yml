@@ -16,15 +16,12 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
-            cross: false
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
-            cross: false
           - target: aarch64-apple-darwin
             runner: macos-latest
             os: macos
-            cross: false
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -42,20 +39,17 @@ jobs:
         with:
           target: ${{ matrix.target }}
           rustflags: ""
-      - name: install cross
-        if: matrix.cross == true
-        run: |
-          cargo install cross
-          echo "CARGO_BIN=cross" >> $GITHUB_ENV
-      - name: set CARGO bin
-        if: matrix.cross == false
-        run: |
-          echo "CARGO_BIN=cargo" >> $GITHUB_ENV
-      - name: run test
-        run: |
-          $CARGO_BIN test --target ${{ matrix.target }} --verbose
+      - uses: taiki-e/install-action@nextest
+      - name: run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --target ${{ matrix.target }} --verbose
       - name: run test processor-sdk
-        run: $CARGO_BIN test --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
 
   # Check formatting with rustfmt
   formatting:
