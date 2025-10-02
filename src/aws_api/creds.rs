@@ -1,9 +1,8 @@
 #[cfg(feature = "aws_iam")]
-use aws_config::Region as AwsRegion;
-#[cfg(feature = "aws_iam")]
-use aws_config::meta::region::ProvideRegion;
-#[cfg(feature = "aws_iam")]
-use aws_credential_types::provider::SharedCredentialsProvider;
+use {
+    aws_config::Region as AwsRegion, aws_config::meta::region::ProvideRegion,
+    aws_credential_types::provider::SharedCredentialsProvider,
+};
 
 use thiserror::Error;
 
@@ -71,13 +70,15 @@ pub enum AwsCredsError {
 }
 
 impl AwsCredsProvider {
+    //
+    // The implementation of new() switches based on the feature flag "aws_iam"
+    //
+
     #[cfg(feature = "aws_iam")]
     pub async fn new() -> Result<Self, AwsCredsError> {
-        use aws_config::BehaviorVersion;
-
         let region = resolve_region().await.ok_or(AwsCredsError::NoRegion)?;
 
-        let cfg = aws_config::defaults(BehaviorVersion::v2025_08_07())
+        let cfg = aws_config::defaults(aws_config::BehaviorVersion::v2025_08_07())
             .region(region)
             .load()
             .await;
@@ -123,7 +124,7 @@ impl AwsCredsProvider {
         }
     }
 }
-// From Vector: resolve region early so that we can fail fast
+// Concept from Vector: resolve region early so that we can fail fast
 #[cfg(feature = "aws_iam")]
 async fn resolve_region() -> Option<AwsRegion> {
     region_provider().region().await
