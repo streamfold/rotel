@@ -4,7 +4,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::kafka::errors::{KafkaExportError, Result};
 use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
-use crate::topology::payload::{Message, OTLPFrom};
+use crate::topology::payload::{Ack, Message, MessageMetadata, OTLPFrom};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures_util::stream::FuturesOrdered;
@@ -33,14 +33,44 @@ const MAX_CONCURRENT_SENDS: usize = 1000;
 
 #[rustfmt::skip]
 type EncodingFuture = Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
-#[rustfmt::skip]
-type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<Delivery, (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
 
 /// Encoded Kafka message ready to be sent
 #[derive(Debug)]
 struct EncodedMessage {
     key: String,
     payload: Bytes,
+    metadata: Option<Vec<MessageMetadata>>,
+}
+
+/// Wrapper for send future that includes metadata for acknowledgment
+type SendFutureWithMetadata = Pin<
+    Box<
+        dyn Future<
+                Output = (
+                    std::result::Result<
+                        Delivery,
+                        (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage),
+                    >,
+                    Option<Vec<MessageMetadata>>,
+                ),
+            > + Send,
+    >,
+>;
+
+/// Kafka-specific acknowledger that acknowledges messages on successful send
+#[derive(Default, Clone)]
+pub struct KafkaAcknowledger;
+
+impl KafkaAcknowledger {
+    pub async fn acknowledge_metadata(&self, metadata: Option<Vec<MessageMetadata>>) {
+        if let Some(mut metadata_vec) = metadata {
+            for metadata in metadata_vec.iter_mut() {
+                if let Err(e) = metadata.ack().await {
+                    tracing::warn!("Failed to acknowledge Kafka message: {:?}", e);
+                }
+            }
+        }
+    }
 }
 
 /// Trait for telemetry resources that can be exported to Kafka
@@ -60,7 +90,7 @@ pub trait KafkaExportable:
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
         data: Vec<Message<Self>>,
-    ) -> Result<(String, Bytes)>;
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)>;
 
     /// Get the telemetry type name
     fn telemetry_type() -> &'static str;
@@ -218,11 +248,23 @@ impl KafkaExportable for ResourceSpans {
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         _config: &KafkaExporterConfig,
         spans: Vec<Message<Self>>,
-    ) -> Result<(String, Bytes)> {
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)> {
         // Use empty message key and send all spans together
         let key = String::new();
+
+        // Extract metadata from all messages
+        let metadata: Vec<MessageMetadata> = spans
+            .iter()
+            .filter_map(|message| message.metadata.clone())
+            .collect();
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+
         let payload = builder.build_message(spans)?;
-        Ok((key, payload))
+        Ok((key, payload, metadata))
     }
 
     fn telemetry_type() -> &'static str {
@@ -251,7 +293,7 @@ impl KafkaExportable for ResourceMetrics {
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
         metrics: Vec<Message<Self>>,
-    ) -> Result<(String, Bytes)> {
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)> {
         let key = if !config.partition_metrics_by_resource_attributes {
             // Default: empty message key
             String::new()
@@ -261,8 +303,20 @@ impl KafkaExportable for ResourceMetrics {
             let hash = extract_resource_attributes_hash_from_metrics(metrics.as_slice());
             hash.map_or(String::new(), hex::encode)
         };
+
+        // Extract metadata from all messages
+        let metadata: Vec<MessageMetadata> = metrics
+            .iter()
+            .filter_map(|message| message.metadata.clone())
+            .collect();
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+
         let payload = builder.build_message(metrics)?;
-        Ok((key, payload))
+        Ok((key, payload, metadata))
     }
 
     fn telemetry_type() -> &'static str {
@@ -308,7 +362,7 @@ impl KafkaExportable for ResourceLogs {
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
         logs: Vec<Message<Self>>,
-    ) -> Result<(String, Bytes)> {
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)> {
         let key = if !config.partition_logs_by_resource_attributes {
             // Default: empty message key
             String::new()
@@ -318,8 +372,20 @@ impl KafkaExportable for ResourceLogs {
             let hash = extract_resource_attributes_hash_from_logs(logs.as_slice());
             hash.map_or(String::new(), hex::encode)
         };
+
+        // Extract metadata from all messages
+        let metadata: Vec<MessageMetadata> = logs
+            .iter()
+            .filter_map(|message| message.metadata.clone())
+            .collect();
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+
         let payload = builder.build_message(logs)?;
-        Ok((key, payload))
+        Ok((key, payload, metadata))
     }
 
     fn telemetry_type() -> &'static str {
@@ -362,8 +428,9 @@ where
     request_builder: KafkaRequestBuilder<Resource, Resource::Request>,
     rx: BoundedReceiver<Vec<Message<Resource>>>,
     topic: String,
+    acknowledger: KafkaAcknowledger,
     encoding_futures: FuturesOrdered<EncodingFuture>,
-    send_futures: FuturesUnordered<SendFuture>,
+    send_futures: FuturesUnordered<SendFutureWithMetadata>,
 }
 
 impl<Resource> Debug for KafkaExporter<Resource>
@@ -403,6 +470,7 @@ where
             request_builder,
             rx,
             topic,
+            acknowledger: KafkaAcknowledger::default(),
             encoding_futures: FuturesOrdered::new(),
             send_futures: FuturesUnordered::new(),
         })
@@ -421,16 +489,19 @@ where
                 biased;
 
                 // Process completed sends
-                Some(send_result) = self.send_futures.next() => {
+                Some((send_result, metadata)) = self.send_futures.next() => {
                     match send_result {
                         Ok(d) => {
                             debug!(
                                 "{} sent successfully to partition {} at offset {}",
                                 telemetry_type, d.partition, d.offset
                             );
+                            // Acknowledge successful send
+                            self.acknowledger.acknowledge_metadata(metadata).await;
                         }
                         Err((e, _)) => {
                             error!("Failed to send {}: {}", telemetry_type, e);
+                            // Don't acknowledge on failure - messages remain unacknowledged
                         }
                     }
                 }
@@ -442,13 +513,15 @@ where
                             let topic = self.topic.clone();
                             let key = encoded_msg.key;
                             let payload = encoded_msg.payload;
+                            let metadata = encoded_msg.metadata;
                             let producer = self.producer.clone();
                             let timeout = Duration::from_millis(self.config.request_timeout_ms as u64);
                             let send_future = async move {
                                 let record = FutureRecord::to(&topic)
                                     .key(&key)
                                     .payload(payload.as_ref());
-                                producer.send(record, timeout).await
+                                let result = producer.send(record, timeout).await;
+                                (result, metadata)
                             };
                             self.send_futures.push(Box::pin(send_future));
                         }
@@ -481,9 +554,10 @@ where
                                 let config = self.config.clone();
                                 let encoding_future = tokio::task::spawn_blocking(move || {
                                     Resource::build_kafka_message(&req_builder, &config, single_payload)
-                                        .map(|(key, payload)| EncodedMessage {
+                                        .map(|(key, payload, metadata)| EncodedMessage {
                                             key,
                                             payload,
+                                            metadata,
                                         })
                                 });
                                 self.encoding_futures.push_back(Box::pin(encoding_future));
@@ -528,12 +602,14 @@ where
                         let producer = self.producer.clone();
                         let timeout = self.config.request_timeout_ms as u64;
 
+                        let metadata = encoded_msg.metadata;
                         let send_future = async move {
                             let record =
                                 FutureRecord::to(&topic).key(&key).payload(payload.as_ref());
-                            producer
+                            let result = producer
                                 .send(record, Timeout::After(Duration::from_millis(timeout)))
-                                .await
+                                .await;
+                            (result, metadata)
                         };
 
                         self.send_futures.push(Box::pin(send_future));
@@ -553,16 +629,19 @@ where
 
         // Then drain all send futures
         while !self.send_futures.is_empty() {
-            if let Some(result) = self.send_futures.next().await {
+            if let Some((result, metadata)) = self.send_futures.next().await {
                 match result {
                     Ok(d) => {
                         debug!(
                             "{} sent successfully to partition {} at offset {} during drain",
                             telemetry_type, d.partition, d.offset
                         );
+                        // Acknowledge successful send during drain
+                        self.acknowledger.acknowledge_metadata(metadata).await;
                     }
                     Err((e, _)) => {
                         error!("Failed to send {} during drain: {}", telemetry_type, e);
+                        // Don't acknowledge on failure - messages remain unacknowledged
                     }
                 }
             }

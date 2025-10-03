@@ -1,6 +1,6 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::file::{Result, TypedFileExporter};
-use crate::topology::payload::Message;
+use crate::topology::payload::{Ack, Message, MessageMetadata};
 use chrono::Utc;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -30,11 +30,24 @@ where
             result = receiver.next() => {
                 match result {
                     Some(messages) => {
-                        // Process incoming telemetry data
+                        // Process incoming telemetry data and collect metadata for acknowledgment
+                        let mut metadata_to_ack = Vec::new();
+
                         for message in messages {
+                            if let Some(metadata) = message.metadata {
+                                metadata_to_ack.push(metadata);
+                            }
+
                             for resource in &message.payload {
                                 let mut converted_data = exporter.convert(resource)?;
                                 buffer.append(&mut converted_data);
+                            }
+                        }
+
+                        // If we successfully processed the messages, acknowledge them immediately
+                        for metadata in metadata_to_ack {
+                            if let Err(e) = metadata.ack().await {
+                                tracing::warn!("Failed to acknowledge file message: {:?}", e);
                             }
                         }
                     }

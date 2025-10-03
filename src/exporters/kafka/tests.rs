@@ -497,7 +497,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should always be empty
     }
 
@@ -565,7 +565,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when disabled
     }
 
@@ -602,7 +602,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert!(!key.to_string().is_empty()); // Should have a hash key when enabled
     }
 
@@ -634,7 +634,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when no attributes
     }
 
@@ -760,7 +760,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when disabled
     }
 
@@ -797,7 +797,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert!(!key.to_string().is_empty()); // Should have a hash key when enabled
     }
 
@@ -829,7 +829,7 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when no attributes
     }
 
