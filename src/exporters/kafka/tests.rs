@@ -686,11 +686,12 @@ mod tests {
         );
 
         // Should be split into 2 groups (one for each ResourceLogs)
-        assert_eq!(split_result[0][0].payload.len(), 2);
+        assert_eq!(split_result.len(), 2);
 
-        // Each group should contain exactly one ResourceLogs
-        for group in split_result {
+        // Each group should contain exactly one Message with one ResourceLogs
+        for group in &split_result {
             assert_eq!(group.len(), 1);
+            assert_eq!(group[0].payload.len(), 1);
         }
     }
 
@@ -880,11 +881,12 @@ mod tests {
         );
 
         // Should be split into 2 groups (one for each ResourceMetrics)
-        assert_eq!(split_result[0][0].payload.len(), 2);
+        assert_eq!(split_result.len(), 2);
 
-        // Each group should contain exactly one ResourceMetrics
-        for group in split_result {
+        // Each group should contain exactly one Message with one ResourceMetrics
+        for group in &split_result {
             assert_eq!(group.len(), 1);
+            assert_eq!(group[0].payload.len(), 1);
         }
     }
 

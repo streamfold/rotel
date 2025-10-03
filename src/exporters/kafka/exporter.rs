@@ -276,9 +276,19 @@ impl KafkaExportable for ResourceMetrics {
         data: Vec<Message<Self>>,
     ) -> Vec<Vec<Message<Self>>> {
         if config.partition_metrics_by_resource_attributes {
-            // Split each ResourceMetrics into separate groups, one per ResourceMetrics
-            // This matches the Go implementation where each resourceMetrics becomes a separate message
-            data.into_iter().map(|metric| vec![metric]).collect()
+            // We need to split WITHIN each Message's payload
+            // Each individual ResourceMetrics should become its own Message
+            let mut result = Vec::new();
+            for message in data {
+                // Split the payload Vec<ResourceMetrics> into individual messages
+                for resource_metric in message.payload {
+                    result.push(vec![Message {
+                        metadata: message.metadata.clone(),
+                        payload: vec![resource_metric],
+                    }]);
+                }
+            }
+            result
         } else {
             vec![data]
         }
@@ -323,9 +333,19 @@ impl KafkaExportable for ResourceLogs {
         data: Vec<Message<Self>>,
     ) -> Vec<Vec<Message<Self>>> {
         if config.partition_logs_by_resource_attributes {
-            // Split each ResourceLogs into separate groups, one per ResourceLogs
-            // This matches the Go implementation where each resourceLogs becomes a separate message
-            data.into_iter().map(|log| vec![log]).collect()
+            // We need to split WITHIN each Message's payload
+            // Each individual ResourceLogs should become its own Message
+            let mut result = Vec::new();
+            for message in data {
+                // Split the payload Vec<ResourceLogs> into individual messages
+                for resource_log in message.payload {
+                    result.push(vec![Message {
+                        metadata: message.metadata.clone(),
+                        payload: vec![resource_log],
+                    }]);
+                }
+            }
+            result
         } else {
             vec![data]
         }
@@ -454,7 +474,7 @@ where
                             // Split data for partitioning if needed (e.g., metrics and logs by resource attributes, traces by trace_id coming later)
                             let payloads_to_process = Resource::split_for_partitioning(&self.config, payload);
                             // N.B. The splitting can result in more payloads to encode than MAX_CONCURRENT_ENCODERS,
-                            // however that is OK for the moment. We're going to allow encoding to "burst" once inside the guard at the top of the select,
+                            // however, that is OK for the moment. We're going to allow encoding to "burst" once inside the guard at the top of the select,
                             // i.e. if self.encoding_futures.len() < MAX_CONCURRENT_ENCODERS
                             for single_payload in payloads_to_process {
                                 let req_builder = self.request_builder.clone();
