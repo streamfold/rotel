@@ -3,7 +3,7 @@
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::request_mapper::{RequestMapper, RequestType};
 use crate::exporters::http::request_builder_mapper::BuildRequest;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadata};
 use http::Request;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -13,7 +13,10 @@ pub trait TransformPayload<T> {
     fn transform(
         &self,
         input: Vec<Message<T>>,
-    ) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError>;
+    ) -> (
+        Result<Vec<(RequestType, ClickhousePayload)>, BoxError>,
+        Option<Vec<MessageMetadata>>,
+    );
 }
 
 // todo: identify the cost of recursively cloning these
@@ -51,7 +54,8 @@ where
     type Output = Vec<Request<ClickhousePayload>>;
 
     fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError> {
-        let payloads = self.transformer.transform(input)?;
+        let (payload_result, _metadata) = self.transformer.transform(input);
+        let payloads = payload_result?;
 
         let requests: Result<Self::Output, BoxError> = payloads
             .into_iter()

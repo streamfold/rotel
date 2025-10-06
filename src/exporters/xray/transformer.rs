@@ -3,7 +3,7 @@
 // Notice: Portions of this code are taken from https://github.com/CosmicMind/opentelemetry-xray
 /* Copyright © 2025, CosmicMind, Inc. */
 use crate::exporters::xray::request_builder::TransformPayload;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadata};
 use bstr::FromUtf8Error;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
@@ -30,19 +30,50 @@ impl Transformer {
 }
 
 impl TransformPayload<ResourceSpans> for Transformer {
-    fn transform(&self, messages: Vec<Message<ResourceSpans>>) -> Result<Vec<Value>, ExportError> {
+    fn transform(
+        &self,
+        messages: Vec<Message<ResourceSpans>>,
+    ) -> (
+        Result<Vec<Value>, ExportError>,
+        Option<Vec<MessageMetadata>>,
+    ) {
         let mut payload = Vec::new();
+        let mut all_metadata = Vec::new();
+
         for message in messages {
+            // Extract metadata from message
+            if let Some(metadata) = message.metadata {
+                all_metadata.push(metadata);
+            }
+
+            // Process the spans
             for rs in message.payload {
                 for ss in rs.scope_spans {
                     for span in ss.spans {
-                        let v = self.transformer.apply(span)?;
-                        payload.push(v)
+                        match self.transformer.apply(span) {
+                            Ok(v) => payload.push(v),
+                            Err(e) => {
+                                return (
+                                    Err(e),
+                                    if all_metadata.is_empty() {
+                                        None
+                                    } else {
+                                        Some(all_metadata)
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
         }
-        Ok(payload)
+
+        let metadata = if all_metadata.is_empty() {
+            None
+        } else {
+            Some(all_metadata)
+        };
+        (Ok(payload), metadata)
     }
 }
 

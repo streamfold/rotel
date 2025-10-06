@@ -4,7 +4,7 @@ use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
 use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_attribute};
 use crate::otlp::cvattr;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
@@ -14,13 +14,21 @@ impl TransformPayload<ResourceSpans> for Transformer {
     fn transform(
         &self,
         input: Vec<Message<ResourceSpans>>,
-    ) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError> {
+    ) -> (
+        Result<Vec<(RequestType, ClickhousePayload)>, BoxError>,
+        Option<Vec<MessageMetadata>>,
+    ) {
         let mut trace_id_ar = [0u8; 32];
         let mut span_id_ar = [0u8; 16];
         let mut parent_id_ar = [0u8; 16];
 
         let mut payload_builder = ClickhousePayloadBuilder::new(self.compression.clone());
+        let mut all_metadata = Vec::new();
+
         for message in input {
+            if let Some(metadata) = message.metadata {
+                all_metadata.push(metadata);
+            }
             for rs in message.payload {
                 let res_attrs = rs.resource.unwrap_or_default().attributes;
                 let res_attrs = cvattr::convert_into(res_attrs);
@@ -117,15 +125,26 @@ impl TransformPayload<ResourceSpans> for Transformer {
                             links_attributes,
                         };
 
-                        payload_builder.add_row(&row)?;
+                        match payload_builder.add_row(&row) {
+                            Ok(_) => {}
+                            Err(e) => return (Err(e), None),
+                        }
                     }
                 }
             }
         }
 
-        payload_builder
-            .finish()
-            .map(|payload| vec![(RequestType::Traces, payload)])
+        let metadata = if all_metadata.is_empty() {
+            None
+        } else {
+            Some(all_metadata)
+        };
+
+        let result = payload_builder
+            .finish_with_metadata(metadata)
+            .map(|payload| vec![(RequestType::Traces, payload)]);
+
+        (result, None)
     }
 }
 
@@ -219,7 +238,7 @@ mod tests {
         };
 
         // This should not panic and should handle the negative duration gracefully
-        let result = transformer.transform(vec![Message {
+        let (result, _metadata) = transformer.transform(vec![Message {
             payload: vec![resource_spans],
             metadata: None,
         }]);

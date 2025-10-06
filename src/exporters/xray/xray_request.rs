@@ -2,10 +2,11 @@
 
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
+use crate::exporters::xray::payload::XRayPayload;
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
-use http_body_util::Full;
 use serde_json::{Value, json};
 use std::error::Error;
 use tower::BoxError;
@@ -54,7 +55,11 @@ impl XRayRequestBuilder {
         Ok(s)
     }
 
-    pub fn build(&self, payload: Vec<Value>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
+    pub fn build(
+        &self,
+        payload: Vec<Value>,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<Vec<Request<XRayPayload>>, BoxError> {
         // Convert each segment Value to a string
         let segment_strings: Vec<String> = payload
             .into_iter()
@@ -67,14 +72,32 @@ impl XRayRequestBuilder {
         .to_string();
         let data = Bytes::from(data.into_bytes());
 
+        // NOTE: Unfortunately we need to clone the data here for AWS request signing.
+        // The AWS signer requires raw Bytes to calculate the signature, but we need to
+        // wrap the data in XRayPayload to carry metadata through the HTTP pipeline.
+        //
+        // Future improvement: Consider modifying the AWS signer to accept a generic Body
+        // that can provide both the raw bytes for signing AND carry additional metadata,
+        // eliminating the need for this clone.
         let signed_request = self.signer.sign(
             self.uri.clone(),
             Method::POST,
             self.base_headers.clone(),
-            data,
+            data.clone(), // TODO: Eliminate this clone by updating signer interface
         );
+
         match signed_request {
-            Ok(r) => Ok(vec![r]),
+            Ok(request) => {
+                // Extract parts from the signed request and rebuild with XRayPayload
+                let (parts, _) = request.into_parts();
+
+                // Move the data (already cloned above) into XRayPayload with metadata
+                let xray_payload = XRayPayload::new(data, metadata);
+
+                // Rebuild request with XRayPayload
+                let new_request = Request::from_parts(parts, xray_payload);
+                Ok(vec![new_request])
+            }
             Err(e) => Err(Box::new(e)),
         }
     }

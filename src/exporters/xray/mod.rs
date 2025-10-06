@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::http::acknowledger::DefaultAcknowledger;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
+use crate::exporters::xray::payload::XRayPayload;
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::http::acknowledger::NoOpAcknowledger;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -19,7 +20,6 @@ use crate::topology::payload::Message;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use http::Request;
-use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
@@ -29,28 +29,29 @@ use tower::{BoxError, ServiceBuilder};
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
+mod payload;
 mod request_builder;
 mod transformer;
 mod xray_request;
 
 type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<Full<Bytes>, RespBody, XRayTraceDecoder>>>;
+    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<XRayPayload, RespBody, XRayTraceDecoder>>>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
             RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
-            Full<Bytes>,
+            XRayPayload,
             RequestBuilder<Resource, Transformer>,
         >,
-        Vec<Request<Full<Bytes>>>,
-        Full<Bytes>,
+        Vec<Request<XRayPayload>>,
+        XRayPayload,
     >,
     SvcType<String>,
-    Full<Bytes>,
+    XRayPayload,
     SuccessStatusFinalizer,
-    NoOpAcknowledger,
+    DefaultAcknowledger,
 >;
 
 pub struct XRayExporterConfigBuilder {
@@ -134,7 +135,7 @@ impl XRayExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
-            NoOpAcknowledger,
+            DefaultAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -163,7 +164,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::xray::{ExporterType, Region, XRayExporterConfigBuilder};
-    use crate::topology::payload::Message;
+    use crate::topology::payload::{Message, MessageMetadata};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
@@ -238,6 +239,76 @@ mod tests {
         assert_err!(res.0.unwrap()); // failed to drain
 
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
+    }
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock XRay endpoint
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/TraceSegments");
+            then.status(200)
+                .header("content-type", "application/x-protobuf")
+                .body("ok");
+        });
+
+        // Create acknowledgment channel for real acknowledgment flow
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        // Create metadata with real acknowledgment channel
+        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+            offset: 123,
+            partition: 0,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+
+        // Use DefaultAcknowledger to test real acknowledgment flow (now hardcoded)
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send traces with metadata
+        let traces = FakeOTLP::trace_service_request();
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
+
+        // Wait for acknowledgment or timeout
+        let ack_received = tokio::select! {
+            result = ack_rx.next() => {
+                match result {
+                    Some(_) => true,  // Acknowledgment received
+                    None => false,    // Channel closed without acknowledgment
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(1000)) => false, // Timeout
+        };
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // ASSERTION: This should pass since XRay now properly acknowledges messages
+        assert!(
+            ack_received,
+            "Message was not acknowledged by XRay exporter - real acknowledgment flow failed!"
+        );
     }
 
     fn new_exporter<'a>(

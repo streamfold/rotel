@@ -39,20 +39,32 @@ impl TransformPayload<ResourceMetrics> for Transformer {
     fn transform(
         &self,
         resource_metrics: Vec<Message<ResourceMetrics>>,
-    ) -> Result<Vec<Event>, ExportError> {
+    ) -> (
+        Result<Vec<Event>, ExportError>,
+        Option<Vec<crate::topology::payload::MessageMetadata>>,
+    ) {
         let mut grouped_metrics: HashMap<GroupKey, GroupedMetric> = HashMap::new();
+        let mut all_metadata = Vec::new();
 
         for message in resource_metrics {
+            // Extract metadata from message
+            if let Some(metadata) = message.metadata {
+                all_metadata.push(metadata);
+            }
+
             for rm in message.payload {
                 let resource_attrs = extract_resource_attributes(&rm);
 
                 for sm in rm.scope_metrics {
                     for metric in sm.metrics {
-                        self.metric_transformer.add_to_grouped_metrics(
+                        match self.metric_transformer.add_to_grouped_metrics(
                             &metric,
                             &resource_attrs,
                             &mut grouped_metrics,
-                        )?;
+                        ) {
+                            Ok(_) => {}
+                            Err(e) => return (Err(e), None),
+                        }
                     }
                 }
             }
@@ -61,13 +73,21 @@ impl TransformPayload<ResourceMetrics> for Transformer {
         // Convert grouped metrics to EMF logs
         let mut emf_logs = Vec::new();
         for (_, grouped_metric) in grouped_metrics {
-            let emf_log = self
+            match self
                 .metric_transformer
-                .translate_grouped_metric_to_emf(grouped_metric)?;
-            emf_logs.push(emf_log);
+                .translate_grouped_metric_to_emf(grouped_metric)
+            {
+                Ok(emf_log) => emf_logs.push(emf_log),
+                Err(e) => return (Err(e), None),
+            }
         }
 
-        Ok(emf_logs)
+        let metadata = if all_metadata.is_empty() {
+            None
+        } else {
+            Some(all_metadata)
+        };
+        (Ok(emf_logs), metadata)
     }
 }
 

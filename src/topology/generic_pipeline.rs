@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::log::warn;
-use tracing::{debug, error};
+use tracing::{Level, debug, error};
 
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
@@ -258,8 +258,9 @@ where
                 _ = batch_timer.tick(), if send_fut.is_none() => {
                     if batch.should_flush(Instant::now()) {
                         let messages = batch.take_batch();
-                        let item_count: usize = messages.iter().map(|msg| msg.payload.len()).sum();
-                        debug!(batch_size = item_count, "Flushing a batch in timeout handler");
+                        if tracing::enabled!(Level::DEBUG) {
+                            debug!(batch_size = messages.size_of(), "Flushing a batch in timeout handler");
+                        }
 
                         let fut = self.fanout.send_async(messages);
                         send_fut = Some(fut);
@@ -352,8 +353,9 @@ where
 
                             let messages = batch.take_batch();
                             if !messages.is_empty() {
-                                let item_count: usize = messages.iter().map(|msg| msg.payload.len()).sum();
-                                debug!(batch_size = item_count, "Flushing a batch on flush message");
+                                if tracing::enabled!(Level::DEBUG) {
+                                    debug!(batch_size = messages.size_of(), "Flushing a batch on flush message");
+                                }
 
                                 if let Err(e) = self.fanout.send_async(messages).await {
                                     error!(error = ?e, "Unable to send item, exiting.");

@@ -19,7 +19,7 @@ use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
-use crate::exporters::http::acknowledger::NoOpAcknowledger;
+use crate::exporters::http::acknowledger::Acknowledger;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -79,7 +79,7 @@ type SvcType<RespBody> = TowerRetry<
     Timeout<Client<ClickhousePayload, RespBody, ClickhouseRespDecoder>>,
 >;
 
-pub type ExporterType<'a, Resource> = Exporter<
+pub type ExporterType<'a, Resource, Ack> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
             RecvStream<'a, Vec<Message<Resource>>>,
@@ -93,7 +93,7 @@ pub type ExporterType<'a, Resource> = Exporter<
     SvcType<ClickhouseResponse>,
     ClickhousePayload,
     ClickhouseResultFinalizer,
-    NoOpAcknowledger,
+    Ack,
 >;
 
 impl ClickhouseExporterConfigBuilder {
@@ -177,39 +177,53 @@ pub struct ClickhouseExporterBuilder {
 }
 
 impl ClickhouseExporterBuilder {
-    pub fn build_traces_exporter<'a>(
+    pub fn build_traces_exporter<'a, Ack>(
         &self,
         rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
         flush_receiver: Option<FlushReceiver>,
-    ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        self.build_exporter("traces", rx, flush_receiver)
+        acknowledger: Ack,
+    ) -> Result<ExporterType<'a, ResourceSpans, Ack>, BoxError>
+    where
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
+    {
+        self.build_exporter("traces", rx, flush_receiver, acknowledger)
     }
 
-    pub fn build_logs_exporter<'a>(
+    pub fn build_logs_exporter<'a, Ack>(
         &self,
         rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
         flush_receiver: Option<FlushReceiver>,
-    ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
-        self.build_exporter("logs", rx, flush_receiver)
+        acknowledger: Ack,
+    ) -> Result<ExporterType<'a, ResourceLogs, Ack>, BoxError>
+    where
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
+    {
+        self.build_exporter("logs", rx, flush_receiver, acknowledger)
     }
 
-    pub fn build_metrics_exporter<'a>(
+    pub fn build_metrics_exporter<'a, Ack>(
         &self,
         rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
-    ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
-        self.build_exporter("metrics", rx, flush_receiver)
+        acknowledger: Ack,
+    ) -> Result<ExporterType<'a, ResourceMetrics, Ack>, BoxError>
+    where
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
+    {
+        self.build_exporter("metrics", rx, flush_receiver, acknowledger)
     }
 
-    fn build_exporter<'a, Resource>(
+    fn build_exporter<'a, Resource, Ack>(
         &self,
         telemetry_type: &'static str,
         rx: BoundedReceiver<Vec<Message<Resource>>>,
         flush_receiver: Option<FlushReceiver>,
-    ) -> Result<ExporterType<'a, Resource>, BoxError>
+        acknowledger: Ack,
+    ) -> Result<ExporterType<'a, Resource, Ack>, BoxError>
     where
         Resource: Clone + Send + Sync + 'static,
         Transformer: TransformPayload<Resource>,
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
     {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
 
@@ -240,7 +254,7 @@ impl ClickhouseExporterBuilder {
             ClickhouseResultFinalizer {
                 telemetry_type: telemetry_type.to_string(),
             },
-            NoOpAcknowledger,
+            acknowledger,
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -331,12 +345,54 @@ mod tests {
     use super::*;
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
+    use crate::exporters::http::acknowledger::{Acknowledger, NoOpAcknowledger};
+    use crate::exporters::http::response::Response;
+    use crate::topology::payload::MessageMetadata;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tokio::join;
     use tokio_test::assert_ok;
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
+
+    /// Mock acknowledger for testing that tracks whether acknowledgments were received
+    #[derive(Clone)]
+    pub struct MockAcknowledger {
+        acknowledgments: Arc<Mutex<Vec<MessageMetadata>>>,
+    }
+
+    impl MockAcknowledger {
+        pub fn new() -> Self {
+            Self {
+                acknowledgments: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub fn get_acknowledgments(&self) -> Vec<MessageMetadata> {
+            self.acknowledgments.lock().unwrap().clone()
+        }
+    }
+
+    impl<T> Acknowledger<T> for MockAcknowledger
+    where
+        T: Send + Sync,
+    {
+        fn acknowledge<'a>(
+            &'a self,
+            response: &'a Response<T>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+            Box::pin(async move {
+                if let Some(metadata_vec) = response.metadata() {
+                    let mut acks = self.acknowledgments.lock().unwrap();
+                    acks.extend(metadata_vec.clone());
+                }
+            })
+        }
+    }
 
     #[tokio::test]
     async fn traces_success() {
@@ -350,7 +406,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
-        let exporter = new_traces_exporter(addr, brx);
+        let exporter = new_traces_exporter(addr, brx, NoOpAcknowledger);
 
         let cancellation_token = CancellationToken::new();
 
@@ -383,7 +439,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<Message<ResourceLogs>>>(100);
-        let exporter = new_logs_exporter(addr, brx);
+        let exporter = new_logs_exporter(addr, brx, NoOpAcknowledger);
 
         let cancellation_token = CancellationToken::new();
 
@@ -416,7 +472,7 @@ mod tests {
         });
 
         let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
-        let exporter = new_metrics_exporter(addr, brx);
+        let exporter = new_metrics_exporter(addr, brx, NoOpAcknowledger);
 
         let cancellation_token = CancellationToken::new();
 
@@ -437,39 +493,118 @@ mod tests {
         hello_mock.assert();
     }
 
-    fn new_traces_exporter<'a>(
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow_fails() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock Clickhouse endpoint
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).body("OK");
+        });
+
+        // Create a mock acknowledger to verify no metadata flows through
+        let mock_acknowledger = MockAcknowledger::new();
+
+        // Create metadata with acknowledgment channel
+        let (ack_tx, _ack_rx) = crate::bounded_channel::bounded(1);
+        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+            offset: 123,
+            partition: 0,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+
+        // Build exporter with mock acknowledger
+        let exporter = new_traces_exporter(addr, brx, mock_acknowledger.clone());
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send traces with metadata
+        let traces = FakeOTLP::trace_service_request();
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
+
+        // Give some time for processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // ASSERTION: This should fail because Clickhouse doesn't propagate metadata yet
+        let acknowledgments = mock_acknowledger.get_acknowledgments();
+        assert!(
+            !acknowledgments.is_empty(),
+            "Clickhouse exporter did not receive metadata - metadata flow is not implemented yet!"
+        );
+    }
+
+    fn new_traces_exporter<'a, Ack>(
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
-    ) -> ExporterType<'a, ResourceSpans> {
+        acknowledger: Ack,
+    ) -> ExporterType<'a, ResourceSpans, Ack>
+    where
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
+    {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
                 .build()
                 .unwrap();
 
-        builder.build_traces_exporter(brx, None).unwrap()
+        builder
+            .build_traces_exporter(brx, None, acknowledger)
+            .unwrap()
     }
 
-    fn new_logs_exporter<'a>(
+    fn new_logs_exporter<'a, Ack>(
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
-    ) -> ExporterType<'a, ResourceLogs> {
+        acknowledger: Ack,
+    ) -> ExporterType<'a, ResourceLogs, Ack>
+    where
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
+    {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
                 .build()
                 .unwrap();
 
-        builder.build_logs_exporter(brx, None).unwrap()
+        builder
+            .build_logs_exporter(brx, None, acknowledger)
+            .unwrap()
     }
 
-    fn new_metrics_exporter<'a>(
+    fn new_metrics_exporter<'a, Ack>(
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
-    ) -> ExporterType<'a, ResourceMetrics> {
+        acknowledger: Ack,
+    ) -> ExporterType<'a, ResourceMetrics, Ack>
+    where
+        Ack: Acknowledger<ClickhouseResponse> + Clone + Send + Sync + 'static,
+    {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
                 .build()
                 .unwrap();
 
-        builder.build_metrics_exporter(brx, None).unwrap()
+        builder
+            .build_metrics_exporter(brx, None, acknowledger)
+            .unwrap()
     }
 }

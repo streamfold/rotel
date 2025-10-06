@@ -47,13 +47,16 @@ impl ClickhousePayloadBuilder {
         self.curr_chunk.is_empty() && self.closed.is_empty()
     }
 
-    pub(crate) fn finish(mut self) -> Result<ClickhousePayload, BoxError> {
+    pub(crate) fn finish_with_metadata(
+        mut self,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<ClickhousePayload, BoxError> {
         if !self.curr_chunk.is_empty() {
             let new_chunk = self.take_and_close_current()?;
             self.closed.push(new_chunk);
         }
 
-        Ok(ClickhousePayload::new(self.closed))
+        Ok(ClickhousePayload::new_with_metadata(self.closed, metadata))
     }
 
     fn take_and_close_current(&mut self) -> Result<Bytes, Error> {
@@ -69,6 +72,7 @@ impl ClickhousePayloadBuilder {
 
 pub struct ClickhousePayload {
     inner: Arc<Mutex<Inner>>,
+    metadata: Option<Vec<MessageMetadata>>,
 }
 
 // We manually clone so that the state of the inner struct is maintained
@@ -78,6 +82,7 @@ impl Clone for ClickhousePayload {
         let inner = self.inner.lock().unwrap();
         Self {
             inner: Arc::new(Mutex::new(inner.clone())),
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -89,12 +94,13 @@ pub struct Inner {
 }
 
 impl ClickhousePayload {
-    fn new(chunks: Vec<Bytes>) -> Self {
+    pub fn new_with_metadata(chunks: Vec<Bytes>, metadata: Option<Vec<MessageMetadata>>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 chunks: Arc::new(chunks.into()),
                 current: 0,
             })),
+            metadata,
         }
     }
 }
@@ -122,9 +128,7 @@ impl Body for ClickhousePayload {
 
 impl MetadataExtractor for ClickhousePayload {
     fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
-        // ClickhousePayload doesn't currently support metadata
-        // This can be enhanced later when needed
-        None
+        self.metadata.take()
     }
 }
 
@@ -159,7 +163,7 @@ mod tests {
             builder.add_row(&row).unwrap();
         }
 
-        let original_payload = builder.finish().unwrap();
+        let original_payload = builder.finish_with_metadata(None).unwrap();
         let cloned_payload = original_payload.clone();
 
         // Pin the payloads for polling

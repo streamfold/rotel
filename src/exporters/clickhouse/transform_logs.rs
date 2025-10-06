@@ -5,7 +5,7 @@ use crate::exporters::clickhouse::schema::LogRecordRow;
 use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_attribute};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrValue;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tower::BoxError;
@@ -14,9 +14,17 @@ impl TransformPayload<ResourceLogs> for Transformer {
     fn transform(
         &self,
         input: Vec<Message<ResourceLogs>>,
-    ) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError> {
+    ) -> (
+        Result<Vec<(RequestType, ClickhousePayload)>, BoxError>,
+        Option<Vec<MessageMetadata>>,
+    ) {
         let mut payload_builder = ClickhousePayloadBuilder::new(self.compression.clone());
+        let mut all_metadata = Vec::new();
+
         for message in input {
+            if let Some(metadata) = message.metadata {
+                all_metadata.push(metadata);
+            }
             for rl in message.payload {
                 let res_attrs = rl.resource.unwrap_or_default().attributes;
                 let res_attrs = cvattr::convert_into(res_attrs);
@@ -68,14 +76,25 @@ impl TransformPayload<ResourceLogs> for Transformer {
                             log_attributes: self.transform_attrs(&log_attrs),
                         };
 
-                        payload_builder.add_row(&row)?;
+                        match payload_builder.add_row(&row) {
+                            Ok(_) => {}
+                            Err(e) => return (Err(e), None),
+                        }
                     }
                 }
             }
         }
 
-        payload_builder
-            .finish()
-            .map(|payload| vec![(RequestType::Logs, payload)])
+        let metadata = if all_metadata.is_empty() {
+            None
+        } else {
+            Some(all_metadata)
+        };
+
+        let result = payload_builder
+            .finish_with_metadata(metadata)
+            .map(|payload| vec![(RequestType::Logs, payload)]);
+
+        (result, None)
     }
 }

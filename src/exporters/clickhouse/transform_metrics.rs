@@ -7,7 +7,7 @@ use crate::exporters::clickhouse::schema::{
 };
 use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
 use crate::otlp::cvattr;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::metrics::v1::exemplar::Value;
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value as DataPointValue;
@@ -20,10 +20,17 @@ impl TransformPayload<ResourceMetrics> for Transformer {
     fn transform(
         &self,
         input: Vec<Message<ResourceMetrics>>,
-    ) -> Result<Vec<(RequestType, ClickhousePayload)>, BoxError> {
+    ) -> (
+        Result<Vec<(RequestType, ClickhousePayload)>, BoxError>,
+        Option<Vec<MessageMetadata>>,
+    ) {
         let mut payloads = HashMap::new();
+        let mut all_metadata = Vec::new();
 
         for message in input {
+            if let Some(metadata) = message.metadata {
+                all_metadata.push(metadata);
+            }
             for rm in message.payload {
                 let res_attrs = rm.resource.unwrap_or_default().attributes;
                 let res_attrs = cvattr::convert_into(res_attrs);
@@ -87,7 +94,10 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                                 )
                                             });
 
-                                        e.add_row(&row)?;
+                                        match e.add_row(&row) {
+                                            Ok(_) => {}
+                                            Err(err) => return (Err(err), None),
+                                        }
                                     }
                                 }
                                 Data::Gauge(g) => {
@@ -114,7 +124,10 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                                 )
                                             });
 
-                                        e.add_row(&row)?;
+                                        match e.add_row(&row) {
+                                            Ok(_) => {}
+                                            Err(err) => return (Err(err), None),
+                                        }
                                     }
                                 }
                                 Data::Histogram(h) => {
@@ -147,7 +160,10 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                                 )
                                             });
 
-                                        e.add_row(&row)?;
+                                        match e.add_row(&row) {
+                                            Ok(_) => {}
+                                            Err(err) => return (Err(err), None),
+                                        }
                                     }
                                 }
                                 Data::ExponentialHistogram(e) => {
@@ -194,7 +210,10 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                                 )
                                             });
 
-                                        e.add_row(&row)?;
+                                        match e.add_row(&row) {
+                                            Ok(_) => {}
+                                            Err(err) => return (Err(err), None),
+                                        }
                                     }
                                 }
                                 Data::Summary(s) => {
@@ -231,7 +250,10 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                                 )
                                             });
 
-                                        e.add_row(&row)?;
+                                        match e.add_row(&row) {
+                                            Ok(_) => {}
+                                            Err(err) => return (Err(err), None),
+                                        }
                                     }
                                 }
                             }
@@ -241,16 +263,24 @@ impl TransformPayload<ResourceMetrics> for Transformer {
             }
         }
 
-        payloads
+        let metadata = if all_metadata.is_empty() {
+            None
+        } else {
+            Some(all_metadata)
+        };
+
+        let result = payloads
             .into_iter()
             .filter_map(|(typ, builder)| match builder.is_empty() {
                 true => None,
-                false => match builder.finish() {
+                false => match builder.finish_with_metadata(metadata.clone()) {
                     Ok(payload) => Some(Ok((typ, payload))),
                     Err(e) => Some(Err(e)),
                 },
             })
-            .collect()
+            .collect();
+
+        (result, None)
     }
 }
 

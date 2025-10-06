@@ -7,20 +7,17 @@ use crate::exporters::awsemf::transformer::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::http::acknowledger::NoOpAcknowledger;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
 use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
 use crate::topology::flush_control::FlushReceiver;
-use bytes::Bytes;
 
 use dim_filter::DimensionFilter;
 use errors::{AwsEmfDecoder, AwsEmfResponse, is_retryable_error};
 use flume::r#async::RecvStream;
 use http::Request;
-use http_body_util::Full;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,6 +25,7 @@ use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
+use super::http::acknowledger::DefaultAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
@@ -36,33 +34,35 @@ mod dim_filter;
 mod emf_request;
 mod errors;
 mod event;
+mod payload;
 mod request_builder;
 mod response_interceptor;
 mod transformer;
 
 use crate::topology::payload::Message;
 use cloudwatch::Cloudwatch;
+use payload::AwsEmfPayload;
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,
-    ResponseInterceptor<Timeout<Client<Full<Bytes>, RespBody, AwsEmfDecoder>>>,
+    ResponseInterceptor<Timeout<Client<AwsEmfPayload, RespBody, AwsEmfDecoder>>>,
 >;
 
-type ExporterType<'a, Resource> = Exporter<
+type ExporterType<'a, Resource, Ack> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
             RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
-            Full<Bytes>,
+            AwsEmfPayload,
             RequestBuilder<Resource, Transformer>,
         >,
-        Vec<Request<Full<Bytes>>>,
-        Full<Bytes>,
+        Vec<Request<AwsEmfPayload>>,
+        AwsEmfPayload,
     >,
     SvcType<AwsEmfResponse>,
-    Full<Bytes>,
+    AwsEmfPayload,
     SuccessStatusFinalizer,
-    NoOpAcknowledger,
+    Ack,
 >;
 
 #[derive(Clone)]
@@ -180,7 +180,7 @@ impl AwsEmfExporterBuilder {
         rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
         aws_config: AwsConfig,
-    ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
+    ) -> Result<ExporterType<'a, ResourceMetrics, DefaultAcknowledger>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let dim_filter = Arc::new(DimensionFilter::new(
             self.config.include_dimensions.clone(),
@@ -223,7 +223,7 @@ impl AwsEmfExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
-            NoOpAcknowledger,
+            DefaultAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -244,7 +244,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::shared::aws::Region;
-    use crate::topology::payload::Message;
+    use crate::topology::payload::{Message, MessageMetadata};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
     use std::time::Duration;
@@ -532,12 +532,83 @@ mod tests {
         assert!(retention_mock.hits() > 0);
     }
 
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock AWS EMF endpoint
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        // Create acknowledgment channel for real acknowledgment flow
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        // Create metadata with real acknowledgment channel
+        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+            offset: 123,
+            partition: 0,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
+
+        // Use DefaultAcknowledger to test real acknowledgment flow (now hardcoded)
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, None);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send metrics with metadata
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
+
+        // Wait for acknowledgment or timeout
+        let ack_received = tokio::select! {
+            result = ack_rx.next() => {
+                match result {
+                    Some(_) => true,  // Acknowledgment received
+                    None => false,    // Channel closed without acknowledgment
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(1000)) => false, // Timeout
+        };
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // ASSERTION: This should pass since AWS EMF now properly acknowledges messages
+        assert!(
+            ack_received,
+            "Message was not acknowledged by AWS EMF exporter - real acknowledgment flow failed!"
+        );
+    }
+
     fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         aws_config: AwsConfig,
         log_retention: Option<u16>,
-    ) -> ExporterType<'a, ResourceMetrics> {
+    ) -> ExporterType<'a, ResourceMetrics, crate::exporters::http::acknowledger::DefaultAcknowledger>
+    {
         let mut builder = AwsEmfExporterConfigBuilder::new()
             .with_region(Region::UsEast1)
             .with_custom_endpoint(addr)

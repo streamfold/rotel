@@ -43,6 +43,7 @@ where
 
 /// No-op acknowledger that does not acknowledge any messages
 #[derive(Default, Clone)]
+#[allow(dead_code)]
 pub struct NoOpAcknowledger;
 
 impl<T> Acknowledger<T> for NoOpAcknowledger

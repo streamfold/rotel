@@ -3,18 +3,23 @@
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
 use crate::exporters::xray::Region;
+use crate::exporters::xray::payload::XRayPayload;
 use crate::exporters::xray::transformer::ExportError;
 use crate::exporters::xray::xray_request::XRayRequestBuilder;
-use crate::topology::payload::Message;
-use bytes::Bytes;
+use crate::topology::payload::{Message, MessageMetadata};
 use http::Request;
-use http_body_util::Full;
 use serde_json::Value;
 use std::marker::PhantomData;
 use tower::BoxError;
 
 pub trait TransformPayload<T> {
-    fn transform(&self, input: Vec<Message<T>>) -> Result<Vec<Value>, ExportError>;
+    fn transform(
+        &self,
+        input: Vec<Message<T>>,
+    ) -> (
+        Result<Vec<Value>, ExportError>,
+        Option<Vec<MessageMetadata>>,
+    );
 }
 
 // todo: identify the cost of recursively cloning these
@@ -52,17 +57,17 @@ where
     }
 }
 
-impl<Resource, Transform> BuildRequest<Resource, Full<Bytes>>
+impl<Resource, Transform> BuildRequest<Resource, XRayPayload>
     for RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
-    type Output = Vec<Request<Full<Bytes>>>;
+    type Output = Vec<Request<XRayPayload>>;
 
     fn build(&self, input: Vec<Message<Resource>>) -> Result<Self::Output, BoxError> {
-        let payload = self.transformer.transform(input);
-        match payload {
-            Ok(p) => self.api_req_builder.build(p),
+        let (payload_result, metadata) = self.transformer.transform(input);
+        match payload_result {
+            Ok(p) => self.api_req_builder.build(p, metadata),
             Err(e) => Err(format!("Export error: {:?}", e).into()),
         }
     }
