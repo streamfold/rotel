@@ -224,24 +224,6 @@ impl Agent {
 
         let mut pipeline_flush_sub = self.pipeline_flush_sub.take();
 
-        // AWS-XRay only supports a batch size of 50 segments
-        let mut trace_batch_config = build_traces_batch_config(config.batch.clone());
-        // Check if AWS X-Ray is configured for traces
-        let has_xray_exporter = exp_config
-            .traces
-            .iter()
-            .any(|cfg| matches!(cfg, ExporterConfig::Xray(_)));
-
-        if has_xray_exporter {
-            // TODO: This splitting can move to the xray exporter: https://github.com/streamfold/rotel/issues/210
-            if trace_batch_config.max_size > 50 {
-                info!(
-                    "AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50"
-                );
-                trace_batch_config.max_size = 50;
-            }
-        }
-
         // Internal metrics
         // N.B Internal metrics initialization MUST be done before starting other parts of the agent such as
         // receiver and exporters, so that the global meter provider is set before those components attempt to
@@ -676,7 +658,7 @@ impl Agent {
                 trace_pipeline_in_rx.clone(),
                 trace_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                trace_batch_config,
+                build_traces_batch_config(config.batch.clone()),
                 config.otlp_with_trace_processor.clone(),
                 config.otel_resource_attributes.clone(),
             );

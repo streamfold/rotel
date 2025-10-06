@@ -315,6 +315,41 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn splits_payload() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/TraceSegments");
+            then.status(200)
+                .header("content-type", "application/x-protobuf")
+                .body("ohi");
+        });
+
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+        let exporter = new_exporter(addr, brx);
+
+        let cancellation_token = CancellationToken::new();
+
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        let traces = FakeOTLP::trace_service_request_with_spans(1, 51);
+        btx.send(vec![Message {
+            metadata: None,
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
+        drop(btx);
+        let res = join!(jh);
+        assert_ok!(res.0);
+
+        assert_eq!(2, hello_mock.hits());
+    }
+
     fn new_exporter<'a>(
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
