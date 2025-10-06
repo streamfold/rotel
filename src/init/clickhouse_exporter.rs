@@ -44,6 +44,7 @@ pub struct ClickhouseExporterArgs {
         long("clickhouse-exporter-user"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_USER"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub user: Option<String>,
 
     /// Clickhouse Exporter password
@@ -51,6 +52,7 @@ pub struct ClickhouseExporterArgs {
         long("clickhouse-exporter-password"),
         env = "ROTEL_CLICKHOUSE_EXPORTER_PASSWORD"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub password: Option<String>,
 
     /// Clickhouse Exporter async insert

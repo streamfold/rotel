@@ -82,6 +82,7 @@ pub struct KafkaExporterArgs {
         env = "ROTEL_KAFKA_EXPORTER_CLIENT_ID",
         default_value = "rotel"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string")]
     pub client_id: String,
 
     /// Maximum message size in bytes
@@ -191,6 +192,7 @@ pub struct KafkaExporterArgs {
         long("kafka-exporter-sasl-username"),
         env = "ROTEL_KAFKA_EXPORTER_SASL_USERNAME"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub sasl_username: Option<String>,
 
     /// SASL password for authentication
@@ -199,6 +201,7 @@ pub struct KafkaExporterArgs {
         long("kafka-exporter-sasl-password"),
         env = "ROTEL_KAFKA_EXPORTER_SASL_PASSWORD"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub sasl_password: Option<String>,
 
     /// SASL mechanism

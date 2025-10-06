@@ -82,6 +82,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_GROUP_ID",
         default_value = "rotel-consumer"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string")]
     pub group_id: String,
 
     /// Client ID for the Kafka consumer
@@ -91,6 +92,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_CLIENT_ID",
         default_value = "rotel"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string")]
     pub client_id: String,
 
     /// Enable auto commit of offsets
@@ -214,6 +216,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_SASL_USERNAME",
         default_value = None,
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub sasl_username: Option<String>,
 
     /// SASL password for authentication
@@ -223,6 +226,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_SASL_PASSWORD",
         default_value = None,
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub sasl_password: Option<String>,
 
     /// SASL mechanism
@@ -273,6 +277,7 @@ pub struct KafkaReceiverArgs {
         env = "ROTEL_KAFKA_RECEIVER_SSL_KEY_PASSWORD",
         default_value = None,
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub ssl_key_password: Option<String>,
 
     /// Custom Kafka consumer configuration parameters (key=value pairs). These will override built-in options if conflicts exist.
