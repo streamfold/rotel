@@ -306,7 +306,7 @@ impl ResponseDecode<ClickhouseResponse> for ClickhouseRespDecoder {
             return Ok(ClickhouseResponse::Empty);
         }
 
-        return Ok(ClickhouseResponse::Unknown(str_payload));
+        Ok(ClickhouseResponse::Unknown(str_payload))
     }
 }
 
@@ -331,7 +331,7 @@ where
                         }
                     }
                 },
-                Response::Grpc(_, _, _) => Err(format!("Clickhouse invalid response type").into()),
+                Response::Grpc(_, _, _) => Err("Clickhouse invalid response type".to_string().into()),
             },
             Err(e) => Err(e.into())
         }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::exporters::kafka::config::{
         AcknowledgementMode, Compression, KafkaExporterConfig, PartitionerType, SaslMechanism,
@@ -81,10 +81,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_message(vec![Message {
-            metadata: None,
-            payload: resource_spans,
-        }]);
+        let result = builder.build_message(resource_spans);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -122,10 +119,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_message(vec![Message {
-            metadata: None,
-            payload: resource_metrics,
-        }]);
+        let result = builder.build_message(resource_metrics);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -159,10 +153,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_message(vec![Message {
-            metadata: None,
-            payload: resource_logs,
-        }]);
+        let result = builder.build_message(resource_logs);
         assert!(result.is_ok());
 
         let payload = result.unwrap();

@@ -253,17 +253,25 @@ impl KafkaExportable for ResourceSpans {
         let key = String::new();
 
         // Extract metadata from all messages
-        let metadata: Vec<MessageMetadata> = spans
-            .iter()
-            .filter_map(|message| message.metadata.clone())
-            .collect();
+        let mut metadata: Vec<MessageMetadata> = Vec::new();
+        let mut payloads: Vec<ResourceSpans> = Vec::new();
+
+        for message in spans {
+            for resource_spans in message.payload {
+                payloads.push(resource_spans);
+            }
+            if let Some(md) = message.metadata {
+                metadata.push(md)
+            }
+        }
+
         let metadata = if metadata.is_empty() {
             None
         } else {
             Some(metadata)
         };
 
-        let payload = builder.build_message(spans)?;
+        let payload = builder.build_message(payloads)?;
         Ok((key, payload, metadata))
     }
 
@@ -305,17 +313,24 @@ impl KafkaExportable for ResourceMetrics {
         };
 
         // Extract metadata from all messages
-        let metadata: Vec<MessageMetadata> = metrics
-            .iter()
-            .filter_map(|message| message.metadata.clone())
-            .collect();
+        let mut metadata: Vec<MessageMetadata> = Vec::new();
+        let mut payloads: Vec<ResourceMetrics> = Vec::new();
+
+        for message in metrics {
+            for resource_metrics in message.payload {
+                payloads.push(resource_metrics);
+            }
+            if let Some(md) = message.metadata {
+                metadata.push(md)
+            }
+        }
+
         let metadata = if metadata.is_empty() {
             None
         } else {
             Some(metadata)
         };
-
-        let payload = builder.build_message(metrics)?;
+        let payload = builder.build_message(payloads)?;
         Ok((key, payload, metadata))
     }
 
@@ -374,17 +389,24 @@ impl KafkaExportable for ResourceLogs {
         };
 
         // Extract metadata from all messages
-        let metadata: Vec<MessageMetadata> = logs
-            .iter()
-            .filter_map(|message| message.metadata.clone())
-            .collect();
+        let mut metadata: Vec<MessageMetadata> = Vec::new();
+        let mut payloads: Vec<ResourceLogs> = Vec::new();
+
+        for message in logs {
+            for resource_logs in message.payload {
+                payloads.push(resource_logs);
+            }
+            if let Some(md) = message.metadata {
+                metadata.push(md)
+            }
+        }
+
         let metadata = if metadata.is_empty() {
             None
         } else {
             Some(metadata)
         };
-
-        let payload = builder.build_message(logs)?;
+        let payload = builder.build_message(payloads)?;
         Ok((key, payload, metadata))
     }
 

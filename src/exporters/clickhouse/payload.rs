@@ -56,7 +56,7 @@ impl ClickhousePayloadBuilder {
             self.closed.push(new_chunk);
         }
 
-        Ok(ClickhousePayload::new_with_metadata(self.closed, metadata))
+        Ok(ClickhousePayload::new(self.closed, metadata))
     }
 
     fn take_and_close_current(&mut self) -> Result<Bytes, Error> {
@@ -94,7 +94,7 @@ pub struct Inner {
 }
 
 impl ClickhousePayload {
-    pub fn new_with_metadata(chunks: Vec<Bytes>, metadata: Option<Vec<MessageMetadata>>) -> Self {
+    pub fn new(chunks: Vec<Bytes>, metadata: Option<Vec<MessageMetadata>>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 chunks: Arc::new(chunks.into()),
