@@ -11,8 +11,8 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::Message;
+use rdkafka::consumer::{Consumer, StreamConsumer};
 use std::error::Error;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -284,10 +284,10 @@ mod tests {
     use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
     use prost::Message;
+    use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::producer::{FutureProducer, FutureRecord};
     use rdkafka::util::Timeout;
-    use rdkafka::ClientConfig;
     use std::time::Duration;
 
     fn create_test_topic_name(prefix: &str) -> String {
