@@ -95,7 +95,7 @@ impl KafkaReceiver {
 
     async fn send_to_pipeline<T>(
         &self,
-        kafka_metadata: KafkaMetadata,
+        _kafka_metadata: KafkaMetadata,
         request: Vec<T>,
         output: &Option<OTLPOutput<payload::Message<T>>>,
     ) -> std::result::Result<(), SendError> {

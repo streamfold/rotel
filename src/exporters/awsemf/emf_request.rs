@@ -70,7 +70,7 @@ impl AwsEmfRequestBuilder {
     pub fn build(
         &self,
         events: Vec<Event>,
-        metadata: Option<Vec<MessageMetadata>>,
+        mut metadata: Option<Vec<MessageMetadata>>,
     ) -> Result<Vec<Request<AwsEmfPayload>>, BoxError> {
         if events.is_empty() {
             return Ok(vec![]);
@@ -124,7 +124,7 @@ impl AwsEmfRequestBuilder {
                 Ok(request) => {
                     // Only clone metadata when there are multiple batches, otherwise move it
                     let batch_metadata = if single_batch {
-                        metadata
+                        metadata.take()
                     } else if idx == 0 {
                         metadata.clone()
                     } else {
