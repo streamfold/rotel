@@ -23,7 +23,7 @@ impl<Resource> BlackholeExporter<Resource> {
                         Some(messages) => {
                             // Acknowledge all messages since blackhole "successfully" processes everything
                             for message in messages {
-                                if let Some(mut metadata) = message.metadata {
+                                if let Some(metadata) = message.metadata {
                                     if let Err(e) = metadata.ack().await {
                                         tracing::warn!("Failed to acknowledge blackhole message: {:?}", e);
                                     }

@@ -15,11 +15,11 @@ pub trait Acknowledger<T>: Send + Sync + Clone {
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 }
 
-/// Default acknowledger that sends acknowledgments for all metadata
+/// Default HTTP acknowledger that sends acknowledgments for all metadata
 #[derive(Default, Clone)]
-pub struct DefaultAcknowledger;
+pub struct DefaultHTTPAcknowledger;
 
-impl<T> Acknowledger<T> for DefaultAcknowledger
+impl<T> Acknowledger<T> for DefaultHTTPAcknowledger
 where
     T: Send + Sync,
 {
@@ -28,9 +28,8 @@ where
         response: &'a Response<T>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            if let Some(metadata_vec) = response.metadata() {
-                let mut metadata_vec = metadata_vec.clone();
-                for metadata in metadata_vec.iter_mut() {
+            if let Some(metadata_vec) = &response.metadata() {
+                for metadata in metadata_vec {
                     if let Err(e) = metadata.ack().await {
                         warn!("Failed to acknowledge message: {:?}", e);
                         // Continue acknowledging other messages even if one fails

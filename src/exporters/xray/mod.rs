@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::http::acknowledger::DefaultAcknowledger;
+use crate::exporters::http::acknowledger::DefaultHTTPAcknowledger;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::xray::payload::XRayPayload;
 use crate::exporters::xray::request_builder::RequestBuilder;
@@ -51,7 +51,7 @@ type ExporterType<'a, Resource> = Exporter<
     SvcType<String>,
     XRayPayload,
     SuccessStatusFinalizer,
-    DefaultAcknowledger,
+    DefaultHTTPAcknowledger,
 >;
 
 pub struct XRayExporterConfigBuilder {
@@ -135,7 +135,7 @@ impl XRayExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
-            DefaultAcknowledger::default(),
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -269,7 +269,7 @@ mod tests {
         // Create a channel for sending messages with metadata
         let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
 
-        // Use DefaultAcknowledger to test real acknowledgment flow (now hardcoded)
+        // Use DefaultHTTPAcknowledger to test real acknowledgment flow
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config);
 

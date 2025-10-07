@@ -25,7 +25,7 @@ use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
-use super::http::acknowledger::DefaultAcknowledger;
+use super::http::acknowledger::DefaultHTTPAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
@@ -180,7 +180,7 @@ impl AwsEmfExporterBuilder {
         rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
         aws_config: AwsConfig,
-    ) -> Result<ExporterType<'a, ResourceMetrics, DefaultAcknowledger>, BoxError> {
+    ) -> Result<ExporterType<'a, ResourceMetrics, DefaultHTTPAcknowledger>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let dim_filter = Arc::new(DimensionFilter::new(
             self.config.include_dimensions.clone(),
@@ -223,7 +223,7 @@ impl AwsEmfExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
-            DefaultAcknowledger::default(),
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -560,7 +560,7 @@ mod tests {
         // Create a channel for sending messages with metadata
         let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
 
-        // Use DefaultAcknowledger to test real acknowledgment flow (now hardcoded)
+        // Use DefaultHTTPAcknowledger to test real acknowledgment flow
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -607,8 +607,11 @@ mod tests {
         brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         aws_config: AwsConfig,
         log_retention: Option<u16>,
-    ) -> ExporterType<'a, ResourceMetrics, crate::exporters::http::acknowledger::DefaultAcknowledger>
-    {
+    ) -> ExporterType<
+        'a,
+        ResourceMetrics,
+        crate::exporters::http::acknowledger::DefaultHTTPAcknowledger,
+    > {
         let mut builder = AwsEmfExporterConfigBuilder::new()
             .with_region(Region::UsEast1)
             .with_custom_endpoint(addr)

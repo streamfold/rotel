@@ -63,8 +63,8 @@ pub struct KafkaAcknowledger;
 
 impl KafkaAcknowledger {
     pub async fn acknowledge_metadata(&self, metadata: Option<Vec<MessageMetadata>>) {
-        if let Some(mut metadata_vec) = metadata {
-            for metadata in metadata_vec.iter_mut() {
+        if let Some(metadata_vec) = metadata {
+            for metadata in metadata_vec {
                 if let Err(e) = metadata.ack().await {
                     tracing::warn!("Failed to acknowledge Kafka message: {:?}", e);
                 }

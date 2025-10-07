@@ -10,7 +10,7 @@ use crate::aws_api::config::AwsConfig;
 /// - Support for both metrics and traces telemetry
 ///
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::http::acknowledger::{Acknowledger, DefaultAcknowledger};
+use crate::exporters::http::acknowledger::{Acknowledger, DefaultHTTPAcknowledger};
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::retry::RetryPolicy;
 use crate::exporters::otlp::client::OTLPClient;
@@ -26,7 +26,7 @@ use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use crate::topology::payload::{Ack, Message, MessageMetadata, OTLPFrom};
+use crate::topology::payload::{Message, MessageMetadata, OTLPFrom};
 use futures::stream::FuturesUnordered;
 use http::Request;
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -346,7 +346,7 @@ where
     encoding_futures: FuturesUnordered<EncodingFuture>,
     export_futures: FuturesUnordered<ExportFuture<HttpResponse<Response>>>,
     svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
-    acknowledger: DefaultAcknowledger,
+    acknowledger: DefaultHTTPAcknowledger,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     flush_receiver: Option<FlushReceiver>,
@@ -383,7 +383,7 @@ where
             rx,
             req_builder,
             svc,
-            acknowledger: DefaultAcknowledger::default(),
+            acknowledger: DefaultHTTPAcknowledger::default(),
             encoding_futures: FuturesUnordered::new(),
             export_futures: FuturesUnordered::new(),
             encode_drain_max_time,
@@ -414,12 +414,13 @@ where
 
                 Some(resp) = self.export_futures.next() => {
                     let (result, metadata) = resp;
-
-                    // First acknowledge with a reference if successful
-                    if let Ok(ref response) = result {
-                        self.acknowledger.acknowledge(response).await;
+                    match &result {
+                        Ok(r) => {
+                            self.acknowledger.acknowledge(r).await
+                        }Err(_e) => {
+                           // TODO - We'll need to propagate MessageMetadata in Errors as well
+                        }
                     }
-
                     // Then pass ownership to logging/finalization
                     self.log_if_failed((result, metadata));
                 },
@@ -605,24 +606,11 @@ where
                     }
                     Some(r) => {
                         let (result, metadata) = r;
-
-                        // First acknowledge with a reference if successful
-                        if let Ok(ref response) = result {
-                            // For drain, spawn acknowledgment to avoid blocking
-                            let response_metadata = response.metadata().clone();
-                            tokio::spawn(async move {
-                                if let Some(mut metadata_vec) = response_metadata {
-                                    // Acknowledge metadata directly without creating fake response
-                                    for metadata in metadata_vec.iter_mut() {
-                                        if let Err(e) = metadata.ack().await {
-                                            tracing::warn!(
-                                                "Failed to acknowledge OTLP message: {:?}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            });
+                        match &result {
+                            Ok(r) => self.acknowledger.acknowledge(r).await,
+                            Err(_e) => {
+                                // TODO - We'll need to propagate MessageMetadata in Errors as well
+                            }
                         }
 
                         // Then pass ownership to logging/finalization

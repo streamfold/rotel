@@ -60,12 +60,12 @@ impl PartialEq for KafkaMetadata {
 // TODO: consider whether we want a generic reason or enum.
 pub trait Ack {
     #[allow(async_fn_in_trait)]
-    async fn ack(&mut self) -> Result<(), SendError>;
-    fn nack(&mut self);
+    async fn ack(&self) -> Result<(), SendError>;
+    fn nack(&self);
 }
 
 impl Ack for MessageMetadata {
-    async fn ack(&mut self) -> Result<(), SendError> {
+    async fn ack(&self) -> Result<(), SendError> {
         match self {
             MessageMetadata::Kafka(km) => {
                 if let Some(ack_chan) = &km.ack_chan {
@@ -82,7 +82,7 @@ impl Ack for MessageMetadata {
         }
     }
 
-    fn nack(&mut self) {
+    fn nack(&self) {
         todo!()
     }
 }

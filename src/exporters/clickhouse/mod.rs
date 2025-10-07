@@ -19,7 +19,7 @@ use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
-use crate::exporters::http::acknowledger::DefaultAcknowledger;
+use crate::exporters::http::acknowledger::DefaultHTTPAcknowledger;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -93,7 +93,7 @@ pub type ExporterType<'a, Resource> = Exporter<
     SvcType<ClickhouseResponse>,
     ClickhousePayload,
     ClickhouseResultFinalizer,
-    DefaultAcknowledger,
+    DefaultHTTPAcknowledger,
 >;
 
 impl ClickhouseExporterConfigBuilder {
@@ -240,7 +240,7 @@ impl ClickhouseExporterBuilder {
             ClickhouseResultFinalizer {
                 telemetry_type: telemetry_type.to_string(),
             },
-            DefaultAcknowledger::default(),
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -466,7 +466,7 @@ mod tests {
         // Create a channel for sending messages with metadata
         let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
 
-        // Build exporter with DefaultAcknowledger (now implicit)
+        // Build exporter with DefaultHTTPAcknowledger
         let exporter = new_traces_exporter(addr, brx);
 
         // Start exporter

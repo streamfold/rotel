@@ -24,7 +24,7 @@ use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
-use super::http::acknowledger::DefaultAcknowledger;
+use super::http::acknowledger::DefaultHTTPAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 
 mod api_request;
@@ -52,7 +52,7 @@ type ExporterType<'a, Resource> = Exporter<
     SvcType<String>,
     DatadogPayload,
     SuccessStatusFinalizer,
-    DefaultAcknowledger,
+    DefaultHTTPAcknowledger,
 >;
 
 #[derive(Copy, Clone)]
@@ -180,7 +180,7 @@ impl DatadogExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
-            DefaultAcknowledger::default(),
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
