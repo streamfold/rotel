@@ -95,7 +95,9 @@ impl AwsEmfRequestBuilder {
         batches.push(curr_batch);
 
         let mut reqs = Vec::with_capacity(batches.len());
-        for batch in batches {
+        let single_batch = batches.len() == 1;
+
+        for (idx, batch) in batches.into_iter().enumerate() {
             let data = json!({
                 "logGroupName": self.log_group_name,
                 "logStreamName": self.log_stream_name,
@@ -120,10 +122,17 @@ impl AwsEmfRequestBuilder {
 
             match signed_request {
                 Ok(request) => {
-                    // Use the new from_signed_request method to wrap the signed request
-                    // with metadata, avoiding the need to clone the data
+                    // Only clone metadata when there are multiple batches, otherwise move it
+                    let batch_metadata = if single_batch {
+                        metadata
+                    } else if idx == 0 {
+                        metadata.clone()
+                    } else {
+                        None
+                    };
+
                     let request_with_metadata =
-                        AwsEmfPayload::from_signed_request(request, metadata.clone());
+                        AwsEmfPayload::from_signed_request(request, batch_metadata);
                     reqs.push(request_with_metadata);
                 }
                 Err(e) => return Err(Box::new(e)),
