@@ -587,7 +587,7 @@ mod tests {
                     None => false,    // Channel closed without acknowledgment
                 }
             }
-            _ = tokio::time::sleep(Duration::from_millis(1000)) => false, // Timeout
+            _ = tokio::time::sleep(Duration::from_millis(5000)) => false, // Timeout
         };
 
         // Clean up

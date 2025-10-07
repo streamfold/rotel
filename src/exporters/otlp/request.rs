@@ -13,9 +13,11 @@ use crate::exporters::otlp::config::{
 use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::grpc_codec::grpc_encode_body;
 use crate::exporters::otlp::http_codec::http_encode_body;
+use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::signer::{RequestSigner, RequestSignerBuilder};
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::telemetry::{Counter, RotelCounter};
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request};
@@ -67,15 +69,6 @@ pub struct RequestBuilderConfig {
     pub protocol: Protocol,
     compression: Option<CompressionEncoding>,
     default_headers: HeaderMap,
-}
-
-use crate::topology::payload::MessageMetadata;
-
-#[derive(Clone)]
-pub struct EncodedRequest {
-    pub request: Request<Full<Bytes>>,
-    pub size: usize,
-    pub metadata: Option<Vec<MessageMetadata>>,
 }
 
 /// Creates a new RequestBuilder for trace exports.
@@ -272,14 +265,15 @@ impl<T: prost::Message, Signer: RequestSigner + Clone> RequestBuilder<T, Signer>
         message: T,
         size: usize,
         metadata: Option<Vec<MessageMetadata>>,
-    ) -> Result<EncodedRequest, ExporterError> {
+    ) -> Result<Request<OtlpPayload>, ExporterError> {
         let res = self.new_request(message);
         match res {
-            Ok(request) => Ok(EncodedRequest {
-                request,
-                size,
-                metadata,
-            }),
+            Ok(request) => {
+                // Wrap the request with OtlpPayload to carry metadata
+                Ok(OtlpPayload::from_request_with_metadata(
+                    request, metadata, size,
+                ))
+            }
             Err(e) => {
                 self.send_failed
                     .add(size as u64, &[KeyValue::new("error", "request.encode")]);

@@ -912,4 +912,46 @@ mod tests {
         assert_eq!(split_result[0].len(), 1);
         assert_eq!(split_result[0][0].payload, resource_metrics);
     }
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        use crate::bounded_channel::bounded;
+        use crate::exporters::kafka::exporter::KafkaAcknowledger;
+        use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, MessageMetadata};
+        use std::time::Duration;
+
+        // Create metadata with acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(1);
+        let expected_offset = 456;
+        let expected_partition = 2;
+        let expected_topic_id = 3;
+        let metadata = vec![MessageMetadata::Kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        })];
+
+        // Test acknowledgment
+        let acknowledger = KafkaAcknowledger;
+        acknowledger.acknowledge_metadata(Some(metadata)).await;
+
+        // Wait for acknowledgment
+        let received_ack = tokio::time::timeout(Duration::from_secs(5), ack_rx.next())
+            .await
+            .expect("Timeout waiting for acknowledgment")
+            .expect("Failed to receive acknowledgment");
+
+        // Verify the acknowledgment contains the expected information
+        match received_ack {
+            KafkaAcknowledgement::Ack(ack) => {
+                assert_eq!(ack.offset, expected_offset, "Offset should match");
+                assert_eq!(ack.partition, expected_partition, "Partition should match");
+                assert_eq!(ack.topic_id, expected_topic_id, "Topic ID should match");
+            }
+            KafkaAcknowledgement::Nack(_) => {
+                panic!("Received Nack instead of Ack");
+            }
+        }
+    }
 }

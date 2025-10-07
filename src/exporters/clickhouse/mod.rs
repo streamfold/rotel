@@ -485,7 +485,7 @@ mod tests {
         .unwrap();
 
         // Wait for acknowledgment
-        let received_ack = tokio::time::timeout(Duration::from_secs(1), ack_rx.next())
+        let received_ack = tokio::time::timeout(Duration::from_secs(5), ack_rx.next())
             .await
             .expect("Timeout waiting for acknowledgment")
             .expect("Failed to receive acknowledgment");

@@ -17,7 +17,8 @@ use crate::exporters::otlp::client::OTLPClient;
 use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
-use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
+use crate::exporters::otlp::payload::OtlpPayload;
+use crate::exporters::otlp::request::RequestBuilder;
 use crate::exporters::otlp::signer::{
     AwsSigv4RequestSigner, AwsSigv4RequestSignerBuilder, RequestSigner,
 };
@@ -27,6 +28,7 @@ use crate::topology::batch::BatchSizer;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::{Ack, Message, MessageMetadata, OTLPFrom};
 use futures::stream::FuturesUnordered;
+use http::Request;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -61,7 +63,7 @@ const MAX_CONCURRENT_ENCODERS: usize = 20;
 #[rustfmt::skip]
 type ExportFuture<T> = Pin<Box<dyn Future<Output = (Result<T, BoxError>, Option<Vec<MessageMetadata>>)> + Send>>;
 #[rustfmt::skip]
-type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<EncodedRequest, errors::ExporterError>, JoinError>> + Send>>;
+type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<Request<OtlpPayload>, errors::ExporterError>, JoinError>> + Send>>;
 
 /// Creates a configured OTLP traces exporter
 ///
@@ -427,15 +429,11 @@ where
                         Ok(encoded_request) => {
                             match encoded_request {
                                 Ok(encoded_req) => {
-                                    let EncodedRequest { request, size: _, metadata } = encoded_req;
-                                    let fut = self.svc.call(EncodedRequest {
-                                        request,
-                                        size: 0,  // size is no longer used after encoding
-                                        metadata: None
-                                    });
+                                    // The client will handle metadata extraction and attachment to response
+                                    let fut = self.svc.call(encoded_req);
                                     let wrapped_fut = async move {
                                         let result = fut.await;
-                                        (result, metadata)
+                                        (result, None) // Client handles metadata, don't pass it separately
                                     };
                                     self.export_futures.push(Box::pin(wrapped_fut));
                                 },
@@ -555,19 +553,11 @@ where
                     Some(r) => match r {
                         Ok(Ok(encoded_req)) => {
                             // we could exceed the previous limit on export_futures here?
-                            let EncodedRequest {
-                                request,
-                                size: _,
-                                metadata,
-                            } = encoded_req;
-                            let fut = self.svc.call(EncodedRequest {
-                                request,
-                                size: 0, // size is no longer used after encoding
-                                metadata: None,
-                            });
+                            // The client will handle metadata extraction and attachment to response
+                            let fut = self.svc.call(encoded_req);
                             let wrapped_fut = async move {
                                 let result = fut.await;
-                                (result, metadata)
+                                (result, None) // Client handles metadata, don't pass it separately
                             };
                             self.export_futures.push(Box::pin(wrapped_fut));
                         }
@@ -663,7 +653,7 @@ where
             Option<Vec<MessageMetadata>>,
         ),
     ) -> bool {
-        let (res, _metadata) = resp; // metadata will be used for ack/nack in the future
+        let (res, _metadata) = resp; // metadata is now in the response, not the tuple
         let type_name = self.type_name.to_string();
 
         match res {

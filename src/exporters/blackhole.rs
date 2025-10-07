@@ -76,4 +76,61 @@ mod tests {
         cancel_token.cancel();
         let _ = join!(jh);
     }
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, MessageMetadata};
+        use std::time::Duration;
+
+        // Create metadata with acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(1);
+        let expected_offset = 456;
+        let expected_partition = 2;
+        let expected_topic_id = 3;
+        let metadata = MessageMetadata::Kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (tr_tx, tr_rx) = bounded(1);
+        let mut exp = BlackholeExporter::new(tr_rx);
+
+        // Start exporter
+        let cancel_token = CancellationToken::new();
+        let shut_token = cancel_token.clone();
+        let jh = spawn(async move { exp.start(shut_token).await });
+
+        // Send a message with metadata
+        let message = Message {
+            metadata: Some(metadata),
+            payload: vec![FakeOTLP::trace_service_request().resource_spans[0].clone()],
+        };
+        tr_tx.send(vec![message]).await.unwrap();
+
+        // Wait for acknowledgment
+        let received_ack = tokio::time::timeout(Duration::from_secs(5), ack_rx.next())
+            .await
+            .expect("Timeout waiting for acknowledgment")
+            .expect("Failed to receive acknowledgment");
+
+        // Verify the acknowledgment contains the expected information
+        match received_ack {
+            KafkaAcknowledgement::Ack(ack) => {
+                assert_eq!(ack.offset, expected_offset, "Offset should match");
+                assert_eq!(ack.partition, expected_partition, "Partition should match");
+                assert_eq!(ack.topic_id, expected_topic_id, "Topic ID should match");
+            }
+            KafkaAcknowledgement::Nack(_) => {
+                panic!("Received Nack instead of Ack");
+            }
+        }
+
+        // Clean up
+        drop(tr_tx);
+        cancel_token.cancel();
+        let _ = join!(jh);
+    }
 }

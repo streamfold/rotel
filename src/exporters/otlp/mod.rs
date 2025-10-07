@@ -27,6 +27,7 @@
 //!
 pub mod config;
 pub mod exporter;
+pub mod payload;
 pub mod request;
 
 pub(crate) mod errors;
@@ -1246,6 +1247,87 @@ mod tests {
 
         let identity = Identity::from_pem(cert, key);
         ServerTlsConfig::new().identity(identity)
+    }
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+
+        let resp = ExportTraceServiceResponse::default();
+        let mut resp_buf = BytesMut::with_capacity(1024);
+        resp.encode(&mut resp_buf).unwrap();
+
+        // Mock OTLP endpoint
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/traces");
+            then.status(200)
+                .header("content-type", "application/x-protobuf")
+                .body(resp_buf);
+        });
+
+        // Create metadata with acknowledgment channel
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+        let expected_offset = 456;
+        let expected_partition = 2;
+        let expected_topic_id = 3;
+        let metadata =
+            topology::payload::MessageMetadata::Kafka(topology::payload::KafkaMetadata {
+                offset: expected_offset,
+                partition: expected_partition,
+                topic_id: expected_topic_id,
+                ack_chan: Some(ack_tx),
+            });
+
+        // Create a channel for sending messages with metadata
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
+
+        // Build OTLP traces exporter
+        let traces_config = trace_config_builder(
+            Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
+            Protocol::Http,
+        );
+
+        let mut otlp_exp = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None)
+            .expect("Failed to build OTLP exporter");
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle = tokio::spawn(async move { otlp_exp.start(cancel_clone).await });
+
+        // Send traces with metadata
+        let traces = FakeOTLP::trace_service_request();
+        trace_btx
+            .send(vec![topology::payload::Message {
+                metadata: Some(metadata),
+                payload: traces.resource_spans,
+            }])
+            .await
+            .unwrap();
+
+        // Wait for acknowledgment
+        let received_ack = tokio::time::timeout(Duration::from_secs(5), ack_rx.next())
+            .await
+            .expect("Timeout waiting for acknowledgment")
+            .expect("Failed to receive acknowledgment");
+
+        // Verify the acknowledgment contains the expected information
+        match received_ack {
+            topology::payload::KafkaAcknowledgement::Ack(ack) => {
+                assert_eq!(ack.offset, expected_offset, "Offset should match");
+                assert_eq!(ack.partition, expected_partition, "Partition should match");
+                assert_eq!(ack.topic_id, expected_topic_id, "Topic ID should match");
+            }
+            topology::payload::KafkaAcknowledgement::Nack(_) => {
+                panic!("Received Nack instead of Ack");
+            }
+        }
+
+        // Clean up
+        drop(trace_btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
     }
 
     async fn create_trace_client(
