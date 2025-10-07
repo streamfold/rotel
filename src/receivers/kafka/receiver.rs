@@ -11,8 +11,8 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use rdkafka::Message;
 use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::Message;
 use std::error::Error;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -102,7 +102,15 @@ impl KafkaReceiver {
         if let Some(output) = output {
             output
                 .send(payload::Message {
-                    metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                    // N.B - Explicitly disabling sending any metadata for now on this next commit.
+                    // We are doing this because we are wiring in Message<T> handing with acknowledgement
+                    // end-to-end all the way to the exporters. However, as we're not doing anything
+                    // with the acknowledegements, we disable their creation for now out of an abundance of caution.
+                    // This will allow us to land these changes and others while iterating on the additional pieces
+                    // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
+                    // and verify with some aggressive end-to-end tests that everything is working as expected.
+                    // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                    metadata: None,
                     payload: request,
                 })
                 .await?;
@@ -276,10 +284,10 @@ mod tests {
     use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
     use prost::Message;
-    use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::producer::{FutureProducer, FutureRecord};
     use rdkafka::util::Timeout;
+    use rdkafka::ClientConfig;
     use std::time::Duration;
 
     fn create_test_topic_name(prefix: &str) -> String {
