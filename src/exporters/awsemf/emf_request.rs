@@ -111,31 +111,20 @@ impl AwsEmfRequestBuilder {
 
             let body = Bytes::from(gz_vec);
 
-            // NOTE: Unfortunately we need to clone the body here for AWS request signing.
-            // The AWS signer requires raw Bytes to calculate the signature, but we need to
-            // wrap the data in AwsEmfPayload to carry metadata through the HTTP pipeline.
-            //
-            // Future improvement: Consider modifying the AWS signer to accept a generic Body
-            // that can provide both the raw bytes for signing AND carry additional metadata,
-            // eliminating the need for this clone.
             let signed_request = self.signer.sign(
                 self.uri.clone(),
                 Method::POST,
                 self.base_headers.clone(),
-                body.clone(), // TODO: Eliminate this clone by updating signer interface
+                body,
             );
 
             match signed_request {
                 Ok(request) => {
-                    // Extract parts from the signed request and rebuild with AwsEmfPayload
-                    let (parts, _) = request.into_parts();
-
-                    // Move the body data into AwsEmfPayload with metadata
-                    let awsemf_payload = AwsEmfPayload::new(body, metadata.clone());
-
-                    // Rebuild request with AwsEmfPayload
-                    let new_request = Request::from_parts(parts, awsemf_payload);
-                    reqs.push(new_request);
+                    // Use the new from_signed_request method to wrap the signed request
+                    // with metadata, avoiding the need to clone the data
+                    let request_with_metadata =
+                        AwsEmfPayload::from_signed_request(request, metadata.clone());
+                    reqs.push(request_with_metadata);
                 }
                 Err(e) => return Err(Box::new(e)),
             }

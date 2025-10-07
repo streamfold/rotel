@@ -72,31 +72,19 @@ impl XRayRequestBuilder {
         .to_string();
         let data = Bytes::from(data.into_bytes());
 
-        // NOTE: Unfortunately we need to clone the data here for AWS request signing.
-        // The AWS signer requires raw Bytes to calculate the signature, but we need to
-        // wrap the data in XRayPayload to carry metadata through the HTTP pipeline.
-        //
-        // Future improvement: Consider modifying the AWS signer to accept a generic Body
-        // that can provide both the raw bytes for signing AND carry additional metadata,
-        // eliminating the need for this clone.
         let signed_request = self.signer.sign(
             self.uri.clone(),
             Method::POST,
             self.base_headers.clone(),
-            data.clone(), // TODO: Eliminate this clone by updating signer interface
+            data,
         );
 
         match signed_request {
             Ok(request) => {
-                // Extract parts from the signed request and rebuild with XRayPayload
-                let (parts, _) = request.into_parts();
-
-                // Move the data (already cloned above) into XRayPayload with metadata
-                let xray_payload = XRayPayload::new(data, metadata);
-
-                // Rebuild request with XRayPayload
-                let new_request = Request::from_parts(parts, xray_payload);
-                Ok(vec![new_request])
+                // Use the new from_signed_request method to wrap the signed request
+                // with metadata, avoiding the need to clone the data
+                let request_with_metadata = XRayPayload::from_signed_request(request, metadata);
+                Ok(vec![request_with_metadata])
             }
             Err(e) => Err(Box::new(e)),
         }
