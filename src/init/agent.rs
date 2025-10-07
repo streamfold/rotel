@@ -3,7 +3,6 @@ use crate::bounded_channel::{BoundedReceiver, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
-use crate::exporters::http::acknowledger::DefaultAcknowledger;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
 use crate::exporters::otlp;
@@ -307,7 +306,6 @@ impl Agent {
                         let exp = builder.build_traces_exporter(
                             trace_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                            DefaultAcknowledger,
                         )?;
 
                         let token = exporters_cancel.clone();
@@ -472,7 +470,6 @@ impl Agent {
                         let exp = builder.build_metrics_exporter(
                             metrics_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                            DefaultAcknowledger,
                         )?;
 
                         let token = exporters_cancel.clone();
@@ -587,7 +584,6 @@ impl Agent {
                         let exp = builder.build_logs_exporter(
                             logs_pipeline_out_rx,
                             self.exporters_flush_sub.as_mut().map(|sub| sub.subscribe()),
-                            DefaultAcknowledger,
                         )?;
 
                         let token = exporters_cancel.clone();
