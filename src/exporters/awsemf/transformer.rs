@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use super::DimensionFilter;
+use super::event::Event;
 use crate::exporters::awsemf::AwsEmfExporterConfig;
 use crate::exporters::awsemf::request_builder::TransformPayload;
+use crate::topology::payload::Message;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_NAMESPACE};
 use serde_json::Error as JsonError;
@@ -13,9 +16,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use thiserror::Error;
-
-use super::DimensionFilter;
-use super::event::Event;
 
 // Only value supported at the moment
 const STORAGE_RESOLUTION: usize = 60;
@@ -36,19 +36,36 @@ impl Transformer {
 }
 
 impl TransformPayload<ResourceMetrics> for Transformer {
-    fn transform(&self, resource_metrics: Vec<ResourceMetrics>) -> Result<Vec<Event>, ExportError> {
+    fn transform(
+        &self,
+        resource_metrics: Vec<Message<ResourceMetrics>>,
+    ) -> (
+        Result<Vec<Event>, ExportError>,
+        Option<Vec<crate::topology::payload::MessageMetadata>>,
+    ) {
         let mut grouped_metrics: HashMap<GroupKey, GroupedMetric> = HashMap::new();
+        let mut all_metadata = Vec::new();
 
-        for rm in resource_metrics {
-            let resource_attrs = extract_resource_attributes(&rm);
+        for message in resource_metrics {
+            // Extract metadata from message
+            if let Some(metadata) = message.metadata {
+                all_metadata.push(metadata);
+            }
 
-            for sm in rm.scope_metrics {
-                for metric in sm.metrics {
-                    self.metric_transformer.add_to_grouped_metrics(
-                        &metric,
-                        &resource_attrs,
-                        &mut grouped_metrics,
-                    )?;
+            for rm in message.payload {
+                let resource_attrs = extract_resource_attributes(&rm);
+
+                for sm in rm.scope_metrics {
+                    for metric in sm.metrics {
+                        match self.metric_transformer.add_to_grouped_metrics(
+                            &metric,
+                            &resource_attrs,
+                            &mut grouped_metrics,
+                        ) {
+                            Ok(_) => {}
+                            Err(e) => return (Err(e), None),
+                        }
+                    }
                 }
             }
         }
@@ -56,13 +73,21 @@ impl TransformPayload<ResourceMetrics> for Transformer {
         // Convert grouped metrics to EMF logs
         let mut emf_logs = Vec::new();
         for (_, grouped_metric) in grouped_metrics {
-            let emf_log = self
+            match self
                 .metric_transformer
-                .translate_grouped_metric_to_emf(grouped_metric)?;
-            emf_logs.push(emf_log);
+                .translate_grouped_metric_to_emf(grouped_metric)
+            {
+                Ok(emf_log) => emf_logs.push(emf_log),
+                Err(e) => return (Err(e), None),
+            }
         }
 
-        Ok(emf_logs)
+        let metadata = if all_metadata.is_empty() {
+            None
+        } else {
+            Some(all_metadata)
+        };
+        (Ok(emf_logs), metadata)
     }
 }
 
@@ -2054,7 +2079,7 @@ mod tests {
         metrics.insert(
             "test_metric".to_string(),
             MetricInfo {
-                value: MetricValue::Double(3.14),
+                value: MetricValue::Double(std::f64::consts::PI),
                 unit: "ratio".to_string(),
             },
         );

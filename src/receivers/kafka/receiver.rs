@@ -95,14 +95,22 @@ impl KafkaReceiver {
 
     async fn send_to_pipeline<T>(
         &self,
-        kafka_metadata: KafkaMetadata,
+        _kafka_metadata: KafkaMetadata,
         request: Vec<T>,
         output: &Option<OTLPOutput<payload::Message<T>>>,
     ) -> std::result::Result<(), SendError> {
         if let Some(output) = output {
             output
                 .send(payload::Message {
-                    metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                    // N.B - Explicitly disabling sending any metadata for now on this next commit.
+                    // We are doing this because we are wiring in Message<T> handing with acknowledgement
+                    // end-to-end all the way to the exporters. However, as we're not doing anything
+                    // with the acknowledegements, we disable their creation for now out of an abundance of caution.
+                    // This will allow us to land these changes and others while iterating on the additional pieces
+                    // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
+                    // and verify with some aggressive end-to-end tests that everything is working as expected.
+                    // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                    metadata: None,
                     payload: request,
                 })
                 .await?;

@@ -124,7 +124,7 @@ pub(crate) fn is_retryable_error(
     result: &Result<Response<AwsEmfResponse>, BoxError>,
 ) -> Option<bool> {
     // Force these to be retried since we'll try to create the log stream/group
-    if let Ok(Response::Http(_, Some(AwsEmfResponse::ResourceNotFoundException(_)))) = result {
+    if let Ok(Response::Http(_, Some(AwsEmfResponse::ResourceNotFoundException(_)), _)) = result {
         return Some(true);
     }
 

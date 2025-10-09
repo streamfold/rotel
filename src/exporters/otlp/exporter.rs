@@ -10,13 +10,15 @@ use crate::aws_api::config::AwsConfig;
 /// - Support for both metrics and traces telemetry
 ///
 use crate::bounded_channel::BoundedReceiver;
+use crate::exporters::http::acknowledger::{Acknowledger, DefaultHTTPAcknowledger};
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::retry::RetryPolicy;
 use crate::exporters::otlp::client::OTLPClient;
 use crate::exporters::otlp::config::{
     OTLPExporterLogsConfig, OTLPExporterMetricsConfig, OTLPExporterTracesConfig,
 };
-use crate::exporters::otlp::request::{EncodedRequest, RequestBuilder};
+use crate::exporters::otlp::payload::OtlpPayload;
+use crate::exporters::otlp::request::RequestBuilder;
 use crate::exporters::otlp::signer::{
     AwsSigv4RequestSigner, AwsSigv4RequestSignerBuilder, RequestSigner,
 };
@@ -24,8 +26,9 @@ use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use crate::topology::payload::OTLPFrom;
+use crate::topology::payload::{Message, MessageMetadata, OTLPFrom};
 use futures::stream::FuturesUnordered;
+use http::Request;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -58,9 +61,9 @@ const MAX_CONCURRENT_REQUESTS: usize = 10;
 const MAX_CONCURRENT_ENCODERS: usize = 20;
 
 #[rustfmt::skip]
-type ExportFuture<T> = Pin<Box<dyn Future<Output = Result<T, BoxError>> + Send>>;
+type ExportFuture<T> = Pin<Box<dyn Future<Output = (Result<T, BoxError>, Option<Vec<MessageMetadata>>)> + Send>>;
 #[rustfmt::skip]
-type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<EncodedRequest, errors::ExporterError>, JoinError>> + Send>>;
+type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<Request<OtlpPayload>, errors::ExporterError>, JoinError>> + Send>>;
 
 /// Creates a configured OTLP traces exporter
 ///
@@ -72,7 +75,7 @@ type EncodingFuture = Pin<Box<dyn Future<Output = Result<Result<EncodedRequest, 
 /// Configured Exporter instance for trace telemetry
 pub fn build_traces_exporter(
     traces_config: OTLPExporterTracesConfig,
-    trace_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    trace_rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<
@@ -147,7 +150,7 @@ fn get_signer_builder(cfg: &OTLPExporterTracesConfig) -> Option<AwsSigv4RequestS
 /// Configured Exporter instance for metrics telemetry
 pub fn build_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<
@@ -189,7 +192,7 @@ pub fn build_metrics_exporter(
 /// Configured Exporter instance for logs telemetry
 pub fn build_logs_exporter(
     logs_config: OTLPExporterLogsConfig,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    logs_rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<
@@ -255,7 +258,7 @@ pub fn build_logs_exporter(
 /// Configured Exporter instance for metrics telemetry
 pub fn build_internal_metrics_exporter(
     metrics_config: OTLPExporterMetricsConfig,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<
@@ -281,7 +284,7 @@ fn _build_metrics_exporter(
     sent: RotelCounter<u64>,
     send_failed: RotelCounter<u64>,
     metrics_config: OTLPExporterMetricsConfig,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     flush_receiver: Option<FlushReceiver>,
 ) -> Result<
     Exporter<
@@ -338,11 +341,12 @@ where
     Signer: Clone,
 {
     type_name: String,
-    rx: BoundedReceiver<Vec<Resource>>,
+    rx: BoundedReceiver<Vec<Message<Resource>>>,
     req_builder: RequestBuilder<Request, Signer>,
     encoding_futures: FuturesUnordered<EncodingFuture>,
     export_futures: FuturesUnordered<ExportFuture<HttpResponse<Response>>>,
     svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
+    acknowledger: DefaultHTTPAcknowledger,
     encode_drain_max_time: Duration,
     export_drain_max_time: Duration,
     flush_receiver: Option<FlushReceiver>,
@@ -368,7 +372,7 @@ where
         type_name: String,
         svc: Retry<RetryPolicy<Response>, Timeout<OTLPClient<Response>>>,
         req_builder: RequestBuilder<Request, Signer>,
-        rx: BoundedReceiver<Vec<Resource>>,
+        rx: BoundedReceiver<Vec<Message<Resource>>>,
         encode_drain_max_time: Duration,
         export_drain_max_time: Duration,
         flush_receiver: Option<FlushReceiver>,
@@ -379,6 +383,7 @@ where
             rx,
             req_builder,
             svc,
+            acknowledger: DefaultHTTPAcknowledger::default(),
             encoding_futures: FuturesUnordered::new(),
             export_futures: FuturesUnordered::new(),
             encode_drain_max_time,
@@ -408,15 +413,30 @@ where
                 biased;
 
                 Some(resp) = self.export_futures.next() => {
-                    self.log_if_failed(resp);
+                    let (result, metadata) = resp;
+                    match &result {
+                        Ok(r) => {
+                            self.acknowledger.acknowledge(r).await
+                        }Err(_e) => {
+                           // TODO - We'll need to propagate MessageMetadata in Errors as well
+                        }
+                    }
+                    // Then pass ownership to logging/finalization
+                    self.log_if_failed((result, metadata));
                 },
 
                 Some(v) = self.encoding_futures.next(), if self.export_futures.len() < MAX_CONCURRENT_REQUESTS => {
                     match v {
                         Ok(encoded_request) => {
                             match encoded_request {
-                                Ok(request) => {
-                                    self.export_futures.push(Box::pin(self.svc.call(request)));
+                                Ok(encoded_req) => {
+                                    // The client will handle metadata extraction and attachment to response
+                                    let fut = self.svc.call(encoded_req);
+                                    let wrapped_fut = async move {
+                                        let result = fut.await;
+                                        (result, None) // Client handles metadata, don't pass it separately
+                                    };
+                                    self.export_futures.push(Box::pin(wrapped_fut));
                                 },
                                 Err(e) => {
                                     error!(exporter_type = type_name,
@@ -434,13 +454,31 @@ where
 
                 req = self.rx.next(), if self.encoding_futures.len() < MAX_CONCURRENT_ENCODERS => {
                     match req {
-                        Some(payload) => {
+                        Some(messages) => {
                             debug!(exporter_type =self.type_name.to_string(),
-                                "Got a request {:?}", payload);
+                                "Got a request with {} messages", messages.len());
+
+                                // Extract payloads and metadata
+                                let mut payloads = Vec::new();
+                                let mut all_metadata = Vec::new();
+
+                                for message in messages {
+                                    if let Some(metadata) = message.metadata {
+                                        all_metadata.push(metadata);
+                                    }
+                                    payloads.extend(message.payload);
+                                }
+
+                                let metadata = if all_metadata.is_empty() {
+                                    None
+                                } else {
+                                    Some(all_metadata)
+                                };
+
                                 let req_builder = self.req_builder.clone();
                                 let f = tokio::task::spawn_blocking(move || {
-                                    let size = BatchSizer::size_of(payload.as_slice());
-                                    req_builder.encode(Request::otlp_from(payload), size)
+                                    let size = BatchSizer::size_of(payloads.as_slice());
+                                    req_builder.encode(Request::otlp_from(payloads), size, metadata)
                                 });
                                 self.encoding_futures.push(Box::pin(f));
                         },
@@ -514,9 +552,15 @@ where
                         break;
                     }
                     Some(r) => match r {
-                        Ok(Ok(r)) => {
+                        Ok(Ok(encoded_req)) => {
                             // we could exceed the previous limit on export_futures here?
-                            self.export_futures.push(Box::pin(self.svc.call(r)));
+                            // The client will handle metadata extraction and attachment to response
+                            let fut = self.svc.call(encoded_req);
+                            let wrapped_fut = async move {
+                                let result = fut.await;
+                                (result, None) // Client handles metadata, don't pass it separately
+                            };
+                            self.export_futures.push(Box::pin(wrapped_fut));
                         }
                         Err(e) => {
                             return Err(format!(
@@ -561,7 +605,16 @@ where
                         break;
                     }
                     Some(r) => {
-                        if self.log_if_failed(r) {
+                        let (result, metadata) = r;
+                        match &result {
+                            Ok(r) => self.acknowledger.acknowledge(r).await,
+                            Err(_e) => {
+                                // TODO - We'll need to propagate MessageMetadata in Errors as well
+                            }
+                        }
+
+                        // Then pass ownership to logging/finalization
+                        if self.log_if_failed((result, metadata)) {
                             drain_errors += 1;
                         }
                     }
@@ -581,12 +634,19 @@ where
     }
 
     // Log if the request failed and return true, otherwise return false
-    fn log_if_failed(&self, res: Result<HttpResponse<Response>, BoxError>) -> bool {
+    fn log_if_failed(
+        &self,
+        resp: (
+            Result<HttpResponse<Response>, BoxError>,
+            Option<Vec<MessageMetadata>>,
+        ),
+    ) -> bool {
+        let (res, _metadata) = resp; // metadata is now in the response, not the tuple
         let type_name = self.type_name.to_string();
 
         match res {
             Ok(r) => match r {
-                HttpResponse::Http(parts, _) => match parts.status.as_u16() {
+                HttpResponse::Http(parts, _, _) => match parts.status.as_u16() {
                     200..=202 => return false,
                     _ => {
                         error!(
@@ -597,7 +657,7 @@ where
                         return true;
                     }
                 },
-                HttpResponse::Grpc(status, _) => {
+                HttpResponse::Grpc(status, _, _) => {
                     if status.code() == tonic::Code::Ok {
                         return false;
                     }

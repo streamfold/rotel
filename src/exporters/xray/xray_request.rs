@@ -2,10 +2,11 @@
 
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
+use crate::exporters::xray::XRayPayload;
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
-use http_body_util::Full;
 use serde_json::{Value, json};
 use std::error::Error;
 use tower::BoxError;
@@ -54,7 +55,11 @@ impl XRayRequestBuilder {
         Ok(s)
     }
 
-    pub fn build(&self, payload: Vec<Value>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
+    pub fn build(
+        &self,
+        payload: Vec<Value>,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<Vec<Request<XRayPayload>>, BoxError> {
         // Convert each segment Value to a string
         let segment_strings: Vec<String> = payload
             .into_iter()
@@ -73,8 +78,20 @@ impl XRayRequestBuilder {
             self.base_headers.clone(),
             data,
         );
+
         match signed_request {
-            Ok(r) => Ok(vec![r]),
+            Ok(request) => {
+                // Decompose the signed request to get parts and body
+                let (parts, body) = request.into_parts();
+
+                // Create MessagePayload with just the body
+                let payload = XRayPayload::new(body, metadata);
+
+                // Reconstruct request with the payload as the body
+                let wrapped_request = Request::from_parts(parts, payload);
+
+                Ok(vec![wrapped_request])
+            }
             Err(e) => Err(Box::new(e)),
         }
     }

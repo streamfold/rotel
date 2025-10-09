@@ -13,16 +13,17 @@ use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
+use crate::topology::payload::Message;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use http::Request;
-use http_body_util::Full;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::time::Duration;
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
+use super::http::acknowledger::DefaultHTTPAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 
 mod api_request;
@@ -30,23 +31,31 @@ mod request_builder;
 mod transform;
 mod types;
 
-type SvcType<RespBody> =
-    TowerRetry<RetryPolicy<RespBody>, Timeout<Client<Full<Bytes>, RespBody, DatadogTraceDecoder>>>;
+/// Type alias for Datadog payloads using the generic MessagePayload
+use crate::exporters::http::metadata_extractor::MessagePayload;
+use http_body_util::Full;
+pub type DatadogPayload = MessagePayload<Full<Bytes>>;
+
+type SvcType<RespBody> = TowerRetry<
+    RetryPolicy<RespBody>,
+    Timeout<Client<DatadogPayload, RespBody, DatadogTraceDecoder>>,
+>;
 
 type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
-            RecvStream<'a, Vec<Resource>>,
+            RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
-            Full<Bytes>,
+            DatadogPayload,
             RequestBuilder<Resource, Transformer>,
         >,
-        Vec<Request<Full<Bytes>>>,
-        Full<Bytes>,
+        Vec<Request<DatadogPayload>>,
+        DatadogPayload,
     >,
     SvcType<String>,
-    Full<Bytes>,
+    DatadogPayload,
     SuccessStatusFinalizer,
+    DefaultHTTPAcknowledger,
 >;
 
 #[derive(Copy, Clone)]
@@ -143,7 +152,7 @@ impl DatadogExporterConfigBuilder {
 impl DatadogExporterBuilder {
     pub fn build<'a>(
         self,
-        rx: BoundedReceiver<Vec<ResourceSpans>>,
+        rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
@@ -174,6 +183,7 @@ impl DatadogExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -202,6 +212,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::datadog::{DatadogExporterConfigBuilder, ExporterType, Region};
     use crate::exporters::http::retry::RetryConfig;
+    use crate::topology::payload::Message;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
@@ -209,6 +220,76 @@ mod tests {
     use tokio_test::{assert_err, assert_ok};
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Set up mock endpoint that returns success
+        let _success_mock = server.mock(|when, then| {
+            when.method(POST).path("/api/v0.2/traces");
+            then.status(200)
+                .header("content-type", "application/x-protobuf")
+                .body("ok");
+        });
+
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+        let exporter = new_exporter(addr, brx);
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded::<crate::topology::payload::KafkaAcknowledgement>(10);
+
+        // Create fake traces with Kafka metadata for acknowledgment
+        let traces = FakeOTLP::trace_service_request();
+        let kafka_metadata = crate::topology::payload::KafkaMetadata {
+            offset: 12345,
+            partition: 2,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        };
+
+        let message = Message {
+            metadata: Some(crate::topology::payload::MessageMetadata::Kafka(
+                kafka_metadata.clone(),
+            )),
+            payload: traces.resource_spans,
+        };
+
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+
+        // Start the exporter
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send the message with metadata
+        btx.send(vec![message]).await.unwrap();
+        drop(btx); // Close the sender to allow exporter to finish
+
+        // Wait for the acknowledgment
+        let ack_result = tokio::time::timeout(Duration::from_secs(5), ack_rx.next()).await;
+
+        assert_ok!(&ack_result, "Should receive acknowledgment within timeout");
+
+        let ack = ack_result.unwrap().unwrap();
+        match ack {
+            crate::topology::payload::KafkaAcknowledgement::Ack(kafka_ack) => {
+                assert_eq!(kafka_ack.offset, 12345);
+                assert_eq!(kafka_ack.partition, 2);
+                assert_eq!(kafka_ack.topic_id, 1);
+            }
+            crate::topology::payload::KafkaAcknowledgement::Nack(_) => {
+                panic!("Expected Ack but got Nack");
+            }
+        }
+
+        // Clean up - cancel the exporter
+        cancellation_token.cancel();
+        let exporter_result = exporter_handle.await;
+        assert_ok!(exporter_result);
+    }
 
     #[tokio::test]
     async fn success_and_retry() {
@@ -223,7 +304,7 @@ mod tests {
                 .body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
         let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -232,7 +313,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let traces = FakeOTLP::trace_service_request();
-        btx.send(traces.resource_spans).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -249,7 +335,7 @@ mod tests {
                 .body("hold up");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
         let exporter = new_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -258,7 +344,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let traces = FakeOTLP::trace_service_request();
-        btx.send(traces.resource_spans).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap()); // failed to drain
@@ -268,7 +359,7 @@ mod tests {
 
     fn new_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceSpans>>,
+        brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
         DatadogExporterConfigBuilder::new(Region::US1, Some(addr), "1234".to_string())
             .with_retry_config(RetryConfig {

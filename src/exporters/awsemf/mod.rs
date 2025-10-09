@@ -13,13 +13,12 @@ use crate::exporters::http::request_builder_mapper::RequestBuilderMapper;
 use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
 use crate::topology::flush_control::FlushReceiver;
-use bytes::Bytes;
 
+use bytes::Bytes;
 use dim_filter::DimensionFilter;
 use errors::{AwsEmfDecoder, AwsEmfResponse, is_retryable_error};
 use flume::r#async::RecvStream;
 use http::Request;
-use http_body_util::Full;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +26,7 @@ use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
 
+use super::http::acknowledger::DefaultHTTPAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
@@ -39,27 +39,34 @@ mod request_builder;
 mod response_interceptor;
 mod transformer;
 
+use crate::topology::payload::Message;
 use cloudwatch::Cloudwatch;
+
+/// Type alias for AWS EMF payloads using the generic MessagePayload
+use crate::exporters::http::metadata_extractor::MessagePayload;
+use http_body_util::Full;
+pub type AwsEmfPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,
-    ResponseInterceptor<Timeout<Client<Full<Bytes>, RespBody, AwsEmfDecoder>>>,
+    ResponseInterceptor<Timeout<Client<AwsEmfPayload, RespBody, AwsEmfDecoder>>>,
 >;
 
-type ExporterType<'a, Resource> = Exporter<
+type ExporterType<'a, Resource, Ack> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
-            RecvStream<'a, Vec<Resource>>,
+            RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
-            Full<Bytes>,
+            AwsEmfPayload,
             RequestBuilder<Resource, Transformer>,
         >,
-        Vec<Request<Full<Bytes>>>,
-        Full<Bytes>,
+        Vec<Request<AwsEmfPayload>>,
+        AwsEmfPayload,
     >,
     SvcType<AwsEmfResponse>,
-    Full<Bytes>,
+    AwsEmfPayload,
     SuccessStatusFinalizer,
+    Ack,
 >;
 
 #[derive(Clone)]
@@ -174,10 +181,10 @@ pub struct AwsEmfExporterBuilder {
 impl AwsEmfExporterBuilder {
     pub(crate) fn build<'a>(
         self,
-        rx: BoundedReceiver<Vec<ResourceMetrics>>,
+        rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
         aws_config: AwsConfig,
-    ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
+    ) -> Result<ExporterType<'a, ResourceMetrics, DefaultHTTPAcknowledger>, BoxError> {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
         let dim_filter = Arc::new(DimensionFilter::new(
             self.config.include_dimensions.clone(),
@@ -220,6 +227,7 @@ impl AwsEmfExporterBuilder {
             enc_stream,
             svc,
             SuccessStatusFinalizer::default(),
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -240,6 +248,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::shared::aws::Region;
+    use crate::topology::payload::{Message, MessageMetadata};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
     use std::time::Duration;
@@ -261,7 +270,7 @@ mod tests {
                 .body("{}");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -271,7 +280,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0.unwrap());
@@ -289,7 +303,7 @@ mod tests {
                 .body(r#"{"__type":"ServiceUnavailableException","message":"Rate exceeded"}"#);
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -299,7 +313,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap()); // failed to drain
@@ -355,7 +374,7 @@ mod tests {
                 .body(r#"{"nextSequenceToken":"12345"}"#);
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -365,7 +384,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -413,7 +437,7 @@ mod tests {
                 .body("{}");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, None);
 
@@ -423,7 +447,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -480,7 +509,7 @@ mod tests {
                 .body(r#"{"nextSequenceToken":"12345"}"#);
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let config = AwsConfig::from_env();
         let exporter = new_exporter(addr, brx, config, Some(3));
 
@@ -490,7 +519,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_err!(res.0.unwrap());
@@ -502,12 +536,86 @@ mod tests {
         assert!(retention_mock.hits() > 0);
     }
 
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock AWS EMF endpoint
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        // Create acknowledgment channel for real acknowledgment flow
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        // Create metadata with real acknowledgment channel
+        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+            offset: 123,
+            partition: 0,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
+
+        // Use DefaultHTTPAcknowledger to test real acknowledgment flow
+        let config = AwsConfig::from_env();
+        let exporter = new_exporter(addr, brx, config, None);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send metrics with metadata
+        let metrics = FakeOTLP::metrics_service_request();
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: metrics.resource_metrics,
+        }])
+        .await
+        .unwrap();
+
+        // Wait for acknowledgment or timeout
+        let ack_received = tokio::select! {
+            result = ack_rx.next() => {
+                match result {
+                    Some(_) => true,  // Acknowledgment received
+                    None => false,    // Channel closed without acknowledgment
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(5000)) => false, // Timeout
+        };
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // ASSERTION: This should pass since AWS EMF now properly acknowledges messages
+        assert!(
+            ack_received,
+            "Message was not acknowledged by AWS EMF exporter - real acknowledgment flow failed!"
+        );
+    }
+
     fn new_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceMetrics>>,
+        brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         aws_config: AwsConfig,
         log_retention: Option<u16>,
-    ) -> ExporterType<'a, ResourceMetrics> {
+    ) -> ExporterType<
+        'a,
+        ResourceMetrics,
+        crate::exporters::http::acknowledger::DefaultHTTPAcknowledger,
+    > {
         let mut builder = AwsEmfExporterConfigBuilder::new()
             .with_region(Region::UsEast1)
             .with_custom_endpoint(addr)

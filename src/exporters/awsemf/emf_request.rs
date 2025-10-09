@@ -2,12 +2,13 @@
 
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
+use crate::exporters::awsemf::AwsEmfPayload;
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::bufread::GzEncoder;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
-use http_body_util::Full;
 use serde_json::json;
 use std::error::Error;
 use std::io::Read;
@@ -66,7 +67,11 @@ impl AwsEmfRequestBuilder {
         Ok(s)
     }
 
-    pub fn build(&self, events: Vec<Event>) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
+    pub fn build(
+        &self,
+        events: Vec<Event>,
+        mut metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<Vec<Request<AwsEmfPayload>>, BoxError> {
         if events.is_empty() {
             return Ok(vec![]);
         }
@@ -90,7 +95,9 @@ impl AwsEmfRequestBuilder {
         batches.push(curr_batch);
 
         let mut reqs = Vec::with_capacity(batches.len());
-        for batch in batches {
+        let single_batch = batches.len() == 1;
+
+        for (idx, batch) in batches.into_iter().enumerate() {
             let data = json!({
                 "logGroupName": self.log_group_name,
                 "logStreamName": self.log_stream_name,
@@ -113,12 +120,30 @@ impl AwsEmfRequestBuilder {
                 body,
             );
 
-            let r = match signed_request {
-                Ok(r) => r,
-                Err(e) => return Err(Box::new(e)),
-            };
+            match signed_request {
+                Ok(request) => {
+                    // Only clone metadata when there are multiple batches, otherwise move it
+                    let batch_metadata = if single_batch {
+                        metadata.take()
+                    } else if idx == 0 {
+                        metadata.clone()
+                    } else {
+                        None
+                    };
 
-            reqs.push(r);
+                    // Decompose the signed request to get parts and body
+                    let (parts, body) = request.into_parts();
+
+                    // Create MessagePayload with just the body
+                    let payload = AwsEmfPayload::new(body, batch_metadata);
+
+                    // Reconstruct request with the payload as the body
+                    let wrapped_request = Request::from_parts(parts, payload);
+
+                    reqs.push(wrapped_request);
+                }
+                Err(e) => return Err(Box::new(e)),
+            }
         }
 
         Ok(reqs)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::bounded_channel::BoundedSender;
+use crate::bounded_channel::{BoundedSender, SendError};
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -57,6 +57,35 @@ impl PartialEq for KafkaMetadata {
     }
 }
 
+// TODO: consider whether we want a generic reason or enum.
+pub trait Ack {
+    #[allow(async_fn_in_trait)]
+    async fn ack(&self) -> Result<(), SendError>;
+    fn nack(&self);
+}
+
+impl Ack for MessageMetadata {
+    async fn ack(&self) -> Result<(), SendError> {
+        match self {
+            MessageMetadata::Kafka(km) => {
+                if let Some(ack_chan) = &km.ack_chan {
+                    ack_chan
+                        .send(KafkaAcknowledgement::Ack(KafkaAck {
+                            offset: km.offset,
+                            partition: km.partition,
+                            topic_id: km.topic_id,
+                        }))
+                        .await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn nack(&self) {
+        todo!()
+    }
+}
 pub enum KafkaAcknowledgement {
     Ack(KafkaAck),
     Nack(KafkaNack),
@@ -97,6 +126,14 @@ impl OTLPFrom<Vec<ResourceSpans>> for ExportTraceServiceRequest {
     }
 }
 
+impl OTLPFrom<Vec<Message<ResourceSpans>>> for ExportTraceServiceRequest {
+    fn otlp_from(value: Vec<Message<ResourceSpans>>) -> Self {
+        ExportTraceServiceRequest {
+            resource_spans: value.into_iter().flat_map(|m| m.payload).collect(),
+        }
+    }
+}
+
 impl OTLPFrom<Vec<ResourceMetrics>> for ExportMetricsServiceRequest {
     fn otlp_from(value: Vec<ResourceMetrics>) -> Self {
         ExportMetricsServiceRequest {
@@ -105,10 +142,26 @@ impl OTLPFrom<Vec<ResourceMetrics>> for ExportMetricsServiceRequest {
     }
 }
 
+impl OTLPFrom<Vec<Message<ResourceMetrics>>> for ExportMetricsServiceRequest {
+    fn otlp_from(value: Vec<Message<ResourceMetrics>>) -> Self {
+        ExportMetricsServiceRequest {
+            resource_metrics: value.into_iter().flat_map(|m| m.payload).collect(),
+        }
+    }
+}
+
 impl OTLPFrom<Vec<ResourceLogs>> for ExportLogsServiceRequest {
     fn otlp_from(value: Vec<ResourceLogs>) -> Self {
         ExportLogsServiceRequest {
             resource_logs: value,
+        }
+    }
+}
+
+impl OTLPFrom<Vec<Message<ResourceLogs>>> for ExportLogsServiceRequest {
+    fn otlp_from(value: Vec<Message<ResourceLogs>>) -> Self {
+        ExportLogsServiceRequest {
+            resource_logs: value.into_iter().flat_map(|m| m.payload).collect(),
         }
     }
 }

@@ -198,11 +198,11 @@ mod tests {
     /// bytes match the expected pattern: [type_code(0x0e), value_bytes(little_endian)]
     #[test]
     fn test_jsontype_double_serialization() {
-        let json_double = JsonType::Double(3.14159);
+        let json_double = JsonType::Double(std::f64::consts::PI);
         let serialized = serialize_to_bytes(json_double);
 
         // Expected bytes: type code 0x0e + 3.14159 as f64 little endian
-        let pi_bytes = 3.14159_f64.to_le_bytes();
+        let pi_bytes = std::f64::consts::PI.to_le_bytes();
         let mut expected = vec![0x0e]; // JsonDouble type code
         expected.extend_from_slice(&pi_bytes);
 
@@ -264,7 +264,7 @@ mod tests {
                 "StrOwned(\"world\")",
                 JsonType::StrOwned("world".to_string()),
             ),
-            ("Double(3.14)", JsonType::Double(3.14)),
+            ("Double(3.14)", JsonType::Double(std::f64::consts::PI)),
         ];
 
         for (name, json_type) in test_cases {

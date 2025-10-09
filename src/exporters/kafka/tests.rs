@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::exporters::kafka::config::{
         AcknowledgementMode, Compression, KafkaExporterConfig, PartitionerType, SaslMechanism,
@@ -8,6 +8,7 @@ mod tests {
     };
     use crate::exporters::kafka::errors::KafkaExportError;
     use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
+    use crate::topology::payload::Message;
     use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
     use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
     use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -80,7 +81,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_message(&resource_spans);
+        let result = builder.build_message(resource_spans);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -118,7 +119,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_message(&resource_metrics);
+        let result = builder.build_message(resource_metrics);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -152,7 +153,7 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = builder.build_message(&resource_logs);
+        let result = builder.build_message(resource_logs);
         assert!(result.is_ok());
 
         let payload = result.unwrap();
@@ -477,10 +478,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceSpans::build_kafka_message(&builder, &config, &resource_spans);
+        let result = ResourceSpans::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_spans,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should always be empty
     }
 
@@ -501,11 +509,18 @@ mod tests {
         }];
 
         // Test that splitting is disabled
-        let split_result = ResourceSpans::split_for_partitioning(&config, resource_spans.clone());
+        let split_result = ResourceSpans::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_spans.clone(),
+            }],
+        );
 
         // Should return original data unchanged
         assert_eq!(split_result.len(), 1);
-        assert_eq!(split_result[0], resource_spans);
+        assert_eq!(split_result[0].len(), 1);
+        assert_eq!(split_result[0][0].payload, resource_spans);
     }
 
     #[test]
@@ -531,10 +546,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceLogs::build_kafka_message(&builder, &config, &resource_logs);
+        let result = ResourceLogs::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when disabled
     }
 
@@ -561,10 +583,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceLogs::build_kafka_message(&builder, &config, &resource_logs);
+        let result = ResourceLogs::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert!(!key.to_string().is_empty()); // Should have a hash key when enabled
     }
 
@@ -586,10 +615,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceLogs::build_kafka_message(&builder, &config, &resource_logs);
+        let result = ResourceLogs::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when no attributes
     }
 
@@ -632,14 +668,21 @@ mod tests {
         ];
 
         // Test splitting
-        let split_result = ResourceLogs::split_for_partitioning(&config, resource_logs);
+        let split_result = ResourceLogs::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs,
+            }],
+        );
 
         // Should be split into 2 groups (one for each ResourceLogs)
         assert_eq!(split_result.len(), 2);
 
-        // Each group should contain exactly one ResourceLogs
-        for group in split_result {
+        // Each group should contain exactly one Message with one ResourceLogs
+        for group in &split_result {
             assert_eq!(group.len(), 1);
+            assert_eq!(group[0].payload.len(), 1);
         }
     }
 
@@ -661,11 +704,18 @@ mod tests {
         }];
 
         // Test that splitting is disabled
-        let split_result = ResourceLogs::split_for_partitioning(&config, resource_logs.clone());
+        let split_result = ResourceLogs::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_logs.clone(),
+            }],
+        );
 
         // Should return original data unchanged
         assert_eq!(split_result.len(), 1);
-        assert_eq!(split_result[0], resource_logs);
+        assert_eq!(split_result[0].len(), 1);
+        assert_eq!(split_result[0][0].payload, resource_logs);
     }
 
     #[test]
@@ -691,10 +741,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceMetrics::build_kafka_message(&builder, &config, &resource_metrics);
+        let result = ResourceMetrics::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when disabled
     }
 
@@ -721,10 +778,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceMetrics::build_kafka_message(&builder, &config, &resource_metrics);
+        let result = ResourceMetrics::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert!(!key.to_string().is_empty()); // Should have a hash key when enabled
     }
 
@@ -746,10 +810,17 @@ mod tests {
             schema_url: "".to_string(),
         }];
 
-        let result = ResourceMetrics::build_kafka_message(&builder, &config, &resource_metrics);
+        let result = ResourceMetrics::build_kafka_message(
+            &builder,
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
         assert!(result.is_ok());
 
-        let (key, _) = result.unwrap();
+        let (key, _, _) = result.unwrap();
         assert_eq!(key.to_string(), ""); // Should be empty when no attributes
     }
 
@@ -792,14 +863,21 @@ mod tests {
         ];
 
         // Test splitting
-        let split_result = ResourceMetrics::split_for_partitioning(&config, resource_metrics);
+        let split_result = ResourceMetrics::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics,
+            }],
+        );
 
         // Should be split into 2 groups (one for each ResourceMetrics)
         assert_eq!(split_result.len(), 2);
 
-        // Each group should contain exactly one ResourceMetrics
-        for group in split_result {
+        // Each group should contain exactly one Message with one ResourceMetrics
+        for group in &split_result {
             assert_eq!(group.len(), 1);
+            assert_eq!(group[0].payload.len(), 1);
         }
     }
 
@@ -821,11 +899,59 @@ mod tests {
         }];
 
         // Test that splitting is disabled
-        let split_result =
-            ResourceMetrics::split_for_partitioning(&config, resource_metrics.clone());
+        let split_result = ResourceMetrics::split_for_partitioning(
+            &config,
+            vec![Message {
+                metadata: None,
+                payload: resource_metrics.clone(),
+            }],
+        );
 
         // Should return original data unchanged
         assert_eq!(split_result.len(), 1);
-        assert_eq!(split_result[0], resource_metrics);
+        assert_eq!(split_result[0].len(), 1);
+        assert_eq!(split_result[0][0].payload, resource_metrics);
+    }
+
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        use crate::bounded_channel::bounded;
+        use crate::exporters::kafka::exporter::KafkaAcknowledger;
+        use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, MessageMetadata};
+        use std::time::Duration;
+
+        // Create metadata with acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(1);
+        let expected_offset = 456;
+        let expected_partition = 2;
+        let expected_topic_id = 3;
+        let metadata = vec![MessageMetadata::Kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        })];
+
+        // Test acknowledgment
+        let acknowledger = KafkaAcknowledger;
+        acknowledger.acknowledge_metadata(Some(metadata)).await;
+
+        // Wait for acknowledgment
+        let received_ack = tokio::time::timeout(Duration::from_secs(5), ack_rx.next())
+            .await
+            .expect("Timeout waiting for acknowledgment")
+            .expect("Failed to receive acknowledgment");
+
+        // Verify the acknowledgment contains the expected information
+        match received_ack {
+            KafkaAcknowledgement::Ack(ack) => {
+                assert_eq!(ack.offset, expected_offset, "Offset should match");
+                assert_eq!(ack.partition, expected_partition, "Partition should match");
+                assert_eq!(ack.topic_id, expected_topic_id, "Topic ID should match");
+            }
+            KafkaAcknowledgement::Nack(_) => {
+                panic!("Received Nack instead of Ack");
+            }
+        }
     }
 }

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::http::client::{Client, Protocol as HttpProtocol, ResponseDecode};
+use crate::exporters::http::metadata_extractor::MetadataExtractor;
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
-use crate::exporters::otlp::request::EncodedRequest;
+use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
-use http::StatusCode;
-use http_body_util::Full;
+use http::{Request, StatusCode};
 use opentelemetry::KeyValue;
 use std::error::Error;
 use std::future::Future;
@@ -90,8 +90,8 @@ where
 /// decoder types from the client type
 #[derive(Clone)]
 enum UnifiedClientType<T> {
-    Grpc(Client<Full<Bytes>, T, GrpcDecoder<T>>),
-    Http(Client<Full<Bytes>, T, HttpDecoder<T>>),
+    Grpc(Client<OtlpPayload, T, GrpcDecoder<T>>),
+    Http(Client<OtlpPayload, T, HttpDecoder<T>>),
 }
 
 /// Client struct for handling OTLP exports.
@@ -110,7 +110,7 @@ where
 }
 
 /// Implementation of Tower's Service trait for OTLPClient
-impl<T> Service<EncodedRequest> for OTLPClient<T>
+impl<T> Service<Request<OtlpPayload>> for OTLPClient<T>
 where
     T: prost::Message + Default + Clone + Send + Sync + 'static,
 {
@@ -124,18 +124,18 @@ where
     }
 
     /// Processes the request and returns a Future containing the response
-    fn call(&mut self, req: EncodedRequest) -> Self::Future {
+    fn call(&mut self, req: Request<OtlpPayload>) -> Self::Future {
         let mut client = self.client.clone();
         let send_failed = self.send_failed.clone();
         let sent = self.sent.clone();
-        let req_size = req.size;
+        let req_size = req.body().size;
 
         Box::pin(async move {
             let result = Self::perform_request_with_client(&mut client, req).await;
 
             match result {
                 Ok(resp) => match &resp {
-                    HttpResponse::Http(parts, _) => {
+                    HttpResponse::Http(parts, _, _) => {
                         if parts.status == StatusCode::OK {
                             sent.add(req_size as u64, &[]);
                         } else {
@@ -150,7 +150,7 @@ where
 
                         Ok(resp)
                     }
-                    HttpResponse::Grpc(status, _) => {
+                    HttpResponse::Grpc(status, _, _) => {
                         if status.code() != tonic::Code::Ok {
                             send_failed.add(
                                 req_size as u64,
@@ -207,11 +207,17 @@ where
 
     async fn perform_request_with_client(
         client: &mut UnifiedClientType<T>,
-        encoded_request: EncodedRequest,
+        mut request: Request<OtlpPayload>,
     ) -> Result<HttpResponse<T>, BoxError> {
-        match client {
-            UnifiedClientType::Grpc(client) => client.call(encoded_request.request).await,
-            UnifiedClientType::Http(client) => client.call(encoded_request.request).await,
-        }
+        // Extract metadata before making the call to preserve it for acknowledgment
+        let metadata = request.body_mut().take_metadata();
+
+        let response = match client {
+            UnifiedClientType::Grpc(client) => client.call(request).await?,
+            UnifiedClientType::Http(client) => client.call(request).await?,
+        };
+
+        // Attach the metadata to the response for acknowledgment
+        Ok(response.with_metadata(metadata))
     }
 }

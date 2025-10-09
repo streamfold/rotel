@@ -5,6 +5,7 @@
 // This module provides a single `Client` that can handle both gRPC and HTTP requests
 // based on the `Protocol` enum.
 
+use crate::exporters::http::metadata_extractor::MetadataExtractor;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
@@ -212,12 +213,13 @@ where
     }
 }
 
+// Service implementation for Request<ReqBody> where ReqBody implements MetadataExtractor
 impl<ReqBody, Resp, Dec> Service<Request<ReqBody>> for Client<ReqBody, Resp, Dec>
 where
-    Dec: ResponseDecode<Resp> + Send + Clone + Sync + 'static,
-    ReqBody: Body + Clone + Send + 'static + Unpin,
+    ReqBody: Body + Clone + Send + 'static + Unpin + MetadataExtractor,
     <ReqBody as Body>::Data: Send,
     <ReqBody as Body>::Error: Into<BoxError>,
+    Dec: ResponseDecode<Resp> + Send + Clone + Sync + 'static,
     Resp: Send + Clone + Sync + 'static,
 {
     type Response = Response<Resp>;
@@ -232,8 +234,19 @@ where
         let this = self.clone();
 
         Box::pin(async move {
+            // Extract metadata by destructuring the request
+            let (parts, mut body) = req.into_parts();
+            let metadata = body.take_metadata();
+
+            // Reconstruct the request with the (possibly modified) body
+            let req = Request::from_parts(parts, body);
+
             match this.perform_request(req).await {
-                Ok(r) => Ok(r),
+                Ok(mut resp) => {
+                    // Add metadata to the response
+                    resp = resp.with_metadata(metadata);
+                    Ok(resp)
+                }
                 Err(e) => Err(e),
             }
         })

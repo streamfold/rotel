@@ -282,7 +282,7 @@ impl Agent {
         if activation.traces == TelemetryState::Active {
             for cfg in exp_config.traces {
                 let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
-                    bounded::<Vec<ResourceSpans>>(self.sending_queue_size);
+                    bounded::<Vec<Message<ResourceSpans>>>(self.sending_queue_size);
                 trace_fanout = trace_fanout.add_tx(trace_pipeline_out_tx);
 
                 match cfg {
@@ -433,7 +433,7 @@ impl Agent {
                 }
 
                 let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
-                    bounded::<Vec<ResourceMetrics>>(self.sending_queue_size);
+                    bounded::<Vec<Message<ResourceMetrics>>>(self.sending_queue_size);
 
                 if is_internal_metrics {
                     internal_metrics_fanout =
@@ -565,7 +565,7 @@ impl Agent {
         if activation.logs == TelemetryState::Active {
             for cfg in exp_config.logs {
                 let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
-                    bounded::<Vec<ResourceLogs>>(self.sending_queue_size);
+                    bounded::<Vec<Message<ResourceLogs>>>(self.sending_queue_size);
                 logs_fanout = logs_fanout.add_tx(logs_pipeline_out_tx);
 
                 match cfg {

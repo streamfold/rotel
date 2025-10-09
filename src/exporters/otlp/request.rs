@@ -13,9 +13,11 @@ use crate::exporters::otlp::config::{
 use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::grpc_codec::grpc_encode_body;
 use crate::exporters::otlp::http_codec::http_encode_body;
+use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::signer::{RequestSigner, RequestSignerBuilder};
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::telemetry::{Counter, RotelCounter};
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request};
@@ -67,12 +69,6 @@ pub struct RequestBuilderConfig {
     pub protocol: Protocol,
     compression: Option<CompressionEncoding>,
     default_headers: HeaderMap,
-}
-
-#[derive(Clone)]
-pub struct EncodedRequest {
-    pub request: Request<Full<Bytes>>,
-    pub size: usize,
 }
 
 /// Creates a new RequestBuilder for trace exports.
@@ -264,10 +260,26 @@ impl<T: prost::Message, Signer: RequestSigner + Clone> RequestBuilder<T, Signer>
     ///
     /// # Returns
     /// * `Result<Request<Full<Bytes>>, ExporterError>`
-    pub fn encode(&self, message: T, size: usize) -> Result<EncodedRequest, ExporterError> {
+    pub fn encode(
+        &self,
+        message: T,
+        size: usize,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<Request<OtlpPayload>, ExporterError> {
         let res = self.new_request(message);
         match res {
-            Ok(request) => Ok(EncodedRequest { request, size }),
+            Ok(request) => {
+                // Decompose the request to get parts and body
+                let (parts, body) = request.into_parts();
+
+                // Create OtlpPayload with just the body and metadata
+                let payload = OtlpPayload::new(body, metadata, size);
+
+                // Reconstruct request with the payload as the body
+                let wrapped_request = Request::from_parts(parts, payload);
+
+                Ok(wrapped_request)
+            }
             Err(e) => {
                 self.send_failed
                     .add(size as u64, &[KeyValue::new("error", "request.encode")]);

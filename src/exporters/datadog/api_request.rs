@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::datadog::DatadogPayload;
 use crate::exporters::datadog::types::pb::AgentPayload;
 use crate::exporters::http::request::{BaseRequestBuilder, RequestUri};
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::read::GzEncoder;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Request};
-use http_body_util::Full;
 use prost::Message;
 use std::error::Error;
 use std::io::Read;
@@ -21,7 +22,7 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 
 #[derive(Clone)]
 pub struct ApiRequestBuilder {
-    base: BaseRequestBuilder<Full<Bytes>>,
+    base: BaseRequestBuilder<DatadogPayload>,
 }
 
 impl ApiRequestBuilder {
@@ -49,7 +50,11 @@ impl ApiRequestBuilder {
         Ok(s)
     }
 
-    pub fn build(&self, payload: AgentPayload) -> Result<Vec<Request<Full<Bytes>>>, BoxError> {
+    pub fn build(
+        &self,
+        payload: AgentPayload,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) -> Result<Vec<Request<DatadogPayload>>, BoxError> {
         let mut buf = Vec::new();
         if let Err(e) = payload.encode(&mut buf) {
             // todo: We pass these on as errors which the final service immediately returns,
@@ -64,11 +69,12 @@ impl ApiRequestBuilder {
 
         let body = Bytes::from(gz_vec);
 
-        self.base
-            .builder()
-            .body(body)?
-            .build()
-            .map(|r| vec![r])
-            .map_err(|e| format!("failed to build request: {:?}", e).into())
+        // Create MessagePayload with just the body
+        let datadog_payload = DatadogPayload::new(http_body_util::Full::new(body), metadata);
+
+        // Use the base builder to create the final request with proper headers
+        let wrapped_request = self.base.builder().body(datadog_payload)?.build()?;
+
+        Ok(vec![wrapped_request])
     }
 }

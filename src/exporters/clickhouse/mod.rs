@@ -12,12 +12,14 @@ mod transform_metrics;
 mod transform_traces;
 mod transformer;
 
+use super::http::finalizer::ResultFinalizer;
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::clickhouse::api_request::ConnectionConfig;
 use crate::exporters::clickhouse::exception::extract_exception;
 use crate::exporters::clickhouse::request_builder::{RequestBuilder, TransformPayload};
 use crate::exporters::clickhouse::request_mapper::RequestMapper;
 use crate::exporters::clickhouse::transformer::Transformer;
+use crate::exporters::http::acknowledger::DefaultHTTPAcknowledger;
 use crate::exporters::http::client::ResponseDecode;
 use crate::exporters::http::client::{Client, Protocol};
 use crate::exporters::http::exporter::Exporter;
@@ -28,6 +30,7 @@ use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
 use crate::exporters::http::tls;
 use crate::exporters::http::types::ContentEncoding;
 use crate::topology::flush_control::FlushReceiver;
+use crate::topology::payload::Message;
 use bytes::Bytes;
 use flume::r#async::RecvStream;
 use http::Request;
@@ -42,8 +45,6 @@ use std::{fmt, str};
 use tower::retry::Retry as TowerRetry;
 use tower::timeout::Timeout;
 use tower::{BoxError, ServiceBuilder};
-
-use super::http::finalizer::ResultFinalizer;
 
 // Buffer sizes from Clickhouse driver
 pub(crate) const BUFFER_SIZE: usize = 256 * 1024;
@@ -81,7 +82,7 @@ type SvcType<RespBody> = TowerRetry<
 pub type ExporterType<'a, Resource> = Exporter<
     RequestIterator<
         RequestBuilderMapper<
-            RecvStream<'a, Vec<Resource>>,
+            RecvStream<'a, Vec<Message<Resource>>>,
             Resource,
             ClickhousePayload,
             RequestBuilder<Resource, Transformer>,
@@ -92,6 +93,7 @@ pub type ExporterType<'a, Resource> = Exporter<
     SvcType<ClickhouseResponse>,
     ClickhousePayload,
     ClickhouseResultFinalizer,
+    DefaultHTTPAcknowledger,
 >;
 
 impl ClickhouseExporterConfigBuilder {
@@ -177,7 +179,7 @@ pub struct ClickhouseExporterBuilder {
 impl ClickhouseExporterBuilder {
     pub fn build_traces_exporter<'a>(
         &self,
-        rx: BoundedReceiver<Vec<ResourceSpans>>,
+        rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
         self.build_exporter("traces", rx, flush_receiver)
@@ -185,7 +187,7 @@ impl ClickhouseExporterBuilder {
 
     pub fn build_logs_exporter<'a>(
         &self,
-        rx: BoundedReceiver<Vec<ResourceLogs>>,
+        rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceLogs>, BoxError> {
         self.build_exporter("logs", rx, flush_receiver)
@@ -193,7 +195,7 @@ impl ClickhouseExporterBuilder {
 
     pub fn build_metrics_exporter<'a>(
         &self,
-        rx: BoundedReceiver<Vec<ResourceMetrics>>,
+        rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, ResourceMetrics>, BoxError> {
         self.build_exporter("metrics", rx, flush_receiver)
@@ -202,7 +204,7 @@ impl ClickhouseExporterBuilder {
     fn build_exporter<'a, Resource>(
         &self,
         telemetry_type: &'static str,
-        rx: BoundedReceiver<Vec<Resource>>,
+        rx: BoundedReceiver<Vec<Message<Resource>>>,
         flush_receiver: Option<FlushReceiver>,
     ) -> Result<ExporterType<'a, Resource>, BoxError>
     where
@@ -238,6 +240,7 @@ impl ClickhouseExporterBuilder {
             ClickhouseResultFinalizer {
                 telemetry_type: telemetry_type.to_string(),
             },
+            DefaultHTTPAcknowledger::default(),
             flush_receiver,
             retry_broadcast,
             Duration::from_secs(1),
@@ -289,7 +292,7 @@ impl ResponseDecode<ClickhouseResponse> for ClickhouseRespDecoder {
             return Ok(ClickhouseResponse::Empty);
         }
 
-        return Ok(ClickhouseResponse::Unknown(str_payload));
+        Ok(ClickhouseResponse::Unknown(str_payload))
     }
 }
 
@@ -304,7 +307,7 @@ where
     fn finalize(&self, result: Result<Response<ClickhouseResponse>, Err>) -> Result<(), BoxError> {
         match result {
             Ok(r) => match r {
-                Response::Http(parts, body) => {
+                Response::Http(parts, body, _) => {
                     match parts.status.as_u16() {
                         200..=202 => Ok(()),
                         404 => Err(format!("Received a 404 when exporting to Clickhouse, does the table exist? (type = {})", self.telemetry_type).into()),
@@ -314,7 +317,7 @@ where
                         }
                     }
                 },
-                Response::Grpc(_, _) => Err(format!("Clickhouse invalid response type").into()),
+                Response::Grpc(_, _, _) => Err("Clickhouse invalid response type".to_string().into()),
             },
             Err(e) => Err(e.into())
         }
@@ -328,8 +331,10 @@ mod tests {
     use super::*;
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
+    use crate::topology::payload::MessageMetadata;
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+    use std::time::Duration;
     use tokio::join;
     use tokio_test::assert_ok;
     use tokio_util::sync::CancellationToken;
@@ -346,7 +351,7 @@ mod tests {
             then.status(200).body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceSpans>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
         let exporter = new_traces_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -355,7 +360,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let traces = FakeOTLP::trace_service_request();
-        btx.send(traces.resource_spans).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -374,7 +384,7 @@ mod tests {
             then.status(200).body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceLogs>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceLogs>>>(100);
         let exporter = new_logs_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -383,7 +393,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let logs = FakeOTLP::logs_service_request();
-        btx.send(logs.resource_logs).await.unwrap();
+        btx.send(vec![Message {
+            metadata: None,
+            payload: logs.resource_logs,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -402,7 +417,7 @@ mod tests {
             then.status(200).body("ohi");
         });
 
-        let (btx, brx) = bounded::<Vec<ResourceMetrics>>(100);
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
         let exporter = new_metrics_exporter(addr, brx);
 
         let cancellation_token = CancellationToken::new();
@@ -411,7 +426,12 @@ mod tests {
         let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
 
         let metrics = FakeOTLP::metrics_service_request();
-        btx.send(metrics.resource_metrics).await.unwrap();
+        btx.send(vec![Message {
+            payload: metrics.resource_metrics,
+            metadata: None,
+        }])
+        .await
+        .unwrap();
         drop(btx);
         let res = join!(jh);
         assert_ok!(res.0);
@@ -419,9 +439,78 @@ mod tests {
         hello_mock.assert();
     }
 
+    #[tokio::test]
+    async fn test_message_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock Clickhouse endpoint
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).body("OK");
+        });
+
+        // Create metadata with acknowledgment channel
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+        let expected_offset = 123;
+        let expected_partition = 0;
+        let expected_topic_id = 1;
+        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+
+        // Build exporter with DefaultHTTPAcknowledger
+        let exporter = new_traces_exporter(addr, brx);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send traces with metadata
+        let traces = FakeOTLP::trace_service_request();
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
+
+        // Wait for acknowledgment
+        let received_ack = tokio::time::timeout(Duration::from_secs(5), ack_rx.next())
+            .await
+            .expect("Timeout waiting for acknowledgment")
+            .expect("Failed to receive acknowledgment");
+
+        // Verify the acknowledgment contains the expected information
+        match received_ack {
+            crate::topology::payload::KafkaAcknowledgement::Ack(ack) => {
+                assert_eq!(ack.offset, expected_offset, "Offset should match");
+                assert_eq!(ack.partition, expected_partition, "Partition should match");
+                assert_eq!(ack.topic_id, expected_topic_id, "Topic ID should match");
+            }
+            crate::topology::payload::KafkaAcknowledgement::Nack(_) => {
+                panic!("Received Nack instead of Ack");
+            }
+        }
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+    }
+
     fn new_traces_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceSpans>>,
+        brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
@@ -433,7 +522,7 @@ mod tests {
 
     fn new_logs_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceLogs>>,
+        brx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     ) -> ExporterType<'a, ResourceLogs> {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
@@ -445,7 +534,7 @@ mod tests {
 
     fn new_metrics_exporter<'a>(
         addr: String,
-        brx: BoundedReceiver<Vec<ResourceMetrics>>,
+        brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     ) -> ExporterType<'a, ResourceMetrics> {
         let builder =
             ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())

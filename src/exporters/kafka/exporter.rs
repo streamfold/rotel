@@ -4,7 +4,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::kafka::config::KafkaExporterConfig;
 use crate::exporters::kafka::errors::{KafkaExportError, Result};
 use crate::exporters::kafka::request_builder::KafkaRequestBuilder;
-use crate::topology::payload::OTLPFrom;
+use crate::topology::payload::{Ack, Message, MessageMetadata, OTLPFrom};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures_util::stream::FuturesOrdered;
@@ -33,14 +33,44 @@ const MAX_CONCURRENT_SENDS: usize = 1000;
 
 #[rustfmt::skip]
 type EncodingFuture = Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
-#[rustfmt::skip]
-type SendFuture = Pin<Box<dyn Future<Output = std::result::Result<Delivery, (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>> + Send>>;
 
 /// Encoded Kafka message ready to be sent
 #[derive(Debug)]
 struct EncodedMessage {
     key: String,
     payload: Bytes,
+    metadata: Option<Vec<MessageMetadata>>,
+}
+
+/// Wrapper for send future that includes metadata for acknowledgment
+type SendFutureWithMetadata = Pin<
+    Box<
+        dyn Future<
+                Output = (
+                    std::result::Result<
+                        Delivery,
+                        (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage),
+                    >,
+                    Option<Vec<MessageMetadata>>,
+                ),
+            > + Send,
+    >,
+>;
+
+/// Kafka-specific acknowledger that acknowledges messages on successful send
+#[derive(Default, Clone)]
+pub struct KafkaAcknowledger;
+
+impl KafkaAcknowledger {
+    pub async fn acknowledge_metadata(&self, metadata: Option<Vec<MessageMetadata>>) {
+        if let Some(metadata_vec) = metadata {
+            for metadata in metadata_vec {
+                if let Err(e) = metadata.ack().await {
+                    tracing::warn!("Failed to acknowledge Kafka message: {:?}", e);
+                }
+            }
+        }
+    }
 }
 
 /// Trait for telemetry resources that can be exported to Kafka
@@ -48,7 +78,7 @@ pub trait KafkaExportable:
     Debug + Send + Sized + 'static + prost::Message + Serialize + Clone
 {
     /// The OTLP request type for this telemetry type
-    type Request: prost::Message + OTLPFrom<Vec<Self>> + Serialize + Clone;
+    type Request: prost::Message + OTLPFrom<Vec<Message<Self>>> + Serialize + Clone;
 
     /// Create a new request builder for this telemetry type
     fn create_request_builder(
@@ -59,15 +89,18 @@ pub trait KafkaExportable:
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
-        data: &[Self],
-    ) -> Result<(String, Bytes)>;
+        data: Vec<Message<Self>>,
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)>;
 
     /// Get the telemetry type name
     fn telemetry_type() -> &'static str;
 
     /// Split data for partition-based processing if needed
     /// Default implementation returns data unchanged
-    fn split_for_partitioning(_config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        _config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         vec![data]
     }
 }
@@ -177,20 +210,26 @@ fn hash_any_value<H: std::hash::Hasher>(
 }
 
 /// Extract resource attributes hash from the first ResourceLogs
-fn extract_resource_attributes_hash_from_logs(logs: &[ResourceLogs]) -> Option<Vec<u8>> {
-    for resource_log in logs {
-        if let Some(resource) = &resource_log.resource {
-            return Some(calculate_resource_attributes_hash(&resource.attributes));
+fn extract_resource_attributes_hash_from_logs(logs: &[Message<ResourceLogs>]) -> Option<Vec<u8>> {
+    for message in logs {
+        for resource_log in &message.payload {
+            if let Some(resource) = &resource_log.resource {
+                return Some(calculate_resource_attributes_hash(&resource.attributes));
+            }
         }
     }
     None
 }
 
 /// Extract resource attributes hash from the first ResourceMetrics
-fn extract_resource_attributes_hash_from_metrics(metrics: &[ResourceMetrics]) -> Option<Vec<u8>> {
-    for resource_metric in metrics {
-        if let Some(resource) = &resource_metric.resource {
-            return Some(calculate_resource_attributes_hash(&resource.attributes));
+fn extract_resource_attributes_hash_from_metrics(
+    metrics: &[Message<ResourceMetrics>],
+) -> Option<Vec<u8>> {
+    for message in metrics {
+        for resource_metric in &message.payload {
+            if let Some(resource) = &resource_metric.resource {
+                return Some(calculate_resource_attributes_hash(&resource.attributes));
+            }
         }
     }
     None
@@ -208,12 +247,32 @@ impl KafkaExportable for ResourceSpans {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         _config: &KafkaExporterConfig,
-        spans: &[Self],
-    ) -> Result<(String, Bytes)> {
+        spans: Vec<Message<Self>>,
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)> {
         // Use empty message key and send all spans together
         let key = String::new();
-        let payload = builder.build_message(spans)?;
-        Ok((key, payload))
+
+        // Extract metadata from all messages
+        let mut metadata: Vec<MessageMetadata> = Vec::new();
+        let mut payloads: Vec<ResourceSpans> = Vec::new();
+
+        for message in spans {
+            for resource_spans in message.payload {
+                payloads.push(resource_spans);
+            }
+            if let Some(md) = message.metadata {
+                metadata.push(md)
+            }
+        }
+
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+
+        let payload = builder.build_message(payloads)?;
+        Ok((key, payload, metadata))
     }
 
     fn telemetry_type() -> &'static str {
@@ -221,7 +280,10 @@ impl KafkaExportable for ResourceSpans {
     }
 
     /// Split for partitioning - traces are not split
-    fn split_for_partitioning(_config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        _config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         vec![data]
     }
 }
@@ -238,19 +300,38 @@ impl KafkaExportable for ResourceMetrics {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
-        metrics: &[Self],
-    ) -> Result<(String, Bytes)> {
+        metrics: Vec<Message<Self>>,
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)> {
         let key = if !config.partition_metrics_by_resource_attributes {
             // Default: empty message key
             String::new()
         } else {
             // When partition_metrics_by_resource_attributes is enabled, use hash of resource attributes as key
             // Expect metrics to contain only one ResourceMetrics after splitting
-            let hash = extract_resource_attributes_hash_from_metrics(metrics);
+            let hash = extract_resource_attributes_hash_from_metrics(metrics.as_slice());
             hash.map_or(String::new(), hex::encode)
         };
-        let payload = builder.build_message(metrics)?;
-        Ok((key, payload))
+
+        // Extract metadata from all messages
+        let mut metadata: Vec<MessageMetadata> = Vec::new();
+        let mut payloads: Vec<ResourceMetrics> = Vec::new();
+
+        for message in metrics {
+            for resource_metrics in message.payload {
+                payloads.push(resource_metrics);
+            }
+            if let Some(md) = message.metadata {
+                metadata.push(md)
+            }
+        }
+
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+        let payload = builder.build_message(payloads)?;
+        Ok((key, payload, metadata))
     }
 
     fn telemetry_type() -> &'static str {
@@ -259,11 +340,24 @@ impl KafkaExportable for ResourceMetrics {
 
     /// Split metrics by resource attributes when partition_metrics_by_resource_attributes is enabled
     /// Each ResourceMetrics becomes its own message, matching the Go implementation
-    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         if config.partition_metrics_by_resource_attributes {
-            // Split each ResourceMetrics into separate groups, one per ResourceMetrics
-            // This matches the Go implementation where each resourceMetrics becomes a separate message
-            data.into_iter().map(|metric| vec![metric]).collect()
+            // We need to split WITHIN each Message's payload
+            // Each individual ResourceMetrics should become its own Message
+            let mut result = Vec::new();
+            for message in data {
+                // Split the payload Vec<ResourceMetrics> into individual messages
+                for resource_metric in message.payload {
+                    result.push(vec![Message {
+                        metadata: message.metadata.clone(),
+                        payload: vec![resource_metric],
+                    }]);
+                }
+            }
+            result
         } else {
             vec![data]
         }
@@ -282,19 +376,38 @@ impl KafkaExportable for ResourceLogs {
     fn build_kafka_message(
         builder: &KafkaRequestBuilder<Self, Self::Request>,
         config: &KafkaExporterConfig,
-        logs: &[Self],
-    ) -> Result<(String, Bytes)> {
+        logs: Vec<Message<Self>>,
+    ) -> Result<(String, Bytes, Option<Vec<MessageMetadata>>)> {
         let key = if !config.partition_logs_by_resource_attributes {
             // Default: empty message key
             String::new()
         } else {
             // When partition_logs_by_resource_attributes is enabled, use hash of resource attributes as key
             // Expect logs to contain only one ResourceLogs after splitting
-            let hash = extract_resource_attributes_hash_from_logs(logs);
+            let hash = extract_resource_attributes_hash_from_logs(logs.as_slice());
             hash.map_or(String::new(), hex::encode)
         };
-        let payload = builder.build_message(logs)?;
-        Ok((key, payload))
+
+        // Extract metadata from all messages
+        let mut metadata: Vec<MessageMetadata> = Vec::new();
+        let mut payloads: Vec<ResourceLogs> = Vec::new();
+
+        for message in logs {
+            for resource_logs in message.payload {
+                payloads.push(resource_logs);
+            }
+            if let Some(md) = message.metadata {
+                metadata.push(md)
+            }
+        }
+
+        let metadata = if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        };
+        let payload = builder.build_message(payloads)?;
+        Ok((key, payload, metadata))
     }
 
     fn telemetry_type() -> &'static str {
@@ -303,11 +416,24 @@ impl KafkaExportable for ResourceLogs {
 
     /// Split logs by resource attributes when partition_logs_by_resource_attributes is enabled
     /// Each ResourceLogs becomes its own message, matching the Go implementation
-    fn split_for_partitioning(config: &KafkaExporterConfig, data: Vec<Self>) -> Vec<Vec<Self>> {
+    fn split_for_partitioning(
+        config: &KafkaExporterConfig,
+        data: Vec<Message<Self>>,
+    ) -> Vec<Vec<Message<Self>>> {
         if config.partition_logs_by_resource_attributes {
-            // Split each ResourceLogs into separate groups, one per ResourceLogs
-            // This matches the Go implementation where each resourceLogs becomes a separate message
-            data.into_iter().map(|log| vec![log]).collect()
+            // We need to split WITHIN each Message's payload
+            // Each individual ResourceLogs should become its own Message
+            let mut result = Vec::new();
+            for message in data {
+                // Split the payload Vec<ResourceLogs> into individual messages
+                for resource_log in message.payload {
+                    result.push(vec![Message {
+                        metadata: message.metadata.clone(),
+                        payload: vec![resource_log],
+                    }]);
+                }
+            }
+            result
         } else {
             vec![data]
         }
@@ -322,10 +448,11 @@ where
     config: KafkaExporterConfig,
     producer: FutureProducer,
     request_builder: KafkaRequestBuilder<Resource, Resource::Request>,
-    rx: BoundedReceiver<Vec<Resource>>,
+    rx: BoundedReceiver<Vec<Message<Resource>>>,
     topic: String,
+    acknowledger: KafkaAcknowledger,
     encoding_futures: FuturesOrdered<EncodingFuture>,
-    send_futures: FuturesUnordered<SendFuture>,
+    send_futures: FuturesUnordered<SendFutureWithMetadata>,
 }
 
 impl<Resource> Debug for KafkaExporter<Resource>
@@ -348,7 +475,7 @@ where
     /// Create a new Kafka exporter
     pub fn new(
         config: KafkaExporterConfig,
-        rx: BoundedReceiver<Vec<Resource>>,
+        rx: BoundedReceiver<Vec<Message<Resource>>>,
         topic: String,
     ) -> Result<Self> {
         // Build Kafka producer
@@ -365,6 +492,7 @@ where
             request_builder,
             rx,
             topic,
+            acknowledger: KafkaAcknowledger::default(),
             encoding_futures: FuturesOrdered::new(),
             send_futures: FuturesUnordered::new(),
         })
@@ -383,16 +511,19 @@ where
                 biased;
 
                 // Process completed sends
-                Some(send_result) = self.send_futures.next() => {
+                Some((send_result, metadata)) = self.send_futures.next() => {
                     match send_result {
                         Ok(d) => {
                             debug!(
                                 "{} sent successfully to partition {} at offset {}",
                                 telemetry_type, d.partition, d.offset
                             );
+                            // Acknowledge successful send
+                            self.acknowledger.acknowledge_metadata(metadata).await;
                         }
                         Err((e, _)) => {
                             error!("Failed to send {}: {}", telemetry_type, e);
+                            // Don't acknowledge on failure - messages remain unacknowledged
                         }
                     }
                 }
@@ -404,13 +535,15 @@ where
                             let topic = self.topic.clone();
                             let key = encoded_msg.key;
                             let payload = encoded_msg.payload;
+                            let metadata = encoded_msg.metadata;
                             let producer = self.producer.clone();
                             let timeout = Duration::from_millis(self.config.request_timeout_ms as u64);
                             let send_future = async move {
                                 let record = FutureRecord::to(&topic)
                                     .key(&key)
                                     .payload(payload.as_ref());
-                                producer.send(record, timeout).await
+                                let result = producer.send(record, timeout).await;
+                                (result, metadata)
                             };
                             self.send_futures.push(Box::pin(send_future));
                         }
@@ -436,16 +569,17 @@ where
                             // Split data for partitioning if needed (e.g., metrics and logs by resource attributes, traces by trace_id coming later)
                             let payloads_to_process = Resource::split_for_partitioning(&self.config, payload);
                             // N.B. The splitting can result in more payloads to encode than MAX_CONCURRENT_ENCODERS,
-                            // however that is OK for the moment. We're going to allow encoding to "burst" once inside the guard at the top of the select,
+                            // however, that is OK for the moment. We're going to allow encoding to "burst" once inside the guard at the top of the select,
                             // i.e. if self.encoding_futures.len() < MAX_CONCURRENT_ENCODERS
                             for single_payload in payloads_to_process {
                                 let req_builder = self.request_builder.clone();
                                 let config = self.config.clone();
                                 let encoding_future = tokio::task::spawn_blocking(move || {
-                                    Resource::build_kafka_message(&req_builder, &config, &single_payload)
-                                        .map(|(key, payload)| EncodedMessage {
+                                    Resource::build_kafka_message(&req_builder, &config, single_payload)
+                                        .map(|(key, payload, metadata)| EncodedMessage {
                                             key,
                                             payload,
+                                            metadata,
                                         })
                                 });
                                 self.encoding_futures.push_back(Box::pin(encoding_future));
@@ -490,12 +624,14 @@ where
                         let producer = self.producer.clone();
                         let timeout = self.config.request_timeout_ms as u64;
 
+                        let metadata = encoded_msg.metadata;
                         let send_future = async move {
                             let record =
                                 FutureRecord::to(&topic).key(&key).payload(payload.as_ref());
-                            producer
+                            let result = producer
                                 .send(record, Timeout::After(Duration::from_millis(timeout)))
-                                .await
+                                .await;
+                            (result, metadata)
                         };
 
                         self.send_futures.push(Box::pin(send_future));
@@ -515,16 +651,19 @@ where
 
         // Then drain all send futures
         while !self.send_futures.is_empty() {
-            if let Some(result) = self.send_futures.next().await {
+            if let Some((result, metadata)) = self.send_futures.next().await {
                 match result {
                     Ok(d) => {
                         debug!(
                             "{} sent successfully to partition {} at offset {} during drain",
                             telemetry_type, d.partition, d.offset
                         );
+                        // Acknowledge successful send during drain
+                        self.acknowledger.acknowledge_metadata(metadata).await;
                     }
                     Err((e, _)) => {
                         error!("Failed to send {} during drain: {}", telemetry_type, e);
+                        // Don't acknowledge on failure - messages remain unacknowledged
                     }
                 }
             }
@@ -537,7 +676,7 @@ where
 /// Creates a Kafka traces exporter
 pub fn build_traces_exporter(
     config: KafkaExporterConfig,
-    traces_rx: BoundedReceiver<Vec<ResourceSpans>>,
+    traces_rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
 ) -> Result<KafkaExporter<ResourceSpans>> {
     let topic = config
         .traces_topic
@@ -550,7 +689,7 @@ pub fn build_traces_exporter(
 /// Creates a Kafka metrics exporter
 pub fn build_metrics_exporter(
     config: KafkaExporterConfig,
-    metrics_rx: BoundedReceiver<Vec<ResourceMetrics>>,
+    metrics_rx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
 ) -> Result<KafkaExporter<ResourceMetrics>> {
     let topic = config
         .metrics_topic
@@ -563,7 +702,7 @@ pub fn build_metrics_exporter(
 /// Creates a Kafka logs exporter
 pub fn build_logs_exporter(
     config: KafkaExporterConfig,
-    logs_rx: BoundedReceiver<Vec<ResourceLogs>>,
+    logs_rx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
 ) -> Result<KafkaExporter<ResourceLogs>> {
     let topic = config
         .logs_topic
@@ -683,7 +822,7 @@ mod tests {
             KeyValue {
                 key: "double_attr".to_string(),
                 value: Some(AnyValue {
-                    value: Some(any_value::Value::DoubleValue(3.14159)),
+                    value: Some(any_value::Value::DoubleValue(std::f64::consts::PI)),
                 }),
             },
             KeyValue {
@@ -847,7 +986,7 @@ mod tests {
                                                                                     value: Some(any_value::Value::BoolValue(true)),
                                                                                 },
                                                                                 AnyValue {
-                                                                                    value: Some(any_value::Value::DoubleValue(2.718)),
+                                                                                    value: Some(any_value::Value::DoubleValue(std::f64::consts::E)),
                                                                                 },
                                                                             ],
                                                                         })),
