@@ -186,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adds_aws_signing_headers() {
-        let inner_service = service_fn(|req: Request<Full<Bytes>>| async move {
+        let inner_service = service_fn(|req: Request<MessagePayload<Full<Bytes>>>| async move {
             // Verify AWS signing headers were added
             assert!(req.headers().get("X-Amz-Date").is_some());
             assert!(req.headers().get(AUTHORIZATION).is_some());
@@ -214,13 +214,17 @@ mod tests {
             .body(Full::from(Bytes::new()))
             .unwrap();
 
+        let (parts, body) = request.into_parts();
+        let payload = MessagePayload::<Full<Bytes>>::new(body, None);
+        let request = Request::from_parts(parts, payload);
+
         let response = signing_service.call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn test_preserves_existing_headers() {
-        let inner_service = service_fn(|req: Request<Full<Bytes>>| async move {
+        let inner_service = service_fn(|req: Request<MessagePayload<Full<Bytes>>>| async move {
             // Verify both original and AWS headers are present
             assert_eq!(
                 req.headers().get("Content-Type").unwrap(),
@@ -247,13 +251,17 @@ mod tests {
             .body(Full::<Bytes>::from(Bytes::from("test body")))
             .unwrap();
 
+        let (parts, body) = request.into_parts();
+        let payload = MessagePayload::new(body, None);
+        let request = Request::from_parts(parts, payload);
+
         let response = signing_service.call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn test_builder_disabled_mode() {
-        let inner_service = service_fn(|req: Request<Full<Bytes>>| async move {
+        let inner_service = service_fn(|req: Request<MessagePayload<Full<Bytes>>>| async move {
             // Verify AWS signing headers were NOT added
             assert!(req.headers().get("X-Amz-Date").is_none());
             assert!(req.headers().get(AUTHORIZATION).is_none());
@@ -278,6 +286,10 @@ mod tests {
             .header("X-Custom-Header", "test-value")
             .body(Full::from(Bytes::new()))
             .unwrap();
+
+        let (parts, body) = request.into_parts();
+        let payload = MessagePayload::<Full<Bytes>>::new(body, None);
+        let request = Request::from_parts(parts, payload);
 
         let response = signing_service.call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);

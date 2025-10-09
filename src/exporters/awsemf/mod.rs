@@ -567,8 +567,7 @@ mod tests {
         let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
 
         // Use DefaultHTTPAcknowledger to test real acknowledgment flow
-        let config = AwsConfig::from_env();
-        let exporter = new_exporter(addr, brx, config, None);
+        let exporter = new_exporter(addr, brx, None);
 
         // Start exporter
         let cancellation_token = CancellationToken::new();

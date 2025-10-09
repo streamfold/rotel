@@ -96,6 +96,7 @@ pub fn config_builder(
 mod tests {
     use crate::bounded_channel::{BoundedSender, bounded};
     use crate::exporters::otlp::{Endpoint, Protocol, config_builder};
+    use crate::topology;
     extern crate utilities;
     use utilities::otlp::FakeOTLP;
 
@@ -1266,8 +1267,9 @@ mod tests {
             Protocol::Http,
         );
 
-        let mut otlp_exp = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None)
-            .expect("Failed to build OTLP exporter");
+        let mut otlp_exp =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None)
+                .expect("Failed to build OTLP exporter");
 
         // Start exporter
         let cancellation_token = CancellationToken::new();
