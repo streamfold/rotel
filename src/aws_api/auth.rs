@@ -200,7 +200,7 @@ where
         }
 
         req_builder
-            .body(Full::from(Bytes::from(payload)))
+            .body(Full::from(payload))
             .map_err(Error::RequestBuildError)
     }
 

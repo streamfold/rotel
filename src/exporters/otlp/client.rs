@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::http::client::{Client, Protocol as HttpProtocol, ResponseDecode};
-use crate::exporters::http::metadata_extractor::MetadataExtractor;
+use crate::exporters::http::metadata_extractor::{MessagePayload, MetadataExtractor};
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
@@ -11,6 +11,7 @@ use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSignin
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
 use http::{Request, StatusCode};
+use http_body_util::Full;
 use opentelemetry::KeyValue;
 use std::error::Error;
 use std::future::Future;
@@ -91,8 +92,8 @@ where
 /// decoder types from the client type
 #[derive(Clone)]
 enum UnifiedClientType<T> {
-    Grpc(AwsSigningService<Client<OtlpPayload, T, GrpcDecoder<T>>>),
-    Http(AwsSigningService<Client<OtlpPayload, T, HttpDecoder<T>>>),
+    Grpc(AwsSigningService<Client<MessagePayload<Full<Bytes>>, T, GrpcDecoder<T>>>),
+    Http(AwsSigningService<Client<MessagePayload<Full<Bytes>>, T, HttpDecoder<T>>>),
 }
 
 /// Client struct for handling OTLP exports.

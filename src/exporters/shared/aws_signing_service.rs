@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt::Display;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -7,9 +8,11 @@ use std::task::{Context, Poll};
 
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::creds::AwsCredsProvider;
+use crate::exporters::http::metadata_extractor::{MessagePayload, MetadataExtractor};
 use bytes::Bytes;
 use http::Request;
 use http_body_util::{BodyExt, Full};
+use hyper::body::Body;
 use tower::{BoxError, Service};
 
 /// A generic middleware service that intercepts HTTP requests to add AWS signing headers.
@@ -59,11 +62,48 @@ impl AwsSigningServiceBuilder {
             config: self.config,
         }
     }
+
+    /// Manually sign a request without using the Tower service pattern.
+    /// This is useful for one-off requests where the Tower middleware overhead is not needed.
+    pub async fn sign_request(
+        &self,
+        uri: http::Uri,
+        method: http::Method,
+        headers: http::HeaderMap,
+        body: bytes::Bytes,
+    ) -> Result<http::Request<http_body_util::Full<bytes::Bytes>>, BoxError> {
+        match self.config.as_ref() {
+            SigningConfig::Disabled => {
+                // No signing needed, just build the request
+                let mut req_builder = http::Request::builder().uri(uri).method(method);
+
+                let builder_headers = req_builder.headers_mut().unwrap();
+                for (k, v) in headers.iter() {
+                    builder_headers.insert(k, v.clone());
+                }
+
+                Ok(req_builder.body(http_body_util::Full::from(body))?)
+            }
+            SigningConfig::Enabled {
+                signer,
+                creds_provider,
+            } => {
+                // Get AWS credentials
+                let creds = creds_provider.get_creds().await?;
+
+                // Sign the request
+                Ok(signer.sign(uri, method, headers, body, &creds)?)
+            }
+        }
+    }
 }
 
-impl<S> Service<Request<Full<Bytes>>> for AwsSigningService<S>
+impl<S, ReqBody> Service<Request<ReqBody>> for AwsSigningService<S>
 where
-    S: Service<Request<Full<Bytes>>> + Clone + Send + 'static,
+    ReqBody: Body + Clone + Send + MetadataExtractor + 'static,
+    <ReqBody as Body>::Data: Send,
+    <ReqBody as Body>::Error: Display,
+    S: Service<Request<MessagePayload<Full<Bytes>>>> + Clone + Send + 'static,
     S::Future: Send + 'static,
     S::Error: Into<BoxError>,
 {
@@ -75,32 +115,45 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<Full<Bytes>>) -> Self::Future {
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let config = self.config.clone();
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
+            let (parts, mut body) = req.into_parts();
+            let metadata = body.take_metadata();
+
+            let body_bytes = match body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(e) => {
+                    return Err(format!("Failed to collect request body: {}", e).into());
+                }
+            };
+
             match config.as_ref() {
-                SigningConfig::Disabled => inner.call(req).await.map_err(Into::into),
+                SigningConfig::Disabled => {
+                    let payload = MessagePayload::new(Full::from(body_bytes), metadata);
+
+                    let req = Request::from_parts(parts, payload);
+
+                    inner.call(req).await.map_err(Into::into)
+                }
                 SigningConfig::Enabled {
                     signer,
                     creds_provider,
                 } => {
-                    let (parts, body) = req.into_parts();
-
-                    let body_bytes = match body.collect().await {
-                        Ok(collected) => collected.to_bytes(),
-                        Err(e) => {
-                            return Err(format!("Failed to collect request body: {}", e).into());
-                        }
-                    };
-
                     let creds = creds_provider.get_creds().await?;
 
                     let signed_req =
                         signer.sign(parts.uri, parts.method, parts.headers, body_bytes, &creds)?;
 
-                    inner.call(signed_req).await.map_err(Into::into)
+                    let (parts, body) = signed_req.into_parts();
+
+                    let payload = MessagePayload::new(body, metadata);
+
+                    let req = Request::from_parts(parts, payload);
+
+                    inner.call(req).await.map_err(Into::into)
                 }
             }
         })

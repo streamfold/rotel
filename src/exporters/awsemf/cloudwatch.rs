@@ -6,14 +6,14 @@ use bytes::Bytes;
 use flate2::Compression;
 use flate2::bufread::GzEncoder;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
-use http::{HeaderMap, HeaderValue, Method, Request, Uri};
+use http::{HeaderMap, HeaderValue, Method, Uri};
 use http_body_util::{BodyExt, Full};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
 use serde_json::json;
 use std::io::Read;
-use tower::{BoxError, Service, ServiceExt};
+use tower::BoxError;
 use tracing::{debug, error, warn};
 
 use super::{AwsEmfDecoder, AwsEmfResponse};
@@ -180,40 +180,23 @@ impl Cloudwatch {
             .map_err(|e| format!("Failed to compress request body: {}", e))?;
         let compressed_body = Bytes::from(gz_vec);
 
-        // Build the unsigned request
-        let mut req_builder = Request::builder()
-            .uri(self.endpoint.clone())
-            .method(Method::POST);
-
-        let builder_headers = req_builder.headers_mut().unwrap();
-        for (k, v) in headers.iter() {
-            builder_headers.insert(k, v.clone());
-        }
-
-        let unsigned_request = req_builder.body(Full::from(compressed_body))?;
-
-        // Create a signing service on-demand for this request (this shouldn't be a hotpath, so should be fine)
-        // Wrap the hyper client in a Tower service using service_fn
-        let client = self.client.clone();
-        let client_service = tower::service_fn(move |req: Request<Full<Bytes>>| {
-            let client = client.clone();
-            async move {
-                client
-                    .request(req)
-                    .await
-                    .map_err(|e| -> BoxError { format!("Hyper client error: {}", e).into() })
-            }
-        });
-
-        // Wrap with AWS signing service
-        let mut signing_service = self.signing_builder.clone().build(client_service);
-
-        // Sign and send the request through the signing service
-        let response = signing_service
-            .ready()
-            .await?
-            .call(unsigned_request)
+        // Build a signed request
+        let signed_request = self
+            .signing_builder
+            .sign_request(
+                self.endpoint.clone(),
+                Method::POST,
+                headers,
+                compressed_body,
+            )
             .await?;
+
+        // Send the request
+        let response = self
+            .client
+            .request(signed_request)
+            .await
+            .map_err(|e| -> BoxError { format!("Failed to send request: {}", e).into() })?;
 
         // Decode and handle the response
         self.handle_response(response, AwsEmfDecoder::default())
