@@ -269,10 +269,16 @@ impl<T: prost::Message, Signer: RequestSigner + Clone> RequestBuilder<T, Signer>
         let res = self.new_request(message);
         match res {
             Ok(request) => {
-                // Wrap the request with OtlpPayload to carry metadata
-                Ok(OtlpPayload::from_request_with_metadata(
-                    request, metadata, size,
-                ))
+                // Decompose the request to get parts and body
+                let (parts, body) = request.into_parts();
+
+                // Create OtlpPayload with just the body and metadata
+                let payload = OtlpPayload::new(body, metadata, size);
+
+                // Reconstruct request with the payload as the body
+                let wrapped_request = Request::from_parts(parts, payload);
+
+                Ok(wrapped_request)
             }
             Err(e) => {
                 self.send_failed

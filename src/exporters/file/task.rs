@@ -45,7 +45,7 @@ where
                         }
 
                         // If we successfully processed the messages, acknowledge them immediately
-                        for mut metadata in metadata_to_ack {
+                        for metadata in metadata_to_ack {
                             if let Err(e) = metadata.ack().await {
                                 tracing::warn!("Failed to acknowledge file message: {:?}", e);
                             }
@@ -158,7 +158,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::bounded_channel::bounded;
     use crate::exporters::file::{Result, TypedFileExporter};
     use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, MessageMetadata};

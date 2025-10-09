@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::datadog::payload::DatadogPayload;
+use crate::exporters::datadog::DatadogPayload;
 use crate::exporters::datadog::types::pb::AgentPayload;
 use crate::exporters::http::request::{BaseRequestBuilder, RequestUri};
 use crate::topology::payload::MessageMetadata;
@@ -68,13 +68,13 @@ impl ApiRequestBuilder {
         gz.read_to_end(&mut gz_vec).unwrap();
 
         let body = Bytes::from(gz_vec);
-        let datadog_payload = DatadogPayload::new(body, metadata);
 
-        self.base
-            .builder()
-            .body(datadog_payload)?
-            .build()
-            .map(|r| vec![r])
-            .map_err(|e| format!("failed to build request: {:?}", e).into())
+        // Create MessagePayload with just the body
+        let datadog_payload = DatadogPayload::new(http_body_util::Full::new(body), metadata);
+
+        // Use the base builder to create the final request with proper headers
+        let wrapped_request = self.base.builder().body(datadog_payload)?.build()?;
+
+        Ok(vec![wrapped_request])
     }
 }

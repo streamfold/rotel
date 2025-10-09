@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::datadog::DatadogPayload;
 use crate::exporters::datadog::Region;
 use crate::exporters::datadog::api_request::ApiRequestBuilder;
-use crate::exporters::datadog::payload::DatadogPayload;
 use crate::exporters::datadog::types::pb::AgentPayload;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
 use crate::topology::payload::{Message, MessageMetadata};

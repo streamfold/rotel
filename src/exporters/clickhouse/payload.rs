@@ -1,7 +1,7 @@
 use crate::exporters::clickhouse::ch_error::Error;
 use crate::exporters::clickhouse::rowbinary::serialize_into;
 use crate::exporters::clickhouse::{BUFFER_SIZE, Compression, MIN_CHUNK_SIZE, compression};
-use crate::exporters::http::metadata_extractor::MetadataExtractor;
+use crate::exporters::http::metadata_extractor::MessagePayload;
 use crate::topology::payload::MessageMetadata;
 use bytes::{Bytes, BytesMut};
 use hyper::body::{Body, Frame};
@@ -56,7 +56,9 @@ impl ClickhousePayloadBuilder {
             self.closed.push(new_chunk);
         }
 
-        Ok(ClickhousePayload::new(self.closed, metadata))
+        let streaming_body = ClickhouseStreamingBody::new(self.closed);
+
+        Ok(ClickhousePayload::new(streaming_body, metadata))
     }
 
     fn take_and_close_current(&mut self) -> Result<Bytes, Error> {
@@ -70,19 +72,18 @@ impl ClickhousePayloadBuilder {
     }
 }
 
-pub struct ClickhousePayload {
+/// Custom streaming body for Clickhouse that maintains state for retries
+pub struct ClickhouseStreamingBody {
     inner: Arc<Mutex<Inner>>,
-    metadata: Option<Vec<MessageMetadata>>,
 }
 
 // We manually clone so that the state of the inner struct is maintained
 // per request. Otherwise we won't replay all chunks on a retry.
-impl Clone for ClickhousePayload {
+impl Clone for ClickhouseStreamingBody {
     fn clone(&self) -> Self {
         let inner = self.inner.lock().unwrap();
         Self {
             inner: Arc::new(Mutex::new(inner.clone())),
-            metadata: self.metadata.clone(),
         }
     }
 }
@@ -93,19 +94,18 @@ pub struct Inner {
     current: usize,
 }
 
-impl ClickhousePayload {
-    pub fn new(chunks: Vec<Bytes>, metadata: Option<Vec<MessageMetadata>>) -> Self {
+impl ClickhouseStreamingBody {
+    pub fn new(chunks: Vec<Bytes>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 chunks: Arc::new(chunks.into()),
                 current: 0,
             })),
-            metadata,
         }
     }
 }
 
-impl Body for ClickhousePayload {
+impl Body for ClickhouseStreamingBody {
     type Data = Bytes;
     type Error = BoxError;
 
@@ -126,23 +126,13 @@ impl Body for ClickhousePayload {
     }
 }
 
-impl MetadataExtractor for ClickhousePayload {
-    fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
-        self.metadata.take()
-    }
-}
+/// Type alias for Clickhouse payloads using the generic MessagePayload with custom streaming body
+pub type ClickhousePayload = MessagePayload<ClickhouseStreamingBody>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::task::{Context, Waker};
-
-    // Helper function to create a simple test row
-    #[derive(Serialize)]
-    struct TestRow {
-        id: u32,
-        name: String,
-    }
 
     struct MockWaker;
     impl std::task::Wake for MockWaker {
@@ -151,24 +141,15 @@ mod tests {
 
     #[test]
     fn test_clone_independence() {
-        // Create a payload builder and add some test data
-        let mut builder = ClickhousePayloadBuilder::new(Compression::None);
+        // Create test chunks
+        let chunks = vec![Bytes::from("chunk1"), Bytes::from("chunk2")];
 
-        // Add enough data to create multiple chunks
-        for i in 0..2 {
-            let row = TestRow {
-                id: i,
-                name: format!("test_{}", i),
-            };
-            builder.add_row(&row).unwrap();
-        }
+        let original_body = ClickhouseStreamingBody::new(chunks);
+        let cloned_body = original_body.clone();
 
-        let original_payload = builder.finish_with_metadata(None).unwrap();
-        let cloned_payload = original_payload.clone();
-
-        // Pin the payloads for polling
-        let mut original_pinned = Box::pin(original_payload);
-        let mut cloned_pinned = Box::pin(cloned_payload);
+        // Pin the bodies for polling
+        let mut original_pinned = Box::pin(original_body);
+        let mut cloned_pinned = Box::pin(cloned_body);
 
         let waker = Waker::from(std::sync::Arc::new(MockWaker));
         let mut ctx = Context::from_waker(&waker);

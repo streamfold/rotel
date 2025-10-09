@@ -2,7 +2,7 @@
 
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::xray::payload::XRayPayload;
+use crate::exporters::xray::XRayPayload;
 use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
@@ -81,10 +81,16 @@ impl XRayRequestBuilder {
 
         match signed_request {
             Ok(request) => {
-                // Use the new from_signed_request method to wrap the signed request
-                // with metadata, avoiding the need to clone the data
-                let request_with_metadata = XRayPayload::from_signed_request(request, metadata);
-                Ok(vec![request_with_metadata])
+                // Decompose the signed request to get parts and body
+                let (parts, body) = request.into_parts();
+
+                // Create MessagePayload with just the body
+                let payload = XRayPayload::new(body, metadata);
+
+                // Reconstruct request with the payload as the body
+                let wrapped_request = Request::from_parts(parts, payload);
+
+                Ok(vec![wrapped_request])
             }
             Err(e) => Err(Box::new(e)),
         }

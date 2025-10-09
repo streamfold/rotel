@@ -2,7 +2,7 @@
 
 use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
 use crate::aws_api::config::AwsConfig;
-use crate::exporters::awsemf::payload::AwsEmfPayload;
+use crate::exporters::awsemf::AwsEmfPayload;
 use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use flate2::Compression;
@@ -131,9 +131,16 @@ impl AwsEmfRequestBuilder {
                         None
                     };
 
-                    let request_with_metadata =
-                        AwsEmfPayload::from_signed_request(request, batch_metadata);
-                    reqs.push(request_with_metadata);
+                    // Decompose the signed request to get parts and body
+                    let (parts, body) = request.into_parts();
+
+                    // Create MessagePayload with just the body
+                    let payload = AwsEmfPayload::new(body, batch_metadata);
+
+                    // Reconstruct request with the payload as the body
+                    let wrapped_request = Request::from_parts(parts, payload);
+
+                    reqs.push(wrapped_request);
                 }
                 Err(e) => return Err(Box::new(e)),
             }

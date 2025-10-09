@@ -14,6 +14,7 @@ use crate::exporters::http::request_iter::RequestIterator;
 use crate::exporters::http::tls;
 use crate::topology::flush_control::FlushReceiver;
 
+use bytes::Bytes;
 use dim_filter::DimensionFilter;
 use errors::{AwsEmfDecoder, AwsEmfResponse, is_retryable_error};
 use flume::r#async::RecvStream;
@@ -34,14 +35,17 @@ mod dim_filter;
 mod emf_request;
 mod errors;
 mod event;
-mod payload;
 mod request_builder;
 mod response_interceptor;
 mod transformer;
 
 use crate::topology::payload::Message;
 use cloudwatch::Cloudwatch;
-use payload::AwsEmfPayload;
+
+/// Type alias for AWS EMF payloads using the generic MessagePayload
+use crate::exporters::http::metadata_extractor::MessagePayload;
+use http_body_util::Full;
+pub type AwsEmfPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,

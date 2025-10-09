@@ -3,7 +3,7 @@
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
 use crate::exporters::xray::Region;
-use crate::exporters::xray::payload::XRayPayload;
+use crate::exporters::xray::XRayPayload;
 use crate::exporters::xray::transformer::ExportError;
 use crate::exporters::xray::xray_request::XRayRequestBuilder;
 use crate::topology::payload::{Message, MessageMetadata};

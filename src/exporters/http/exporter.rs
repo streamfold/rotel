@@ -110,7 +110,6 @@ where
                         Ok(response) => {
                             // First, run the acknowledger with a reference (no cloning)
                             self.acknowledger.acknowledge(&response).await;
-
                             // Then finalize, giving ownership to the finalizer
                             match self.result_finalizer.finalize(Ok(response)) {
                                 Err(e) => {

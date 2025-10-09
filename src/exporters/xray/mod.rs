@@ -3,7 +3,6 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::exporters::http::acknowledger::DefaultHTTPAcknowledger;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
-use crate::exporters::xray::payload::XRayPayload;
 use crate::exporters::xray::request_builder::RequestBuilder;
 use crate::exporters::xray::transformer::Transformer;
 
@@ -29,10 +28,14 @@ use tower::{BoxError, ServiceBuilder};
 use super::http::finalizer::SuccessStatusFinalizer;
 use super::shared::aws::Region;
 
-mod payload;
 mod request_builder;
 mod transformer;
 mod xray_request;
+
+/// Type alias for XRay payloads using the generic MessagePayload
+use crate::exporters::http::metadata_extractor::MessagePayload;
+use http_body_util::Full;
+pub type XRayPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> =
     TowerRetry<RetryPolicy<RespBody>, Timeout<Client<XRayPayload, RespBody, XRayTraceDecoder>>>;

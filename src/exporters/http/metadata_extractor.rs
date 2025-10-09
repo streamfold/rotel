@@ -1,38 +1,54 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::topology::payload::MessageMetadata;
-use bytes::Bytes;
-use http_body_util::Full;
 
 /// Trait for extracting metadata from request bodies
 pub trait MetadataExtractor {
     fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>>;
 }
 
-// Implementation for Full<Bytes> - no metadata
-impl MetadataExtractor for Full<Bytes> {
-    fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
-        None
+/// Generic message payload that stores a body with metadata
+#[derive(Clone)]
+pub struct MessagePayload<ReqBody> {
+    body: ReqBody,
+    metadata: Option<Vec<MessageMetadata>>,
+}
+
+impl<ReqBody> MessagePayload<ReqBody> {
+    /// Create a new MessagePayload from just a body with metadata
+    pub fn new(body: ReqBody, metadata: Option<Vec<MessageMetadata>>) -> Self {
+        Self { body, metadata }
     }
 }
 
-// Implementation for Bytes - no metadata
-impl MetadataExtractor for Bytes {
+impl<ReqBody> MetadataExtractor for MessagePayload<ReqBody> {
     fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
-        None
+        self.metadata.take()
     }
 }
 
-// Implementation for String - no metadata (used in some HTTP scenarios)
-impl MetadataExtractor for String {
-    fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
-        None
-    }
-}
+// Implement Body for MessagePayload to delegate to the body directly
+impl<ReqBody> hyper::body::Body for MessagePayload<ReqBody>
+where
+    ReqBody: hyper::body::Body + Clone + Unpin,
+{
+    type Data = ReqBody::Data;
+    type Error = ReqBody::Error;
 
-// Implementation for &str - no metadata (used in some HTTP scenarios)
-impl MetadataExtractor for &str {
-    fn take_metadata(&mut self) -> Option<Vec<MessageMetadata>> {
-        None
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        // Poll the body directly
+        let body_pin = std::pin::Pin::new(&mut self.body);
+        body_pin.poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
     }
 }

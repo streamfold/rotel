@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::BoundedReceiver;
-use crate::exporters::datadog::payload::DatadogPayload;
 use crate::exporters::datadog::request_builder::RequestBuilder;
 use crate::exporters::datadog::transform::Transformer;
 use crate::exporters::http::retry::{RetryConfig, RetryPolicy};
@@ -28,10 +27,14 @@ use super::http::acknowledger::DefaultHTTPAcknowledger;
 use super::http::finalizer::SuccessStatusFinalizer;
 
 mod api_request;
-mod payload;
 mod request_builder;
 mod transform;
 mod types;
+
+/// Type alias for Datadog payloads using the generic MessagePayload
+use crate::exporters::http::metadata_extractor::MessagePayload;
+use http_body_util::Full;
+pub type DatadogPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
     RetryPolicy<RespBody>,

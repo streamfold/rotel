@@ -213,12 +213,13 @@ where
     }
 }
 
+// Service implementation for Request<ReqBody> where ReqBody implements MetadataExtractor
 impl<ReqBody, Resp, Dec> Service<Request<ReqBody>> for Client<ReqBody, Resp, Dec>
 where
-    Dec: ResponseDecode<Resp> + Send + Clone + Sync + 'static,
     ReqBody: Body + Clone + Send + 'static + Unpin + MetadataExtractor,
     <ReqBody as Body>::Data: Send,
     <ReqBody as Body>::Error: Into<BoxError>,
+    Dec: ResponseDecode<Resp> + Send + Clone + Sync + 'static,
     Resp: Send + Clone + Sync + 'static,
 {
     type Response = Response<Resp>;
@@ -239,6 +240,50 @@ where
 
             // Reconstruct the request with the (possibly modified) body
             let req = Request::from_parts(parts, body);
+
+            match this.perform_request(req).await {
+                Ok(mut resp) => {
+                    // Add metadata to the response
+                    resp = resp.with_metadata(metadata);
+                    Ok(resp)
+                }
+                Err(e) => Err(e),
+            }
+        })
+    }
+}
+
+// Service implementation for types that implement AsRef<Request<ReqBody>>
+impl<T, ReqBody, Resp, Dec> Service<T> for Client<ReqBody, Resp, Dec>
+where
+    T: AsRef<Request<ReqBody>> + MetadataExtractor + Clone + Send + 'static,
+    T: std::fmt::Debug, // Add Debug constraint to distinguish from Request<ReqBody>
+    ReqBody: Body + Clone + Send + 'static + Unpin,
+    <ReqBody as Body>::Data: Send,
+    <ReqBody as Body>::Error: Into<BoxError>,
+    Dec: ResponseDecode<Resp> + Send + Clone + Sync + 'static,
+    Resp: Send + Clone + Sync + 'static,
+{
+    type Response = Response<Resp>;
+    type Error = BoxError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, mut req_wrapper: T) -> Self::Future {
+        let this = self.clone();
+
+        Box::pin(async move {
+            // Extract metadata from the wrapper
+            let metadata = req_wrapper.take_metadata();
+
+            // Get the inner request via AsRef - no cloning of the wrapper
+            let req = req_wrapper.as_ref();
+
+            // Clone only the inner request for the HTTP call
+            let req = req.clone();
 
             match this.perform_request(req).await {
                 Ok(mut resp) => {

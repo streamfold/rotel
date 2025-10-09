@@ -3,8 +3,8 @@
 use super::event::Event;
 use crate::aws_api::config::AwsConfig;
 use crate::exporters::awsemf::AwsEmfExporterConfig;
+use crate::exporters::awsemf::AwsEmfPayload;
 use crate::exporters::awsemf::emf_request::AwsEmfRequestBuilder;
-use crate::exporters::awsemf::payload::AwsEmfPayload;
 use crate::exporters::awsemf::transformer::ExportError;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
 use crate::topology::payload::{Message, MessageMetadata};
