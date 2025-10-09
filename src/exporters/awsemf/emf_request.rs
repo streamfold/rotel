@@ -106,15 +106,6 @@ impl AwsEmfRequestBuilder {
 
             let body = Bytes::from(gz_vec);
 
-            // Only clone metadata when there are multiple batches, otherwise move it
-            let batch_metadata = if single_batch {
-                metadata.take()
-            } else if idx == 0 {
-                metadata.clone()
-            } else {
-                None
-            };
-
             let mut req_builder = Request::builder()
                 .uri(self.uri.clone())
                 .method(Method::POST);
@@ -128,6 +119,15 @@ impl AwsEmfRequestBuilder {
 
             match req {
                 Ok(request) => {
+                    // Only clone metadata when there are multiple batches, otherwise move it
+                    let batch_metadata = if single_batch {
+                        metadata.take()
+                    } else if idx == 0 {
+                        metadata.clone()
+                    } else {
+                        None
+                    };
+
                     // Decompose the request to get parts and body
                     let (parts, body) = request.into_parts();
 
