@@ -1,5 +1,5 @@
 use serde::{
-    Deserializer,
+    Deserialize, Deserializer,
     de::{self, Visitor},
 };
 use std::error::Error;
@@ -98,6 +98,30 @@ pub(crate) fn parse_bool_value(val: &String) -> Result<bool, BoxError> {
         "1" | "true" => Ok(true),
         _ => Err(format!("Unable to parse bool value: {}", val).into()),
     }
+}
+
+// Support deser into a string from multiple value types. This allows a string
+// environment variable to have a value that is a number or bool
+pub(crate) fn deser_into_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(num) => Ok(num.to_string()),
+        serde_json::Value::Bool(b) => Ok(b.to_string()),
+        serde_json::Value::String(s) => Ok(s),
+        _ => Err(serde::de::Error::custom(
+            "unexpected value for string parameter",
+        )),
+    }
+}
+
+pub(crate) fn deser_into_string_opt<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deser_into_string(deserializer).map(|v| Some(v))?)
 }
 
 #[cfg(test)]
@@ -245,5 +269,72 @@ mod test {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Empty key"));
+    }
+
+    #[derive(Deserialize, Debug)]
+    struct StringConfig {
+        #[serde(deserialize_with = "deser_into_string")]
+        value: String,
+    }
+
+    #[test]
+    fn test_deser_into_string_from_string() {
+        let json = r#"{"value": "hello"}"#;
+        let config: StringConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.value, "hello");
+    }
+
+    #[test]
+    fn test_deser_into_string_from_integer() {
+        let json = r#"{"value": 42}"#;
+        let config: StringConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.value, "42");
+    }
+
+    #[test]
+    fn test_deser_into_string_from_negative_integer() {
+        let json = r#"{"value": -123}"#;
+        let config: StringConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.value, "-123");
+    }
+
+    #[test]
+    fn test_deser_into_string_from_float() {
+        let json = r#"{"value": 3.14}"#;
+        let config: StringConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.value, "3.14");
+    }
+
+    #[test]
+    fn test_deser_into_string_from_bool_true() {
+        let json = r#"{"value": true}"#;
+        let config: StringConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.value, "true");
+    }
+
+    #[test]
+    fn test_deser_into_string_from_null_fails() {
+        let json = r#"{"value": null}"#;
+        let result: Result<StringConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected value for string parameter")
+        );
+    }
+
+    #[test]
+    fn test_deser_into_string_from_array_fails() {
+        let json = r#"{"value": [1, 2, 3]}"#;
+        let result: Result<StringConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected value for string parameter")
+        );
     }
 }

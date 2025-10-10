@@ -27,6 +27,7 @@ pub struct DatadogExporterArgs {
         long("datadog-exporter-api-key"),
         env = "ROTEL_DATADOG_EXPORTER_API_KEY"
     )]
+    #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub api_key: Option<String>,
 }
 
