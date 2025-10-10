@@ -249,14 +249,7 @@ crate._
 
 ### AWS X-Ray exporter configuration
 
-The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ray exporter only supports traces. Note:
-X-Ray
-limits batch sizes to 50 traces segments. If you assign a `--batch-max-size` of greater than 50, Rotel will override and
-enforce the max
-batch size of 50 with the warning:
-```
-INFO AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50
-```
+The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ray exporter only supports traces.
 
 See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS X-Ray exporter.
 
