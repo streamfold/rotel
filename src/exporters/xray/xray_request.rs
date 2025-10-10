@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
-use crate::aws_api::config::AwsConfig;
-use crate::exporters::xray::XRayPayload;
-use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
+use http_body_util::Full;
 use serde_json::{Value, json};
 use std::error::Error;
 use tower::BoxError;
+
+use crate::exporters::xray::XRayPayload;
+use crate::topology::payload::MessageMetadata;
 
 const TRACES_PATH: &str = "/TraceSegments";
 
@@ -19,13 +19,12 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 
 #[derive(Clone)]
 pub struct XRayRequestBuilder {
-    signer: AwsRequestSigner<SystemClock>,
     pub base_headers: HeaderMap,
     pub uri: Uri,
 }
 
 impl XRayRequestBuilder {
-    pub fn new(endpoint: String, config: AwsConfig) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub fn new(endpoint: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let uri: url::Url = match endpoint.parse() {
             Ok(u) => u,
             Err(e) => return Err(format!("failed to parse endpoint {}: {}", endpoint, e).into()),
@@ -44,14 +43,7 @@ impl XRayRequestBuilder {
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
 
-        let signer =
-            AwsRequestSigner::new("xray", config.region.clone().as_str(), config, SystemClock);
-
-        let s = Self {
-            uri,
-            base_headers,
-            signer,
-        };
+        let s = Self { uri, base_headers };
         Ok(s)
     }
 
@@ -72,16 +64,20 @@ impl XRayRequestBuilder {
         .to_string();
         let data = Bytes::from(data.into_bytes());
 
-        let signed_request = self.signer.sign(
-            self.uri.clone(),
-            Method::POST,
-            self.base_headers.clone(),
-            data,
-        );
+        let mut req_builder = Request::builder()
+            .uri(self.uri.clone())
+            .method(Method::POST);
 
-        match signed_request {
+        let builder_headers = req_builder.headers_mut().unwrap();
+        for (k, v) in self.base_headers.iter() {
+            builder_headers.insert(k, v.clone());
+        }
+
+        let req = req_builder.body(Full::from(data));
+
+        match req {
             Ok(request) => {
-                // Decompose the signed request to get parts and body
+                // Decompose the request to get parts and body
                 let (parts, body) = request.into_parts();
 
                 // Create MessagePayload with just the body
@@ -92,6 +88,7 @@ impl XRayRequestBuilder {
 
                 Ok(vec![wrapped_request])
             }
+
             Err(e) => Err(Box::new(e)),
         }
     }

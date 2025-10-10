@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::exporters::http::client::{Client, Protocol as HttpProtocol, ResponseDecode};
-use crate::exporters::http::metadata_extractor::MetadataExtractor;
+use crate::exporters::http::metadata_extractor::{MessagePayload, MetadataExtractor};
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
 use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
+use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSigningServiceBuilder};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
 use http::{Request, StatusCode};
+use http_body_util::Full;
 use opentelemetry::KeyValue;
 use std::error::Error;
 use std::future::Future;
@@ -90,8 +92,8 @@ where
 /// decoder types from the client type
 #[derive(Clone)]
 enum UnifiedClientType<T> {
-    Grpc(Client<OtlpPayload, T, GrpcDecoder<T>>),
-    Http(Client<OtlpPayload, T, HttpDecoder<T>>),
+    Grpc(AwsSigningService<Client<MessagePayload<Full<Bytes>>, T, GrpcDecoder<T>>>),
+    Http(AwsSigningService<Client<MessagePayload<Full<Bytes>>, T, HttpDecoder<T>>>),
 }
 
 /// Client struct for handling OTLP exports.
@@ -103,7 +105,6 @@ where
 {
     /// The underlying unified HTTP client
     client: UnifiedClientType<T>,
-    /// PhantomData to handle generic type T
     _phantom: PhantomData<T>,
     send_failed: RotelCounter<u64>,
     sent: RotelCounter<u64>,
@@ -118,7 +119,6 @@ where
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    /// Checks if the service is ready to process requests
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
@@ -183,17 +183,18 @@ where
         protocol: Protocol,
         sent: RotelCounter<u64>,
         send_failed: RotelCounter<u64>,
+        signing_builder: AwsSigningServiceBuilder,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = match protocol {
             Protocol::Grpc => {
                 let decoder: GrpcDecoder<T> = GrpcDecoder::new(send_failed.clone());
-                let client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
-                UnifiedClientType::Grpc(client)
+                let http_client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
+                UnifiedClientType::Grpc(signing_builder.build(http_client))
             }
             Protocol::Http => {
                 let decoder: HttpDecoder<T> = HttpDecoder::new(send_failed.clone());
-                let client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
-                UnifiedClientType::Http(client)
+                let http_client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
+                UnifiedClientType::Http(signing_builder.build(http_client))
             }
         };
 

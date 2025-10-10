@@ -152,8 +152,8 @@ The Rotel OTLP exporter can export to the
 [Cloudwatch OTLP endpoints](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OTLPEndpoint.html)
 for traces and logs. You'll need to select the HTTP protocol and enable the sigv4auth authenticator.
 
-The sigv4auth authenticator requires the AWS authentication environment variables to be set. At the moment this is restricted
-to credentials specified as: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and optionally `AWS_SESSION_TOKEN`.
+The sigv4auth authenticator requires the AWS authentication credentials. See the [AWS Authentication](#aws-authentication) docs
+for supported methods.
 
 **Traces**
 
@@ -253,12 +253,12 @@ The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ra
 X-Ray
 limits batch sizes to 50 traces segments. If you assign a `--batch-max-size` of greater than 50, Rotel will override and
 enforce the max
-batch size of 50 with the warning
-`INFO AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50`
+batch size of 50 with the warning:
+```
+INFO AWS X-Ray only supports a batch size of 50 segments, setting batch max size to 50
+```
 
-AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` for the X-Ray exporter
-are
-automatically sourced from Rotel's environment on startup.
+See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS X-Ray exporter.
 
 | Option                             | Default   | Options          |
 | ---------------------------------- | --------- | ---------------- |
@@ -275,8 +275,7 @@ Cloudwatch [Embedded metric format](https://docs.aws.amazon.com/AmazonCloudWatch
 and
 send those as JSON log lines to Cloudwatch. Cloudwatch will convert the log lines into Cloudwatch Metrics.
 
-AWS Credentials including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` for the EMF exporter
-are automatically sourced from Rotel's environment on startup.
+See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS EMF exporter.
 
 | Option                                                 | Default          | Options          |
 | ------------------------------------------------------ | ---------------- | ---------------- |
@@ -866,6 +865,13 @@ you would instead set the `ROTEL_EXPORTERS_LOGS` environment variable to:
 > Sending telemetry to multiple exporters at once is currently in alpha. The telemetry is copied between the
 > multiple exporter queues which may cause additional memory use under large volumes. This is an area of
 > improvement as we expand on this capability.
+
+### AWS Authentication
+
+For exporters that rely on AWS authentication, Rotel supports several methods of configuring AWS credentials.
+Rotel relies on the standard AWS SDK credential provider methods for locating the right credentials. See the
+AWS [documentation](https://docs.aws.amazon.com/sdkref/latest/guide/creds-config-files.html) for how to
+configure and acquire credentials when running Rotel.
 
 ### Full example
 

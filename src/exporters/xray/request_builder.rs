@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::aws_api::config::AwsConfig;
 use crate::exporters::http::request_builder_mapper::BuildRequest;
 use crate::exporters::xray::Region;
 use crate::exporters::xray::XRayPayload;
@@ -39,7 +38,6 @@ where
 {
     pub fn new(
         transformer: Transform,
-        config: AwsConfig,
         region: Region,
         custom_endpoint: Option<String>,
     ) -> Result<Self, BoxError> {
@@ -48,7 +46,7 @@ where
         } else {
             format!("https://xray.{}.amazonaws.com", region).to_string()
         };
-        let api_req_builder = XRayRequestBuilder::new(endpoint, config)?;
+        let api_req_builder = XRayRequestBuilder::new(endpoint)?;
         Ok(Self {
             transformer,
             api_req_builder,
