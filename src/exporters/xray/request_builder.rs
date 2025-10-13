@@ -11,10 +11,7 @@ use std::marker::PhantomData;
 use tower::BoxError;
 
 pub trait TransformPayload<T> {
-    fn transform(
-        &self,
-        input: Vec<Message<T>>,
-    ) -> Result<Vec<XRayValuePayload>, ExportError>;
+    fn transform(&self, input: Vec<Message<T>>) -> Result<Vec<XRayValuePayload>, ExportError>;
 }
 
 // todo: identify the cost of recursively cloning these
