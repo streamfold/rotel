@@ -599,10 +599,6 @@ mod tests {
             }
         }
 
-        // The critical test: How many acks did we get?
-        // If Clickhouse is working correctly:
-        // - Should get exactly 1 ack since it creates one payload with embedded metadata
-        // - Internal chunking should not affect acknowledgment (it's within the same HTTP request)
         assert_eq!(
             ack_count, 1,
             "Expected exactly 1 acknowledgment for Clickhouse request, got {}",

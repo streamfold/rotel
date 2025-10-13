@@ -1105,7 +1105,6 @@ mod tests {
             }
         }
 
-        // The critical test: How many acks did we get?
         // If Kafka is working correctly with reference counting:
         // - Should get exactly 1 ack when ref count reaches 0 after all 5 clones are processed
         assert_eq!(

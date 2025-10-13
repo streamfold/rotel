@@ -434,12 +434,6 @@ mod tests {
             }
         }
 
-        // The critical test: How many acks did we get?
-        // If XRay is working correctly with reference counting:
-        // - Should get exactly 1 ack when ref count reaches 0
-        // - First chunk gets cloned metadata (ref count: 1->2)
-        // - First chunk acks (ref count: 2->1)
-        // - Only the first chunk should contribute to the ack
         assert_eq!(
             ack_count, 1,
             "Expected exactly 1 acknowledgment for multi-chunk XRay request, got {}",

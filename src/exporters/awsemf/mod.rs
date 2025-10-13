@@ -46,6 +46,7 @@ use cloudwatch::Cloudwatch;
 /// Type alias for AWS EMF payloads using the generic MessagePayload
 use crate::exporters::http::metadata_extractor::MessagePayload;
 use http_body_util::Full;
+
 pub type AwsEmfPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
@@ -716,11 +717,6 @@ mod tests {
             }
         }
 
-        // The critical test: How many acks did we get?
-        // If EMF is working correctly with reference counting:
-        // - Should get exactly 1 ack when ref count reaches 0
-        // But if there's a bug like in XRay where only first batch gets metadata:
-        // - May get 0 acks because ref count never reaches 0
         assert_eq!(
             ack_count, 1,
             "Expected exactly 1 acknowledgment for multi-batch EMF request, got {}",
