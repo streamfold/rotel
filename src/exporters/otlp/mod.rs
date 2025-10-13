@@ -96,6 +96,7 @@ pub fn config_builder(
 mod tests {
     use crate::bounded_channel::{BoundedSender, bounded};
     use crate::exporters::otlp::{Endpoint, Protocol, config_builder};
+    use crate::topology;
     extern crate utilities;
     use utilities::otlp::FakeOTLP;
 
@@ -126,8 +127,6 @@ mod tests {
     use crate::exporters::otlp;
     use crate::exporters::otlp::config::OTLPExporterConfig;
     use crate::exporters::otlp::exporter::Exporter;
-    use crate::exporters::otlp::signer::AwsSigv4RequestSigner;
-    use crate::topology;
     use crate::topology::flush_control::FlushBroadcast;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
@@ -489,6 +488,7 @@ mod tests {
             traces_config,
             trace_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -567,6 +567,7 @@ mod tests {
             metrics_config,
             metrics_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -645,6 +646,7 @@ mod tests {
             logs_config,
             logs_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -715,6 +717,7 @@ mod tests {
             traces_config,
             trace_brx,
             Some(flush_pipeline_sub.subscribe()),
+            None,
         )
         .unwrap();
 
@@ -788,7 +791,8 @@ mod tests {
         .with_key_file(key_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let traces =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
 
         let res = send_test_msg(traces, trace_btx, &mut server_rx).await;
         assert!(res.is_some());
@@ -802,7 +806,8 @@ mod tests {
         .with_cert_file(cert_file)
         .with_key_file(key_file);
 
-        let traces = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None).unwrap();
+        let traces =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None).unwrap();
         let res = send_test_msg(traces, trace_btx.clone(), &mut server_rx).await;
         assert!(res.is_none());
         //
@@ -816,7 +821,7 @@ mod tests {
         .with_cert_file(cert_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_err());
 
         // Fails because missing cert
@@ -829,7 +834,7 @@ mod tests {
         .with_key_file(key_file)
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_err());
 
         // Succeeds because no identity but provides a CA and a correct domain
@@ -841,7 +846,7 @@ mod tests {
         )
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         // Fails because we have a CA but incorrect domain
@@ -852,7 +857,7 @@ mod tests {
         )
         .with_ca_file(server_root_ca_cert_file);
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_msg(otlp_res.unwrap(), trace_btx.clone(), &mut server_rx).await;
@@ -887,7 +892,7 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_traces_msgs_and_stop(otlp_res.unwrap(), trace_btx, 1).await;
@@ -919,7 +924,7 @@ mod tests {
         .with_initial_backoff(Duration::from_millis(5))
         .with_max_elapsed_time(Duration::from_millis(20));
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_traces_msgs_and_stop(otlp_res.unwrap(), trace_btx, 1).await;
@@ -957,7 +962,7 @@ mod tests {
         .with_max_elapsed_time(Duration::from_millis(20))
         .with_encode_drain_max_time(Duration::from_millis(10));
 
-        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None);
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let otlp_exp = otlp_res.unwrap();
@@ -997,7 +1002,8 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None);
+        let otlp_res =
+            otlp::exporter::build_metrics_exporter(metrics_config, metrics_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_metrics_msg_and_stop(otlp_res.unwrap(), metrics_btx, 1).await;
@@ -1032,7 +1038,7 @@ mod tests {
             Protocol::Http,
         );
 
-        let otlp_res = otlp::exporter::build_logs_exporter(logs_config, logs_brx, None);
+        let otlp_res = otlp::exporter::build_logs_exporter(logs_config, logs_brx, None, None);
         assert!(otlp_res.is_ok());
 
         let res = send_test_logs_msg_and_stop(otlp_res.unwrap(), logs_btx, 1).await;
@@ -1044,12 +1050,7 @@ mod tests {
 
     // Wait for a msg to be sent, returns None if it was unable to deliver
     async fn send_test_msg(
-        mut traces: Exporter<
-            ResourceSpans,
-            ExportTraceServiceRequest,
-            AwsSigv4RequestSigner,
-            ExportTraceServiceResponse,
-        >,
+        mut traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
         btx: BoundedSender<Vec<topology::payload::Message<ResourceSpans>>>,
         server_rx: &mut tokio::sync::mpsc::Receiver<()>,
     ) -> Option<()> {
@@ -1084,12 +1085,7 @@ mod tests {
     }
 
     async fn send_test_traces_msgs_and_stop(
-        traces: Exporter<
-            ResourceSpans,
-            ExportTraceServiceRequest,
-            AwsSigv4RequestSigner,
-            ExportTraceServiceResponse,
-        >,
+        traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
         btx: BoundedSender<Vec<topology::payload::Message<ResourceSpans>>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1105,7 +1101,6 @@ mod tests {
         metrics: Exporter<
             ResourceMetrics,
             ExportMetricsServiceRequest,
-            AwsSigv4RequestSigner,
             ExportMetricsServiceResponse,
         >,
         btx: BoundedSender<Vec<topology::payload::Message<ResourceMetrics>>>,
@@ -1120,12 +1115,7 @@ mod tests {
     }
 
     async fn send_test_logs_msg_and_stop(
-        logs: Exporter<
-            ResourceLogs,
-            ExportLogsServiceRequest,
-            AwsSigv4RequestSigner,
-            ExportLogsServiceResponse,
-        >,
+        logs: Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
         btx: BoundedSender<Vec<topology::payload::Message<ResourceLogs>>>,
         how_many: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1138,12 +1128,7 @@ mod tests {
     }
 
     async fn send_test_trace_and_stop(
-        mut traces: Exporter<
-            ResourceSpans,
-            ExportTraceServiceRequest,
-            AwsSigv4RequestSigner,
-            ExportTraceServiceResponse,
-        >,
+        mut traces: Exporter<ResourceSpans, ExportTraceServiceRequest, ExportTraceServiceResponse>,
         payloads: Vec<Vec<ResourceSpans>>,
         btx: BoundedSender<Vec<topology::payload::Message<ResourceSpans>>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1175,7 +1160,6 @@ mod tests {
         mut metrics: Exporter<
             ResourceMetrics,
             ExportMetricsServiceRequest,
-            AwsSigv4RequestSigner,
             ExportMetricsServiceResponse,
         >,
         payloads: Vec<Vec<ResourceMetrics>>,
@@ -1206,12 +1190,7 @@ mod tests {
     }
 
     async fn send_test_logs_and_stop(
-        mut logs: Exporter<
-            ResourceLogs,
-            ExportLogsServiceRequest,
-            AwsSigv4RequestSigner,
-            ExportLogsServiceResponse,
-        >,
+        mut logs: Exporter<ResourceLogs, ExportLogsServiceRequest, ExportLogsServiceResponse>,
         payloads: Vec<Vec<ResourceLogs>>,
         btx: BoundedSender<Vec<topology::payload::Message<ResourceLogs>>>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1288,8 +1267,9 @@ mod tests {
             Protocol::Http,
         );
 
-        let mut otlp_exp = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None)
-            .expect("Failed to build OTLP exporter");
+        let mut otlp_exp =
+            otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None)
+                .expect("Failed to build OTLP exporter");
 
         // Start exporter
         let cancellation_token = CancellationToken::new();

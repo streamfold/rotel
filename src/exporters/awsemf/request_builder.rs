@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::event::Event;
-use crate::aws_api::config::AwsConfig;
 use crate::exporters::awsemf::AwsEmfExporterConfig;
 use crate::exporters::awsemf::AwsEmfPayload;
 use crate::exporters::awsemf::emf_request::AwsEmfRequestBuilder;
@@ -36,11 +35,7 @@ impl<Resource, Transform> RequestBuilder<Resource, Transform>
 where
     Transform: TransformPayload<Resource>,
 {
-    pub fn new(
-        transformer: Transform,
-        aws_config: AwsConfig,
-        config: AwsEmfExporterConfig,
-    ) -> Result<Self, BoxError> {
+    pub fn new(transformer: Transform, config: AwsEmfExporterConfig) -> Result<Self, BoxError> {
         let endpoint = if let Some(custom) = &config.custom_endpoint {
             custom.clone()
         } else {
@@ -49,7 +44,6 @@ where
 
         let api_req_builder = AwsEmfRequestBuilder::new(
             endpoint,
-            aws_config,
             config.log_group_name.clone(),
             config.log_stream_name.clone(),
         )?;

@@ -14,7 +14,6 @@ use crate::exporters::otlp::errors::ExporterError;
 use crate::exporters::otlp::grpc_codec::grpc_encode_body;
 use crate::exporters::otlp::http_codec::http_encode_body;
 use crate::exporters::otlp::payload::OtlpPayload;
-use crate::exporters::otlp::signer::{RequestSigner, RequestSignerBuilder};
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::telemetry::{Counter, RotelCounter};
 use crate::topology::payload::MessageMetadata;
@@ -50,14 +49,10 @@ const LOGS_RELATIVE_HTTP_PATH: &str = "v1/logs";
 ///
 /// Generic type `T` represents the type of request being built, e.g. ExportTraceServiceRequest.
 #[derive(Clone)]
-pub struct RequestBuilder<T, Signer>
-where
-    Signer: Clone,
-{
+pub struct RequestBuilder<T> {
     config: RequestBuilderConfig,
     _phantom: PhantomData<T>,
     pub send_failed: RotelCounter<u64>,
-    signer: Option<Signer>,
 }
 
 /// Configuration for the request builder.
@@ -78,27 +73,17 @@ pub struct RequestBuilderConfig {
 ///
 /// # Returns
 /// * `Result<RequestBuilder<ExportTraceServiceRequest>, Box<dyn Error + Send + Sync>>`
-pub fn build_traces<SignerBuilder>(
+pub fn build_traces(
     traces_config: &OTLPExporterTracesConfig,
     send_failed: RotelCounter<u64>,
-    signer_builder: Option<SignerBuilder>,
-) -> Result<RequestBuilder<ExportTraceServiceRequest, SignerBuilder::Signer>, BoxError>
-where
-    SignerBuilder: RequestSignerBuilder,
-    SignerBuilder::Signer: RequestSigner + Clone,
-{
+) -> Result<RequestBuilder<ExportTraceServiceRequest>, BoxError> {
     let rbc = get_request_builder_config(
         traces_config,
         TRACE_GRPC_SERVICE_PATH,
         TRACES_RELATIVE_HTTP_PATH,
     )?;
 
-    let signer = match signer_builder {
-        None => None,
-        Some(b) => Some(b.build(rbc.uri.as_str())?),
-    };
-
-    Ok(RequestBuilder::new(rbc, send_failed, signer))
+    Ok(RequestBuilder::new(rbc, send_failed))
 }
 
 /// Creates a new RequestBuilder for metric exports.
@@ -108,30 +93,17 @@ where
 ///
 /// # Returns
 /// * `Result<RequestBuilder<ExportMetricsServiceRequest>, Box<dyn Error + Send + Sync>>`
-pub fn build_metrics<SignerBuilder>(
+pub fn build_metrics(
     metrics_config: &OTLPExporterMetricsConfig,
     send_failed: RotelCounter<u64>,
-    signer_builder: Option<SignerBuilder>,
-) -> Result<
-    RequestBuilder<ExportMetricsServiceRequest, SignerBuilder::Signer>,
-    Box<dyn Error + Send + Sync>,
->
-where
-    SignerBuilder: RequestSignerBuilder,
-    SignerBuilder::Signer: RequestSigner + Clone,
-{
+) -> Result<RequestBuilder<ExportMetricsServiceRequest>, Box<dyn Error + Send + Sync>> {
     let rbc = get_request_builder_config(
         metrics_config,
         METRICS_GRPC_SERVICE_PATH,
         METRICS_RELATIVE_HTTP_PATH,
     )?;
 
-    let signer = match signer_builder {
-        None => None,
-        Some(b) => Some(b.build(rbc.uri.as_str())?),
-    };
-
-    Ok(RequestBuilder::new(rbc, send_failed, signer))
+    Ok(RequestBuilder::new(rbc, send_failed))
 }
 
 /// Creates a new RequestBuilder for metric exports.
@@ -141,27 +113,14 @@ where
 ///
 /// # Returns
 /// * `Result<RequestBuilder<ExportLogsServiceRequest>, Box<dyn Error + Send + Sync>>`
-pub fn build_logs<SignerBuilder>(
+pub fn build_logs(
     logs_config: &OTLPExporterLogsConfig,
     send_failed: RotelCounter<u64>,
-    signer_builder: Option<SignerBuilder>,
-) -> Result<
-    RequestBuilder<ExportLogsServiceRequest, SignerBuilder::Signer>,
-    Box<dyn Error + Send + Sync>,
->
-where
-    SignerBuilder: RequestSignerBuilder,
-    SignerBuilder::Signer: RequestSigner + Clone,
-{
+) -> Result<RequestBuilder<ExportLogsServiceRequest>, Box<dyn Error + Send + Sync>> {
     let rbc =
         get_request_builder_config(logs_config, LOGS_GRPC_SERVICE_PATH, LOGS_RELATIVE_HTTP_PATH)?;
 
-    let signer = match signer_builder {
-        None => None,
-        Some(b) => Some(b.build(rbc.uri.as_str())?),
-    };
-
-    Ok(RequestBuilder::new(rbc, send_failed, signer))
+    Ok(RequestBuilder::new(rbc, send_failed))
 }
 
 /// Creates the configuration for a RequestBuilder.
@@ -238,19 +197,18 @@ fn get_request_builder_config(
     })
 }
 
-impl<T: prost::Message, Signer: RequestSigner + Clone> RequestBuilder<T, Signer> {
+impl<T: prost::Message> RequestBuilder<T> {
     /// Creates a new RequestBuilder with the given configuration.
-    fn new(
-        config: RequestBuilderConfig,
-        send_failed: RotelCounter<u64>,
-        signer: Option<Signer>,
-    ) -> Self {
+    fn new(config: RequestBuilderConfig, send_failed: RotelCounter<u64>) -> Self {
         Self {
             config,
             send_failed,
-            signer,
             _phantom: PhantomData,
         }
+    }
+
+    pub fn uri(&self) -> String {
+        self.config.uri.clone()
     }
 
     /// Encodes a message into a full HTTP request.
@@ -308,41 +266,23 @@ impl<T: prost::Message, Signer: RequestSigner + Clone> RequestBuilder<T, Signer>
             .map_err(|e| format!("failed to build request: {}", e).into())
     }
 
-    /// Creates a request from encoded bytes.
+    /// Creates an HTTP request from raw bytes.
+    ///
+    /// Constructs a POST request with the configured URI and default headers,
+    /// using the provided bytes as the request body.
     ///
     /// # Arguments
-    /// * `body` - The encoded request body
-    /// * `uri` - The URI for the request
-    /// * `header_map` - Headers to include in the request
+    /// * `body` - The raw bytes to use as the request body
     ///
     /// # Returns
-    /// * `Result<Request<Full<Bytes>>, BoxError>`
+    /// * `Result<Request<Full<Bytes>>, BoxError>` - The constructed HTTP request or an error
     fn request_from_bytes(&self, body: Bytes) -> Result<Request<Full<Bytes>>, BoxError> {
-        match self.signer.as_ref() {
-            None => self.unsigned_request_from_bytes(
-                body,
-                self.config.uri.clone(),
-                &self.config.default_headers,
-            ),
-            Some(signer) => {
-                match signer.sign(Method::POST, self.config.default_headers.clone(), body) {
-                    Ok(req) => Ok(req),
-                    Err(e) => Err(format!("unable to sign OTLP request: {}", e).into()),
-                }
-            }
-        }
-    }
-
-    fn unsigned_request_from_bytes(
-        &self,
-        body: Bytes,
-        uri: String,
-        header_map: &HeaderMap,
-    ) -> Result<Request<Full<Bytes>>, BoxError> {
-        let mut builder = hyper::Request::builder().method(Method::POST).uri(uri);
+        let mut builder = hyper::Request::builder()
+            .method(Method::POST)
+            .uri(&self.config.uri);
 
         let hdrs = builder.headers_mut().unwrap();
-        for (k, v) in header_map {
+        for (k, v) in &self.config.default_headers {
             hdrs.insert(k, v.clone());
         }
 

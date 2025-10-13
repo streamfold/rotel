@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::aws_api::auth::{AwsRequestSigner, SystemClock};
-use crate::aws_api::config::AwsConfig;
-use crate::exporters::xray::XRayPayload;
-use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
+use http_body_util::Full;
 use serde_json::{Value, json};
 use std::error::Error;
 use tower::BoxError;
 
+use crate::exporters::xray::XRayPayload;
+use crate::topology::payload::MessageMetadata;
+
 const TRACES_PATH: &str = "/TraceSegments";
+
+const MAX_SPANS: usize = 50;
 
 fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
     endpoint.join(path).unwrap()
@@ -19,13 +21,12 @@ fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
 
 #[derive(Clone)]
 pub struct XRayRequestBuilder {
-    signer: AwsRequestSigner<SystemClock>,
     pub base_headers: HeaderMap,
     pub uri: Uri,
 }
 
 impl XRayRequestBuilder {
-    pub fn new(endpoint: String, config: AwsConfig) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub fn new(endpoint: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let uri: url::Url = match endpoint.parse() {
             Ok(u) => u,
             Err(e) => return Err(format!("failed to parse endpoint {}: {}", endpoint, e).into()),
@@ -44,55 +45,61 @@ impl XRayRequestBuilder {
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
 
-        let signer =
-            AwsRequestSigner::new("xray", config.region.clone().as_str(), config, SystemClock);
-
-        let s = Self {
-            uri,
-            base_headers,
-            signer,
-        };
+        let s = Self { uri, base_headers };
         Ok(s)
     }
 
     pub fn build(
         &self,
         payload: Vec<Value>,
-        metadata: Option<Vec<MessageMetadata>>,
+        mut metadata: Option<Vec<MessageMetadata>>,
     ) -> Result<Vec<Request<XRayPayload>>, BoxError> {
-        // Convert each segment Value to a string
-        let segment_strings: Vec<String> = payload
-            .into_iter()
-            .map(|segment| segment.to_string())
-            .collect();
+        let mut requests = Vec::new();
+        let num_chunks = (payload.len() + MAX_SPANS - 1) / MAX_SPANS;
 
-        let data = json!({
-        "TraceSegmentDocuments": segment_strings
-        })
-        .to_string();
-        let data = Bytes::from(data.into_bytes());
+        // X-Ray API limits to 50 spans max
+        for (idx, chunk) in payload.chunks(MAX_SPANS).enumerate() {
+            let segments: Vec<String> = chunk
+                .into_iter()
+                .map(|segment| segment.to_string())
+                .collect();
 
-        let signed_request = self.signer.sign(
-            self.uri.clone(),
-            Method::POST,
-            self.base_headers.clone(),
-            data,
-        );
+            let data = json!({
+                "TraceSegmentDocuments": segments
+            })
+            .to_string();
+            let data = Bytes::from(data.into_bytes());
 
-        match signed_request {
-            Ok(request) => {
-                // Decompose the signed request to get parts and body
-                let (parts, body) = request.into_parts();
+            let mut req_builder = Request::builder().uri(&self.uri).method(Method::POST);
 
-                // Create MessagePayload with just the body
-                let payload = XRayPayload::new(body, metadata);
-
-                // Reconstruct request with the payload as the body
-                let wrapped_request = Request::from_parts(parts, payload);
-
-                Ok(vec![wrapped_request])
+            let builder_headers = req_builder.headers_mut().unwrap();
+            for (k, v) in self.base_headers.iter() {
+                builder_headers.insert(k, v.clone());
             }
-            Err(e) => Err(Box::new(e)),
+
+            let req = req_builder.body(Full::from(data))?;
+
+            // Decompose the request to get parts and body
+            let (parts, body) = req.into_parts();
+
+            // Only clone metadata when there are multiple batches, otherwise move it
+            let batch_metadata = if num_chunks == 1 {
+                metadata.take()
+            } else if idx == 0 {
+                metadata.clone()
+            } else {
+                None
+            };
+
+            // Create MessagePayload with just the body
+            let payload = XRayPayload::new(body, batch_metadata);
+
+            // Reconstruct request with the payload as the body
+            let wrapped_request = Request::from_parts(parts, payload);
+
+            requests.push(wrapped_request);
         }
+
+        Ok(requests)
     }
 }
