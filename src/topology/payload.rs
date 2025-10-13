@@ -95,6 +95,7 @@ impl std::fmt::Debug for MessageMetadata {
 impl PartialEq for MessageMetadata {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
+            && self.ref_count.load(Ordering::Acquire) == other.ref_count.load(Ordering::Acquire)
     }
 }
 
