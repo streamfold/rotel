@@ -389,26 +389,6 @@ mod tests {
 
         // Send traces with 75 spans (should split into 2 chunks: 50 + 25)
         let traces = FakeOTLP::trace_service_request_with_spans(1, 75);
-        println!(
-            "Sending message with {} resource spans",
-            traces.resource_spans.len()
-        );
-
-        let total_spans: usize = traces
-            .resource_spans
-            .iter()
-            .map(|rs| {
-                rs.scope_spans
-                    .iter()
-                    .map(|ss| ss.spans.len())
-                    .sum::<usize>()
-            })
-            .sum();
-        println!("Total individual spans: {}", total_spans);
-
-        // Debug: Check initial ref count
-        let initial_ref_count = metadata.ref_count();
-        println!("Initial metadata ref count: {}", initial_ref_count);
 
         btx.send(vec![Message {
             metadata: Some(metadata),
@@ -417,24 +397,19 @@ mod tests {
         .await
         .unwrap();
 
-        // Count acknowledgments received
-        let mut ack_count = 0;
-        let mut received_acks = Vec::new();
-
-        // Wait for acknowledgments with timeout
-        while ack_count < 10 {
-            // Reasonable upper limit to avoid infinite loop
-            let result = tokio::time::timeout(Duration::from_millis(5000), ack_rx.next()).await;
-
-            match result {
-                Ok(Some(ack)) => {
-                    ack_count += 1;
-                    received_acks.push(ack);
+        // Wait for the expected acknowledgment with timeout
+        let (ack_count, received_acks) =
+            match tokio::time::timeout(Duration::from_millis(10000), ack_rx.next()).await {
+                Ok(Some(ack)) => (1, vec![ack]),
+                Ok(None) => {
+                    // Channel closed without receiving acknowledgment
+                    (0, vec![])
                 }
-                Ok(None) => break, // Channel closed
-                Err(_) => break,   // Timeout
-            }
-        }
+                Err(_) => {
+                    // Timeout occurred
+                    (0, vec![])
+                }
+            };
 
         // Clean up
         drop(btx);
@@ -443,21 +418,12 @@ mod tests {
 
         // Verify the server received 2 requests (75 spans split into 50+25)
         let actual_hits = hello_mock.hits();
-        println!("HTTP requests received: {}", actual_hits);
         assert_eq!(2, actual_hits, "Expected 2 HTTP requests for 75 spans");
 
         // Verify acknowledgment behavior
-        println!("Received {} acknowledgments", ack_count);
-        for (i, ack) in received_acks.iter().enumerate() {
+        for ack in received_acks.iter() {
             match ack {
                 KafkaAcknowledgement::Ack(kafka_ack) => {
-                    println!(
-                        "Ack {}: offset={}, partition={}, topic_id={}",
-                        i + 1,
-                        kafka_ack.offset,
-                        kafka_ack.partition,
-                        kafka_ack.topic_id
-                    );
                     assert_eq!(kafka_ack.offset, expected_offset);
                     assert_eq!(kafka_ack.partition, expected_partition);
                     assert_eq!(kafka_ack.topic_id, expected_topic_id);

@@ -348,11 +348,23 @@ impl KafkaExportable for ResourceMetrics {
             // We need to split WITHIN each Message's payload
             // Each individual ResourceMetrics should become its own Message
             let mut result = Vec::new();
-            for message in data {
+            for mut message in data {
+                let payload_len = message.payload.len();
                 // Split the payload Vec<ResourceMetrics> into individual messages
-                for resource_metric in message.payload {
+                for (idx, resource_metric) in message.payload.into_iter().enumerate() {
+                    let metadata = if payload_len == 1 {
+                        // Single item: take original metadata
+                        message.metadata.take()
+                    } else if idx == payload_len - 1 {
+                        // Last item: take original metadata so ref count can reach 0
+                        message.metadata.take()
+                    } else {
+                        // Earlier items: clone metadata (increments ref count)
+                        message.metadata.clone()
+                    };
+
                     result.push(vec![Message {
-                        metadata: message.metadata.clone(),
+                        metadata,
                         payload: vec![resource_metric],
                     }]);
                 }
@@ -424,11 +436,23 @@ impl KafkaExportable for ResourceLogs {
             // We need to split WITHIN each Message's payload
             // Each individual ResourceLogs should become its own Message
             let mut result = Vec::new();
-            for message in data {
+            for mut message in data {
+                let payload_len = message.payload.len();
                 // Split the payload Vec<ResourceLogs> into individual messages
-                for resource_log in message.payload {
+                for (idx, resource_log) in message.payload.into_iter().enumerate() {
+                    let metadata = if payload_len == 1 {
+                        // Single item: take original metadata
+                        message.metadata.take()
+                    } else if idx == payload_len - 1 {
+                        // Last item: take original metadata so ref count can reach 0
+                        message.metadata.take()
+                    } else {
+                        // Earlier items: clone metadata (increments ref count)
+                        message.metadata.clone()
+                    };
+
                     result.push(vec![Message {
-                        metadata: message.metadata.clone(),
+                        metadata,
                         payload: vec![resource_log],
                     }]);
                 }

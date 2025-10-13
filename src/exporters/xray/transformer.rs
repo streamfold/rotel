@@ -71,7 +71,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
             }
 
             // Now chunk the spans into groups of MAX_SPANS_PER_CHUNK
-            let num_chunks = (message_spans.len() + MAX_SPANS_PER_CHUNK - 1) / MAX_SPANS_PER_CHUNK;
+            let num_chunks = message_spans.len().div_ceil(MAX_SPANS_PER_CHUNK);
 
             // Create XRayValuePayload for each chunk
             for (idx, chunk) in message_spans.chunks(MAX_SPANS_PER_CHUNK).enumerate() {

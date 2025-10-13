@@ -954,4 +954,164 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn test_multi_batch_acknowledgment_flow() {
+        use crate::bounded_channel::bounded;
+        use crate::exporters::kafka::exporter::{KafkaAcknowledger, KafkaExportable};
+        use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, MessageMetadata};
+        use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+        use opentelemetry_proto::tonic::metrics::v1::{
+            Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
+        };
+        use opentelemetry_proto::tonic::resource::v1::Resource;
+        use std::time::Duration;
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(10);
+        let expected_offset = 789;
+        let expected_partition = 3;
+        let expected_topic_id = 4;
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create multiple ResourceMetrics with different resource attributes
+        // This will trigger partition-based splitting when partition_metrics_by_resource_attributes is enabled
+        let mut resource_metrics = Vec::new();
+        for i in 0..5 {
+            let resource_metric = ResourceMetrics {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue(format!("service_{}", i)))
+                        })
+                    }],
+                    dropped_attributes_count: 0,
+                    entity_refs: vec![],
+                }),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: None,
+                    metrics: vec![Metric {
+                        name: format!("test_metric_{}", i),
+                        description: "".to_string(),
+                        unit: "".to_string(),
+                        metadata: vec![],
+                        data: Some(metric::Data::Gauge(Gauge {
+                            data_points: vec![NumberDataPoint {
+                                attributes: vec![],
+                                start_time_unix_nano: 0,
+                                time_unix_nano: 1000000000,
+                                value: Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsDouble(i as f64)),
+                                exemplars: vec![],
+                                flags: 0,
+                            }],
+                        })),
+                    }],
+                    schema_url: "".to_string(),
+                }],
+                schema_url: "".to_string(),
+            };
+            resource_metrics.push(resource_metric);
+        }
+
+        // Create a message with metadata
+        let message = Message {
+            metadata: Some(metadata),
+            payload: resource_metrics,
+        };
+
+        // Test the partition splitting logic that triggers multi-batch behavior
+        let config = KafkaExporterConfig::new("localhost:9092".to_string())
+            .with_partition_metrics_by_resource_attributes(true);
+
+        // This should split the single message into 5 separate messages (one per ResourceMetrics)
+        // Each split message should get a cloned copy of the metadata
+        let split_result = ResourceMetrics::split_for_partitioning(&config, vec![message]);
+
+        assert_eq!(
+            split_result.len(),
+            5,
+            "Should split into 5 separate batches"
+        );
+
+        // Verify each batch has exactly one message with cloned metadata
+        for (i, batch) in split_result.iter().enumerate() {
+            assert_eq!(batch.len(), 1, "Each batch should have exactly one message");
+            let msg = &batch[0];
+            assert_eq!(
+                msg.payload.len(),
+                1,
+                "Each message should have exactly one ResourceMetrics"
+            );
+
+            // Verify metadata was cloned properly
+            assert!(
+                msg.metadata.is_some(),
+                "Metadata should be cloned for batch {}",
+                i
+            );
+            if let Some(ref md) = msg.metadata {
+                // Each cloned metadata should have the same Kafka properties
+                if let Some(kafka_metadata) = md.as_kafka() {
+                    assert_eq!(kafka_metadata.offset, expected_offset);
+                    assert_eq!(kafka_metadata.partition, expected_partition);
+                    assert_eq!(kafka_metadata.topic_id, expected_topic_id);
+                }
+            }
+        }
+
+        // Now simulate acknowledgment of all split messages
+        let acknowledger = KafkaAcknowledger;
+
+        // Acknowledge each split batch (simulating successful Kafka sends)
+        for batch in split_result {
+            for message in batch {
+                if let Some(metadata_vec) = message.metadata.map(|m| vec![m]) {
+                    acknowledger.acknowledge_metadata(Some(metadata_vec)).await;
+                }
+            }
+        }
+
+        // Wait for the expected acknowledgment with timeout
+        let (ack_count, received_acks) =
+            match tokio::time::timeout(Duration::from_millis(10000), ack_rx.next()).await {
+                Ok(Some(ack)) => (1, vec![ack]),
+                Ok(None) => {
+                    // Channel closed without receiving acknowledgment
+                    (0, vec![])
+                }
+                Err(_) => {
+                    // Timeout occurred
+                    (0, vec![])
+                }
+            };
+
+        // Verify all acknowledgments have the expected metadata
+        for ack in received_acks.iter() {
+            match ack {
+                KafkaAcknowledgement::Ack(kafka_ack) => {
+                    assert_eq!(kafka_ack.offset, expected_offset);
+                    assert_eq!(kafka_ack.partition, expected_partition);
+                    assert_eq!(kafka_ack.topic_id, expected_topic_id);
+                }
+                KafkaAcknowledgement::Nack(_) => {
+                    panic!("Received Nack instead of Ack");
+                }
+            }
+        }
+
+        // The critical test: How many acks did we get?
+        // If Kafka is working correctly with reference counting:
+        // - Should get exactly 1 ack when ref count reaches 0 after all 5 clones are processed
+        assert_eq!(
+            ack_count, 1,
+            "Expected exactly 1 acknowledgment for multi-batch Kafka request, got {}",
+            ack_count
+        );
+    }
 }

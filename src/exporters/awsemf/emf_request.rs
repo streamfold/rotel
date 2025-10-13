@@ -89,6 +89,7 @@ impl AwsEmfRequestBuilder {
 
         let mut reqs = Vec::with_capacity(batches.len());
         let single_batch = batches.len() == 1;
+        let total_batches = batches.len();
 
         for (idx, batch) in batches.into_iter().enumerate() {
             let data = json!({
@@ -119,13 +120,17 @@ impl AwsEmfRequestBuilder {
 
             match req {
                 Ok(request) => {
-                    // Only clone metadata when there are multiple batches, otherwise move it
+                    // Proper metadata assignment for reference counting:
+                    // - Single batch: take metadata (no cloning needed)
+                    // - Multiple batches: clone for all except last, take for last
                     let batch_metadata = if single_batch {
                         metadata.take()
-                    } else if idx == 0 {
-                        metadata.clone()
+                    } else if idx == total_batches - 1 {
+                        // Last batch: take original metadata so ref count can reach 0
+                        metadata.take()
                     } else {
-                        None
+                        // Earlier batches: clone metadata (increments ref count)
+                        metadata.clone()
                     };
 
                     // Decompose the request to get parts and body

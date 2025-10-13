@@ -255,7 +255,7 @@ mod tests {
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::shared::aws::Region;
-    use crate::topology::payload::{Message, MessageMetadata};
+    use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, Message, MessageMetadata};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
     use std::time::Duration;
@@ -604,6 +604,127 @@ mod tests {
         assert!(
             ack_received,
             "Message was not acknowledged by AWS EMF exporter - real acknowledgment flow failed!"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multi_batch_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock server that accepts all requests
+        let put_logs_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .header("content-type", "application/x-amz-json-1.1")
+                .body("{}");
+        });
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(10);
+        let expected_offset = 123;
+        let expected_partition = 1;
+        let expected_topic_id = 2;
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create exporter
+        let (btx, brx) = bounded::<Vec<Message<ResourceMetrics>>>(100);
+        let exporter = new_exporter(addr, brx, None);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Create many metrics with different dimensions to prevent grouping
+        // This should result in many individual EMF events that will need to be split into multiple batches
+        let mut all_resource_metrics = Vec::new();
+
+        // Generate 15,000 metrics with unique dimension combinations to exceed MAX_BATCH_EVENTS (10,000)
+        for i in 0..15000 {
+            let mut fake_metrics = FakeOTLP::metrics_service_request_with_metrics(1, 1);
+
+            // Add unique resource attributes to prevent grouping
+            if let Some(ref mut rm) = fake_metrics.resource_metrics.get_mut(0) {
+                if let Some(ref mut resource) = rm.resource {
+                    resource.attributes.push(opentelemetry_proto::tonic::common::v1::KeyValue {
+                        key: "unique_dimension".to_string(),
+                        value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                                format!("value_{}", i)
+                            ))
+                        })
+                    });
+                }
+            }
+
+            all_resource_metrics.extend(fake_metrics.resource_metrics);
+        }
+
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: all_resource_metrics,
+        }])
+        .await
+        .unwrap();
+
+        // Wait for the expected acknowledgment with timeout
+        let (ack_count, received_acks) =
+            match tokio::time::timeout(Duration::from_millis(10000), ack_rx.next()).await {
+                Ok(Some(ack)) => (1, vec![ack]),
+                Ok(None) => {
+                    // Channel closed without receiving acknowledgment
+                    (0, vec![])
+                }
+                Err(_) => {
+                    // Timeout occurred
+                    (0, vec![])
+                }
+            };
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // Verify the server received multiple requests due to batch splitting
+        let actual_hits = put_logs_mock.hits();
+        assert!(
+            actual_hits > 1,
+            "Expected multiple HTTP requests for 15,000 metrics, got {}",
+            actual_hits
+        );
+
+        // Verify acknowledgment behavior
+        for ack in received_acks.iter() {
+            match ack {
+                KafkaAcknowledgement::Ack(kafka_ack) => {
+                    assert_eq!(kafka_ack.offset, expected_offset);
+                    assert_eq!(kafka_ack.partition, expected_partition);
+                    assert_eq!(kafka_ack.topic_id, expected_topic_id);
+                }
+                KafkaAcknowledgement::Nack(_) => {
+                    panic!("Received Nack instead of Ack");
+                }
+            }
+        }
+
+        // The critical test: How many acks did we get?
+        // If EMF is working correctly with reference counting:
+        // - Should get exactly 1 ack when ref count reaches 0
+        // But if there's a bug like in XRay where only first batch gets metadata:
+        // - May get 0 acks because ref count never reaches 0
+        assert_eq!(
+            ack_count, 1,
+            "Expected exactly 1 acknowledgment for multi-batch EMF request, got {}",
+            ack_count
         );
     }
 
