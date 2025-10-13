@@ -4,16 +4,14 @@ use bytes::Bytes;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request, Uri};
 use http_body_util::Full;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::error::Error;
 use tower::BoxError;
 
 use crate::exporters::xray::XRayPayload;
-use crate::topology::payload::MessageMetadata;
+use crate::exporters::xray::transformer::XRayValuePayload;
 
 const TRACES_PATH: &str = "/TraceSegments";
-
-const MAX_SPANS: usize = 50;
 
 fn build_url(endpoint: &url::Url, path: &str) -> url::Url {
     endpoint.join(path).unwrap()
@@ -51,18 +49,18 @@ impl XRayRequestBuilder {
 
     pub fn build(
         &self,
-        payload: Vec<Value>,
-        mut metadata: Option<Vec<MessageMetadata>>,
+        payloads: Vec<XRayValuePayload>,
     ) -> Result<Vec<Request<XRayPayload>>, BoxError> {
         let mut requests = Vec::new();
-        let num_chunks = (payload.len() + MAX_SPANS - 1) / MAX_SPANS;
 
-        // X-Ray API limits to 50 spans max
-        for (idx, chunk) in payload.chunks(MAX_SPANS).enumerate() {
-            let segments: Vec<String> = chunk
-                .into_iter()
-                .map(|segment| segment.to_string())
-                .collect();
+        // Iterate through payloads and create a request for each
+        for mut payload in payloads {
+            // The payload.value is already an array of span documents
+            let segments = if let serde_json::Value::Array(spans) = payload.value {
+                spans.into_iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            } else {
+                return Err("Expected array of spans in XRayValuePayload".into());
+            };
 
             let data = json!({
                 "TraceSegmentDocuments": segments
@@ -82,20 +80,12 @@ impl XRayRequestBuilder {
             // Decompose the request to get parts and body
             let (parts, body) = req.into_parts();
 
-            // Only clone metadata when there are multiple batches, otherwise move it
-            let batch_metadata = if num_chunks == 1 {
-                metadata.take()
-            } else if idx == 0 {
-                metadata.clone()
-            } else {
-                None
-            };
-
-            // Create MessagePayload with just the body
-            let payload = XRayPayload::new(body, batch_metadata);
+            // Move metadata from payload into the request
+            let batch_metadata = payload.metadata.take().map(|m| vec![m]);
+            let xray_payload = XRayPayload::new(body, batch_metadata);
 
             // Reconstruct request with the payload as the body
-            let wrapped_request = Request::from_parts(parts, payload);
+            let wrapped_request = Request::from_parts(parts, xray_payload);
 
             requests.push(wrapped_request);
         }

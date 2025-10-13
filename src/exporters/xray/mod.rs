@@ -36,6 +36,7 @@ mod xray_request;
 /// Type alias for XRay payloads using the generic MessagePayload
 use crate::exporters::http::metadata_extractor::MessagePayload;
 use http_body_util::Full;
+
 pub type XRayPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
@@ -167,11 +168,11 @@ mod tests {
     extern crate utilities;
 
     use crate::aws_api::creds::{AwsCreds, AwsCredsProvider};
-    use crate::bounded_channel::{BoundedReceiver, bounded};
+    use crate::bounded_channel::{bounded, BoundedReceiver};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::xray::{ExporterType, Region, XRayExporterConfigBuilder};
-    use crate::topology::payload::{Message, MessageMetadata};
+    use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, Message, MessageMetadata};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
@@ -348,6 +349,136 @@ mod tests {
         assert_ok!(res.0);
 
         assert_eq!(2, hello_mock.hits());
+    }
+
+    #[tokio::test]
+    async fn test_multi_chunk_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock server that accepts all requests
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/TraceSegments");
+            then.status(200)
+                .header("content-type", "application/x-protobuf")
+                .body("success");
+        });
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(10);
+        let expected_offset = 123;
+        let expected_partition = 1;
+        let expected_topic_id = 2;
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create exporter
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+        let exporter = new_exporter(addr, brx);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Send traces with 75 spans (should split into 2 chunks: 50 + 25)
+        let traces = FakeOTLP::trace_service_request_with_spans(1, 75);
+        println!(
+            "Sending message with {} resource spans",
+            traces.resource_spans.len()
+        );
+
+        let total_spans: usize = traces
+            .resource_spans
+            .iter()
+            .map(|rs| {
+                rs.scope_spans
+                    .iter()
+                    .map(|ss| ss.spans.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        println!("Total individual spans: {}", total_spans);
+
+        // Debug: Check initial ref count
+        let initial_ref_count = metadata.ref_count();
+        println!("Initial metadata ref count: {}", initial_ref_count);
+
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: traces.resource_spans,
+        }])
+        .await
+        .unwrap();
+
+        // Count acknowledgments received
+        let mut ack_count = 0;
+        let mut received_acks = Vec::new();
+
+        // Wait for acknowledgments with timeout
+        while ack_count < 10 {
+            // Reasonable upper limit to avoid infinite loop
+            let result = tokio::time::timeout(Duration::from_millis(5000), ack_rx.next()).await;
+
+            match result {
+                Ok(Some(ack)) => {
+                    ack_count += 1;
+                    received_acks.push(ack);
+                }
+                Ok(None) => break, // Channel closed
+                Err(_) => break,   // Timeout
+            }
+        }
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // Verify the server received 2 requests (75 spans split into 50+25)
+        let actual_hits = hello_mock.hits();
+        println!("HTTP requests received: {}", actual_hits);
+        assert_eq!(2, actual_hits, "Expected 2 HTTP requests for 75 spans");
+
+        // Verify acknowledgment behavior
+        println!("Received {} acknowledgments", ack_count);
+        for (i, ack) in received_acks.iter().enumerate() {
+            match ack {
+                KafkaAcknowledgement::Ack(kafka_ack) => {
+                    println!(
+                        "Ack {}: offset={}, partition={}, topic_id={}",
+                        i + 1,
+                        kafka_ack.offset,
+                        kafka_ack.partition,
+                        kafka_ack.topic_id
+                    );
+                    assert_eq!(kafka_ack.offset, expected_offset);
+                    assert_eq!(kafka_ack.partition, expected_partition);
+                    assert_eq!(kafka_ack.topic_id, expected_topic_id);
+                }
+                KafkaAcknowledgement::Nack(_) => {
+                    panic!("Received Nack instead of Ack");
+                }
+            }
+        }
+
+        // The critical test: How many acks did we get?
+        // If XRay is working correctly with reference counting:
+        // - Should get exactly 1 ack when ref count reaches 0
+        // - First chunk gets cloned metadata (ref count: 1->2)
+        // - First chunk acks (ref count: 2->1)
+        // - Only the first chunk should contribute to the ack
+        assert_eq!(
+            ack_count, 1,
+            "Expected exactly 1 acknowledgment for multi-chunk XRay request, got {}",
+            ack_count
+        );
     }
 
     fn new_exporter<'a>(

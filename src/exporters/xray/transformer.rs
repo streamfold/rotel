@@ -16,6 +16,19 @@ use std::time::Duration;
 use std::{env, io};
 use thiserror::Error;
 
+/// Container for XRay values with their associated metadata for proper acknowledgment
+#[derive(Clone, Debug)]
+pub struct XRayValuePayload {
+    pub value: Value,
+    pub metadata: Option<MessageMetadata>,
+}
+
+impl XRayValuePayload {
+    pub fn new(value: Value, metadata: Option<MessageMetadata>) -> Self {
+        Self { value, metadata }
+    }
+}
+
 #[derive(Clone)]
 pub struct Transformer {
     transformer: TraceTransformer,
@@ -33,47 +46,55 @@ impl TransformPayload<ResourceSpans> for Transformer {
     fn transform(
         &self,
         messages: Vec<Message<ResourceSpans>>,
-    ) -> (
-        Result<Vec<Value>, ExportError>,
-        Option<Vec<MessageMetadata>>,
-    ) {
-        let mut payload = Vec::new();
-        let mut all_metadata = Vec::new();
+    ) -> Result<Vec<XRayValuePayload>, ExportError> {
+        let mut all_payloads = Vec::new();
+        const MAX_SPANS_PER_CHUNK: usize = 50;
 
         for message in messages {
-            // Extract metadata from message
-            if let Some(metadata) = message.metadata {
-                all_metadata.push(metadata);
-            }
+            let mut message_metadata = message.metadata;
+            let mut message_spans = Vec::new();
 
-            // Process the spans
+            // First, collect all transformed spans from this message
             for rs in message.payload {
                 for ss in rs.scope_spans {
                     for span in ss.spans {
                         match self.transformer.apply(span) {
-                            Ok(v) => payload.push(v),
+                            Ok(v) => {
+                                message_spans.push(v);
+                            }
                             Err(e) => {
-                                return (
-                                    Err(e),
-                                    if all_metadata.is_empty() {
-                                        None
-                                    } else {
-                                        Some(all_metadata)
-                                    },
-                                );
+                                return Err(e);
                             }
                         }
                     }
                 }
             }
+
+            // Now chunk the spans into groups of MAX_SPANS_PER_CHUNK
+            let num_chunks = (message_spans.len() + MAX_SPANS_PER_CHUNK - 1) / MAX_SPANS_PER_CHUNK;
+
+            // Create XRayValuePayload for each chunk
+            for (idx, chunk) in message_spans.chunks(MAX_SPANS_PER_CHUNK).enumerate() {
+                // Create a JSON array of spans for this chunk
+                let chunk_value = serde_json::Value::Array(chunk.to_vec());
+
+                // Assign metadata appropriately
+                let chunk_metadata = if num_chunks == 1 {
+                    // Single chunk: take the metadata (move it)
+                    message_metadata.take()
+                } else if idx == num_chunks - 1 {
+                    // Last chunk of multiple: take the original metadata
+                    message_metadata.take()
+                } else {
+                    // Other chunks: clone the metadata
+                    message_metadata.clone()
+                };
+
+                all_payloads.push(XRayValuePayload::new(chunk_value, chunk_metadata));
+            }
         }
 
-        let metadata = if all_metadata.is_empty() {
-            None
-        } else {
-            Some(all_metadata)
-        };
-        (Ok(payload), metadata)
+        Ok(all_payloads)
     }
 }
 
