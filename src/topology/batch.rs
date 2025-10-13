@@ -334,7 +334,7 @@ mod tests {
             ack_chan: None,
         };
         let message = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata.clone())),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata.clone())),
             payload: first_request.resource_spans,
         };
 
@@ -351,7 +351,7 @@ mod tests {
             ack_chan: None,
         };
         let message2 = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata2)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata2)),
             payload: second_request.resource_spans,
         };
 
@@ -365,16 +365,20 @@ mod tests {
         assert_eq!(batch_content.size_of(), 8);
 
         // Verify metadata is preserved
-        if let Some(MessageMetadata::Kafka(meta)) = &batch_content[0].metadata {
-            assert_eq!(meta.offset, 100);
-        } else {
-            panic!("Expected Kafka metadata in first message");
+        if let Some(metadata) = &batch_content[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 100);
+            } else {
+                panic!("Expected Kafka metadata in first message");
+            }
         }
 
-        if let Some(MessageMetadata::Kafka(meta)) = &batch_content[1].metadata {
-            assert_eq!(meta.offset, 101);
-        } else {
-            panic!("Expected Kafka metadata in second message");
+        if let Some(metadata) = &batch_content[1].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 101);
+            } else {
+                panic!("Expected Kafka metadata in second message");
+            }
         }
     }
 
@@ -392,7 +396,7 @@ mod tests {
             ack_chan: None,
         };
         let message = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata.clone())),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata.clone())),
             payload: first_request.resource_spans,
         };
 
@@ -409,7 +413,7 @@ mod tests {
             ack_chan: None,
         };
         let message2 = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata2.clone())),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata2.clone())),
             payload: second_request.resource_spans,
         };
 
@@ -423,19 +427,23 @@ mod tests {
         assert_eq!(flushed_batch.len(), 2);
 
         // First message should have its original metadata
-        if let Some(MessageMetadata::Kafka(meta)) = &flushed_batch[0].metadata {
-            assert_eq!(meta.offset, 100);
-        } else {
-            panic!("Expected Kafka metadata in first message");
+        if let Some(metadata) = &flushed_batch[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 100);
+            } else {
+                panic!("Expected Kafka metadata in first message");
+            }
         }
 
         // Second message in flushed batch should ALSO have Kafka metadata (cloned for both parts)
-        if let Some(MessageMetadata::Kafka(meta)) = &flushed_batch[1].metadata {
-            assert_eq!(meta.offset, 101);
-            assert_eq!(meta.partition, 0);
-            assert_eq!(meta.topic_id, 1);
-        } else {
-            panic!("Expected Kafka metadata in split message first part");
+        if let Some(metadata) = &flushed_batch[1].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 101);
+                assert_eq!(meta.partition, 0);
+                assert_eq!(meta.topic_id, 1);
+            } else {
+                panic!("Expected Kafka metadata in split message first part");
+            }
         }
 
         // Get remaining batch
@@ -444,12 +452,14 @@ mod tests {
         assert_eq!(remaining.size_of(), 2);
 
         // The remaining part should also have the Kafka metadata (cloned)
-        if let Some(MessageMetadata::Kafka(meta)) = &remaining[0].metadata {
-            assert_eq!(meta.offset, 101);
-            assert_eq!(meta.partition, 0);
-            assert_eq!(meta.topic_id, 1);
-        } else {
-            panic!("Expected Kafka metadata in remaining message");
+        if let Some(metadata) = &remaining[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 101);
+                assert_eq!(meta.partition, 0);
+                assert_eq!(meta.topic_id, 1);
+            } else {
+                panic!("Expected Kafka metadata in remaining message");
+            }
         }
     }
 
@@ -467,7 +477,7 @@ mod tests {
             ack_chan: None,
         };
         let message = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata.clone())),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata.clone())),
             payload: request.resource_spans,
         };
 
@@ -478,24 +488,28 @@ mod tests {
         // First batch should have 10 items in one message WITH metadata (cloned)
         assert_eq!(flushed.size_of(), 10);
         assert_eq!(flushed.len(), 1);
-        if let Some(MessageMetadata::Kafka(meta)) = &flushed[0].metadata {
-            assert_eq!(meta.offset, 200);
-            assert_eq!(meta.partition, 1);
-            assert_eq!(meta.topic_id, 2);
-        } else {
-            panic!("Expected Kafka metadata in first split");
+        if let Some(metadata) = &flushed[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 200);
+                assert_eq!(meta.partition, 1);
+                assert_eq!(meta.topic_id, 2);
+            } else {
+                panic!("Expected Kafka metadata in first split");
+            }
         }
 
         // Remaining should have 5 items with the same metadata (cloned)
         let remaining = batch.take_batch();
         assert_eq!(remaining.size_of(), 5);
         assert_eq!(remaining.len(), 1);
-        if let Some(MessageMetadata::Kafka(meta)) = &remaining[0].metadata {
-            assert_eq!(meta.offset, 200);
-            assert_eq!(meta.partition, 1);
-            assert_eq!(meta.topic_id, 2);
-        } else {
-            panic!("Expected Kafka metadata in remaining message");
+        if let Some(metadata) = &remaining[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 200);
+                assert_eq!(meta.partition, 1);
+                assert_eq!(meta.topic_id, 2);
+            } else {
+                panic!("Expected Kafka metadata in remaining message");
+            }
         }
     }
 
@@ -532,7 +546,7 @@ mod tests {
             ack_chan: None,
         };
         let message = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata)),
             payload: request.resource_spans,
         };
 
@@ -591,7 +605,7 @@ mod tests {
             ack_chan: None,
         };
         let message = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata)),
             payload: request.resource_spans,
         };
 
@@ -608,12 +622,14 @@ mod tests {
         assert_eq!(messages.size_of(), 5);
 
         // Verify metadata is preserved when batching is disabled
-        if let Some(MessageMetadata::Kafka(meta)) = &messages[0].metadata {
-            assert_eq!(meta.offset, 600);
-            assert_eq!(meta.partition, 1);
-            assert_eq!(meta.topic_id, 2);
-        } else {
-            panic!("Expected Kafka metadata to be preserved");
+        if let Some(metadata) = &messages[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 600);
+                assert_eq!(meta.partition, 1);
+                assert_eq!(meta.topic_id, 2);
+            } else {
+                panic!("Expected Kafka metadata to be preserved");
+            }
         }
     }
 
@@ -642,7 +658,7 @@ mod tests {
             ack_chan: None,
         };
         let message2 = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata)),
             payload: second_request.resource_metrics,
         };
 
@@ -655,22 +671,26 @@ mod tests {
         assert!(flushed[0].metadata.is_none());
         // Second message (split part) should have Kafka metadata (cloned)
         if flushed.len() > 1 {
-            if let Some(MessageMetadata::Kafka(meta)) = &flushed[1].metadata {
-                assert_eq!(meta.offset, 700);
-                assert_eq!(meta.partition, 0);
-                assert_eq!(meta.topic_id, 3);
-            } else {
-                panic!("Expected Kafka metadata in split part");
+            if let Some(metadata) = &flushed[1].metadata {
+                if let Some(meta) = metadata.as_kafka() {
+                    assert_eq!(meta.offset, 700);
+                    assert_eq!(meta.partition, 0);
+                    assert_eq!(meta.topic_id, 3);
+                } else {
+                    panic!("Expected Kafka metadata in split part");
+                }
             }
         }
 
         // Remaining should also have the Kafka metadata (cloned)
         let leftover = batch.take_batch();
         assert_eq!(leftover.size_of(), 2);
-        if let Some(MessageMetadata::Kafka(meta)) = &leftover[0].metadata {
-            assert_eq!(meta.offset, 700);
-        } else {
-            panic!("Expected Kafka metadata in remaining metrics");
+        if let Some(metadata) = &leftover[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 700);
+            } else {
+                panic!("Expected Kafka metadata in remaining metrics");
+            }
         }
     }
 
@@ -699,7 +719,7 @@ mod tests {
             ack_chan: None,
         };
         let message2 = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata)),
             payload: second_request.resource_logs,
         };
 
@@ -710,24 +730,28 @@ mod tests {
         assert_eq!(flushed.size_of(), 10);
         // Split part should have Kafka metadata (cloned)
         if flushed.len() > 1 {
-            if let Some(MessageMetadata::Kafka(meta)) = &flushed[1].metadata {
-                assert_eq!(meta.offset, 800);
-                assert_eq!(meta.partition, 2);
-                assert_eq!(meta.topic_id, 4);
-            } else {
-                panic!("Expected Kafka metadata in split part");
+            if let Some(metadata) = &flushed[1].metadata {
+                if let Some(meta) = metadata.as_kafka() {
+                    assert_eq!(meta.offset, 800);
+                    assert_eq!(meta.partition, 2);
+                    assert_eq!(meta.topic_id, 4);
+                } else {
+                    panic!("Expected Kafka metadata in split part");
+                }
             }
         }
 
         // Remaining should also have the Kafka metadata (cloned)
         let leftover = batch.take_batch();
         assert_eq!(leftover.size_of(), 2);
-        if let Some(MessageMetadata::Kafka(meta)) = &leftover[0].metadata {
-            assert_eq!(meta.offset, 800);
-            assert_eq!(meta.partition, 2);
-            assert_eq!(meta.topic_id, 4);
-        } else {
-            panic!("Expected Kafka metadata in remaining logs");
+        if let Some(metadata) = &leftover[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 800);
+                assert_eq!(meta.partition, 2);
+                assert_eq!(meta.topic_id, 4);
+            } else {
+                panic!("Expected Kafka metadata in remaining logs");
+            }
         }
     }
 
@@ -745,7 +769,7 @@ mod tests {
             ack_chan: None,
         };
         let message1 = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata)),
             payload: request1.resource_spans,
         };
 
@@ -765,7 +789,7 @@ mod tests {
             ack_chan: None,
         };
         let message3 = Message {
-            metadata: Some(MessageMetadata::Kafka(kafka_metadata2)),
+            metadata: Some(MessageMetadata::kafka(kafka_metadata2)),
             payload: request3.resource_spans,
         };
 
@@ -784,32 +808,38 @@ mod tests {
         assert_eq!(flushed.len(), 3);
 
         // First message should have its metadata
-        if let Some(MessageMetadata::Kafka(meta)) = &flushed[0].metadata {
-            assert_eq!(meta.offset, 300);
-        } else {
-            panic!("Expected Kafka metadata in first message");
+        if let Some(metadata) = &flushed[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 300);
+            } else {
+                panic!("Expected Kafka metadata in first message");
+            }
         }
 
         // Second message should have no metadata (originally had none)
         assert!(flushed[1].metadata.is_none());
 
         // Third message is split, first part should have metadata (cloned)
-        if let Some(MessageMetadata::Kafka(meta)) = &flushed[2].metadata {
-            assert_eq!(meta.offset, 301);
-            assert_eq!(meta.partition, 2);
-            assert_eq!(meta.topic_id, 3);
-        } else {
-            panic!("Expected Kafka metadata in split part");
+        if let Some(metadata) = &flushed[2].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 301);
+                assert_eq!(meta.partition, 2);
+                assert_eq!(meta.topic_id, 3);
+            } else {
+                panic!("Expected Kafka metadata in split part");
+            }
         }
 
         // Remaining batch should have the rest with metadata (cloned)
         let remaining = batch.take_batch();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining.size_of(), 2);
-        if let Some(MessageMetadata::Kafka(meta)) = &remaining[0].metadata {
-            assert_eq!(meta.offset, 301);
-        } else {
-            panic!("Expected Kafka metadata in remaining message");
+        if let Some(metadata) = &remaining[0].metadata {
+            if let Some(meta) = metadata.as_kafka() {
+                assert_eq!(meta.offset, 301);
+            } else {
+                panic!("Expected Kafka metadata in remaining message");
+            }
         }
     }
 }

@@ -554,7 +554,7 @@ mod tests {
         let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
 
         // Create metadata with real acknowledgment channel
-        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+        let metadata = MessageMetadata::kafka(crate::topology::payload::KafkaMetadata {
             offset: 123,
             partition: 0,
             topic_id: 1,

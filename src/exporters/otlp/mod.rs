@@ -1272,7 +1272,7 @@ mod tests {
         let expected_partition = 2;
         let expected_topic_id = 3;
         let metadata =
-            topology::payload::MessageMetadata::Kafka(topology::payload::KafkaMetadata {
+            topology::payload::MessageMetadata::kafka(topology::payload::KafkaMetadata {
                 offset: expected_offset,
                 partition: expected_partition,
                 topic_id: expected_topic_id,

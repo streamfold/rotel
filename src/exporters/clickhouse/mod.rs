@@ -456,7 +456,7 @@ mod tests {
         let expected_offset = 123;
         let expected_partition = 0;
         let expected_topic_id = 1;
-        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+        let metadata = MessageMetadata::kafka(crate::topology::payload::KafkaMetadata {
             offset: expected_offset,
             partition: expected_partition,
             topic_id: expected_topic_id,
