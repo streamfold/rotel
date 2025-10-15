@@ -79,10 +79,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
                 let chunk_value = serde_json::Value::Array(chunk.to_vec());
 
                 // Assign metadata appropriately
-                let chunk_metadata = if num_chunks == 1 {
-                    // Single chunk: take the metadata (move it)
-                    message_metadata.take()
-                } else if idx == num_chunks - 1 {
+                let chunk_metadata = if idx == num_chunks - 1 {
                     // Last chunk of multiple: take the original metadata
                     message_metadata.take()
                 } else {

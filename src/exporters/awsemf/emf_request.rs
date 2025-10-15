@@ -123,9 +123,7 @@ impl AwsEmfRequestBuilder {
                     // Proper metadata assignment for reference counting:
                     // - Single batch: take metadata (no cloning needed)
                     // - Multiple batches: clone for all except last, take for last
-                    let batch_metadata = if single_batch {
-                        metadata.take()
-                    } else if idx == total_batches - 1 {
+                    let batch_metadata = if idx == total_batches - 1 {
                         // Last batch: take original metadata so ref count can reach 0
                         metadata.take()
                     } else {
