@@ -88,7 +88,6 @@ impl AwsEmfRequestBuilder {
         batches.push(curr_batch);
 
         let mut reqs = Vec::with_capacity(batches.len());
-        let single_batch = batches.len() == 1;
         let total_batches = batches.len();
 
         for (idx, batch) in batches.into_iter().enumerate() {
