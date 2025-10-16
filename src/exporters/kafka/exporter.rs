@@ -440,10 +440,7 @@ impl KafkaExportable for ResourceLogs {
                 let payload_len = message.payload.len();
                 // Split the payload Vec<ResourceLogs> into individual messages
                 for (idx, resource_log) in message.payload.into_iter().enumerate() {
-                    let metadata = if payload_len == 1 {
-                        // Single item: take original metadata
-                        message.metadata.take()
-                    } else if idx == payload_len - 1 {
+                    let metadata = if idx == payload_len - 1 {
                         // Last item: take original metadata so ref count can reach 0
                         message.metadata.take()
                     } else {
