@@ -81,7 +81,7 @@ impl XRayRequestBuilder {
             let (parts, body) = req.into_parts();
 
             // Move metadata from payload into the request
-            let batch_metadata = payload.metadata.take().map(|m| vec![m]);
+            let batch_metadata = payload.metadata.take();
             let xray_payload = XRayPayload::new(body, batch_metadata);
 
             // Reconstruct request with the payload as the body

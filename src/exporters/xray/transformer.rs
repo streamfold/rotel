@@ -20,11 +20,11 @@ use thiserror::Error;
 #[derive(Clone, Debug)]
 pub struct XRayValuePayload {
     pub value: Value,
-    pub metadata: Option<MessageMetadata>,
+    pub metadata: Option<Vec<MessageMetadata>>,
 }
 
 impl XRayValuePayload {
-    pub fn new(value: Value, metadata: Option<MessageMetadata>) -> Self {
+    pub fn new(value: Value, metadata: Option<Vec<MessageMetadata>>) -> Self {
         Self { value, metadata }
     }
 }
@@ -50,45 +50,65 @@ impl TransformPayload<ResourceSpans> for Transformer {
         let mut all_payloads = Vec::new();
         const MAX_SPANS_PER_CHUNK: usize = 50;
 
-        for message in messages {
-            let mut message_metadata = message.metadata;
-            let mut message_spans = Vec::new();
+        // Buffer to accumulate spans across messages
+        let mut span_buffer = Vec::new();
+        // Track metadata from messages that contributed spans to the current buffer
+        let mut metadata_tracking: Vec<MessageMetadata> = Vec::new();
 
-            // First, collect all transformed spans from this message
+        for mut message in messages.into_iter() {
+            // Transform all spans from this message
             for rs in message.payload {
                 for ss in rs.scope_spans {
                     for span in ss.spans {
                         match self.transformer.apply(span) {
                             Ok(v) => {
-                                message_spans.push(v);
+                                span_buffer.push(v);
+
+                                // If buffer is full, create a request
+                                if span_buffer.len() == MAX_SPANS_PER_CHUNK {
+                                    let chunk_value =
+                                        Value::Array(std::mem::take(&mut span_buffer));
+
+                                    // Record this message's contribution if it has metadata
+                                    if let Some(metadata) = message.metadata.as_ref() {
+                                        metadata_tracking.push(metadata.clone());
+                                    }
+
+                                    // Build metadata list from all contributing messages
+                                    let chunk_metadata = if metadata_tracking.is_empty() {
+                                        None
+                                    } else {
+                                        Some(std::mem::take(&mut metadata_tracking))
+                                    };
+
+                                    all_payloads
+                                        .push(XRayValuePayload::new(chunk_value, chunk_metadata));
+                                }
                             }
-                            Err(e) => {
-                                return Err(e);
-                            }
+                            Err(e) => return Err(e),
                         }
                     }
                 }
             }
 
-            // Now chunk the spans into groups of MAX_SPANS_PER_CHUNK
-            let num_chunks = message_spans.len().div_ceil(MAX_SPANS_PER_CHUNK);
-
-            // Create XRayValuePayload for each chunk
-            for (idx, chunk) in message_spans.chunks(MAX_SPANS_PER_CHUNK).enumerate() {
-                // Create a JSON array of spans for this chunk
-                let chunk_value = serde_json::Value::Array(chunk.to_vec());
-
-                // Assign metadata appropriately
-                let chunk_metadata = if idx == num_chunks - 1 {
-                    // Last chunk of multiple: take the original metadata
-                    message_metadata.take()
-                } else {
-                    // Other chunks: clone the metadata
-                    message_metadata.clone()
-                };
-
-                all_payloads.push(XRayValuePayload::new(chunk_value, chunk_metadata));
+            // Track this message's metadata for the current buffer if it has metadata
+            if let Some(metadata) = message.metadata.take() {
+                metadata_tracking.push(metadata);
             }
+        }
+
+        // Handle remaining spans in buffer
+        if !span_buffer.is_empty() {
+            let chunk_value = Value::Array(span_buffer);
+
+            // Build metadata list from all contributing messages
+            let chunk_metadata = if metadata_tracking.is_empty() {
+                None
+            } else {
+                Some(metadata_tracking)
+            };
+
+            all_payloads.push(XRayValuePayload::new(chunk_value, chunk_metadata));
         }
 
         Ok(all_payloads)
