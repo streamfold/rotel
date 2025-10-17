@@ -87,7 +87,7 @@ mod tests {
         let expected_offset = 456;
         let expected_partition = 2;
         let expected_topic_id = 3;
-        let metadata = MessageMetadata::Kafka(KafkaMetadata {
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
             offset: expected_offset,
             partition: expected_partition,
             topic_id: expected_topic_id,

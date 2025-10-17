@@ -274,4 +274,90 @@ mod tests {
         // First consumer should still receive the message
         assert_eq!(Some(message), rx1.next().await);
     }
+
+    #[tokio::test]
+    async fn test_fanout_message_metadata_reference_counting() {
+        use crate::topology::payload::{
+            Ack, KafkaAcknowledgement, KafkaMetadata, Message, MessageMetadata,
+        };
+        use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+        use std::time::Duration;
+
+        let (tx1, mut rx1) = bounded(10);
+        let (tx2, mut rx2) = bounded(10);
+        let (tx3, mut rx3) = bounded(10);
+
+        let fanout = Fanout::new(vec![tx1, tx2, tx3]);
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        // Create message with metadata
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
+            offset: 100,
+            partition: 0,
+            topic_id: 1,
+            ack_chan: Some(ack_tx),
+        });
+
+        let test_payload = vec![ResourceSpans::default()];
+        let message = Message {
+            metadata: Some(metadata),
+            payload: test_payload.clone(),
+        };
+
+        // Send message through fanout
+        let send_result = fanout.send_async(message).await;
+        assert!(send_result.is_ok());
+
+        // Receive messages from all consumers
+        let msg1 = rx1.next().await.unwrap();
+        let msg2 = rx2.next().await.unwrap();
+        let msg3 = rx3.next().await.unwrap();
+
+        // Verify all received the same payload
+        assert_eq!(msg1.payload, test_payload);
+        assert_eq!(msg2.payload, test_payload);
+        assert_eq!(msg3.payload, test_payload);
+
+        // Verify reference count is 3 (fanout created 2 clones + 1 original)
+        let ref_count = msg1.metadata.as_ref().unwrap().ref_count();
+        assert_eq!(
+            ref_count, 3,
+            "Reference count should be 3 after fanout to 3 consumers"
+        );
+
+        // First ack should not send acknowledgment (ref count: 3 -> 2)
+        msg1.metadata.as_ref().unwrap().ack().await.unwrap();
+        let result = tokio::time::timeout(Duration::from_millis(100), ack_rx.next()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive ack after first consumer"
+        );
+
+        // Second ack should not send acknowledgment (ref count: 2 -> 1)
+        msg2.metadata.as_ref().unwrap().ack().await.unwrap();
+        let result = tokio::time::timeout(Duration::from_millis(100), ack_rx.next()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive ack after second consumer"
+        );
+
+        // Third ack should send acknowledgment (ref count: 1 -> 0)
+        msg3.metadata.as_ref().unwrap().ack().await.unwrap();
+        let ack = tokio::time::timeout(Duration::from_millis(1000), ack_rx.next())
+            .await
+            .expect("Should receive ack after third consumer")
+            .unwrap();
+
+        // Verify the acknowledgment details
+        match ack {
+            KafkaAcknowledgement::Ack(kafka_ack) => {
+                assert_eq!(kafka_ack.offset, 100);
+                assert_eq!(kafka_ack.partition, 0);
+                assert_eq!(kafka_ack.topic_id, 1);
+            }
+            _ => panic!("Expected Ack"),
+        }
+    }
 }

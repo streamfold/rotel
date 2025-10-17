@@ -8,7 +8,6 @@ pub trait MetadataExtractor {
 }
 
 /// Generic message payload that stores a body with metadata
-#[derive(Clone)]
 pub struct MessagePayload<ReqBody> {
     body: ReqBody,
     metadata: Option<Vec<MessageMetadata>>,
@@ -18,6 +17,24 @@ impl<ReqBody> MessagePayload<ReqBody> {
     /// Create a new MessagePayload from just a body with metadata
     pub fn new(body: ReqBody, metadata: Option<Vec<MessageMetadata>>) -> Self {
         Self { body, metadata }
+    }
+}
+
+/// Custom Clone implementation for retry scenarios
+/// Clones the body but shares metadata without incrementing ref count
+impl<ReqBody> Clone for MessagePayload<ReqBody>
+where
+    ReqBody: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            body: self.body.clone(),
+            metadata: self.metadata.as_ref().map(|vec| {
+                // Share the same metadata instances without cloning them
+                // This avoids incrementing the reference count for retry scenarios
+                vec.iter().map(|meta| meta.shallow_clone()).collect()
+            }),
+        }
     }
 }
 

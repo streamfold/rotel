@@ -159,13 +159,15 @@ where
 #[cfg(test)]
 mod tests {
     use crate::bounded_channel::bounded;
+    use crate::exporters::file::task::run_traces_loop;
     use crate::exporters::file::{Result, TypedFileExporter};
-    use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, MessageMetadata};
+    use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, Message, MessageMetadata};
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
 
     // Mock exporter that does nothing but implements TypedFileExporter
     #[derive(Default)]
@@ -194,7 +196,7 @@ mod tests {
         let expected_offset = 456;
         let expected_partition = 2;
         let expected_topic_id = 3;
-        let metadata = MessageMetadata::Kafka(KafkaMetadata {
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
             offset: expected_offset,
             partition: expected_partition,
             topic_id: expected_topic_id,
