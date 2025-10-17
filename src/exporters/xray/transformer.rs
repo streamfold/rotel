@@ -3,6 +3,7 @@
 // Notice: Portions of this code are taken from https://github.com/CosmicMind/opentelemetry-xray
 /* Copyright © 2025, CosmicMind, Inc. */
 use crate::exporters::xray::request_builder::TransformPayload;
+use crate::topology::batch::BatchSizer;
 use crate::topology::payload::{Message, MessageMetadata};
 use bstr::FromUtf8Error;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -55,7 +56,16 @@ impl TransformPayload<ResourceSpans> for Transformer {
         // Track metadata from messages that contributed spans to the current buffer
         let mut metadata_tracking: Vec<MessageMetadata> = Vec::new();
 
-        for mut message in messages.into_iter() {
+        let total_messages = messages.len();
+
+        for (msg_idx, mut message) in messages.into_iter().enumerate() {
+            let is_last_message = msg_idx == total_messages - 1;
+
+            // Pre-count spans in this message using BatchSizer
+            let total_spans_in_message: usize = message.payload.size_of();
+            let mut spans_processed_from_message = 0;
+            let mut metadata_added_to_current_chunk = false;
+
             // Transform all spans from this message
             for rs in message.payload {
                 for ss in rs.scope_spans {
@@ -63,26 +73,43 @@ impl TransformPayload<ResourceSpans> for Transformer {
                         match self.transformer.apply(span) {
                             Ok(v) => {
                                 span_buffer.push(v);
+                                spans_processed_from_message += 1;
+
+                                // Add metadata for this message when we add its first span to a chunk
+                                if !metadata_added_to_current_chunk && message.metadata.is_some() {
+                                    // Check how many spans are left to process from this message
+                                    // (not including the current span which has already been added to buffer)
+                                    let remaining_spans =
+                                        total_spans_in_message - spans_processed_from_message;
+                                    let spans_in_current_chunk = span_buffer.len();
+
+                                    // This chunk will contain all remaining spans from this message if:
+                                    // remaining_spans <= (MAX_SPANS_PER_CHUNK - spans_in_current_chunk)
+                                    let this_chunk_contains_all_remaining_spans = remaining_spans
+                                        <= (MAX_SPANS_PER_CHUNK - spans_in_current_chunk);
+
+                                    if is_last_message && this_chunk_contains_all_remaining_spans {
+                                        // This chunk will contain all remaining spans from the last message, take the metadata
+                                        metadata_tracking.push(message.metadata.take().unwrap());
+                                    } else {
+                                        // More chunks needed or more messages to come, clone the metadata
+                                        metadata_tracking
+                                            .push(message.metadata.as_ref().unwrap().clone());
+                                    }
+                                    metadata_added_to_current_chunk = true;
+                                }
 
                                 // If buffer is full, create a request
                                 if span_buffer.len() == MAX_SPANS_PER_CHUNK {
                                     let chunk_value =
                                         Value::Array(std::mem::take(&mut span_buffer));
-
-                                    // Record this message's contribution if it has metadata
-                                    if let Some(metadata) = message.metadata.as_ref() {
-                                        metadata_tracking.push(metadata.clone());
-                                    }
-
-                                    // Build metadata list from all contributing messages
-                                    let chunk_metadata = if metadata_tracking.is_empty() {
-                                        None
-                                    } else {
-                                        Some(std::mem::take(&mut metadata_tracking))
-                                    };
-
+                                    let chunk_metadata = (!metadata_tracking.is_empty())
+                                        .then(|| std::mem::take(&mut metadata_tracking));
                                     all_payloads
                                         .push(XRayValuePayload::new(chunk_value, chunk_metadata));
+
+                                    // Reset for next chunk
+                                    metadata_added_to_current_chunk = false;
                                 }
                             }
                             Err(e) => return Err(e),
@@ -90,24 +117,13 @@ impl TransformPayload<ResourceSpans> for Transformer {
                     }
                 }
             }
-
-            // Track this message's metadata for the current buffer if it has metadata
-            if let Some(metadata) = message.metadata.take() {
-                metadata_tracking.push(metadata);
-            }
         }
 
         // Handle remaining spans in buffer
         if !span_buffer.is_empty() {
             let chunk_value = Value::Array(span_buffer);
-
-            // Build metadata list from all contributing messages
-            let chunk_metadata = if metadata_tracking.is_empty() {
-                None
-            } else {
-                Some(metadata_tracking)
-            };
-
+            // Build metadata list from all contributing messages, if any
+            let chunk_metadata = (!metadata_tracking.is_empty()).then_some(metadata_tracking);
             all_payloads.push(XRayValuePayload::new(chunk_value, chunk_metadata));
         }
 
