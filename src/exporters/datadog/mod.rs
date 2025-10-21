@@ -251,7 +251,7 @@ mod tests {
         };
 
         let message = Message {
-            metadata: Some(crate::topology::payload::MessageMetadata::Kafka(
+            metadata: Some(crate::topology::payload::MessageMetadata::kafka(
                 kafka_metadata.clone(),
             )),
             payload: traces.resource_spans,

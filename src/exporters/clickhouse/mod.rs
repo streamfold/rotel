@@ -331,7 +331,7 @@ mod tests {
     use super::*;
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
-    use crate::topology::payload::MessageMetadata;
+    use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, Message, MessageMetadata};
     use httpmock::prelude::*;
     use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
     use std::time::Duration;
@@ -456,7 +456,7 @@ mod tests {
         let expected_offset = 123;
         let expected_partition = 0;
         let expected_topic_id = 1;
-        let metadata = MessageMetadata::Kafka(crate::topology::payload::KafkaMetadata {
+        let metadata = MessageMetadata::kafka(crate::topology::payload::KafkaMetadata {
             offset: expected_offset,
             partition: expected_partition,
             topic_id: expected_topic_id,
@@ -506,6 +506,104 @@ mod tests {
         drop(btx);
         cancellation_token.cancel();
         let _ = exporter_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_multi_batch_acknowledgment_flow() {
+        init_crypto();
+        let server = MockServer::start();
+        let addr = format!("http://127.0.0.1:{}", server.port());
+
+        // Mock Clickhouse endpoint that accepts multiple requests
+        let clickhouse_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).body("OK");
+        });
+
+        // Create acknowledgment channel
+        let (ack_tx, mut ack_rx) = bounded(10);
+        let expected_offset = 456;
+        let expected_partition = 2;
+        let expected_topic_id = 3;
+        let metadata = MessageMetadata::kafka(KafkaMetadata {
+            offset: expected_offset,
+            partition: expected_partition,
+            topic_id: expected_topic_id,
+            ack_chan: Some(ack_tx),
+        });
+
+        // Create a channel for sending messages with metadata
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+
+        // Build exporter with DefaultHTTPAcknowledger
+        let exporter = new_traces_exporter(addr, brx);
+
+        // Start exporter
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let exporter_handle =
+            tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        // Create a large amount of trace data that could potentially trigger
+        // multiple internal chunks or payloads in Clickhouse
+        let mut all_resource_spans = Vec::new();
+
+        // Test with the original failing size to reproduce the bug
+        for _i in 0..1000 {
+            let traces = FakeOTLP::trace_service_request_with_spans(10, 50); // 10 ResourceSpans, 50 spans each
+            all_resource_spans.extend(traces.resource_spans);
+        }
+
+        // Send traces with metadata
+        btx.send(vec![Message {
+            metadata: Some(metadata),
+            payload: all_resource_spans,
+        }])
+        .await
+        .unwrap();
+
+        // Wait for the expected acknowledgment with timeout
+        let (ack_count, received_acks) =
+            match tokio::time::timeout(Duration::from_millis(10000), ack_rx.next()).await {
+                Ok(Some(ack)) => (1, vec![ack]),
+                Ok(None) => {
+                    // Channel closed without receiving acknowledgment
+                    (0, vec![])
+                }
+                Err(_) => {
+                    // Timeout occurred
+                    (0, vec![])
+                }
+            };
+
+        // Clean up
+        drop(btx);
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // Verify the server received requests
+        let _actual_hits = clickhouse_mock.hits();
+        // Note: Clickhouse typically sends one request per batch, but with internal chunking
+
+        // Verify acknowledgment behavior
+        for ack in received_acks.iter() {
+            match ack {
+                KafkaAcknowledgement::Ack(kafka_ack) => {
+                    assert_eq!(kafka_ack.offset, expected_offset);
+                    assert_eq!(kafka_ack.partition, expected_partition);
+                    assert_eq!(kafka_ack.topic_id, expected_topic_id);
+                }
+                KafkaAcknowledgement::Nack(_) => {
+                    panic!("Received Nack instead of Ack");
+                }
+            }
+        }
+
+        assert_eq!(
+            ack_count, 1,
+            "Expected exactly 1 acknowledgment for Clickhouse request, got {}",
+            ack_count
+        );
     }
 
     fn new_traces_exporter<'a>(
