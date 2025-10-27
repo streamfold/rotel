@@ -3,35 +3,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
 
-/// Tracks Kafka offsets for at-least-once processing semantics.
-///
-/// Each tracker is dedicated to a single topic and maintains pending offsets per partition.
-/// When an offset is acknowledged, it's removed from tracking.
-/// The lowest pending offset for each partition represents the safe commit point.
-pub trait OffsetTracker: Send + Sync {
-    /// Track a new offset when a message is consumed from Kafka
-    fn track(&self, partition: i32, offset: i64);
-
-    /// Remove an offset when acknowledgment is received from downstream processors
-    fn acknowledge(&self, partition: i32, offset: i64);
-
-    /// Get the lowest pending offset for each partition.
-    /// Returns the offset that should be committed to Kafka.
-    /// If no offsets are pending for a partition, it won't be in the returned map.
-    fn get_committable_offsets(&self) -> HashMap<i32, i64>;
-
-    /// Get the lowest pending offset for a specific partition.
-    /// Returns None if no offsets are pending for this partition.
-    /// This is more efficient than get_committable_offsets when you only need one partition.
-    fn lowest_pending_offset(&self, partition: i32) -> Option<i64>;
-
-    /// Get count of pending offsets for a specific partition (for monitoring)
-    fn pending_count(&self, partition: i32) -> usize;
-
-    /// Get total count of all pending offsets across all partitions
-    fn total_pending(&self) -> usize;
-}
-
 /// BTreeMap-based implementation of OffsetTracker.
 ///
 /// Uses a BTreeMap per partition to maintain sorted offsets,
@@ -43,21 +14,19 @@ pub struct BTreeMapOffsetTracker {
     partitions: RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>,
 }
 
-impl BTreeMapOffsetTracker {
-    pub fn new() -> Self {
-        Self {
-            partitions: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
 impl Default for BTreeMapOffsetTracker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl OffsetTracker for BTreeMapOffsetTracker {
+impl BTreeMapOffsetTracker {
+    pub fn new() -> Self {
+        Self {
+            partitions: RwLock::new(HashMap::new()),
+        }
+    }
+
     fn track(&self, partition: i32, offset: i64) {
         // Get or create the partition's BTreeMap with read lock first
         let partition_lock = {
@@ -89,8 +58,24 @@ impl OffsetTracker for BTreeMapOffsetTracker {
         };
 
         if let Some(partition_lock) = partition_lock {
-            let mut offsets = partition_lock.lock().unwrap();
-            offsets.remove(&offset);
+            let should_remove = {
+                let mut offsets = partition_lock.lock().unwrap();
+                offsets.remove(&offset);
+                offsets.is_empty()
+            };
+
+            // Clean up empty partition entries to prevent memory leak
+            if should_remove {
+                let mut partitions = self.partitions.write().unwrap();
+                // Double-check it's still empty (another thread might have added)
+                if let Some(partition_map) = partitions.get(&partition) {
+                    let offsets = partition_map.lock().unwrap();
+                    if offsets.is_empty() {
+                        drop(offsets);
+                        partitions.remove(&partition);
+                    }
+                }
+            }
         }
     }
 
@@ -146,7 +131,7 @@ impl OffsetTracker for BTreeMapOffsetTracker {
 /// when processing messages from different topics in parallel.
 pub struct TopicTrackers {
     /// Maps topic_id to its dedicated offset tracker
-    trackers: RwLock<HashMap<u8, Box<dyn OffsetTracker>>>,
+    trackers: RwLock<HashMap<u8, BTreeMapOffsetTracker>>,
 }
 
 impl TopicTrackers {
@@ -171,9 +156,7 @@ impl TopicTrackers {
         // Need to create a new tracker, acquire write lock
         let mut trackers = self.trackers.write().unwrap();
         // Double-check in case another thread created it
-        let tracker = trackers
-            .entry(topic_id)
-            .or_insert_with(|| Box::new(BTreeMapOffsetTracker::new()));
+        let tracker = trackers.entry(topic_id).or_default();
         tracker.track(partition, offset);
     }
 
@@ -234,6 +217,14 @@ impl TopicTrackers {
             .get(&topic_id)
             .map(|tracker| tracker.total_pending())
             .unwrap_or(0)
+    }
+
+    /// Get the lowest pending offset for a specific topic and partition
+    pub fn lowest_pending_offset(&self, topic_id: u8, partition: i32) -> Option<i64> {
+        let trackers = self.trackers.read().unwrap();
+        trackers
+            .get(&topic_id)
+            .and_then(|tracker| tracker.lowest_pending_offset(partition))
     }
 }
 
@@ -489,10 +480,10 @@ mod tests {
         }
     }
 
-    // Test both implementations with the same test cases
-    fn run_tracker_tests<T: OffsetTracker + Default>() {
+    #[test]
+    fn test_btree_implementation() {
         // Basic track and ack
-        let tracker = T::default();
+        let tracker = BTreeMapOffsetTracker::default();
         tracker.track(0, 100);
         tracker.track(0, 101);
         assert_eq!(tracker.pending_count(0), 2);
@@ -504,7 +495,7 @@ mod tests {
         assert_eq!(tracker.lowest_pending_offset(0), Some(101));
 
         // Out of order acks
-        let tracker = T::default();
+        let tracker = BTreeMapOffsetTracker::default();
         tracker.track(0, 100);
         tracker.track(0, 101);
         tracker.track(0, 102);
@@ -519,11 +510,6 @@ mod tests {
 
         // Test empty partition
         assert_eq!(tracker.lowest_pending_offset(99), None);
-    }
-
-    #[test]
-    fn test_btree_implementation() {
-        run_tracker_tests::<BTreeMapOffsetTracker>();
     }
 
     #[test]
@@ -584,6 +570,29 @@ mod tests {
 
         let topic2_committable = trackers.get_committable_offsets(2);
         assert!(topic2_committable.is_empty());
+    }
+
+    #[test]
+    fn test_topic_trackers_lowest_pending_offset() {
+        let trackers = TopicTrackers::new();
+
+        // Initially empty
+        assert_eq!(trackers.lowest_pending_offset(1, 0), None);
+
+        // Track some offsets
+        trackers.track(1, 0, 105);
+        trackers.track(1, 0, 100);
+        trackers.track(1, 0, 102);
+        trackers.track(2, 1, 200);
+
+        // Should return lowest for each topic/partition
+        assert_eq!(trackers.lowest_pending_offset(1, 0), Some(100));
+        assert_eq!(trackers.lowest_pending_offset(2, 1), Some(200));
+        assert_eq!(trackers.lowest_pending_offset(99, 0), None); // Unknown topic
+
+        // Acknowledge lowest offset
+        trackers.acknowledge(1, 0, 100);
+        assert_eq!(trackers.lowest_pending_offset(1, 0), Some(102));
     }
 
     #[test]
