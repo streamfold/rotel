@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
-use std::sync::RwLock;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// Tracks Kafka offsets for at-least-once processing semantics.
 ///
@@ -37,16 +36,17 @@ pub trait OffsetTracker: Send + Sync {
 ///
 /// Uses a BTreeMap per partition to maintain sorted offsets,
 /// allowing O(1) access to the minimum offset.
+/// Uses per-partition locks to allow concurrent access to different partitions.
 pub struct BTreeMapOffsetTracker {
-    /// Maps partition to a sorted set of pending offsets
+    /// Maps partition to a mutex-protected sorted set of pending offsets
     /// Using () as value since we only need the keys
-    pending: RwLock<HashMap<i32, BTreeMap<i64, ()>>>,
+    partitions: RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>,
 }
 
 impl BTreeMapOffsetTracker {
     pub fn new() -> Self {
         Self {
-            pending: RwLock::new(HashMap::new()),
+            partitions: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -59,184 +59,83 @@ impl Default for BTreeMapOffsetTracker {
 
 impl OffsetTracker for BTreeMapOffsetTracker {
     fn track(&self, partition: i32, offset: i64) {
-        let mut pending = self.pending.write().unwrap();
-        pending
-            .entry(partition)
-            .or_insert_with(BTreeMap::new)
-            .insert(offset, ());
+        // Get or create the partition's BTreeMap with read lock first
+        let partition_lock = {
+            let partitions = self.partitions.read().unwrap();
+            if let Some(partition_map) = partitions.get(&partition) {
+                partition_map.clone()
+            } else {
+                // Need to create new partition, upgrade to write lock
+                drop(partitions);
+                let mut partitions = self.partitions.write().unwrap();
+                // Double-check in case another thread created it
+                partitions
+                    .entry(partition)
+                    .or_insert_with(|| Arc::new(Mutex::new(BTreeMap::new())))
+                    .clone()
+            }
+        };
+
+        // Now acquire the partition-specific lock and insert
+        let mut offsets = partition_lock.lock().unwrap();
+        offsets.insert(offset, ());
     }
 
     fn acknowledge(&self, partition: i32, offset: i64) {
-        let mut pending = self.pending.write().unwrap();
-        if let Some(partition_offsets) = pending.get_mut(&partition) {
-            partition_offsets.remove(&offset);
+        // Get the partition's BTreeMap
+        let partition_lock = {
+            let partitions = self.partitions.read().unwrap();
+            partitions.get(&partition).cloned()
+        };
 
-            // Clean up empty partition entries to prevent memory leak
-            if partition_offsets.is_empty() {
-                pending.remove(&partition);
-            }
+        if let Some(partition_lock) = partition_lock {
+            let mut offsets = partition_lock.lock().unwrap();
+            offsets.remove(&offset);
         }
     }
 
     fn get_committable_offsets(&self) -> HashMap<i32, i64> {
-        let pending = self.pending.read().unwrap();
+        let partitions = self.partitions.read().unwrap();
         let mut committable = HashMap::new();
 
-        for (partition, offsets) in pending.iter() {
+        for (partition, partition_lock) in partitions.iter() {
+            let offsets = partition_lock.lock().unwrap();
             // Get the minimum offset for this partition
             if let Some((min_offset, _)) = offsets.first_key_value() {
                 committable.insert(*partition, *min_offset);
             }
         }
-
         committable
     }
 
     fn lowest_pending_offset(&self, partition: i32) -> Option<i64> {
-        let pending = self.pending.read().unwrap();
-        pending
-            .get(&partition)
-            .and_then(|offsets| offsets.first_key_value())
-            .map(|(offset, _)| *offset)
+        let partitions = self.partitions.read().unwrap();
+        partitions.get(&partition).and_then(|partition_lock| {
+            let offsets = partition_lock.lock().unwrap();
+            offsets.first_key_value().map(|(offset, _)| *offset)
+        })
     }
 
     fn pending_count(&self, partition: i32) -> usize {
-        let pending = self.pending.read().unwrap();
-        pending
+        let partitions = self.partitions.read().unwrap();
+        partitions
             .get(&partition)
-            .map(|offsets| offsets.len())
+            .map(|partition_lock| {
+                let offsets = partition_lock.lock().unwrap();
+                offsets.len()
+            })
             .unwrap_or(0)
     }
 
     fn total_pending(&self) -> usize {
-        let pending = self.pending.read().unwrap();
-        pending.values().map(|offsets| offsets.len()).sum()
-    }
-}
-
-/// MinHeap-based implementation of OffsetTracker.
-///
-/// Uses a BinaryHeap (min-heap) per partition to track offsets.
-/// Additionally maintains a HashSet for O(1) membership checks.
-pub struct MinHeapOffsetTracker {
-    /// Maps partition to heap and set of pending offsets
-    /// The heap gives us O(1) access to minimum, set gives O(1) membership check
-    pending: RwLock<HashMap<i32, PartitionTracker>>,
-}
-
-struct PartitionTracker {
-    /// Min-heap of offsets (using Reverse for min-heap behavior)
-    heap: BinaryHeap<Reverse<i64>>,
-    /// Set for O(1) membership check and removal tracking
-    offsets: HashSet<i64>,
-}
-
-impl PartitionTracker {
-    fn new() -> Self {
-        Self {
-            heap: BinaryHeap::new(),
-            offsets: HashSet::new(),
-        }
-    }
-
-    fn track(&mut self, offset: i64) {
-        if self.offsets.insert(offset) {
-            self.heap.push(Reverse(offset));
-        }
-    }
-
-    fn acknowledge(&mut self, offset: i64) {
-        self.offsets.remove(&offset);
-        // We don't remove from heap immediately - we handle it lazily in get_min()
-    }
-
-    fn get_min(&mut self) -> Option<i64> {
-        // Clean the heap by removing acknowledged offsets from the top
-        while let Some(Reverse(min_offset)) = self.heap.peek() {
-            if self.offsets.contains(min_offset) {
-                return Some(*min_offset);
-            }
-            // This offset was acknowledged, remove it from heap
-            self.heap.pop();
-        }
-        None
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.is_empty()
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len()
-    }
-}
-
-impl MinHeapOffsetTracker {
-    pub fn new() -> Self {
-        Self {
-            pending: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-impl Default for MinHeapOffsetTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OffsetTracker for MinHeapOffsetTracker {
-    fn track(&self, partition: i32, offset: i64) {
-        let mut pending = self.pending.write().unwrap();
-        pending
-            .entry(partition)
-            .or_insert_with(PartitionTracker::new)
-            .track(offset);
-    }
-
-    fn acknowledge(&self, partition: i32, offset: i64) {
-        let mut pending = self.pending.write().unwrap();
-        if let Some(partition_tracker) = pending.get_mut(&partition) {
-            partition_tracker.acknowledge(offset);
-
-            // Clean up empty partition entries
-            if partition_tracker.is_empty() {
-                pending.remove(&partition);
-            }
-        }
-    }
-
-    fn get_committable_offsets(&self) -> HashMap<i32, i64> {
-        let mut pending = self.pending.write().unwrap();
-        let mut committable = HashMap::new();
-
-        for (partition, tracker) in pending.iter_mut() {
-            if let Some(min_offset) = tracker.get_min() {
-                committable.insert(*partition, min_offset);
-            }
-        }
-
-        committable
-    }
-
-    fn lowest_pending_offset(&self, partition: i32) -> Option<i64> {
-        let mut pending = self.pending.write().unwrap();
-        pending
-            .get_mut(&partition)
-            .and_then(|tracker| tracker.get_min())
-    }
-
-    fn pending_count(&self, partition: i32) -> usize {
-        let pending = self.pending.read().unwrap();
-        pending
-            .get(&partition)
-            .map(|tracker| tracker.len())
-            .unwrap_or(0)
-    }
-
-    fn total_pending(&self) -> usize {
-        let pending = self.pending.read().unwrap();
-        pending.values().map(|tracker| tracker.len()).sum()
+        let partitions = self.partitions.read().unwrap();
+        partitions
+            .values()
+            .map(|partition_lock| {
+                let offsets = partition_lock.lock().unwrap();
+                offsets.len()
+            })
+            .sum()
     }
 }
 
@@ -628,81 +527,6 @@ mod tests {
     }
 
     #[test]
-    fn test_minheap_implementation() {
-        run_tracker_tests::<MinHeapOffsetTracker>();
-    }
-
-    #[test]
-    fn test_minheap_lazy_cleanup() {
-        let tracker = MinHeapOffsetTracker::new();
-
-        // Add many offsets
-        for i in 0..1000 {
-            tracker.track(0, i);
-        }
-
-        // Acknowledge most of them out of order
-        for i in (0..950).rev() {
-            tracker.acknowledge(0, i);
-        }
-
-        // The min should still be found efficiently despite heap cleanup
-        let committable = tracker.get_committable_offsets();
-        assert_eq!(committable.get(&0), Some(&950));
-        assert_eq!(tracker.pending_count(0), 50);
-    }
-
-    #[test]
-    fn test_minheap_edge_cases() {
-        let tracker = MinHeapOffsetTracker::new();
-
-        // Acknowledge non-existent offset
-        tracker.acknowledge(0, 999);
-        assert_eq!(tracker.pending_count(0), 0);
-
-        // Track, ack all, then get committable
-        tracker.track(0, 100);
-        tracker.acknowledge(0, 100);
-        assert!(tracker.get_committable_offsets().is_empty());
-
-        // Duplicate tracking should be idempotent
-        tracker.track(0, 200);
-        tracker.track(0, 200);
-        assert_eq!(tracker.pending_count(0), 1);
-    }
-
-    #[test]
-    fn test_minheap_lowest_pending_offset() {
-        let tracker = MinHeapOffsetTracker::new();
-
-        // Initially empty
-        assert_eq!(tracker.lowest_pending_offset(0), None);
-
-        // Track offsets out of order
-        tracker.track(0, 105);
-        tracker.track(0, 102);
-        tracker.track(0, 110);
-        tracker.track(0, 100);
-
-        // Should return the lowest offset (with lazy cleanup)
-        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
-
-        // Acknowledge some offsets
-        tracker.acknowledge(0, 100);
-        tracker.acknowledge(0, 105);
-
-        // Should still find the correct min after lazy cleanup
-        assert_eq!(tracker.lowest_pending_offset(0), Some(102));
-
-        // Acknowledge remaining
-        tracker.acknowledge(0, 102);
-        assert_eq!(tracker.lowest_pending_offset(0), Some(110));
-
-        tracker.acknowledge(0, 110);
-        assert_eq!(tracker.lowest_pending_offset(0), None);
-    }
-
-    #[test]
     fn test_topic_trackers_basic() {
         let trackers = TopicTrackers::new();
 
@@ -825,159 +649,5 @@ mod tests {
         for topic_id in 0..10 {
             assert_eq!(all_committable.get(&(topic_id, 0)), Some(&50));
         }
-    }
-}
-
-#[cfg(test)]
-mod benches {
-    use super::*;
-    use std::time::Instant;
-
-    /// Simple benchmark helper
-    fn benchmark<F>(name: &str, f: F) -> std::time::Duration
-    where
-        F: FnOnce(),
-    {
-        let start = Instant::now();
-        f();
-        let duration = start.elapsed();
-        println!("{}: {:?}", name, duration);
-        duration
-    }
-
-    #[test]
-    #[ignore] // Run with `cargo test bench_ -- --ignored`
-    fn bench_track_performance() {
-        const N: i64 = 10_000;
-
-        let btree_time = benchmark("BTreeMap track 10k sequential", || {
-            let tracker = BTreeMapOffsetTracker::new();
-            for i in 0..N {
-                tracker.track(0, i);
-            }
-        });
-
-        let heap_time = benchmark("MinHeap track 10k sequential", || {
-            let tracker = MinHeapOffsetTracker::new();
-            for i in 0..N {
-                tracker.track(0, i);
-            }
-        });
-
-        println!(
-            "BTreeMap vs MinHeap track ratio: {:.2}",
-            btree_time.as_nanos() as f64 / heap_time.as_nanos() as f64
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_ack_performance() {
-        const N: i64 = 10_000;
-
-        let btree_time = benchmark("BTreeMap ack 10k sequential", || {
-            let tracker = BTreeMapOffsetTracker::new();
-            for i in 0..N {
-                tracker.track(0, i);
-            }
-            for i in 0..N {
-                tracker.acknowledge(0, i);
-            }
-        });
-
-        let heap_time = benchmark("MinHeap ack 10k sequential", || {
-            let tracker = MinHeapOffsetTracker::new();
-            for i in 0..N {
-                tracker.track(0, i);
-            }
-            for i in 0..N {
-                tracker.acknowledge(0, i);
-            }
-        });
-
-        println!(
-            "BTreeMap vs MinHeap ack ratio: {:.2}",
-            btree_time.as_nanos() as f64 / heap_time.as_nanos() as f64
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_get_committable_performance() {
-        const N: i64 = 10_000;
-        const QUERIES: usize = 1_000;
-
-        let btree_time = benchmark("BTreeMap get_committable 1k queries", || {
-            let tracker = BTreeMapOffsetTracker::new();
-            for i in 0..N {
-                tracker.track(0, i);
-            }
-            for _ in 0..QUERIES {
-                let _ = tracker.get_committable_offsets();
-            }
-        });
-
-        let heap_time = benchmark("MinHeap get_committable 1k queries", || {
-            let tracker = MinHeapOffsetTracker::new();
-            for i in 0..N {
-                tracker.track(0, i);
-            }
-            for _ in 0..QUERIES {
-                let _ = tracker.get_committable_offsets();
-            }
-        });
-
-        println!(
-            "BTreeMap vs MinHeap get_committable ratio: {:.2}",
-            btree_time.as_nanos() as f64 / heap_time.as_nanos() as f64
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_mixed_workload() {
-        let btree_time = benchmark("BTreeMap mixed workload", || {
-            let tracker = BTreeMapOffsetTracker::new();
-
-            // Mixed pattern: track in batches, ack some out of order
-            for batch in 0..10 {
-                let start = batch * 1000;
-                // Track 1000 offsets
-                for i in start..start + 1000 {
-                    tracker.track(0, i);
-                }
-                // Ack 800 of them out of order
-                for i in (start + 200..start + 1000).step_by(2) {
-                    tracker.acknowledge(0, i);
-                }
-                // Check committable a few times
-                for _ in 0..10 {
-                    let _ = tracker.get_committable_offsets();
-                }
-            }
-        });
-
-        let heap_time = benchmark("MinHeap mixed workload", || {
-            let tracker = MinHeapOffsetTracker::new();
-
-            // Same mixed pattern
-            for batch in 0..10 {
-                let start = batch * 1000;
-                for i in start..start + 1000 {
-                    tracker.track(0, i);
-                }
-                for i in (start + 200..start + 1000).step_by(2) {
-                    tracker.acknowledge(0, i);
-                }
-                for _ in 0..10 {
-                    let _ = tracker.get_committable_offsets();
-                }
-            }
-        });
-
-        println!(
-            "BTreeMap vs MinHeap mixed workload ratio: {:.2}",
-            btree_time.as_nanos() as f64 / heap_time.as_nanos() as f64
-        );
     }
 }
