@@ -165,6 +165,13 @@ impl TopicTrackers {
         let trackers = self.trackers.read().unwrap();
         if let Some(tracker) = trackers.get(&topic_id) {
             tracker.acknowledge(partition, offset);
+        } else {
+            tracing::warn!(
+                topic_id = topic_id,
+                partition = partition,
+                offset = offset,
+                "Received acknowledgment for unknown topic"
+            );
         }
     }
 
