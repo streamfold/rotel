@@ -22,11 +22,15 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
             os: macos
-            python-version: "3.13"
     runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        if: matrix.os == 'macos'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - name: update apt cache on linux
         if: matrix.os == 'ubuntu'
         run: sudo apt-get update

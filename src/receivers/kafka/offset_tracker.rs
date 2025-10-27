@@ -21,6 +21,11 @@ pub trait OffsetTracker: Send + Sync {
     /// If no offsets are pending for a partition, it won't be in the returned map.
     fn get_committable_offsets(&self) -> HashMap<i32, i64>;
 
+    /// Get the lowest pending offset for a specific partition.
+    /// Returns None if no offsets are pending for this partition.
+    /// This is more efficient than get_committable_offsets when you only need one partition.
+    fn lowest_pending_offset(&self, partition: i32) -> Option<i64>;
+
     /// Get count of pending offsets for a specific partition (for monitoring)
     fn pending_count(&self, partition: i32) -> usize;
 
@@ -85,6 +90,14 @@ impl OffsetTracker for BTreeMapOffsetTracker {
         }
 
         committable
+    }
+
+    fn lowest_pending_offset(&self, partition: i32) -> Option<i64> {
+        let pending = self.pending.read().unwrap();
+        pending
+            .get(&partition)
+            .and_then(|offsets| offsets.first_key_value())
+            .map(|(offset, _)| *offset)
     }
 
     fn pending_count(&self, partition: i32) -> usize {
@@ -204,6 +217,13 @@ impl OffsetTracker for MinHeapOffsetTracker {
         }
 
         committable
+    }
+
+    fn lowest_pending_offset(&self, partition: i32) -> Option<i64> {
+        let mut pending = self.pending.write().unwrap();
+        pending
+            .get_mut(&partition)
+            .and_then(|tracker| tracker.get_min())
     }
 
     fn pending_count(&self, partition: i32) -> usize {
@@ -351,6 +371,42 @@ mod tests {
         // Committable should now be 101
         let committable = tracker.get_committable_offsets();
         assert_eq!(committable.get(&0), Some(&101));
+    }
+
+    #[test]
+    fn test_lowest_pending_offset() {
+        let tracker = BTreeMapOffsetTracker::new();
+
+        // Initially empty
+        assert_eq!(tracker.lowest_pending_offset(0), None);
+
+        // Track some offsets out of order
+        tracker.track(0, 105);
+        tracker.track(0, 102);
+        tracker.track(0, 110);
+        tracker.track(0, 100);
+
+        // Should return the lowest offset
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
+
+        // Acknowledge the lowest
+        tracker.acknowledge(0, 100);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(102));
+
+        // Acknowledge middle offset
+        tracker.acknowledge(0, 105);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(102));
+
+        // Acknowledge 102
+        tracker.acknowledge(0, 102);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(110));
+
+        // Acknowledge last offset
+        tracker.acknowledge(0, 110);
+        assert_eq!(tracker.lowest_pending_offset(0), None);
+
+        // Test non-existent partition
+        assert_eq!(tracker.lowest_pending_offset(99), None);
     }
 
     #[test]
@@ -542,9 +598,11 @@ mod tests {
         tracker.track(0, 101);
         assert_eq!(tracker.pending_count(0), 2);
         assert_eq!(tracker.get_committable_offsets().get(&0), Some(&100));
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
 
         tracker.acknowledge(0, 100);
         assert_eq!(tracker.get_committable_offsets().get(&0), Some(&101));
+        assert_eq!(tracker.lowest_pending_offset(0), Some(101));
 
         // Out of order acks
         let tracker = T::default();
@@ -554,9 +612,14 @@ mod tests {
 
         tracker.acknowledge(0, 102);
         assert_eq!(tracker.get_committable_offsets().get(&0), Some(&100));
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
 
         tracker.acknowledge(0, 100);
         assert_eq!(tracker.get_committable_offsets().get(&0), Some(&101));
+        assert_eq!(tracker.lowest_pending_offset(0), Some(101));
+
+        // Test empty partition
+        assert_eq!(tracker.lowest_pending_offset(99), None);
     }
 
     #[test]
@@ -606,6 +669,37 @@ mod tests {
         tracker.track(0, 200);
         tracker.track(0, 200);
         assert_eq!(tracker.pending_count(0), 1);
+    }
+
+    #[test]
+    fn test_minheap_lowest_pending_offset() {
+        let tracker = MinHeapOffsetTracker::new();
+
+        // Initially empty
+        assert_eq!(tracker.lowest_pending_offset(0), None);
+
+        // Track offsets out of order
+        tracker.track(0, 105);
+        tracker.track(0, 102);
+        tracker.track(0, 110);
+        tracker.track(0, 100);
+
+        // Should return the lowest offset (with lazy cleanup)
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
+
+        // Acknowledge some offsets
+        tracker.acknowledge(0, 100);
+        tracker.acknowledge(0, 105);
+
+        // Should still find the correct min after lazy cleanup
+        assert_eq!(tracker.lowest_pending_offset(0), Some(102));
+
+        // Acknowledge remaining
+        tracker.acknowledge(0, 102);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(110));
+
+        tracker.acknowledge(0, 110);
+        assert_eq!(tracker.lowest_pending_offset(0), None);
     }
 
     #[test]
