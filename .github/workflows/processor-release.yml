@@ -16,62 +16,50 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
-            cross: false
             python-version: "3.10"
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
-            cross: false
             python-version: 3.11
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
-            cross: false
             python-version: 3.12
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
-            cross: false
             python-version: 3.13
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
-            cross: false
             python-version: "3.10"
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
-            cross: false
             python-version: 3.11
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
-            cross: false
             python-version: 3.12
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
-            cross: false
             python-version: 3.13
           - target: aarch64-apple-darwin
             runner: macos-14
             os: macos
-            cross: false
             python-version: "3.10"
           - target: aarch64-apple-darwin
             runner: macos-14
             os: macos
-            cross: false
             python-version: 3.11
           - target: aarch64-apple-darwin
             runner: macos-14
             os: macos
-            cross: false
             python-version: 3.12
           - target: aarch64-apple-darwin
             runner: macos-14
             os: macos
-            cross: false
             python-version: 3.13
     env:
       TARGET: ${{ matrix.target }}
@@ -112,19 +100,17 @@ jobs:
         with:
           target: ${{ matrix.target }}
           rustflags: ""
-      - name: install cross
-        if: matrix.cross == true
-        run: |
-          cargo install cross
-          echo "CARGO_BIN=cross" >> $GITHUB_ENV
-      - name: set CARGO bin
-        if: matrix.cross == false
-        run: |
-          echo "CARGO_BIN=cargo" >> $GITHUB_ENV
+      - uses: taiki-e/install-action@nextest
       - name: run test processor-sdk
-        run: $CARGO_BIN test --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
       - name: build
-        run: $CARGO_BIN build --release --features pyo3 --locked --target ${{ matrix.target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --features pyo3 --locked --target ${{ matrix.target }}
       - name: upload build
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
