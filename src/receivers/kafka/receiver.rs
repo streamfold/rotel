@@ -1,10 +1,11 @@
-use crate::bounded_channel::SendError;
 use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig};
 use crate::receivers::kafka::error::{KafkaReceiverError, Result};
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use crate::topology::payload::KafkaMetadata;
 use bytes::Bytes;
+use futures::stream::FuturesUnordered;
+use futures::stream::StreamExt;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -14,7 +15,10 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rdkafka::Message;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use std::error::Error;
+use std::future::Future;
+use std::pin::Pin;
 use tokio::select;
+use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -24,11 +28,22 @@ const TRACES_TOPIC_ID: u8 = 0;
 const METRICS_TOPIC_ID: u8 = 1;
 const LOGS_TOPIC_ID: u8 = 2;
 
-// Struct to hold topic processing configuration
-struct TopicConfig<'a, T> {
-    name: &'static str,
-    topic_id: u8,
-    output: &'a Option<OTLPOutput<payload::Message<T>>>,
+const MAX_CONCURRENT_DECODERS: usize = 20;
+
+#[allow(dead_code)] // Just to stop warning on unused metadata
+enum DecodedResult {
+    Traces {
+        resources: Vec<ResourceSpans>,
+        metadata: KafkaMetadata,
+    },
+    Metrics {
+        resources: Vec<ResourceMetrics>,
+        metadata: KafkaMetadata,
+    },
+    Logs {
+        resources: Vec<ResourceLogs>,
+        metadata: KafkaMetadata,
+    },
 }
 
 pub struct KafkaReceiver {
@@ -40,6 +55,9 @@ pub struct KafkaReceiver {
     pub metrics_topic: String,
     pub logs_topic: String,
     pub format: DeserializationFormat,
+    decoding_futures: FuturesUnordered<
+        Pin<Box<dyn Future<Output = std::result::Result<DecodedResult, JoinError>> + Send>>,
+    >,
 }
 
 impl KafkaReceiver {}
@@ -90,96 +108,60 @@ impl KafkaReceiver {
             metrics_topic,
             logs_topic,
             format: config.deserialization_format,
+            decoding_futures: FuturesUnordered::new(),
         })
     }
 
-    async fn send_to_pipeline<T>(
-        &self,
-        _kafka_metadata: KafkaMetadata,
-        request: Vec<T>,
-        output: &Option<OTLPOutput<payload::Message<T>>>,
-    ) -> std::result::Result<(), SendError> {
-        if let Some(output) = output {
-            output
-                .send(payload::Message {
-                    // N.B - Explicitly disabling sending any metadata for now on this next commit.
-                    // We are doing this because we are wiring in Message<T> handing with acknowledgement
-                    // end-to-end all the way to the exporters. However, as we're not doing anything
-                    // with the acknowledegements, we disable their creation for now out of an abundance of caution.
-                    // This will allow us to land these changes and others while iterating on the additional pieces
-                    // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
-                    // and verify with some aggressive end-to-end tests that everything is working as expected.
-                    // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
-                    metadata: None,
-                    payload: request,
-                })
-                .await?;
-        }
-        Ok(())
+    fn spawn_decode<T, R>(
+        &mut self,
+        data: Vec<u8>,
+        metadata: KafkaMetadata,
+        extract_resources: impl Fn(T) -> Vec<R> + Send + 'static,
+        make_result: impl Fn(Vec<R>, KafkaMetadata) -> DecodedResult + Send + 'static,
+    ) where
+        T: serde::de::DeserializeOwned + prost::Message + Default + Send + 'static,
+        R: Send + 'static,
+    {
+        let format = self.format;
+
+        let f = tokio::task::spawn_blocking(move || {
+            match Self::decode_kafka_message::<T>(data, format) {
+                Ok(req) => {
+                    let resources = extract_resources(req);
+                    make_result(resources, metadata)
+                }
+                Err(e) => {
+                    warn!("Failed to decode message: {}", e);
+                    panic!("Decode error: {}", e);
+                }
+            }
+        });
+        self.decoding_futures.push(Box::pin(f));
     }
 
-    // Generic function to handle deserialization and pipeline sending
-    async fn process_kafka_message<T>(
-        &self,
-        data: &[u8],
+    // Static method for decoding Kafka messages
+    fn decode_kafka_message<T>(
+        data: Vec<u8>,
+        format: DeserializationFormat,
     ) -> std::result::Result<T, Box<dyn Error + Send + Sync>>
     where
         T: serde::de::DeserializeOwned + prost::Message + Default,
     {
-        let request = match self.format {
-            DeserializationFormat::Json => serde_json::from_slice::<T>(data).map_err(|e| {
+        let request = match format {
+            DeserializationFormat::Json => serde_json::from_slice::<T>(&data).map_err(|e| {
                 debug!("Failed to decode {}", e);
                 e
             })?,
-            DeserializationFormat::Protobuf => {
-                T::decode(Bytes::from(data.to_vec())).map_err(|e| {
-                    debug!("Failed to decode {}", e);
-                    e
-                })?
-            }
+            DeserializationFormat::Protobuf => T::decode(Bytes::from(data)).map_err(|e| {
+                debug!("Failed to decode {}", e);
+                e
+            })?,
         };
         Ok(request)
     }
 
-    // Helper function to process payload data for any topic type
-    async fn process_payload<T, R>(
-        &self,
-        data: &[u8],
-        offset: i64,
-        partition: i32,
-        config: TopicConfig<'_, R>,
-        extract_resources: impl Fn(T) -> Vec<R>,
-    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>>
-    where
-        T: serde::de::DeserializeOwned + prost::Message + Default,
-    {
-        debug!(
-            "Processing {} message with {} bytes",
-            config.name,
-            data.len()
-        );
-        let req = self.process_kafka_message::<T>(data).await?;
-        let resources = extract_resources(req);
-
-        let metadata = KafkaMetadata {
-            offset,
-            partition,
-            topic_id: config.topic_id,
-            ack_chan: None,
-        };
-
-        if let Err(e) = self
-            .send_to_pipeline(metadata, resources, config.output)
-            .await
-        {
-            warn!("error sending {} to pipeline {}", config.name, e);
-        }
-
-        Ok(())
-    }
-
     pub(crate) async fn run(
-        &self,
+        &mut self,
         receivers_cancel: CancellationToken,
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         debug!("Starting Kafka receiver");
@@ -191,10 +173,10 @@ impl KafkaReceiver {
 
         loop {
             select! {
-                record = self.consumer.recv() => {
+                record = self.consumer.recv(),  if self.decoding_futures.len() < MAX_CONCURRENT_DECODERS => {
                     match record {
                         Ok(m) => {
-                            let topic = m.topic();
+                            let topic = m.topic().to_string();
                             let partition = m.partition();
                             let offset = m.offset();
 
@@ -203,62 +185,108 @@ impl KafkaReceiver {
                             match m.payload() {
                                 None => debug!("Empty payload from Kafka"),
                                 Some(data) => {
-                                    let result = match topic {
+                                    let data = data.to_vec();
+                                    match topic.as_str() {
                                         t if t == self.traces_topic => {
-                                            let config = TopicConfig {
-                                                name: "traces",
-                                                topic_id: TRACES_TOPIC_ID,
-                                                output: &self.traces_output,
-                                            };
-                                            self.process_payload(
-                                                data,
+                                            let metadata = KafkaMetadata {
                                                 offset,
                                                 partition,
-                                                config,
+                                                topic_id: TRACES_TOPIC_ID,
+                                                ack_chan: None,
+                                            };
+                                            self.spawn_decode(
+                                                data, metadata,
                                                 |req: ExportTraceServiceRequest| req.resource_spans,
-                                            ).await
+                                                |resources, metadata| DecodedResult::Traces { resources, metadata }
+                                            );
                                         }
                                         t if t == self.metrics_topic => {
-                                            let config = TopicConfig {
-                                                name: "metrics",
-                                                topic_id: METRICS_TOPIC_ID,
-                                                output: &self.metrics_output,
-                                            };
-                                            self.process_payload(
-                                                data,
+                                            let metadata = KafkaMetadata {
                                                 offset,
                                                 partition,
-                                                config,
+                                                topic_id: METRICS_TOPIC_ID,
+                                                ack_chan: None,
+                                            };
+                                            self.spawn_decode(
+                                                data, metadata,
                                                 |req: ExportMetricsServiceRequest| req.resource_metrics,
-                                            ).await
+                                                |resources, metadata| DecodedResult::Metrics { resources, metadata }
+                                            );
                                         }
                                         t if t == self.logs_topic => {
-                                            let config = TopicConfig {
-                                                name: "logs",
-                                                topic_id: LOGS_TOPIC_ID,
-                                                output: &self.logs_output,
-                                            };
-                                            self.process_payload(
-                                                data,
+                                            let metadata = KafkaMetadata {
                                                 offset,
                                                 partition,
-                                                config,
+                                                topic_id: LOGS_TOPIC_ID,
+                                                ack_chan: None,
+                                            };
+                                            self.spawn_decode(
+                                                data, metadata,
                                                 |req: ExportLogsServiceRequest| req.resource_logs,
-                                            ).await
+                                                |resources, metadata| DecodedResult::Logs { resources, metadata }
+                                            );
                                         }
                                         _ => {
                                             debug!("Unknown topic: {}", topic);
-                                            Ok(())
                                         }
-                                    };
-
-                                    if let Err(e) = result {
-                                        warn!("Error processing message from topic {}: {}", topic, e);
                                     }
                                 }
                             }
                         }
                         Err(e) => info!("Error reading from Kafka: {:?}", e),
+                    }
+                },
+                // Process completed decoding futures
+                decoded_result = self.decoding_futures.select_next_some(), if !self.decoding_futures.is_empty() => {
+                    match decoded_result {
+                        Ok(decoded) => {
+                            match decoded {
+                            // N.B - Explicitly disabling sending any metadata for now on this next commit.
+                            // We are doing this because we are wiring in Message<T> handing with acknowledgement
+                            // end-to-end all the way to the exporters. However, as we're not doing anything
+                            // with the acknowledegements, we disable their creation for now out of an abundance of caution.
+                            // This will allow us to land these changes and others while iterating on the additional pieces
+                            // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
+                            // and verify with some aggressive end-to-end tests that everything is working as expected.
+                            // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                                DecodedResult::Traces { resources, metadata: _ } => {
+                                    if let Some(ref output) = self.traces_output {
+                                        let message = payload::Message {
+                                            metadata: None, // Still keeping metadata as None for now
+                                            payload: resources,
+                                        };
+                                        if let Err(e) = output.send(message).await {
+                                            warn!("Failed to send traces to pipeline: {}", e);
+                                        }
+                                    }
+                                }
+                                DecodedResult::Metrics { resources, metadata: _ } => {
+                                    if let Some(ref output) = self.metrics_output {
+                                        let message = payload::Message {
+                                            metadata: None, // Still keeping metadata as None for now
+                                            payload: resources,
+                                        };
+                                        if let Err(e) = output.send(message).await {
+                                            warn!("Failed to send metrics to pipeline: {}", e);
+                                        }
+                                    }
+                                }
+                                DecodedResult::Logs { resources, metadata: _ } => {
+                                    if let Some(ref output) = self.logs_output {
+                                        let message = payload::Message {
+                                            metadata: None, // Still keeping metadata as None for now
+                                            payload: resources,
+                                        };
+                                        if let Err(e) = output.send(message).await {
+                                            warn!("Failed to send logs to pipeline: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Decoding task failed: {}", e);
+                        }
                     }
                 },
                 _ = receivers_cancel.cancelled() => {
@@ -382,46 +410,46 @@ mod tests {
 
     fn create_test_resource_metrics() -> Vec<ResourceMetrics> {
         vec![ResourceMetrics {
-            resource: Some(Resource {
-                attributes: vec![KeyValue {
-                    key: "service.name".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
-                            "test-service".to_string(),
-                        )),
-                    }),
-                }],
-                dropped_attributes_count: 0,
-                entity_refs: Vec::new(),
-            }),
-            scope_metrics: vec![ScopeMetrics {
-                scope: None,
-                metrics: vec![Metric {
-                    name: "test.metric".to_string(),
-                    description: "A test metric".to_string(),
-                    unit: "1".to_string(),
-                    metadata: vec![],
-                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
-                        Gauge {
-                            data_points: vec![NumberDataPoint {
-                                attributes: vec![],
-                                start_time_unix_nano: 1000000000,
-                                time_unix_nano: 2000000000,
-                                exemplars: vec![],
-                                flags: 0,
-                                value: Some(
-                                    opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(
-                                        42,
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                                "test-service".to_string(),
+                            )),
+                        }),
+                    }],
+                    dropped_attributes_count: 0,
+                    entity_refs: Vec::new(),
+                }),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: None,
+                    metrics: vec![Metric {
+                        name: "test.metric".to_string(),
+                        description: "A test metric".to_string(),
+                        unit: "1".to_string(),
+                        metadata: vec![],
+                        data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
+                            Gauge {
+                                data_points: vec![NumberDataPoint {
+                                    attributes: vec![],
+                                    start_time_unix_nano: 1000000000,
+                                    time_unix_nano: 2000000000,
+                                    exemplars: vec![],
+                                    flags: 0,
+                                    value: Some(
+                                        opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(
+                                            42,
+                                        ),
                                     ),
-                                ),
-                            }],
-                        },
-                    )),
+                                }],
+                            },
+                        )),
+                    }],
+                    schema_url: "".to_string(),
                 }],
                 schema_url: "".to_string(),
-            }],
-            schema_url: "".to_string(),
-        }]
+            }]
     }
 
     fn create_test_resource_logs() -> Vec<ResourceLogs> {
@@ -481,6 +509,257 @@ mod tests {
         assert!(receiver.is_ok());
     }
 
+    #[tokio::test]
+    async fn test_decode_kafka_message_protobuf_traces() {
+        let test_data = ExportTraceServiceRequest {
+            resource_spans: create_test_resource_spans(),
+        };
+        let mut buf = Vec::new();
+        test_data.encode(&mut buf).expect("Failed to encode");
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportTraceServiceRequest>(
+            buf,
+            DeserializationFormat::Protobuf,
+        );
+
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert_eq!(decoded.resource_spans.len(), 1);
+        assert_eq!(decoded.resource_spans[0].scope_spans.len(), 1);
+        assert_eq!(decoded.resource_spans[0].scope_spans[0].spans.len(), 1);
+        assert_eq!(
+            decoded.resource_spans[0].scope_spans[0].spans[0].name,
+            "test-span"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_kafka_message_protobuf_metrics() {
+        let test_data = ExportMetricsServiceRequest {
+            resource_metrics: create_test_resource_metrics(),
+        };
+        let mut buf = Vec::new();
+        test_data.encode(&mut buf).expect("Failed to encode");
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportMetricsServiceRequest>(
+            buf,
+            DeserializationFormat::Protobuf,
+        );
+
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert_eq!(decoded.resource_metrics.len(), 1);
+        assert_eq!(decoded.resource_metrics[0].scope_metrics.len(), 1);
+        assert_eq!(
+            decoded.resource_metrics[0].scope_metrics[0].metrics.len(),
+            1
+        );
+        assert_eq!(
+            decoded.resource_metrics[0].scope_metrics[0].metrics[0].name,
+            "test.metric"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_kafka_message_protobuf_logs() {
+        let test_data = ExportLogsServiceRequest {
+            resource_logs: create_test_resource_logs(),
+        };
+        let mut buf = Vec::new();
+        test_data.encode(&mut buf).expect("Failed to encode");
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportLogsServiceRequest>(
+            buf,
+            DeserializationFormat::Protobuf,
+        );
+
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert_eq!(decoded.resource_logs.len(), 1);
+        assert_eq!(decoded.resource_logs[0].scope_logs.len(), 1);
+        assert_eq!(decoded.resource_logs[0].scope_logs[0].log_records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_decode_kafka_message_json_metrics() {
+        let test_data = ExportMetricsServiceRequest {
+            resource_metrics: create_test_resource_metrics(),
+        };
+        let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportMetricsServiceRequest>(
+            json_data,
+            DeserializationFormat::Json,
+        );
+
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert_eq!(decoded.resource_metrics.len(), 1);
+        assert_eq!(
+            decoded.resource_metrics[0].scope_metrics[0].metrics[0].name,
+            "test.metric"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_kafka_message_invalid_data() {
+        let invalid_data = b"invalid protobuf data".to_vec();
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportTraceServiceRequest>(
+            invalid_data,
+            DeserializationFormat::Protobuf,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_spawn_decode_traces_processing() {
+        let config =
+            KafkaReceiverConfig::new("localhost:9092".to_string(), "test-group".to_string())
+                .with_traces(true)
+                .with_traces_topic("test-traces".to_string());
+
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
+        let traces_output = OTLPOutput::new(tx);
+
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+            .expect("Failed to create receiver");
+
+        // Create test data
+        let test_data = ExportTraceServiceRequest {
+            resource_spans: create_test_resource_spans(),
+        };
+        let mut buf = Vec::new();
+        test_data.encode(&mut buf).expect("Failed to encode");
+
+        let metadata = KafkaMetadata {
+            offset: 123,
+            partition: 0,
+            topic_id: TRACES_TOPIC_ID,
+            ack_chan: None,
+        };
+
+        // Spawn decode task
+        receiver.spawn_decode(
+            buf,
+            metadata,
+            |req: ExportTraceServiceRequest| req.resource_spans,
+            |resources, metadata| DecodedResult::Traces {
+                resources,
+                metadata,
+            },
+        );
+
+        // Process the futures manually since we can't run the full main loop
+        assert_eq!(receiver.decoding_futures.len(), 1);
+
+        // Wait for the decode task to complete and get the result
+        let decoded_result = receiver.decoding_futures.select_next_some().await;
+        assert!(decoded_result.is_ok());
+
+        let decoded = decoded_result.unwrap();
+        match decoded {
+            DecodedResult::Traces {
+                resources,
+                metadata: _,
+            } => {
+                assert_eq!(resources.len(), 1);
+                assert_eq!(resources[0].scope_spans[0].spans[0].name, "test-span");
+
+                // Now test the result processing by sending to pipeline
+                if let Some(ref output) = receiver.traces_output {
+                    let message = payload::Message {
+                        metadata: None,
+                        payload: resources,
+                    };
+                    output.send(message).await.expect("Failed to send");
+                }
+
+                // Verify we received the data on the output channel
+                let received = rx.next().await.expect("Failed to receive traces");
+                assert_eq!(received.payload.len(), 1);
+                assert_eq!(
+                    received.payload[0].scope_spans[0].spans[0].name,
+                    "test-span"
+                );
+            }
+            _ => panic!("Expected traces result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_spawn_decode_metrics_processing() {
+        let config =
+            KafkaReceiverConfig::new("localhost:9092".to_string(), "test-group".to_string())
+                .with_metrics(true)
+                .with_metrics_topic(Some("test-metrics".to_string()))
+                .with_deserialization_format(DeserializationFormat::Json);
+
+        let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
+        let metrics_output = OTLPOutput::new(tx);
+
+        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
+            .expect("Failed to create receiver");
+
+        // Create test data
+        let test_data = ExportMetricsServiceRequest {
+            resource_metrics: create_test_resource_metrics(),
+        };
+        let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
+
+        let metadata = KafkaMetadata {
+            offset: 456,
+            partition: 1,
+            topic_id: METRICS_TOPIC_ID,
+            ack_chan: None,
+        };
+
+        // Test with JSON format
+        receiver.spawn_decode(
+            json_data,
+            metadata,
+            |req: ExportMetricsServiceRequest| req.resource_metrics,
+            |resources, metadata| DecodedResult::Metrics {
+                resources,
+                metadata,
+            },
+        );
+
+        // Process the future
+        let decoded_result = receiver.decoding_futures.select_next_some().await;
+        assert!(decoded_result.is_ok());
+
+        let decoded = decoded_result.unwrap();
+        match decoded {
+            DecodedResult::Metrics {
+                resources,
+                metadata: _,
+            } => {
+                assert_eq!(resources.len(), 1);
+                assert_eq!(resources[0].scope_metrics[0].metrics[0].name, "test.metric");
+
+                // Send to pipeline
+                if let Some(ref output) = receiver.metrics_output {
+                    let message = payload::Message {
+                        metadata: None,
+                        payload: resources,
+                    };
+                    output.send(message).await.expect("Failed to send");
+                }
+
+                // Verify received data
+                let received = rx.next().await.expect("Failed to receive metrics");
+                assert_eq!(received.payload.len(), 1);
+                assert_eq!(
+                    received.payload[0].scope_metrics[0].metrics[0].name,
+                    "test.metric"
+                );
+            }
+            _ => panic!("Expected metrics result"),
+        }
+    }
+
     #[test]
     fn test_kafka_receiver_creation_fails_without_topics() {
         let config =
@@ -514,7 +793,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -584,7 +863,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
+        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -651,7 +930,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, None, None, Some(logs_output))
+        let mut receiver = KafkaReceiver::new(config, None, None, Some(logs_output))
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -738,7 +1017,7 @@ mod tests {
             bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(logs_tx);
 
-        let receiver = KafkaReceiver::new(
+        let mut receiver = KafkaReceiver::new(
             config,
             Some(traces_output),
             Some(metrics_output),
@@ -856,7 +1135,7 @@ mod tests {
         let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -907,7 +1186,7 @@ mod tests {
         let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
