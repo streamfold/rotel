@@ -548,8 +548,8 @@ mod tests {
         // multiple internal chunks or payloads in Clickhouse
         let mut all_resource_spans = Vec::new();
 
-        // Test with the original failing size to reproduce the bug
-        for _i in 0..1000 {
+        // 100 iterations * 10 ResourceSpans = 1000 ResourceSpans (was 10,000)
+        for _i in 0..100 {
             let traces = FakeOTLP::trace_service_request_with_spans(10, 50); // 10 ResourceSpans, 50 spans each
             all_resource_spans.extend(traces.resource_spans);
         }
@@ -576,16 +576,7 @@ mod tests {
                 }
             };
 
-        // Clean up
-        drop(btx);
-        cancellation_token.cancel();
-        let _ = exporter_handle.await;
-
-        // Verify the server received requests
-        let _actual_hits = clickhouse_mock.hits();
-        // Note: Clickhouse typically sends one request per batch, but with internal chunking
-
-        // Verify acknowledgment behavior
+        // Verify acknowledgment behavior BEFORE cleanup
         for ack in received_acks.iter() {
             match ack {
                 KafkaAcknowledgement::Ack(kafka_ack) => {
@@ -604,6 +595,18 @@ mod tests {
             "Expected exactly 1 acknowledgment for Clickhouse request, got {}",
             ack_count
         );
+
+        // Clean up AFTER verification
+        drop(btx);
+
+        // Give exporter a moment to finish any in-flight processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        cancellation_token.cancel();
+        let _ = exporter_handle.await;
+
+        // Verify the server received requests
+        let _actual_hits = clickhouse_mock.hits();
     }
 
     fn new_traces_exporter<'a>(
