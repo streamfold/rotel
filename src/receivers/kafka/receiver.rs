@@ -280,6 +280,7 @@ mod tests {
     use super::*;
     use crate::bounded_channel::bounded;
     use crate::receivers::kafka::config::AutoOffsetReset;
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
     use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
     use opentelemetry_proto::tonic::metrics::v1::{
@@ -575,6 +576,61 @@ mod tests {
             decoded.resource_metrics[0].scope_metrics[0].metrics[0].name,
             "test.metric"
         );
+    }
+
+    #[tokio::test]
+    async fn test_decode_kafka_message_json_traces() {
+        let test_data = ExportTraceServiceRequest {
+            resource_spans: create_test_resource_spans(),
+        };
+        let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportTraceServiceRequest>(
+            json_data,
+            DeserializationFormat::Json,
+        );
+
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert_eq!(decoded.resource_spans.len(), 1);
+        assert_eq!(decoded.resource_spans[0].scope_spans.len(), 1);
+        assert_eq!(decoded.resource_spans[0].scope_spans[0].spans.len(), 1);
+        assert_eq!(
+            decoded.resource_spans[0].scope_spans[0].spans[0].name,
+            "test-span"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_kafka_message_json_logs() {
+        let test_data = ExportLogsServiceRequest {
+            resource_logs: create_test_resource_logs(),
+        };
+        let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
+
+        let result = KafkaReceiver::decode_kafka_message::<ExportLogsServiceRequest>(
+            json_data,
+            DeserializationFormat::Json,
+        );
+
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert_eq!(decoded.resource_logs.len(), 1);
+        let v = decoded.resource_logs[0].scope_logs[0].log_records[0]
+            .body
+            .as_ref()
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap();
+        match v {
+            Value::StringValue(s) => {
+                assert_eq!(s, "Test log message");
+            }
+            _ => {
+                panic!("Expected value type");
+            }
+        }
     }
 
     #[tokio::test]
