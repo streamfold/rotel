@@ -4,8 +4,8 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use crate::topology::payload::KafkaMetadata;
 use bytes::Bytes;
-use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
+use futures_util::stream::FuturesOrdered;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -55,7 +55,7 @@ pub struct KafkaReceiver {
     pub metrics_topic: String,
     pub logs_topic: String,
     pub format: DeserializationFormat,
-    decoding_futures: FuturesUnordered<
+    decoding_futures: FuturesOrdered<
         Pin<Box<dyn Future<Output = std::result::Result<DecodedResult, JoinError>> + Send>>,
     >,
 }
@@ -108,7 +108,7 @@ impl KafkaReceiver {
             metrics_topic,
             logs_topic,
             format: config.deserialization_format,
-            decoding_futures: FuturesUnordered::new(),
+            decoding_futures: FuturesOrdered::new(),
         })
     }
 
@@ -136,7 +136,7 @@ impl KafkaReceiver {
                 }
             }
         });
-        self.decoding_futures.push(Box::pin(f));
+        self.decoding_futures.push_back(Box::pin(f));
     }
 
     // Static method for decoding Kafka messages
