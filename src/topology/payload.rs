@@ -17,6 +17,10 @@ pub struct Message<T> {
 }
 
 impl<T> Message<T> {
+    pub fn new(metadata: Option<MessageMetadata>, payload: Vec<T>) -> Self {
+        Self { metadata, payload }
+    }
+
     // Used in testing
     #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
@@ -106,6 +110,23 @@ pub struct KafkaMetadata {
     pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
 }
 
+impl KafkaMetadata {
+    /// Create new KafkaMetadata
+    pub fn new(
+        offset: i64,
+        partition: i32,
+        topic_id: u8,
+        ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
+    ) -> Self {
+        Self {
+            offset,
+            partition,
+            topic_id,
+            ack_chan,
+        }
+    }
+}
+
 // Manual Debug for KafkaMetadata since BoundedSender doesn't implement Debug
 impl std::fmt::Debug for KafkaMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -172,12 +193,7 @@ mod tests {
     async fn test_reference_counting_single_ack() {
         let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
 
-        let kafka_metadata = KafkaMetadata {
-            offset: 123,
-            partition: 0,
-            topic_id: 1,
-            ack_chan: Some(ack_tx),
-        };
+        let kafka_metadata = KafkaMetadata::new(123, 0, 1, Some(ack_tx));
 
         let metadata = MessageMetadata::kafka(kafka_metadata);
 
@@ -203,12 +219,7 @@ mod tests {
     async fn test_reference_counting_clone_and_ack() {
         let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
 
-        let kafka_metadata = KafkaMetadata {
-            offset: 456,
-            partition: 2,
-            topic_id: 3,
-            ack_chan: Some(ack_tx),
-        };
+        let kafka_metadata = KafkaMetadata::new(456, 2, 3, Some(ack_tx));
 
         let metadata1 = MessageMetadata::kafka(kafka_metadata);
         assert_eq!(metadata1.ref_count(), 1);
@@ -246,12 +257,7 @@ mod tests {
     async fn test_shallow_clone_does_not_increment_ref_count() {
         let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
 
-        let kafka_metadata = KafkaMetadata {
-            offset: 789,
-            partition: 1,
-            topic_id: 2,
-            ack_chan: Some(ack_tx),
-        };
+        let kafka_metadata = KafkaMetadata::new(789, 1, 2, Some(ack_tx));
 
         let metadata1 = MessageMetadata::kafka(kafka_metadata);
         assert_eq!(metadata1.ref_count(), 1);

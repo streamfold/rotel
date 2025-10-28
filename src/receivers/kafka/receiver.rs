@@ -188,12 +188,7 @@ impl KafkaReceiver {
                                     let data = data.to_vec();
                                     match topic.as_str() {
                                         t if t == self.traces_topic => {
-                                            let metadata = KafkaMetadata {
-                                                offset,
-                                                partition,
-                                                topic_id: TRACES_TOPIC_ID,
-                                                ack_chan: None,
-                                            };
+                                            let metadata = KafkaMetadata::new(offset, partition, TRACES_TOPIC_ID, None);
                                             self.spawn_decode(
                                                 data, metadata,
                                                 |req: ExportTraceServiceRequest| req.resource_spans,
@@ -201,12 +196,7 @@ impl KafkaReceiver {
                                             );
                                         }
                                         t if t == self.metrics_topic => {
-                                            let metadata = KafkaMetadata {
-                                                offset,
-                                                partition,
-                                                topic_id: METRICS_TOPIC_ID,
-                                                ack_chan: None,
-                                            };
+                                            let metadata = KafkaMetadata::new(offset, partition, METRICS_TOPIC_ID, None);
                                             self.spawn_decode(
                                                 data, metadata,
                                                 |req: ExportMetricsServiceRequest| req.resource_metrics,
@@ -214,12 +204,7 @@ impl KafkaReceiver {
                                             );
                                         }
                                         t if t == self.logs_topic => {
-                                            let metadata = KafkaMetadata {
-                                                offset,
-                                                partition,
-                                                topic_id: LOGS_TOPIC_ID,
-                                                ack_chan: None,
-                                            };
+                                            let metadata = KafkaMetadata::new(offset, partition, LOGS_TOPIC_ID, None);
                                             self.spawn_decode(
                                                 data, metadata,
                                                 |req: ExportLogsServiceRequest| req.resource_logs,
@@ -244,17 +229,14 @@ impl KafkaReceiver {
                             // N.B - Explicitly disabling sending any metadata for now on this next commit.
                             // We are doing this because we are wiring in Message<T> handing with acknowledgement
                             // end-to-end all the way to the exporters. However, as we're not doing anything
-                            // with the acknowledegements, we disable their creation for now out of an abundance of caution.
+                            // with the acknowledgement, we disable their creation for now out of an abundance of caution.
                             // This will allow us to land these changes and others while iterating on the additional pieces
                             // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
                             // and verify with some aggressive end-to-end tests that everything is working as expected.
                             // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
                                 DecodedResult::Traces { resources, metadata: _ } => {
                                     if let Some(ref output) = self.traces_output {
-                                        let message = payload::Message {
-                                            metadata: None, // Still keeping metadata as None for now
-                                            payload: resources,
-                                        };
+                                        let message = payload::Message::new(None, resources);
                                         if let Err(e) = output.send(message).await {
                                             warn!("Failed to send traces to pipeline: {}", e);
                                         }
@@ -262,10 +244,7 @@ impl KafkaReceiver {
                                 }
                                 DecodedResult::Metrics { resources, metadata: _ } => {
                                     if let Some(ref output) = self.metrics_output {
-                                        let message = payload::Message {
-                                            metadata: None, // Still keeping metadata as None for now
-                                            payload: resources,
-                                        };
+                                        let message = payload::Message::new(None, resources);
                                         if let Err(e) = output.send(message).await {
                                             warn!("Failed to send metrics to pipeline: {}", e);
                                         }
@@ -273,10 +252,7 @@ impl KafkaReceiver {
                                 }
                                 DecodedResult::Logs { resources, metadata: _ } => {
                                     if let Some(ref output) = self.logs_output {
-                                        let message = payload::Message {
-                                            metadata: None, // Still keeping metadata as None for now
-                                            payload: resources,
-                                        };
+                                        let message = payload::Message::new(None, resources);
                                         if let Err(e) = output.send(message).await {
                                             warn!("Failed to send logs to pipeline: {}", e);
                                         }
@@ -633,12 +609,7 @@ mod tests {
         let mut buf = Vec::new();
         test_data.encode(&mut buf).expect("Failed to encode");
 
-        let metadata = KafkaMetadata {
-            offset: 123,
-            partition: 0,
-            topic_id: TRACES_TOPIC_ID,
-            ack_chan: None,
-        };
+        let metadata = KafkaMetadata::new(123, 0, TRACES_TOPIC_ID, None);
 
         // Spawn decode task
         receiver.spawn_decode(
@@ -708,12 +679,7 @@ mod tests {
         };
         let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
 
-        let metadata = KafkaMetadata {
-            offset: 456,
-            partition: 1,
-            topic_id: METRICS_TOPIC_ID,
-            ack_chan: None,
-        };
+        let metadata = KafkaMetadata::new(456, 1, METRICS_TOPIC_ID, None);
 
         // Test with JSON format
         receiver.spawn_decode(
