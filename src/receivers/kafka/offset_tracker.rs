@@ -12,6 +12,7 @@ pub struct BTreeMapOffsetTracker {
     /// Maps partition to a mutex-protected sorted set of pending offsets
     /// Using () as value since we only need the keys
     partitions: RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>,
+    high_water_marks: HashMap<i32, i64>,
 }
 
 impl Default for BTreeMapOffsetTracker {
@@ -24,6 +25,7 @@ impl BTreeMapOffsetTracker {
     pub fn new() -> Self {
         Self {
             partitions: RwLock::new(HashMap::new()),
+            high_water_marks: HashMap::new(), // This is only going to be updated by a single thread,
         }
     }
 
@@ -50,7 +52,18 @@ impl BTreeMapOffsetTracker {
         offsets.insert(offset, ());
     }
 
-    fn acknowledge(&self, partition: i32, offset: i64) {
+    fn acknowledge(&mut self, partition: i32, offset: i64) {
+        let hwm = self.high_water_marks.get(&partition);
+        match hwm {
+            None => {
+                self.high_water_marks.insert(partition, offset);
+            }
+            Some(h) => {
+                if *h < offset {
+                    self.high_water_marks.insert(partition, offset);
+                }
+            }
+        }
         // Get the partition's BTreeMap
         let partition_lock = {
             let partitions = self.partitions.read().unwrap();
@@ -76,7 +89,19 @@ impl BTreeMapOffsetTracker {
                     }
                 }
             }
+        } else {
+            tracing::warn!(
+                partition = partition,
+                offset = offset,
+                "Received acknowledgment for unknown partition"
+            );
         }
+    }
+
+    // Currently only used in test but will be used by the offset committer
+    #[allow(dead_code)]
+    fn get_high_water_mark(&self, partition: i32) -> Option<i64> {
+        self.high_water_marks.get(&partition).copied()
     }
 
     fn get_committable_offsets(&self) -> HashMap<i32, i64> {
@@ -162,8 +187,8 @@ impl TopicTrackers {
 
     /// Acknowledge an offset for a specific topic and partition
     pub fn acknowledge(&self, topic_id: u8, partition: i32, offset: i64) {
-        let trackers = self.trackers.read().unwrap();
-        if let Some(tracker) = trackers.get(&topic_id) {
+        let mut trackers = self.trackers.write().unwrap();
+        if let Some(tracker) = trackers.get_mut(&topic_id) {
             tracker.acknowledge(partition, offset);
         } else {
             tracing::warn!(
@@ -247,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_basic_track_and_ack() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Track some offsets
         tracker.track(0, 100);
@@ -272,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_lowest_pending_offset() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Initially empty
         assert_eq!(tracker.lowest_pending_offset(0), None);
@@ -308,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_out_of_order_acks() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Track sequential offsets
         tracker.track(0, 100);
@@ -342,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_multiple_partitions() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Track offsets for different partitions
         tracker.track(0, 100);
@@ -376,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_empty_state() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Should return empty map when no offsets tracked
         let committable = tracker.get_committable_offsets();
@@ -396,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_tracking() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Track same offset multiple times (idempotent)
         tracker.track(0, 100);
@@ -413,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_ack_non_existent() {
-        let tracker = BTreeMapOffsetTracker::new();
+        let mut tracker = BTreeMapOffsetTracker::new();
 
         // Acking non-existent offset should be safe no-op
         tracker.acknowledge(0, 999);
@@ -435,7 +460,7 @@ mod tests {
         use std::sync::{Arc, Barrier};
         use std::thread;
 
-        let tracker = Arc::new(BTreeMapOffsetTracker::new());
+        let tracker = Arc::new(Mutex::new(BTreeMapOffsetTracker::new()));
         let mut handles = vec![];
 
         // Use barrier to ensure all tracking is done before acking
@@ -447,7 +472,7 @@ mod tests {
             let barrier_clone = barrier.clone();
             let handle = thread::spawn(move || {
                 for j in 0..100 {
-                    tracker_clone.track(i, j);
+                    tracker_clone.lock().unwrap().track(i, j);
                 }
                 barrier_clone.wait(); // Wait for all threads to finish tracking
             });
@@ -461,7 +486,7 @@ mod tests {
             let handle = thread::spawn(move || {
                 barrier_clone.wait(); // Wait for all tracking to complete first
                 for j in 0..50 {
-                    tracker_clone.acknowledge(i, j);
+                    tracker_clone.lock().unwrap().acknowledge(i, j);
                 }
             });
             handles.push(handle);
@@ -471,6 +496,8 @@ mod tests {
         for handle in handles {
             handle.join().unwrap();
         }
+
+        let tracker = tracker.lock().unwrap();
 
         // Each partition should have 50 pending offsets (100 tracked - 50 acked)
         for i in 0..10 {
@@ -490,7 +517,7 @@ mod tests {
     #[test]
     fn test_btree_implementation() {
         // Basic track and ack
-        let tracker = BTreeMapOffsetTracker::default();
+        let mut tracker = BTreeMapOffsetTracker::default();
         tracker.track(0, 100);
         tracker.track(0, 101);
         assert_eq!(tracker.pending_count(0), 2);
@@ -502,7 +529,7 @@ mod tests {
         assert_eq!(tracker.lowest_pending_offset(0), Some(101));
 
         // Out of order acks
-        let tracker = BTreeMapOffsetTracker::default();
+        let mut tracker = BTreeMapOffsetTracker::default();
         tracker.track(0, 100);
         tracker.track(0, 101);
         tracker.track(0, 102);
@@ -517,6 +544,36 @@ mod tests {
 
         // Test empty partition
         assert_eq!(tracker.lowest_pending_offset(99), None);
+    }
+
+    #[test]
+    fn test_high_water_mark_after_complete_ack() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Track 5 offsets for partition 0
+        tracker.track(0, 100);
+        tracker.track(0, 101);
+        tracker.track(0, 102);
+        tracker.track(0, 103);
+        tracker.track(0, 104);
+
+        // Verify they are tracked
+        assert_eq!(tracker.pending_count(0), 5);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
+
+        // Acknowledge all offsets
+        tracker.acknowledge(0, 100);
+        tracker.acknowledge(0, 101);
+        tracker.acknowledge(0, 102);
+        tracker.acknowledge(0, 103);
+        tracker.acknowledge(0, 104);
+
+        // Verify all are acknowledged - lowest pending should be None
+        assert_eq!(tracker.lowest_pending_offset(0), None);
+        assert_eq!(tracker.pending_count(0), 0);
+
+        // Check high water mark - should be the highest acknowledged offset
+        assert_eq!(tracker.get_high_water_mark(0), Some(104));
     }
 
     #[test]
