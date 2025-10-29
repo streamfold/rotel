@@ -98,9 +98,8 @@ impl BTreeMapOffsetTracker {
         }
     }
 
-    // Currently only used in test but will be used by the offset committer
-    #[allow(dead_code)]
-    fn get_high_water_mark(&self, partition: i32) -> Option<i64> {
+    // Returns the highest acknowledged offset for a partition (high water mark)
+    pub fn get_high_water_mark(&self, partition: i32) -> Option<i64> {
         self.high_water_marks.get(&partition).copied()
     }
 
@@ -257,6 +256,14 @@ impl TopicTrackers {
         trackers
             .get(&topic_id)
             .and_then(|tracker| tracker.lowest_pending_offset(partition))
+    }
+
+    /// Get the high water mark for a specific topic and partition
+    pub fn high_water_mark(&self, topic_id: u8, partition: i32) -> Option<i64> {
+        let trackers = self.trackers.read().unwrap();
+        trackers
+            .get(&topic_id)
+            .and_then(|tracker| tracker.get_high_water_mark(partition))
     }
 }
 

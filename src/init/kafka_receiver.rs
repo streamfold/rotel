@@ -99,7 +99,7 @@ pub struct KafkaReceiverArgs {
     #[arg(
         long("kafka-receiver-enable-auto-commit"),
         env = "ROTEL_KAFKA_RECEIVER_ENABLE_AUTO_COMMIT",
-        default_value = "true"
+        default_value = "false"
     )]
     pub enable_auto_commit: bool,
 
