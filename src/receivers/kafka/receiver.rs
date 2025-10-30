@@ -20,7 +20,10 @@ use std::pin::Pin;
 use tokio::select;
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+
+#[rustfmt::skip]
+type DecodingFuture = Pin<Box<dyn Future<Output = std::result::Result<std::result::Result<DecodedResult, Box<dyn Error + Send + Sync>>, JoinError>> + Send>>;
 
 // In the future if we support arbitrary topics with non OTLP data we might replace these
 // with a map.
@@ -55,9 +58,7 @@ pub struct KafkaReceiver {
     pub metrics_topic: String,
     pub logs_topic: String,
     pub format: DeserializationFormat,
-    decoding_futures: FuturesOrdered<
-        Pin<Box<dyn Future<Output = std::result::Result<DecodedResult, JoinError>> + Send>>,
-    >,
+    decoding_futures: FuturesOrdered<DecodingFuture>,
 }
 
 impl KafkaReceiver {}
@@ -128,12 +129,9 @@ impl KafkaReceiver {
             match Self::decode_kafka_message::<T>(data, format) {
                 Ok(req) => {
                     let resources = extract_resources(req);
-                    make_result(resources, metadata)
+                    Ok(make_result(resources, metadata))
                 }
-                Err(e) => {
-                    warn!("Failed to decode message: {}", e);
-                    panic!("Decode error: {}", e);
-                }
+                Err(e) => Err(e),
             }
         });
         self.decoding_futures.push_back(Box::pin(f));
@@ -212,7 +210,7 @@ impl KafkaReceiver {
                                             );
                                         }
                                         _ => {
-                                            debug!("Unknown topic: {}", topic);
+                                            debug!("Received data from kafka for unknown topic: {}", topic);
                                         }
                                     }
                                 }
@@ -224,39 +222,46 @@ impl KafkaReceiver {
                 // Process completed decoding futures
                 decoded_result = self.decoding_futures.select_next_some(), if !self.decoding_futures.is_empty() => {
                     match decoded_result {
-                        Ok(decoded) => {
-                            match decoded {
-                            // N.B - Explicitly disabling sending any metadata for now on this next commit.
-                            // We are doing this because we are wiring in Message<T> handing with acknowledgement
-                            // end-to-end all the way to the exporters. However, as we're not doing anything
-                            // with the acknowledgement, we disable their creation for now out of an abundance of caution.
-                            // This will allow us to land these changes and others while iterating on the additional pieces
-                            // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
-                            // and verify with some aggressive end-to-end tests that everything is working as expected.
-                            // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
-                                DecodedResult::Traces { resources, metadata: _ } => {
-                                    if let Some(ref output) = self.traces_output {
-                                        let message = payload::Message::new(None, resources);
-                                        if let Err(e) = output.send(message).await {
-                                            warn!("Failed to send traces to pipeline: {}", e);
+                        Ok(decode_result) => {
+                            match decode_result {
+                                Ok(decoded) => {
+                                    match decoded {
+                                    // N.B - Explicitly disabling sending any metadata for now on this next commit.
+                                    // We are doing this because we are wiring in Message<T> handing with acknowledgement
+                                    // end-to-end all the way to the exporters. However, as we're not doing anything
+                                    // with the acknowledgement, we disable their creation for now out of an abundance of caution.
+                                    // This will allow us to land these changes and others while iterating on the additional pieces
+                                    // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
+                                    // and verify with some aggressive end-to-end tests that everything is working as expected.
+                                    // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
+                                        DecodedResult::Traces { resources, metadata: _ } => {
+                                            if let Some(ref output) = self.traces_output {
+                                                let message = payload::Message::new(None, resources);
+                                                if let Err(e) = output.send(message).await {
+                                                    warn!("Failed to send traces to pipeline: {}", e);
+                                                }
+                                            }
+                                        }
+                                        DecodedResult::Metrics { resources, metadata: _ } => {
+                                            if let Some(ref output) = self.metrics_output {
+                                                let message = payload::Message::new(None, resources);
+                                                if let Err(e) = output.send(message).await {
+                                                    warn!("Failed to send metrics to pipeline: {}", e);
+                                                }
+                                            }
+                                        }
+                                        DecodedResult::Logs { resources, metadata: _ } => {
+                                            if let Some(ref output) = self.logs_output {
+                                                let message = payload::Message::new(None, resources);
+                                                if let Err(e) = output.send(message).await {
+                                                    warn!("Failed to send logs to pipeline: {}", e);
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                DecodedResult::Metrics { resources, metadata: _ } => {
-                                    if let Some(ref output) = self.metrics_output {
-                                        let message = payload::Message::new(None, resources);
-                                        if let Err(e) = output.send(message).await {
-                                            warn!("Failed to send metrics to pipeline: {}", e);
-                                        }
-                                    }
-                                }
-                                DecodedResult::Logs { resources, metadata: _ } => {
-                                    if let Some(ref output) = self.logs_output {
-                                        let message = payload::Message::new(None, resources);
-                                        if let Err(e) = output.send(message).await {
-                                            warn!("Failed to send logs to pipeline: {}", e);
-                                        }
-                                    }
+                                Err(e) => {
+                                    error!("Failed to decode Kafka message: {}", e);
                                 }
                             }
                         }
@@ -685,7 +690,10 @@ mod tests {
         let decoded_result = receiver.decoding_futures.select_next_some().await;
         assert!(decoded_result.is_ok());
 
-        let decoded = decoded_result.unwrap();
+        let inner_result = decoded_result.unwrap();
+        assert!(inner_result.is_ok());
+
+        let decoded = inner_result.unwrap();
         match decoded {
             DecodedResult::Traces {
                 resources,
@@ -752,7 +760,10 @@ mod tests {
         let decoded_result = receiver.decoding_futures.select_next_some().await;
         assert!(decoded_result.is_ok());
 
-        let decoded = decoded_result.unwrap();
+        let inner_result = decoded_result.unwrap();
+        assert!(inner_result.is_ok());
+
+        let decoded = inner_result.unwrap();
         match decoded {
             DecodedResult::Metrics {
                 resources,
