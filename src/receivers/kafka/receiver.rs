@@ -229,7 +229,7 @@ impl KafkaOffsetCommitter {
                                     "Topic {} (id {}) partition {} has no pending offsets, using high water mark: {}",
                                     topic_name, topic_id, partition, hwm
                                 );
-                                commits.push((topic_name, partition, hwm));
+                                commits.push((topic_name, partition, hwm + 1));
                             } else {
                                 debug!(
                                     "Topic {} (id {}) partition {} has no pending offsets and no high water mark",
@@ -298,7 +298,7 @@ impl KafkaOffsetCommitter {
                             if let Some(offset) = self.topic_trackers.lowest_pending_offset(topic_id, partition) {
                                 final_commits.push((topic_name.clone(), partition, offset));
                             } else if let Some(hwm) = self.topic_trackers.high_water_mark(topic_id, partition) {
-                                final_commits.push((topic_name.clone(), partition, hwm));
+                                final_commits.push((topic_name.clone(), partition, hwm + 1));
                             }
                         }
                     }
