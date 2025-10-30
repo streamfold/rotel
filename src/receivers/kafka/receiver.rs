@@ -2,7 +2,7 @@ use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig
 use crate::receivers::kafka::error::{KafkaReceiverError, Result};
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
-use crate::topology::payload::KafkaMetadata;
+use crate::topology::payload::{KafkaMetadata, MessageMetadata};
 use bytes::Bytes;
 use futures::stream::StreamExt;
 use futures_util::stream::FuturesOrdered;
@@ -602,26 +602,26 @@ impl KafkaReceiver {
                             match decode_result {
                                 Ok(decoded) => {
                                     match decoded {
-                                        DecodedResult::Traces { resources, metadata: _ } => {
+                                        DecodedResult::Traces { resources, metadata } => {
                                             if let Some(ref output) = self.traces_output {
-                                                let message = payload::Message::new(None, resources);
+                                                let message = payload::Message::new(Some(MessageMetadata::kafka(metadata)), resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "traces").await {
                                                     break;
                                                 }
                                             }
                                         }
-                                        DecodedResult::Metrics { resources, metadata: _ } => {
+                                        DecodedResult::Metrics { resources, metadata } => {
                                             if let Some(ref output) = self.metrics_output {
-                                                let message = payload::Message::new(None, resources);
+                                                let message = payload::Message::new(Some(MessageMetadata::kafka(metadata)), resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "metrics").await {
                                                     break;
                                                 }
                                                 // Other errors already logged in send_with_cancellation
                                             }
                                         }
-                                        DecodedResult::Logs { resources, metadata: _ } => {
+                                        DecodedResult::Logs { resources, metadata } => {
                                             if let Some(ref output) = self.logs_output {
-                                                let message = payload::Message::new(None, resources);
+                                                let message = payload::Message::new(Some(MessageMetadata::kafka(metadata)), resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "logs").await {
                                                     break;
                                                 }
