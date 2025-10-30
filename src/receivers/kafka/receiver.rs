@@ -335,9 +335,6 @@ pub struct KafkaReceiver {
     pub metrics_topic: String,
     pub logs_topic: String,
     pub format: DeserializationFormat,
-    //decoding_futures: FuturesOrdered<
-    //    Pin<Box<dyn Future<Output = std::result::Result<DecodedResult, JoinError>> + Send>>,
-    //>,
     pub topic_trackers: std::sync::Arc<crate::receivers::kafka::offset_tracker::TopicTrackers>,
     pub ack_sender: crate::bounded_channel::BoundedSender<payload::KafkaAcknowledgement>,
     offset_committer: Option<KafkaOffsetCommitter>,
@@ -605,14 +602,6 @@ impl KafkaReceiver {
                             match decode_result {
                                 Ok(decoded) => {
                                     match decoded {
-                                    // N.B - Explicitly disabling sending any metadata for now on this next commit.
-                                    // We are doing this because we are wiring in Message<T> handing with acknowledgement
-                                    // end-to-end all the way to the exporters. However, as we're not doing anything
-                                    // with the acknowledgement, we disable their creation for now out of an abundance of caution.
-                                    // This will allow us to land these changes and others while iterating on the additional pieces
-                                    // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
-                                    // and verify with some aggressive end-to-end tests that everything is working as expected.
-                                    // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
                                         DecodedResult::Traces { resources, metadata: _ } => {
                                             if let Some(ref output) = self.traces_output {
                                                 let message = payload::Message::new(None, resources);
