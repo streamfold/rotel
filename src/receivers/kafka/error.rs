@@ -6,6 +6,14 @@ pub enum KafkaReceiverError {
     /// Configuration error
     #[error("Invalid configuration: {0}")]
     ConfigurationError(String),
+
+    /// Send operation was canceled
+    #[error("Send operation cancelled")]
+    SendCancelled,
+
+    /// Send operation failed
+    #[error("Failed to send {signal_type}: {error}")]
+    SendFailed { signal_type: String, error: String },
 }
 
 pub type Result<T> = std::result::Result<T, KafkaReceiverError>;

@@ -802,7 +802,7 @@ impl Agent {
                     }
                 }
                 ReceiverConfig::Kafka(config) => {
-                    let kafka = KafkaReceiver::new(
+                    let mut kafka = KafkaReceiver::new(
                         config.clone(),
                         traces_output.clone(),
                         metrics_output.clone(),
