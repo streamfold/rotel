@@ -140,6 +140,9 @@ pub struct KafkaReceiverConfig {
     /// Auto commit interval in milliseconds
     pub auto_commit_interval_ms: u32,
 
+    /// Manual offset commit interval in seconds (when auto commit is disabled)
+    pub manual_commit_interval_secs: u64,
+
     /// Auto offset reset behavior when no offset is found
     pub auto_offset_reset: AutoOffsetReset,
 
@@ -217,8 +220,9 @@ impl Default for KafkaReceiverConfig {
             deserialization_format: DeserializationFormat::default(),
             group_id: "rotel-consumer".to_string(),
             client_id: "rotel".to_string(),
-            enable_auto_commit: true,
+            enable_auto_commit: false, // Disabled by default to use manual offset committing
             auto_commit_interval_ms: 5000,
+            manual_commit_interval_secs: 5, // 5 seconds default for manual commits
             auto_offset_reset: AutoOffsetReset::default(),
             session_timeout_ms: 30000,
             heartbeat_interval_ms: 3000,
@@ -548,7 +552,7 @@ mod tests {
         assert!(!config.traces);
         assert!(!config.metrics);
         assert!(!config.logs);
-        assert!(config.enable_auto_commit);
+        assert!(!config.enable_auto_commit);
         assert_eq!(config.auto_commit_interval_ms, 5000);
     }
 
