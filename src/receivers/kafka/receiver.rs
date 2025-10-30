@@ -158,6 +158,42 @@ impl KafkaReceiver {
         Ok(request)
     }
 
+    // Helper method to send messages with cancellation support
+    async fn send_with_cancellation<T>(
+        output: &OTLPOutput<payload::Message<T>>,
+        message: payload::Message<T>,
+        cancel_token: &CancellationToken,
+        signal_type: &str,
+    ) -> Result<()>
+    where
+        T: Send + 'static,
+    {
+        // Use send_async which returns a future we can select against
+        // This avoids both cloning and spinning - proper async coordination
+        let send_fut = output.send_async(message);
+        tokio::pin!(send_fut);
+
+        select! {
+            result = send_fut => {
+                match result {
+                    Ok(()) => Ok(()),
+                    Err(_e) => {
+                        // flume::SendError means channel disconnected
+                        warn!("Failed to send {} to pipeline: channel disconnected", signal_type);
+                        Err(KafkaReceiverError::SendFailed {
+                            signal_type: signal_type.to_string(),
+                            error: "Channel disconnected".to_string(),
+                        })
+                    }
+                }
+            }
+            _ = cancel_token.cancelled() => {
+                debug!("Received cancellation signal while waiting to send {}", signal_type);
+                Err(KafkaReceiverError::SendCancelled)
+            }
+        }
+    }
+
     pub(crate) async fn run(
         &mut self,
         receivers_cancel: CancellationToken,
@@ -237,25 +273,27 @@ impl KafkaReceiver {
                                         DecodedResult::Traces { resources, metadata: _ } => {
                                             if let Some(ref output) = self.traces_output {
                                                 let message = payload::Message::new(None, resources);
-                                                if let Err(e) = output.send(message).await {
-                                                    warn!("Failed to send traces to pipeline: {}", e);
+                                                if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "traces").await {
+                                                    break;
                                                 }
                                             }
                                         }
                                         DecodedResult::Metrics { resources, metadata: _ } => {
                                             if let Some(ref output) = self.metrics_output {
                                                 let message = payload::Message::new(None, resources);
-                                                if let Err(e) = output.send(message).await {
-                                                    warn!("Failed to send metrics to pipeline: {}", e);
+                                                if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "metrics").await {
+                                                    break;
                                                 }
+                                                // Other errors already logged in send_with_cancellation
                                             }
                                         }
                                         DecodedResult::Logs { resources, metadata: _ } => {
                                             if let Some(ref output) = self.logs_output {
                                                 let message = payload::Message::new(None, resources);
-                                                if let Err(e) = output.send(message).await {
-                                                    warn!("Failed to send logs to pipeline: {}", e);
+                                                if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "logs").await {
+                                                    break;
                                                 }
+                                                // Other errors already logged in send_with_cancellation
                                             }
                                         }
                                     }
@@ -1246,5 +1284,65 @@ mod tests {
         cancel_token.cancel();
         let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_cancellation_blocked_channel() {
+        use crate::bounded_channel::bounded;
+        use crate::receivers::otlp_output::OTLPOutput;
+        use crate::topology::payload;
+        use tokio::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        // Create a channel with size 1 that we'll fill to block it
+        let (tx, mut rx) = bounded::<payload::Message<ResourceSpans>>(1);
+        let output = OTLPOutput::new(tx);
+
+        // Fill the channel to make it block by sending a message but not receiving it
+        let blocking_message = payload::Message::new(None, vec![ResourceSpans::default()]);
+        output
+            .send(blocking_message)
+            .await
+            .expect("Should be able to send first message");
+
+        // Now the channel is full (size 1) - any new send will block
+
+        // Create a message to send
+        let message = payload::Message::new(None, vec![ResourceSpans::default()]);
+
+        // Create cancellation token
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
+
+        // Clone output for the async task
+        let output_clone = output.clone();
+
+        // Spawn task that will try to send with cancellation
+        let send_task = tokio::spawn(async move {
+            KafkaReceiver::send_with_cancellation(
+                &output_clone,
+                message,
+                &cancel_token_clone,
+                "test",
+            )
+            .await
+        });
+
+        // Give the task time to start and block on the send
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Cancel the operation
+        cancel_token.cancel();
+
+        // Wait for the task to complete and verify it returns SendCancelled error
+        let result = tokio::time::timeout(Duration::from_millis(500), send_task)
+            .await
+            .expect("Task should complete within timeout")
+            .expect("Task should not panic");
+
+        assert!(matches!(result, Err(KafkaReceiverError::SendCancelled)));
+
+        // Clean up: drain the channel to prevent any hanging
+        rx.next().await;
     }
 }
