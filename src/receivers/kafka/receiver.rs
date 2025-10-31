@@ -125,7 +125,7 @@ impl KafkaReceiver {
     {
         let format = self.format;
 
-        let f = tokio::task::spawn_blocking(move || {
+        let f = tokio::spawn(async move {
             match Self::decode_kafka_message::<T>(data, format) {
                 Ok(req) => {
                     let resources = extract_resources(req);
