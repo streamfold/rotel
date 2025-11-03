@@ -19,6 +19,7 @@ use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
+use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 use crate::receivers::kafka::receiver::KafkaReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp::otlp_http::OTLPHttpServer;
@@ -106,10 +107,12 @@ impl Agent {
         let mut receivers_task_set = JoinSet::new();
         let mut pipeline_task_set = JoinSet::new();
         let mut exporters_task_set = JoinSet::new();
+        let mut kafka_offset_committer: Option<KafkaOffsetCommitter> = None;
 
         let receivers_cancel = CancellationToken::new();
         let pipeline_cancel = CancellationToken::new();
         let exporters_cancel = CancellationToken::new();
+        let kafka_offset_committer_cancel = CancellationToken::new();
 
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
             bounded::<Message<ResourceSpans>>(max(4, num_cpus));
@@ -808,10 +811,26 @@ impl Agent {
                         metrics_output.clone(),
                         logs_output.clone(),
                     )?;
+
+                    // Extract the offset committer before starting the receiver
+                    kafka_offset_committer = kafka.take_offset_committer();
+
                     let receivers_cancel = receivers_cancel.clone();
                     receivers_task_set.spawn(async move { kafka.run(receivers_cancel).await });
                 }
             }
+        }
+
+        // Start the Kafka offset committer if we have one
+        let mut kafka_offset_committer_task_set = JoinSet::new();
+        if let Some(mut committer) = kafka_offset_committer {
+            let cancel_token = kafka_offset_committer_cancel.clone();
+            kafka_offset_committer_task_set.spawn(async move {
+                if let Err(e) = committer.run(cancel_token).await {
+                    warn!("Kafka offset committer error: {:?}", e);
+                }
+                Ok(())
+            });
         }
 
         //
@@ -952,6 +971,23 @@ impl Agent {
                     .await;
             if let Err(e) = res {
                 return Err(format!("timed out waiting for exporters to exit: {}", e).into());
+            }
+        }
+
+        // Now that exporters are done, cancel the Kafka offset committer
+        if !kafka_offset_committer_task_set.is_empty() {
+            debug!("Cancelling Kafka offset committer after exporters shutdown");
+            kafka_offset_committer_cancel.cancel();
+
+            let res = wait::wait_for_tasks_with_timeout(
+                &mut kafka_offset_committer_task_set,
+                Duration::from_secs(5),
+            )
+            .await;
+            if let Err(e) = res {
+                warn!("Kafka offset committer did not exit within timeout: {}", e);
+            } else {
+                debug!("Kafka offset committer shut down successfully");
             }
         }
 

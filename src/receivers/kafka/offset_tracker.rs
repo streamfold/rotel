@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::topology::payload::MessageMetadata;
 use std::collections::{BTreeMap, HashMap};
-use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
-use tower::BoxError;
 
 #[rustfmt::skip]
 type PartitionMap = RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>;

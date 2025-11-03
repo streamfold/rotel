@@ -113,6 +113,8 @@ impl ConsumerContext for KafkaConsumerContext {
         match rebalance {
             Rebalance::Assign(_) => {
                 debug!("Pre-rebalance: partition assignment starting");
+                // Nothing to do here, if we were loading offsets from some external storage system
+                // other than kafka, we'd do it here.
             }
             Rebalance::Revoke(tpl) => {
                 debug!("Pre-rebalance: partition revocation starting");
@@ -131,7 +133,19 @@ impl ConsumerContext for KafkaConsumerContext {
                         topic_partition.topic(),
                         topic_partition.partition()
                     )
-                })
+                });
+                let res = consumer.unassign();
+                match res {
+                    Ok(_) => {
+                        debug!("Successfully unassigned partitions after rebalance revoke");
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Error during consumer unassign in pre_rebalance::Revoke {}",
+                            e
+                        );
+                    }
+                }
             }
             Rebalance::Error(err) => {
                 warn!("Rebalance error: {}", err);
@@ -214,7 +228,7 @@ impl KafkaReceiver {
             ));
         }
 
-        // Create assigned partitions tracker
+        // Create an assigned partitions tracker
         let assigned_partitions = Arc::new(std::sync::Mutex::new(AssignedPartitions::new()));
         let topic_trackers = Arc::new(TopicTrackers::new());
 
@@ -375,6 +389,10 @@ impl KafkaReceiver {
         }
     }
 
+    pub fn take_offset_committer(&mut self) -> Option<KafkaOffsetCommitter> {
+        self.offset_committer.take()
+    }
+
     pub(crate) async fn run(
         &mut self,
         receivers_cancel: CancellationToken,
@@ -385,23 +403,6 @@ impl KafkaReceiver {
         // which is set to "earliest" by default in the config
         let subscription = self.consumer.subscription().unwrap();
         debug!("Initial subscriptions: {:?}", subscription);
-
-        // Create a cancellation token for the offset committer
-        let offset_committer_cancel = CancellationToken::new();
-        let offset_committer_cancel_clone = offset_committer_cancel.clone();
-
-        // Extract offset committer to move into the spawned task
-        let mut offset_committer = self
-            .offset_committer
-            .take()
-            .expect("offset_committer should be initialized");
-
-        // Spawn the offset committer as a separate task
-        let offset_committer_handle = tokio::spawn(async move {
-            if let Err(e) = offset_committer.run(offset_committer_cancel_clone).await {
-                warn!("Offset committer error: {:?}", e);
-            }
-        });
 
         loop {
             select! {
@@ -481,7 +482,6 @@ impl KafkaReceiver {
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "metrics").await {
                                                     break;
                                                 }
-                                                // Other errors already logged in send_with_cancellation
                                             }
                                         }
                                         DecodedResult::Logs { resources, metadata } => {
@@ -490,7 +490,6 @@ impl KafkaReceiver {
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "logs").await {
                                                     break;
                                                 }
-                                                // Other errors already logged in send_with_cancellation
                                             }
                                         }
                                     }
@@ -510,14 +509,6 @@ impl KafkaReceiver {
                     break;
                 }
             }
-        }
-
-        // Cancel the offset committer and wait for it to clean up
-        debug!("Cancelling offset committer");
-        offset_committer_cancel.cancel();
-        match offset_committer_handle.await {
-            Ok(_) => debug!("Offset committer shut down successfully"),
-            Err(e) => warn!("Error waiting for offset committer to shut down: {:?}", e),
         }
 
         Ok(())

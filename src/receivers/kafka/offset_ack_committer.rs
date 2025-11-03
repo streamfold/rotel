@@ -5,6 +5,7 @@ use crate::topology::payload;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -52,63 +53,91 @@ impl KafkaOffsetCommitter {
                         &self.topic_trackers,
                         |tpl, mode| self.consumer.commit(tpl, mode));
                 }
-                ack = self.ack_receiver.next() => {
-                    if let Some(ack) = ack {
-                        match ack {
-                            payload::KafkaAcknowledgement::Ack(kafka_ack) => {
-                                debug!("Current tracker pending is {}", self.topic_trackers.pending_count(kafka_ack.topic_id, kafka_ack.partition));
-                                debug!("Received ack for topic {} partition {} offset {}", kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
-                                self.topic_trackers.acknowledge(kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
+                 ack_result = self.ack_receiver.next() => {
+                    match ack_result {
+                        Some(ack) => {
+                            match ack {
+                                payload::KafkaAcknowledgement::Ack(kafka_ack) => {
+                                    debug!("Current tracker pending is {}", self.topic_trackers.pending_count(kafka_ack.topic_id, kafka_ack.partition));
+                                    debug!("Received ack for topic {} partition {} offset {}", kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
+                                    self.topic_trackers.acknowledge(kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
+                                }
+                                payload::KafkaAcknowledgement::Nack(_kafka_nack) => {
+                                    // TODO: Implement nack
+                                    //self.topic_trackers.nack(kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset);
+                                }
                             }
-                            payload::KafkaAcknowledgement::Nack(_kafka_nack) => {
-                                // TODO: Implement nack
-                                //self.topic_trackers.nack(kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset);
-                            }
+                        }
+                        None => {
+                            // Channel closed - exit the main loop
+                            debug!("Ack channel closed, exiting offset committer run loop");
+                            break;
                         }
                     }
                 }
                 _ = cancel_token.cancelled() => {
-                    debug!("KafkaOffsetCommitter cancelled, performing final commit before shutdown");
-
-                    // Perform final commit before shutting down
-                    let assigned = self.assigned_partitions.lock().unwrap();
-                    let mut final_commits = Vec::new();
-
-                    for (topic_name, partitions) in assigned.topics.iter() {
-                        let topic_id = match self.topic_names_to_id.get(topic_name) {
-                            Some(id) => *id,
-                            None => continue,
-                        };
-
-                        for &partition in partitions.iter() {
-                            if let Some(offset) = self.topic_trackers.lowest_pending_offset(topic_id, partition) {
-                                final_commits.push((topic_name.clone(), partition, offset));
-                            } else if let Some(hwm) = self.topic_trackers.high_water_mark(topic_id, partition) {
-                                final_commits.push((topic_name.clone(), partition, hwm + 1));
-                            }
-                        }
-                    }
-
-                    if !final_commits.is_empty() {
-                        let mut topic_partition_list = rdkafka::topic_partition_list::TopicPartitionList::new();
-                        for (topic_name, partition, offset) in final_commits.iter() {
-                            topic_partition_list
-                                .add_partition_offset(topic_name, *partition, rdkafka::topic_partition_list::Offset::Offset(*offset))
-                                .ok();
-                        }
-                        debug!("About to commit TPL of {:?} entries:", topic_partition_list);
-
-                        match self.consumer.commit(&topic_partition_list, rdkafka::consumer::CommitMode::Sync) {
-                            Ok(_) => debug!("Final commit successful for {} partitions", final_commits.len()),
-                            Err(e) => warn!("Failed to perform final commit: {:?}", e),
-                        }
-                    }
-
+                    debug!("KafkaOffsetCommitter cancelled, draining pending acknowledgements");
                     break;
                 }
             }
         }
+        self.drain().await;
         Ok(())
+    }
+
+    pub async fn drain(&mut self) {
+        let drain_start = tokio::time::Instant::now();
+        let drain_deadline = drain_start + Duration::from_secs(2);
+        let mut ack_count = 0;
+
+        // Simple drain loop with deadline check
+        loop {
+            if tokio::time::Instant::now() >= drain_deadline {
+                debug!(
+                    "Drain deadline reached after processing {} acknowledgements",
+                    ack_count
+                );
+                break;
+            }
+            match self.ack_receiver.next().await {
+                Some(ack) => {
+                    match ack {
+                        payload::KafkaAcknowledgement::Ack(kafka_ack) => {
+                            debug!(
+                                "Draining ack for topic {} partition {} offset {}",
+                                kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset
+                            );
+                            self.topic_trackers.acknowledge(
+                                kafka_ack.topic_id,
+                                kafka_ack.partition,
+                                kafka_ack.offset,
+                            );
+                            ack_count += 1;
+                        }
+                        payload::KafkaAcknowledgement::Nack(_) => {
+                            // TODO: Implement nack handling
+                        }
+                    }
+                }
+                None => {
+                    debug!("Ack channel closed during drain after {} acks", ack_count);
+                    break;
+                }
+            }
+        }
+
+        if ack_count > 0 {
+            debug!("Drained {} pending acknowledgements", ack_count);
+        }
+
+        // Perform the final commit using the existing commit_offset function
+        debug!("Performing final commit after draining");
+        commit_offset(
+            self.assigned_partitions.clone(),
+            &self.topic_names_to_id,
+            &self.topic_trackers,
+            |tpl, mode| self.consumer.commit(tpl, mode),
+        );
     }
 }
 
