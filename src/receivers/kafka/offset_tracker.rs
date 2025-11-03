@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::topology::payload::MessageMetadata;
 use std::collections::{BTreeMap, HashMap};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
+use tower::BoxError;
 
+#[rustfmt::skip]
+type PartitionMap = RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>;
 /// BTreeMap-based implementation of OffsetTracker.
 ///
 /// Uses a BTreeMap per partition to maintain sorted offsets,
@@ -11,7 +16,7 @@ use std::sync::{Arc, Mutex, RwLock};
 pub struct BTreeMapOffsetTracker {
     /// Maps partition to a mutex-protected sorted set of pending offsets
     /// Using () as value since we only need the keys
-    partitions: RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>,
+    partitions: PartitionMap,
     high_water_marks: HashMap<i32, i64>,
 }
 
