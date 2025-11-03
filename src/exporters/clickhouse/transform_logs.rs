@@ -2,7 +2,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::LogRecordRow;
-use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_attribute};
+use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_str_attribute};
 use crate::otlp::cvattr;
 use crate::otlp::cvattr::ConvertedAttrValue;
 use crate::topology::payload::{Message, MessageMetadata};
@@ -28,7 +28,7 @@ impl TransformPayload<ResourceLogs> for Transformer {
             for rl in message.payload {
                 let res_attrs = rl.resource.unwrap_or_default().attributes;
                 let res_attrs = cvattr::convert_into(res_attrs);
-                let service_name = find_attribute(SERVICE_NAME, &res_attrs);
+                let service_name = find_str_attribute(SERVICE_NAME, &res_attrs);
                 let res_attrs_field = self.transform_attrs(&res_attrs);
 
                 let res_schema_url = rl.schema_url;
