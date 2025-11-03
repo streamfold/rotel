@@ -1,7 +1,7 @@
 use crate::bounded_channel::bounded;
 use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig};
 use crate::receivers::kafka::error::{KafkaReceiverError, Result};
-use crate::receivers::kafka::offset_ack_committer::{commit_offset, KafkaOffsetCommitter};
+use crate::receivers::kafka::offset_ack_committer::{KafkaOffsetCommitter, commit_offset};
 use crate::receivers::kafka::offset_tracker::TopicTrackers;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
@@ -15,10 +15,10 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use rdkafka::Message;
 use rdkafka::client::ClientContext;
 use rdkafka::config::FromClientConfigAndContext;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
-use rdkafka::Message;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::future::Future;
@@ -539,10 +539,10 @@ mod tests {
     use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
     use prost::Message;
+    use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::producer::{FutureProducer, FutureRecord};
     use rdkafka::util::Timeout;
-    use rdkafka::ClientConfig;
     use std::time::Duration;
 
     fn create_test_topic_name(prefix: &str) -> String {
