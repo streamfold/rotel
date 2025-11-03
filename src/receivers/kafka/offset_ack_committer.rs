@@ -13,7 +13,7 @@ pub struct KafkaOffsetCommitter {
     tick_interval: tokio::time::Interval,
     ack_receiver: BoundedReceiver<payload::KafkaAcknowledgement>,
     topic_trackers: Arc<TopicTrackers>,
-    topic_name_to_id: HashMap<String, u8>,
+    topic_names_to_id: HashMap<String, u8>,
     assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
     consumer: Arc<StreamConsumer<KafkaConsumerContext>>,
 }
@@ -23,23 +23,17 @@ impl KafkaOffsetCommitter {
         tick_every: std::time::Duration,
         ack_receiver: BoundedReceiver<payload::KafkaAcknowledgement>,
         topic_trackers: Arc<TopicTrackers>,
-        topic_names: HashMap<u8, String>,
+        topic_names_to_id: HashMap<String, u8>,
         assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
         consumer: Arc<StreamConsumer<KafkaConsumerContext>>,
     ) -> Self {
         let tick_interval = tokio::time::interval(tick_every);
 
-        // Build reverse map: topic name -> topic ID
-        let topic_name_to_id: HashMap<String, u8> = topic_names
-            .iter()
-            .map(|(id, name)| (name.clone(), *id))
-            .collect();
-
         KafkaOffsetCommitter {
             tick_interval,
             ack_receiver,
             topic_trackers,
-            topic_name_to_id,
+            topic_names_to_id,
             assigned_partitions,
             consumer,
         }
@@ -52,14 +46,9 @@ impl KafkaOffsetCommitter {
         loop {
             select! {
                 biased;
-                // Can't collapse these two into one case because select! is matching on futures completing, not boolean conditions.
-                // We could do something like this:
-                // _ = self.tick_interval.tick() => self.handle_commit().await,
-                // _ = self.rebalance_rx.next() => self.handle_commit().await,
-                // But prefer to avoid another await and just be explicit about the two cases
                 _ = self.tick_interval.tick() => {
                     commit_offset(self.assigned_partitions.clone(),
-                        &self.topic_name_to_id,
+                        &self.topic_names_to_id,
                         &self.topic_trackers,
                         |tpl, mode| self.consumer.commit(tpl, mode));
                 }
@@ -82,11 +71,11 @@ impl KafkaOffsetCommitter {
                     debug!("KafkaOffsetCommitter cancelled, performing final commit before shutdown");
 
                     // Perform final commit before shutting down
-                    let assigned = self.assigned_partitions.lock().unwrap().clone();
+                    let assigned = self.assigned_partitions.lock().unwrap();
                     let mut final_commits = Vec::new();
 
                     for (topic_name, partitions) in assigned.topics.iter() {
-                        let topic_id = match self.topic_name_to_id.get(topic_name) {
+                        let topic_id = match self.topic_names_to_id.get(topic_name) {
                             Some(id) => *id,
                             None => continue,
                         };
@@ -174,7 +163,6 @@ pub fn commit_offset<F>(
 
     if !commits.is_empty() {
         debug!("Built commit list with {} entries", commits.len());
-
         // Build TopicPartitionList for commit
         let mut topic_partition_list = rdkafka::topic_partition_list::TopicPartitionList::new();
         for (topic_name, partition, offset) in commits.iter() {

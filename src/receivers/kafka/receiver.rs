@@ -116,7 +116,6 @@ impl ConsumerContext for KafkaConsumerContext {
             }
             Rebalance::Revoke(tpl) => {
                 debug!("Pre-rebalance: partition revocation starting");
-                //let mut assigned = self.assigned_partitions.lock().unwrap();
                 commit_offset(
                     self.assigned_partitions.clone(),
                     &self.topic_names_to_id,
@@ -274,7 +273,7 @@ impl KafkaReceiver {
             tick_interval,
             ack_receiver,
             topic_trackers.clone(),
-            topic_names,
+            topic_name_to_id,
             assigned_partitions.clone(),
             consumer.clone(),
         );
