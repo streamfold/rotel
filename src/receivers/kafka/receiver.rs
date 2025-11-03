@@ -1,5 +1,8 @@
+use crate::bounded_channel::bounded;
 use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig};
 use crate::receivers::kafka::error::{KafkaReceiverError, Result};
+use crate::receivers::kafka::offset_ack_committer::{commit_offset, KafkaOffsetCommitter};
+use crate::receivers::kafka::offset_tracker::TopicTrackers;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use crate::topology::payload::{KafkaMetadata, MessageMetadata};
@@ -12,14 +15,15 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
-use rdkafka::Message;
 use rdkafka::client::ClientContext;
 use rdkafka::config::FromClientConfigAndContext;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
+use rdkafka::Message;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use tokio::select;
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -83,13 +87,21 @@ impl Default for AssignedPartitions {
 
 /// Consumer context that tracks partition assignments
 pub struct KafkaConsumerContext {
-    pub assigned_partitions: std::sync::Arc<std::sync::Mutex<AssignedPartitions>>,
+    pub assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
+    pub topic_trackers: Arc<TopicTrackers>,
+    pub topic_names_to_id: HashMap<String, u8>,
 }
 
 impl KafkaConsumerContext {
-    pub fn new(assigned_partitions: std::sync::Arc<std::sync::Mutex<AssignedPartitions>>) -> Self {
+    pub fn new(
+        assigned_partitions: std::sync::Arc<std::sync::Mutex<AssignedPartitions>>,
+        topic_trackers: Arc<TopicTrackers>,
+        topic_names_to_id: HashMap<String, u8>,
+    ) -> Self {
         Self {
             assigned_partitions,
+            topic_trackers,
+            topic_names_to_id,
         }
     }
 }
@@ -97,16 +109,30 @@ impl KafkaConsumerContext {
 impl ClientContext for KafkaConsumerContext {}
 
 impl ConsumerContext for KafkaConsumerContext {
-    fn pre_rebalance(&self, _consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+    fn pre_rebalance(&self, consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
         match rebalance {
             Rebalance::Assign(_) => {
                 debug!("Pre-rebalance: partition assignment starting");
             }
-            Rebalance::Revoke(_) => {
+            Rebalance::Revoke(tpl) => {
                 debug!("Pre-rebalance: partition revocation starting");
-                // Clear assigned partitions on revoke
-                let mut assigned = self.assigned_partitions.lock().unwrap();
-                assigned.clear();
+                //let mut assigned = self.assigned_partitions.lock().unwrap();
+                commit_offset(
+                    self.assigned_partitions.clone(),
+                    &self.topic_names_to_id,
+                    &self.topic_trackers,
+                    |tpl, mode| consumer.commit(tpl, mode),
+                );
+                let mut partition_guard = self.assigned_partitions.lock().unwrap();
+                tpl.elements().iter().for_each(|topic_partition| {
+                    partition_guard
+                        .remove_partition(topic_partition.topic(), topic_partition.partition());
+                    debug!(
+                        "Revoked: topic {} partition {}",
+                        topic_partition.topic(),
+                        topic_partition.partition()
+                    )
+                })
             }
             Rebalance::Error(err) => {
                 warn!("Rebalance error: {}", err);
@@ -158,174 +184,6 @@ enum DecodedResult {
     },
 }
 
-pub struct KafkaOffsetCommitter {
-    tick_interval: tokio::time::Interval,
-    ack_receiver:
-        crate::bounded_channel::BoundedReceiver<crate::topology::payload::KafkaAcknowledgement>,
-    topic_trackers: std::sync::Arc<crate::receivers::kafka::offset_tracker::TopicTrackers>,
-    topic_name_to_id: HashMap<String, u8>,
-    assigned_partitions: std::sync::Arc<std::sync::Mutex<AssignedPartitions>>,
-    consumer: std::sync::Arc<StreamConsumer<KafkaConsumerContext>>,
-}
-
-impl KafkaOffsetCommitter {
-    pub fn new(
-        tick_every: std::time::Duration,
-        ack_receiver: crate::bounded_channel::BoundedReceiver<payload::KafkaAcknowledgement>,
-        topic_trackers: std::sync::Arc<crate::receivers::kafka::offset_tracker::TopicTrackers>,
-        topic_names: HashMap<u8, String>,
-        assigned_partitions: std::sync::Arc<std::sync::Mutex<AssignedPartitions>>,
-        consumer: std::sync::Arc<StreamConsumer<KafkaConsumerContext>>,
-    ) -> Self {
-        let tick_interval = tokio::time::interval(tick_every);
-
-        // Build reverse map: topic name -> topic ID
-        let topic_name_to_id: std::collections::HashMap<String, u8> = topic_names
-            .iter()
-            .map(|(id, name)| (name.clone(), *id))
-            .collect();
-
-        KafkaOffsetCommitter {
-            tick_interval,
-            ack_receiver,
-            topic_trackers,
-            topic_name_to_id,
-            assigned_partitions,
-            consumer,
-        }
-    }
-
-    pub async fn run(&mut self, cancel_token: CancellationToken) -> Result<()> {
-        loop {
-            select! {
-                biased;
-
-                _ = self.tick_interval.tick() => {
-                    // Lock and clone assigned partitions
-                    let assigned = self.assigned_partitions.lock().unwrap().clone();
-
-                    // Build list of topic/partition/offset to commit
-                    let mut commits = Vec::new();
-                    for (topic_name, partitions) in assigned.topics.iter() {
-                        let topic_id = match self.topic_name_to_id.get(topic_name) {
-                            Some(id) => *id,
-                            None => {
-                                debug!("Unknown topic name in assigned partitions: {}", topic_name);
-                                continue;
-                            }
-                        };
-
-                        // For each assigned partition, determine the offset to commit
-                        for &partition in partitions.iter() {
-                            // Try to get lowest pending offset first
-                            if let Some(offset) = self.topic_trackers.lowest_pending_offset(topic_id, partition) {
-                                debug!(
-                                    "Topic {} (id {}) partition {} has pending offset: {}",
-                                    topic_name, topic_id, partition, offset
-                                );
-                                commits.push((topic_name, partition, offset));
-            } else if let Some(hwm) = self.topic_trackers.high_water_mark(topic_id, partition) {
-                                debug!(
-                                    "Topic {} (id {}) partition {} has no pending offsets, using high water mark: {}",
-                                    topic_name, topic_id, partition, hwm
-                                );
-                                commits.push((topic_name, partition, hwm + 1));
-                            } else {
-                                debug!(
-                                    "Topic {} (id {}) partition {} has no pending offsets and no high water mark",
-                                    topic_name, topic_id, partition
-                                );
-                            }
-                        }
-                    }
-
-                    if !commits.is_empty() {
-                        debug!("Built commit list with {} entries", commits.len());
-
-                        // Build TopicPartitionList for commit
-                        let mut topic_partition_list = rdkafka::topic_partition_list::TopicPartitionList::new();
-                        for (topic_name, partition, offset) in commits.iter() {
-                            debug!("Committing: topic {} partition {} offset {}", topic_name, partition, offset);
-                            topic_partition_list
-                                .add_partition_offset(topic_name, *partition, rdkafka::topic_partition_list::Offset::Offset(*offset))
-                                .map_err(|e| {
-                                    warn!("Failed to add partition to commit list: {:?}", e);
-                                    e
-                                }).ok();
-                        }
-
-                        // Commit the offsets to Kafka
-                        match self.consumer.commit(&topic_partition_list, rdkafka::consumer::CommitMode::Sync) {
-                            Ok(_) => {
-                                debug!("Successfully committed offsets for {} partitions", commits.len());
-                            }
-                            Err(e) => {
-                                warn!("Failed to commit offsets to Kafka: {:?}", e);
-                            }
-                        }
-                    }
-
-                }
-                ack = self.ack_receiver.next() => {
-                    if let Some(ack) = ack {
-                        match ack {
-                            payload::KafkaAcknowledgement::Ack(kafka_ack) => {
-                                debug!("Current tracker pending is {}", self.topic_trackers.pending_count(kafka_ack.topic_id, kafka_ack.partition));
-                                debug!("Received ack for topic {} partition {} offset {}", kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
-                                self.topic_trackers.acknowledge(kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
-                            }
-                            payload::KafkaAcknowledgement::Nack(_kafka_nack) => {
-                                // TODO: Implement nack
-                                //self.topic_trackers.nack(kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset);
-                            }
-                        }
-                    }
-                }
-                _ = cancel_token.cancelled() => {
-                    debug!("KafkaOffsetCommitter cancelled, performing final commit before shutdown");
-
-                    // Perform final commit before shutting down
-                    let assigned = self.assigned_partitions.lock().unwrap().clone();
-                    let mut final_commits = Vec::new();
-
-                    for (topic_name, partitions) in assigned.topics.iter() {
-                        let topic_id = match self.topic_name_to_id.get(topic_name) {
-                            Some(id) => *id,
-                            None => continue,
-                        };
-
-                        for &partition in partitions.iter() {
-                            if let Some(offset) = self.topic_trackers.lowest_pending_offset(topic_id, partition) {
-                                final_commits.push((topic_name.clone(), partition, offset));
-                            } else if let Some(hwm) = self.topic_trackers.high_water_mark(topic_id, partition) {
-                                final_commits.push((topic_name.clone(), partition, hwm + 1));
-                            }
-                        }
-                    }
-
-                    if !final_commits.is_empty() {
-                        let mut topic_partition_list = rdkafka::topic_partition_list::TopicPartitionList::new();
-                        for (topic_name, partition, offset) in final_commits.iter() {
-                            topic_partition_list
-                                .add_partition_offset(topic_name, *partition, rdkafka::topic_partition_list::Offset::Offset(*offset))
-                                .ok();
-                        }
-                        debug!("About to commit TPL of {:?} entries:", topic_partition_list);
-
-                        match self.consumer.commit(&topic_partition_list, rdkafka::consumer::CommitMode::Sync) {
-                            Ok(_) => debug!("Final commit successful for {} partitions", final_commits.len()),
-                            Err(e) => warn!("Failed to perform final commit: {:?}", e),
-                        }
-                    }
-
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 pub struct KafkaReceiver {
     pub consumer: std::sync::Arc<StreamConsumer<KafkaConsumerContext>>,
     pub traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
@@ -358,11 +216,42 @@ impl KafkaReceiver {
         }
 
         // Create assigned partitions tracker
-        let assigned_partitions =
-            std::sync::Arc::new(std::sync::Mutex::new(AssignedPartitions::new()));
+        let assigned_partitions = Arc::new(std::sync::Mutex::new(AssignedPartitions::new()));
+        let topic_trackers = Arc::new(TopicTrackers::new());
+
+        let traces_topic = config.traces_topic.clone();
+        let traces_topic = traces_topic.unwrap_or("".into());
+
+        let metrics_topic = config.metrics_topic.clone();
+        let metrics_topic = metrics_topic.unwrap_or("".into());
+
+        let logs_topic = config.logs_topic.clone();
+        let logs_topic = logs_topic.unwrap_or("".into());
+
+        // Build topic names map for the offset committer
+        let mut topic_names = HashMap::new();
+        if !traces_topic.is_empty() {
+            topic_names.insert(TRACES_TOPIC_ID, traces_topic.clone());
+        }
+        if !metrics_topic.is_empty() {
+            topic_names.insert(METRICS_TOPIC_ID, metrics_topic.clone());
+        }
+        if !logs_topic.is_empty() {
+            topic_names.insert(LOGS_TOPIC_ID, logs_topic.clone());
+        }
+
+        // Build reverse map: topic name -> topic ID
+        let topic_name_to_id: HashMap<String, u8> = topic_names
+            .iter()
+            .map(|(id, name)| (name.clone(), *id))
+            .collect();
 
         // Create consumer context
-        let context = KafkaConsumerContext::new(assigned_partitions.clone());
+        let context = KafkaConsumerContext::new(
+            assigned_partitions.clone(),
+            topic_trackers.clone(),
+            topic_name_to_id.clone(),
+        );
 
         // Build the Kafka client configuration
         let cc = config.build_client_config();
@@ -378,31 +267,8 @@ impl KafkaReceiver {
             KafkaReceiverError::ConfigurationError(format!("Failed to subscribe to topics: {}", e))
         })?;
 
-        let (ack_sender, ack_receiver) = crate::bounded_channel::bounded(1000);
-        let topic_trackers =
-            std::sync::Arc::new(crate::receivers::kafka::offset_tracker::TopicTrackers::new());
+        let (ack_sender, ack_receiver) = bounded(1000);
         let tick_interval = std::time::Duration::from_secs(config.manual_commit_interval_secs);
-
-        let traces_topic = config.traces_topic.clone();
-        let traces_topic = traces_topic.unwrap_or("".into());
-
-        let metrics_topic = config.metrics_topic.clone();
-        let metrics_topic = metrics_topic.unwrap_or("".into());
-
-        let logs_topic = config.logs_topic.clone();
-        let logs_topic = logs_topic.unwrap_or("".into());
-
-        // Build topic names map for the offset committer
-        let mut topic_names = std::collections::HashMap::new();
-        if !traces_topic.is_empty() {
-            topic_names.insert(TRACES_TOPIC_ID, traces_topic.clone());
-        }
-        if !metrics_topic.is_empty() {
-            topic_names.insert(METRICS_TOPIC_ID, metrics_topic.clone());
-        }
-        if !logs_topic.is_empty() {
-            topic_names.insert(LOGS_TOPIC_ID, logs_topic.clone());
-        }
 
         let offset_committer = KafkaOffsetCommitter::new(
             tick_interval,
@@ -673,10 +539,10 @@ mod tests {
     use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
     use prost::Message;
-    use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::producer::{FutureProducer, FutureRecord};
     use rdkafka::util::Timeout;
+    use rdkafka::ClientConfig;
     use std::time::Duration;
 
     fn create_test_topic_name(prefix: &str) -> String {
@@ -771,46 +637,46 @@ mod tests {
 
     fn create_test_resource_metrics() -> Vec<ResourceMetrics> {
         vec![ResourceMetrics {
-                resource: Some(Resource {
-                    attributes: vec![KeyValue {
-                        key: "service.name".to_string(),
-                        value: Some(AnyValue {
-                            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
-                                "test-service".to_string(),
-                            )),
-                        }),
-                    }],
-                    dropped_attributes_count: 0,
-                    entity_refs: Vec::new(),
-                }),
-                scope_metrics: vec![ScopeMetrics {
-                    scope: None,
-                    metrics: vec![Metric {
-                        name: "test.metric".to_string(),
-                        description: "A test metric".to_string(),
-                        unit: "1".to_string(),
-                        metadata: vec![],
-                        data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
-                            Gauge {
-                                data_points: vec![NumberDataPoint {
-                                    attributes: vec![],
-                                    start_time_unix_nano: 1000000000,
-                                    time_unix_nano: 2000000000,
-                                    exemplars: vec![],
-                                    flags: 0,
-                                    value: Some(
-                                        opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(
-                                            42,
-                                        ),
-                                    ),
-                                }],
-                            },
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                            "test-service".to_string(),
                         )),
-                    }],
-                    schema_url: "".to_string(),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            }),
+            scope_metrics: vec![ScopeMetrics {
+                scope: None,
+                metrics: vec![Metric {
+                    name: "test.metric".to_string(),
+                    description: "A test metric".to_string(),
+                    unit: "1".to_string(),
+                    metadata: vec![],
+                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
+                        Gauge {
+                            data_points: vec![NumberDataPoint {
+                                attributes: vec![],
+                                start_time_unix_nano: 1000000000,
+                                time_unix_nano: 2000000000,
+                                exemplars: vec![],
+                                flags: 0,
+                                value: Some(
+                                    opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(
+                                        42,
+                                    ),
+                                ),
+                            }],
+                        },
+                    )),
                 }],
                 schema_url: "".to_string(),
-            }]
+            }],
+            schema_url: "".to_string(),
+        }]
     }
 
     fn create_test_resource_logs() -> Vec<ResourceLogs> {
