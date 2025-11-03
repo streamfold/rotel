@@ -2,7 +2,7 @@ use crate::exporters::clickhouse::payload::{ClickhousePayload, ClickhousePayload
 use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
-use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_attribute};
+use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_str_attribute};
 use crate::otlp::cvattr;
 use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
@@ -32,7 +32,7 @@ impl TransformPayload<ResourceSpans> for Transformer {
             for rs in message.payload {
                 let res_attrs = rs.resource.unwrap_or_default().attributes;
                 let res_attrs = cvattr::convert_into(res_attrs);
-                let service_name = find_attribute(SERVICE_NAME, &res_attrs);
+                let service_name = find_str_attribute(SERVICE_NAME, &res_attrs);
                 let res_attrs_field = self.transform_attrs(&res_attrs);
 
                 for ss in rs.scope_spans {

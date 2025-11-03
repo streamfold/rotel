@@ -1,7 +1,7 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::rowbinary::json::JsonType;
 use crate::exporters::clickhouse::schema::MapOrJson;
-use crate::otlp::cvattr::ConvertedAttrKeyValue;
+use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrValue};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -101,12 +101,18 @@ impl Transformer {
     }
 }
 
-pub(crate) fn find_attribute(attr: &str, attributes: &[ConvertedAttrKeyValue]) -> String {
+pub(crate) fn find_str_attribute<'a>(
+    attr: &str,
+    attributes: &'a [ConvertedAttrKeyValue],
+) -> Cow<'a, str> {
     attributes
         .iter()
         .find(|kv| kv.0 == attr)
-        .map(|kv| kv.1.to_string())
-        .unwrap_or(String::new())
+        .map(|kv| match &kv.1 {
+            ConvertedAttrValue::String(s) => Cow::Borrowed(s.as_str()),
+            _ => Cow::Borrowed(""),
+        })
+        .unwrap_or(Cow::Borrowed(""))
 }
 
 pub(crate) fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {

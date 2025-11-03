@@ -5,7 +5,7 @@ use crate::exporters::clickhouse::schema::{
     MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow, MetricsMeta,
     MetricsSumRow, MetricsSummaryRow,
 };
-use crate::exporters::clickhouse::transformer::{Transformer, find_attribute};
+use crate::exporters::clickhouse::transformer::{Transformer, find_str_attribute};
 use crate::otlp::cvattr;
 use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::metrics::v1::exemplar::Value;
@@ -34,7 +34,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
             for rm in message.payload {
                 let res_attrs = rm.resource.unwrap_or_default().attributes;
                 let res_attrs = cvattr::convert_into(res_attrs);
-                let service_name = find_attribute(SERVICE_NAME, &res_attrs);
+                let service_name = find_str_attribute(SERVICE_NAME, &res_attrs);
                 let res_attrs_field = self.transform_attrs(&res_attrs);
 
                 for sm in rm.scope_metrics {
