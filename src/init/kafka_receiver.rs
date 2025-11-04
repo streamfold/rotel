@@ -97,11 +97,11 @@ pub struct KafkaReceiverArgs {
 
     /// Enable auto commit of offsets
     #[arg(
-        long("kafka-receiver-enable-auto-commit"),
-        env = "ROTEL_KAFKA_RECEIVER_ENABLE_AUTO_COMMIT",
+        long("kafka-receiver-enable-offset-tracking"),
+        env = "ROTEL_KAFKA_RECEIVER_ENABLE_OFFSET_TRACKING",
         default_value = "false"
     )]
-    pub enable_auto_commit: bool,
+    pub enable_offset_tracking: bool,
 
     /// Auto commit interval in milliseconds
     #[arg(
@@ -300,7 +300,7 @@ impl KafkaReceiverArgs {
             .with_logs(self.logs)
             .with_deserialization_format(self.format)
             .with_client_id(self.client_id.clone())
-            .with_auto_commit(self.enable_auto_commit, self.auto_commit_interval_ms)
+            .with_auto_commit(!self.enable_offset_tracking, self.auto_commit_interval_ms)
             .with_auto_offset_reset(self.auto_offset_reset)
             .with_session_timeout_ms(self.session_timeout_ms)
             .with_heartbeat_interval_ms(self.heartbeat_interval_ms)

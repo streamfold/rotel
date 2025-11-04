@@ -90,15 +90,18 @@ pub struct KafkaConsumerContext {
     pub assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
     pub topic_trackers: Arc<TopicTrackers>,
     pub topic_names_to_id: HashMap<String, u8>,
+    pub auto_commit: bool,
 }
 
 impl KafkaConsumerContext {
     pub fn new(
-        assigned_partitions: std::sync::Arc<std::sync::Mutex<AssignedPartitions>>,
+        auto_commit: bool,
+        assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
         topic_trackers: Arc<TopicTrackers>,
         topic_names_to_id: HashMap<String, u8>,
     ) -> Self {
         Self {
+            auto_commit,
             assigned_partitions,
             topic_trackers,
             topic_names_to_id,
@@ -110,6 +113,9 @@ impl ClientContext for KafkaConsumerContext {}
 
 impl ConsumerContext for KafkaConsumerContext {
     fn pre_rebalance(&self, consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+        if self.auto_commit {
+            return;
+        }
         match rebalance {
             Rebalance::Assign(_) => {
                 debug!("Pre-rebalance: partition assignment starting");
@@ -154,6 +160,9 @@ impl ConsumerContext for KafkaConsumerContext {
     }
 
     fn post_rebalance(&self, _consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+        if self.auto_commit {
+            return;
+        }
         match rebalance {
             Rebalance::Assign(assignment) => {
                 debug!("Post-rebalance: partitions assigned");
@@ -198,7 +207,7 @@ enum DecodedResult {
 }
 
 pub struct KafkaReceiver {
-    pub consumer: std::sync::Arc<StreamConsumer<KafkaConsumerContext>>,
+    pub consumer: Arc<StreamConsumer<KafkaConsumerContext>>,
     pub traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
     pub metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
     pub logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
@@ -206,8 +215,9 @@ pub struct KafkaReceiver {
     pub metrics_topic: String,
     pub logs_topic: String,
     pub format: DeserializationFormat,
-    pub topic_trackers: std::sync::Arc<crate::receivers::kafka::offset_tracker::TopicTrackers>,
+    pub topic_trackers: Arc<TopicTrackers>,
     pub ack_sender: crate::bounded_channel::BoundedSender<payload::KafkaAcknowledgement>,
+    auto_commit: bool,
     offset_committer: Option<KafkaOffsetCommitter>,
     decoding_futures: FuturesOrdered<DecodingFuture>,
 }
@@ -259,20 +269,23 @@ impl KafkaReceiver {
             .map(|(id, name)| (name.clone(), *id))
             .collect();
 
+        let is_auto_commit = config.enable_auto_commit;
+        let cc = config.build_client_config();
+
         // Create consumer context
         let context = KafkaConsumerContext::new(
+            is_auto_commit,
             assigned_partitions.clone(),
             topic_trackers.clone(),
             topic_name_to_id.clone(),
         );
 
         // Build the Kafka client configuration
-        let cc = config.build_client_config();
-        let consumer: StreamConsumer<KafkaConsumerContext, _> =
-            StreamConsumer::from_config_and_context(&cc, context).map_err(|e| {
-                KafkaReceiverError::ConfigurationError(format!("Failed to create receiver: {}", e))
-            })?;
-        let consumer = std::sync::Arc::new(consumer);
+        let consumer = StreamConsumer::from_config_and_context(&cc, context).map_err(|e| {
+            KafkaReceiverError::ConfigurationError(format!("Failed to create receiver: {}", e))
+        })?;
+
+        let consumer = Arc::new(consumer);
 
         // Subscribe to the configured topics
         let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
@@ -283,14 +296,17 @@ impl KafkaReceiver {
         let (ack_sender, ack_receiver) = bounded(1000);
         let tick_interval = std::time::Duration::from_secs(config.manual_commit_interval_secs);
 
-        let offset_committer = KafkaOffsetCommitter::new(
-            tick_interval,
-            ack_receiver,
-            topic_trackers.clone(),
-            topic_name_to_id,
-            assigned_partitions.clone(),
-            consumer.clone(),
-        );
+        let offset_committer = match is_auto_commit {
+            true => None,
+            false => Some(KafkaOffsetCommitter::new(
+                tick_interval,
+                ack_receiver,
+                topic_trackers.clone(),
+                topic_name_to_id,
+                assigned_partitions.clone(),
+                consumer.clone(),
+            )),
+        };
 
         Ok(Self {
             consumer,
@@ -304,7 +320,8 @@ impl KafkaReceiver {
             decoding_futures: FuturesOrdered::new(),
             topic_trackers,
             ack_sender,
-            offset_committer: Some(offset_committer),
+            auto_commit: is_auto_commit,
+            offset_committer,
         })
     }
 
@@ -470,7 +487,11 @@ impl KafkaReceiver {
                                     match decoded {
                                         DecodedResult::Traces { resources, metadata } => {
                                             if let Some(ref output) = self.traces_output {
-                                                let message = payload::Message::new(Some(MessageMetadata::kafka(metadata)), resources);
+                                                let md = match self.auto_commit {
+                                                    true => None,
+                                                    false => Some(MessageMetadata::kafka(metadata)),
+                                                };
+                                                let message = payload::Message::new(md, resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "traces").await {
                                                     break;
                                                 }
@@ -478,7 +499,11 @@ impl KafkaReceiver {
                                         }
                                         DecodedResult::Metrics { resources, metadata } => {
                                             if let Some(ref output) = self.metrics_output {
-                                                let message = payload::Message::new(Some(MessageMetadata::kafka(metadata)), resources);
+                                                  let md = match self.auto_commit {
+                                                    true => None,
+                                                    false => Some(MessageMetadata::kafka(metadata)),
+                                                };
+                                                let message = payload::Message::new(md, resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "metrics").await {
                                                     break;
                                                 }
@@ -486,7 +511,11 @@ impl KafkaReceiver {
                                         }
                                         DecodedResult::Logs { resources, metadata } => {
                                             if let Some(ref output) = self.logs_output {
-                                                let message = payload::Message::new(Some(MessageMetadata::kafka(metadata)), resources);
+                                                  let md = match self.auto_commit {
+                                                    true => None,
+                                                    false => Some(MessageMetadata::kafka(metadata)),
+                                                };
+                                                let message = payload::Message::new(md, resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "logs").await {
                                                     break;
                                                 }
