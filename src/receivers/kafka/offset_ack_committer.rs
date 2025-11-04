@@ -21,7 +21,7 @@ pub struct KafkaOffsetCommitter {
 
 impl KafkaOffsetCommitter {
     pub fn new(
-        tick_every: std::time::Duration,
+        tick_every: Duration,
         ack_receiver: BoundedReceiver<payload::KafkaAcknowledgement>,
         topic_trackers: Arc<TopicTrackers>,
         topic_names_to_id: HashMap<String, u8>,
