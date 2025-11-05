@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
 
+#[rustfmt::skip]
+type PartitionMap = RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>;
 /// BTreeMap-based implementation of OffsetTracker.
 ///
 /// Uses a BTreeMap per partition to maintain sorted offsets,
@@ -11,7 +13,7 @@ use std::sync::{Arc, Mutex, RwLock};
 pub struct BTreeMapOffsetTracker {
     /// Maps partition to a mutex-protected sorted set of pending offsets
     /// Using () as value since we only need the keys
-    partitions: RwLock<HashMap<i32, Arc<Mutex<BTreeMap<i64, ()>>>>>,
+    partitions: PartitionMap,
     high_water_marks: HashMap<i32, i64>,
 }
 
@@ -98,9 +100,8 @@ impl BTreeMapOffsetTracker {
         }
     }
 
-    // Currently only used in test but will be used by the offset committer
-    #[allow(dead_code)]
-    fn get_high_water_mark(&self, partition: i32) -> Option<i64> {
+    // Returns the highest acknowledged offset for a partition (high water mark)
+    pub fn get_high_water_mark(&self, partition: i32) -> Option<i64> {
         self.high_water_marks.get(&partition).copied()
     }
 
@@ -257,6 +258,14 @@ impl TopicTrackers {
         trackers
             .get(&topic_id)
             .and_then(|tracker| tracker.lowest_pending_offset(partition))
+    }
+
+    /// Get the high water mark for a specific topic and partition
+    pub fn high_water_mark(&self, topic_id: u8, partition: i32) -> Option<i64> {
+        let trackers = self.trackers.read().unwrap();
+        trackers
+            .get(&topic_id)
+            .and_then(|tracker| tracker.get_high_water_mark(partition))
     }
 }
 

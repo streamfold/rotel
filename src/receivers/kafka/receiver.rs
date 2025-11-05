@@ -1,8 +1,11 @@
+use crate::bounded_channel::bounded;
 use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig};
 use crate::receivers::kafka::error::{KafkaReceiverError, Result};
+use crate::receivers::kafka::offset_ack_committer::{KafkaOffsetCommitter, commit_offset};
+use crate::receivers::kafka::offset_tracker::TopicTrackers;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
-use crate::topology::payload::KafkaMetadata;
+use crate::topology::payload::{KafkaMetadata, MessageMetadata};
 use bytes::Bytes;
 use futures::stream::StreamExt;
 use futures_util::stream::FuturesOrdered;
@@ -13,10 +16,14 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rdkafka::Message;
-use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::client::ClientContext;
+use rdkafka::config::FromClientConfigAndContext;
+use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use tokio::select;
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -32,6 +39,156 @@ const METRICS_TOPIC_ID: u8 = 1;
 const LOGS_TOPIC_ID: u8 = 2;
 
 const MAX_CONCURRENT_DECODERS: usize = 20;
+
+/// Structure to hold assigned topic/partition information
+#[derive(Clone, Debug)]
+pub struct AssignedPartitions {
+    /// Maps topic name to a set of assigned partition IDs
+    pub topics: HashMap<String, HashSet<i32>>,
+}
+
+impl AssignedPartitions {
+    pub fn new() -> Self {
+        Self {
+            topics: HashMap::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.topics.clear();
+    }
+
+    pub fn add_partition(&mut self, topic: String, partition: i32) {
+        self.topics
+            .entry(topic)
+            .or_insert_with(HashSet::new)
+            .insert(partition);
+    }
+
+    pub fn remove_partition(&mut self, topic: &str, partition: i32) {
+        if let Some(partitions) = self.topics.get_mut(topic) {
+            partitions.remove(&partition);
+            if partitions.is_empty() {
+                self.topics.remove(topic);
+            }
+        }
+    }
+
+    pub fn get_partitions_for_topic(&self, topic: &str) -> Option<&HashSet<i32>> {
+        self.topics.get(topic)
+    }
+}
+
+impl Default for AssignedPartitions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Consumer context that tracks partition assignments
+pub struct KafkaConsumerContext {
+    pub assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
+    pub topic_trackers: Arc<TopicTrackers>,
+    pub topic_names_to_id: HashMap<String, u8>,
+    pub auto_commit: bool,
+}
+
+impl KafkaConsumerContext {
+    pub fn new(
+        auto_commit: bool,
+        assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
+        topic_trackers: Arc<TopicTrackers>,
+        topic_names_to_id: HashMap<String, u8>,
+    ) -> Self {
+        Self {
+            auto_commit,
+            assigned_partitions,
+            topic_trackers,
+            topic_names_to_id,
+        }
+    }
+}
+
+impl ClientContext for KafkaConsumerContext {}
+
+impl ConsumerContext for KafkaConsumerContext {
+    fn pre_rebalance(&self, consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+        if self.auto_commit {
+            return;
+        }
+        match rebalance {
+            Rebalance::Assign(_) => {
+                debug!("Pre-rebalance: partition assignment starting");
+                // Nothing to do here, if we were loading offsets from some external storage system
+                // other than kafka, we'd do it here.
+            }
+            Rebalance::Revoke(tpl) => {
+                debug!("Pre-rebalance: partition revocation starting");
+                commit_offset(
+                    self.assigned_partitions.clone(),
+                    &self.topic_names_to_id,
+                    &self.topic_trackers,
+                    |tpl, mode| consumer.commit(tpl, mode),
+                );
+                let mut partition_guard = self.assigned_partitions.lock().unwrap();
+                tpl.elements().iter().for_each(|topic_partition| {
+                    partition_guard
+                        .remove_partition(topic_partition.topic(), topic_partition.partition());
+                    debug!(
+                        "Revoked: topic {} partition {}",
+                        topic_partition.topic(),
+                        topic_partition.partition()
+                    )
+                });
+                let res = consumer.unassign();
+                match res {
+                    Ok(_) => {
+                        debug!("Successfully unassigned partitions after rebalance revoke");
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Error during consumer unassign in pre_rebalance::Revoke {}",
+                            e
+                        );
+                    }
+                }
+            }
+            Rebalance::Error(err) => {
+                warn!("Rebalance error: {}", err);
+            }
+        }
+    }
+
+    fn post_rebalance(&self, _consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+        if self.auto_commit {
+            return;
+        }
+        match rebalance {
+            Rebalance::Assign(assignment) => {
+                debug!("Post-rebalance: partitions assigned");
+                let mut assigned = self.assigned_partitions.lock().unwrap();
+                assigned.clear();
+                for topic_partition in assignment.elements() {
+                    assigned.add_partition(
+                        topic_partition.topic().to_string(),
+                        topic_partition.partition(),
+                    );
+                    debug!(
+                        "Assigned: topic {} partition {}",
+                        topic_partition.topic(),
+                        topic_partition.partition()
+                    );
+                }
+            }
+            Rebalance::Revoke(_) => {
+                debug!("Post-rebalance: partitions revoked");
+            }
+            Rebalance::Error(err) => {
+                warn!("Rebalance error: {}", err);
+            }
+        }
+    }
+}
 
 #[allow(dead_code)] // Just to stop warning on unused metadata
 enum DecodedResult {
@@ -50,7 +207,7 @@ enum DecodedResult {
 }
 
 pub struct KafkaReceiver {
-    pub consumer: StreamConsumer,
+    pub consumer: Arc<StreamConsumer<KafkaConsumerContext>>,
     pub traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
     pub metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
     pub logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
@@ -58,10 +215,12 @@ pub struct KafkaReceiver {
     pub metrics_topic: String,
     pub logs_topic: String,
     pub format: DeserializationFormat,
+    pub topic_trackers: Arc<TopicTrackers>,
+    pub ack_sender: crate::bounded_channel::BoundedSender<payload::KafkaAcknowledgement>,
+    auto_commit: bool,
+    offset_committer: Option<KafkaOffsetCommitter>,
     decoding_futures: FuturesOrdered<DecodingFuture>,
 }
-
-impl KafkaReceiver {}
 
 impl KafkaReceiver {
     pub fn new(
@@ -79,17 +238,9 @@ impl KafkaReceiver {
             ));
         }
 
-        // Build the Kafka client configuration
-        let cc = config.build_client_config();
-        let consumer: StreamConsumer = cc.create().map_err(|e| {
-            KafkaReceiverError::ConfigurationError(format!("Failed to create receiver: {}", e))
-        })?;
-
-        // Subscribe to the configured topics
-        let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
-        consumer.subscribe(&topic_refs).map_err(|e| {
-            KafkaReceiverError::ConfigurationError(format!("Failed to subscribe to topics: {}", e))
-        })?;
+        // Create an assigned partitions tracker
+        let assigned_partitions = Arc::new(std::sync::Mutex::new(AssignedPartitions::new()));
+        let topic_trackers = Arc::new(TopicTrackers::new());
 
         let traces_topic = config.traces_topic.clone();
         let traces_topic = traces_topic.unwrap_or("".into());
@@ -99,6 +250,63 @@ impl KafkaReceiver {
 
         let logs_topic = config.logs_topic.clone();
         let logs_topic = logs_topic.unwrap_or("".into());
+
+        // Build topic names map for the offset committer
+        let mut topic_names = HashMap::new();
+        if !traces_topic.is_empty() {
+            topic_names.insert(TRACES_TOPIC_ID, traces_topic.clone());
+        }
+        if !metrics_topic.is_empty() {
+            topic_names.insert(METRICS_TOPIC_ID, metrics_topic.clone());
+        }
+        if !logs_topic.is_empty() {
+            topic_names.insert(LOGS_TOPIC_ID, logs_topic.clone());
+        }
+
+        // Build reverse map: topic name -> topic ID
+        let topic_name_to_id: HashMap<String, u8> = topic_names
+            .iter()
+            .map(|(id, name)| (name.clone(), *id))
+            .collect();
+
+        let is_auto_commit = config.enable_auto_commit;
+        let cc = config.build_client_config();
+
+        // Create consumer context
+        let context = KafkaConsumerContext::new(
+            is_auto_commit,
+            assigned_partitions.clone(),
+            topic_trackers.clone(),
+            topic_name_to_id.clone(),
+        );
+
+        // Build the Kafka client configuration
+        let consumer = StreamConsumer::from_config_and_context(&cc, context).map_err(|e| {
+            KafkaReceiverError::ConfigurationError(format!("Failed to create receiver: {}", e))
+        })?;
+
+        let consumer = Arc::new(consumer);
+
+        // Subscribe to the configured topics
+        let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
+        consumer.subscribe(&topic_refs).map_err(|e| {
+            KafkaReceiverError::ConfigurationError(format!("Failed to subscribe to topics: {}", e))
+        })?;
+
+        let (ack_sender, ack_receiver) = bounded(1000);
+        let tick_interval = std::time::Duration::from_secs(config.manual_commit_interval_secs);
+
+        let offset_committer = match is_auto_commit {
+            true => None,
+            false => Some(KafkaOffsetCommitter::new(
+                tick_interval,
+                ack_receiver,
+                topic_trackers.clone(),
+                topic_name_to_id,
+                assigned_partitions.clone(),
+                consumer.clone(),
+            )),
+        };
 
         Ok(Self {
             consumer,
@@ -110,6 +318,10 @@ impl KafkaReceiver {
             logs_topic,
             format: config.deserialization_format,
             decoding_futures: FuturesOrdered::new(),
+            topic_trackers,
+            ack_sender,
+            auto_commit: is_auto_commit,
+            offset_committer,
         })
     }
 
@@ -194,6 +406,10 @@ impl KafkaReceiver {
         }
     }
 
+    pub fn take_offset_committer(&mut self) -> Option<KafkaOffsetCommitter> {
+        self.offset_committer.take()
+    }
+
     pub(crate) async fn run(
         &mut self,
         receivers_cancel: CancellationToken,
@@ -222,7 +438,9 @@ impl KafkaReceiver {
                                     let data = data.to_vec();
                                     match topic.as_str() {
                                         t if t == self.traces_topic => {
-                                            let metadata = KafkaMetadata::new(offset, partition, TRACES_TOPIC_ID, None);
+                                            // Track the offset when we receive it
+                                            self.topic_trackers.track(TRACES_TOPIC_ID, partition, offset);
+                                            let metadata = KafkaMetadata::new(offset, partition, TRACES_TOPIC_ID, Some(self.ack_sender.clone()));
                                             self.spawn_decode(
                                                 data, metadata,
                                                 |req: ExportTraceServiceRequest| req.resource_spans,
@@ -230,7 +448,9 @@ impl KafkaReceiver {
                                             );
                                         }
                                         t if t == self.metrics_topic => {
-                                            let metadata = KafkaMetadata::new(offset, partition, METRICS_TOPIC_ID, None);
+                                            // Track the offset when we receive it
+                                            self.topic_trackers.track(METRICS_TOPIC_ID, partition, offset);
+                                            let metadata = KafkaMetadata::new(offset, partition, METRICS_TOPIC_ID, Some(self.ack_sender.clone()));
                                             self.spawn_decode(
                                                 data, metadata,
                                                 |req: ExportMetricsServiceRequest| req.resource_metrics,
@@ -238,7 +458,9 @@ impl KafkaReceiver {
                                             );
                                         }
                                         t if t == self.logs_topic => {
-                                            let metadata = KafkaMetadata::new(offset, partition, LOGS_TOPIC_ID, None);
+                                            // Track the offset when we receive it
+                                            self.topic_trackers.track(LOGS_TOPIC_ID, partition, offset);
+                                            let metadata = KafkaMetadata::new(offset, partition, LOGS_TOPIC_ID, Some(self.ack_sender.clone()));
                                             self.spawn_decode(
                                                 data, metadata,
                                                 |req: ExportLogsServiceRequest| req.resource_logs,
@@ -258,42 +480,45 @@ impl KafkaReceiver {
                 // Process completed decoding futures
                 decoded_result = self.decoding_futures.select_next_some(), if !self.decoding_futures.is_empty() => {
                     match decoded_result {
+
                         Ok(decode_result) => {
                             match decode_result {
                                 Ok(decoded) => {
                                     match decoded {
-                                    // N.B - Explicitly disabling sending any metadata for now on this next commit.
-                                    // We are doing this because we are wiring in Message<T> handing with acknowledgement
-                                    // end-to-end all the way to the exporters. However, as we're not doing anything
-                                    // with the acknowledgement, we disable their creation for now out of an abundance of caution.
-                                    // This will allow us to land these changes and others while iterating on the additional pieces
-                                    // of Kafka offset tracking. Finally, once everything is in place, we can "wire up" sending the metadata
-                                    // and verify with some aggressive end-to-end tests that everything is working as expected.
-                                    // metadata: Some(payload::MessageMetadata::Kafka(kafka_metadata)),
-                                        DecodedResult::Traces { resources, metadata: _ } => {
+                                        DecodedResult::Traces { resources, metadata } => {
                                             if let Some(ref output) = self.traces_output {
-                                                let message = payload::Message::new(None, resources);
+                                                let md = match self.auto_commit {
+                                                    true => None,
+                                                    false => Some(MessageMetadata::kafka(metadata)),
+                                                };
+                                                let message = payload::Message::new(md, resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "traces").await {
                                                     break;
                                                 }
                                             }
                                         }
-                                        DecodedResult::Metrics { resources, metadata: _ } => {
+                                        DecodedResult::Metrics { resources, metadata } => {
                                             if let Some(ref output) = self.metrics_output {
-                                                let message = payload::Message::new(None, resources);
+                                                  let md = match self.auto_commit {
+                                                    true => None,
+                                                    false => Some(MessageMetadata::kafka(metadata)),
+                                                };
+                                                let message = payload::Message::new(md, resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "metrics").await {
                                                     break;
                                                 }
-                                                // Other errors already logged in send_with_cancellation
                                             }
                                         }
-                                        DecodedResult::Logs { resources, metadata: _ } => {
+                                        DecodedResult::Logs { resources, metadata } => {
                                             if let Some(ref output) = self.logs_output {
-                                                let message = payload::Message::new(None, resources);
+                                                  let md = match self.auto_commit {
+                                                    true => None,
+                                                    false => Some(MessageMetadata::kafka(metadata)),
+                                                };
+                                                let message = payload::Message::new(md, resources);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "logs").await {
                                                     break;
                                                 }
-                                                // Other errors already logged in send_with_cancellation
                                             }
                                         }
                                     }
@@ -314,6 +539,7 @@ impl KafkaReceiver {
                 }
             }
         }
+
         Ok(())
     }
 }
@@ -430,46 +656,46 @@ mod tests {
 
     fn create_test_resource_metrics() -> Vec<ResourceMetrics> {
         vec![ResourceMetrics {
-                resource: Some(Resource {
-                    attributes: vec![KeyValue {
-                        key: "service.name".to_string(),
-                        value: Some(AnyValue {
-                            value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
-                                "test-service".to_string(),
-                            )),
-                        }),
-                    }],
-                    dropped_attributes_count: 0,
-                    entity_refs: Vec::new(),
-                }),
-                scope_metrics: vec![ScopeMetrics {
-                    scope: None,
-                    metrics: vec![Metric {
-                        name: "test.metric".to_string(),
-                        description: "A test metric".to_string(),
-                        unit: "1".to_string(),
-                        metadata: vec![],
-                        data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
-                            Gauge {
-                                data_points: vec![NumberDataPoint {
-                                    attributes: vec![],
-                                    start_time_unix_nano: 1000000000,
-                                    time_unix_nano: 2000000000,
-                                    exemplars: vec![],
-                                    flags: 0,
-                                    value: Some(
-                                        opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(
-                                            42,
-                                        ),
-                                    ),
-                                }],
-                            },
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                            "test-service".to_string(),
                         )),
-                    }],
-                    schema_url: "".to_string(),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            }),
+            scope_metrics: vec![ScopeMetrics {
+                scope: None,
+                metrics: vec![Metric {
+                    name: "test.metric".to_string(),
+                    description: "A test metric".to_string(),
+                    unit: "1".to_string(),
+                    metadata: vec![],
+                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
+                        Gauge {
+                            data_points: vec![NumberDataPoint {
+                                attributes: vec![],
+                                start_time_unix_nano: 1000000000,
+                                time_unix_nano: 2000000000,
+                                exemplars: vec![],
+                                flags: 0,
+                                value: Some(
+                                    opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(
+                                        42,
+                                    ),
+                                ),
+                            }],
+                        },
+                    )),
                 }],
                 schema_url: "".to_string(),
-            }]
+            }],
+            schema_url: "".to_string(),
+        }]
     }
 
     fn create_test_resource_logs() -> Vec<ResourceLogs> {
