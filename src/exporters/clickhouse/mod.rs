@@ -152,7 +152,6 @@ impl ClickhouseExporterConfigBuilder {
     }
 
     pub fn set_indefinite_retry(&mut self) {
-        use std::time::Duration;
         self.retry_config.max_elapsed_time = Duration::from_secs(u64::MAX);
     }
 
