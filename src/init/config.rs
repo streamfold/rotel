@@ -89,6 +89,43 @@ pub(crate) struct ExporterConfigs {
     pub(crate) internal_metrics: Vec<ExporterConfig>,
 }
 
+impl ExporterConfigs {
+    /// Set all exporters to use indefinite retry (for Kafka offset tracking)
+    pub(crate) fn set_indefinite_retry(&mut self) {
+        use std::time::Duration;
+
+        let indefinite_duration = Duration::from_secs(u64::MAX);
+
+        for exporter in self
+            .traces
+            .iter_mut()
+            .chain(self.metrics.iter_mut())
+            .chain(self.logs.iter_mut())
+            .chain(self.internal_metrics.iter_mut())
+        {
+            match exporter {
+                ExporterConfig::Otlp(config) => {
+                    config.retry_config.max_elapsed_time = indefinite_duration;
+                }
+                ExporterConfig::Datadog(config) => {
+                    config.set_indefinite_retry();
+                }
+                ExporterConfig::Xray(config) => {
+                    config.set_indefinite_retry();
+                }
+                ExporterConfig::Awsemf(config) => {
+                    config.set_indefinite_retry();
+                }
+                ExporterConfig::Clickhouse(config) => {
+                    config.set_indefinite_retry();
+                }
+                // Kafka is already maxint reties and we don't need to worry about this for file.
+                _ => {}
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ExporterArgs {
     Blackhole,

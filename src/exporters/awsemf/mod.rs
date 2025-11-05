@@ -159,6 +159,11 @@ impl AwsEmfExporterConfigBuilder {
         self
     }
 
+    pub fn set_indefinite_retry(&mut self) {
+        use std::time::Duration;
+        self.config.retry_config.max_elapsed_time = Duration::from_secs(u64::MAX);
+    }
+
     pub fn with_include_dimensions(mut self, include_dimensions: Vec<String>) -> Self {
         self.config.include_dimensions = include_dimensions;
         self

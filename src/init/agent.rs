@@ -131,7 +131,21 @@ impl Agent {
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
         let rec_config = get_receivers_config(&config)?;
-        let exp_config = get_exporters_config(&config, &self.environment)?;
+        let mut exp_config = get_exporters_config(&config, &self.environment)?;
+
+        // Check if Kafka receiver with offset tracking is enabled
+        // Offset tracking is enabled when auto commit is disabled
+        let kafka_offset_tracking_enabled = rec_config.iter().any(|(_, cfg)| {
+            matches!(cfg, ReceiverConfig::Kafka(k) if !k.enable_auto_commit && !k.disable_exporter_indefinite_retry)
+        });
+
+        // If Kafka offset tracking is enabled, modify retry configs to be indefinite
+        if kafka_offset_tracking_enabled {
+            info!(
+                "Kafka offset tracking enabled - setting exporters to retry indefinitely to ensure no data loss. To disable this behavior, use --kafka-receiver-disable-exporter-indefinite-retry"
+            );
+            exp_config.set_indefinite_retry();
+        }
 
         let activation = TelemetryActivation::from_config(&rec_config, &exp_config);
 

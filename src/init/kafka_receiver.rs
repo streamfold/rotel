@@ -103,6 +103,16 @@ pub struct KafkaReceiverArgs {
     )]
     pub enable_offset_tracking: bool,
 
+    /// Disable indefinite retry for exporters when offset tracking is enabled
+    /// When offset tracking is enabled, exporters will retry indefinitely by default to ensure no data loss.
+    /// Setting this flag will revert to the normal retry behavior with timeout.
+    #[arg(
+        long("kafka-receiver-disable-exporter-indefinite-retry"),
+        env = "ROTEL_KAFKA_RECEIVER_DISABLE_EXPORTER_INDEFINITE_RETRY",
+        default_value = "false"
+    )]
+    pub disable_exporter_indefinite_retry: bool,
+
     /// Auto commit interval in milliseconds
     #[arg(
         long("kafka-receiver-auto-commit-interval-ms"),
@@ -331,6 +341,7 @@ impl KafkaReceiverArgs {
         // Set other boolean flags
         config.enable_partition_eof = self.enable_partition_eof;
         config.check_crcs = self.check_crcs;
+        config.disable_exporter_indefinite_retry = self.disable_exporter_indefinite_retry;
 
         // Configure SASL if credentials are provided
         if let (Some(username), Some(password), Some(mechanism), Some(protocol)) = (
