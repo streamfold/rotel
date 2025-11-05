@@ -976,14 +976,24 @@ impl Agent {
 
         // Now that exporters are done, cancel the Kafka offset committer
         if !kafka_offset_committer_task_set.is_empty() {
+            let res = wait::wait_for_tasks_with_timeout(
+                &mut kafka_offset_committer_task_set,
+                Duration::from_secs(2),
+            )
+            .await;
+            if res.is_err() {
+                warn!("Kafka offset committer did not exit on channel close, cancelling.");
+            }
+
             debug!("Cancelling Kafka offset committer after exporters shutdown");
             kafka_offset_committer_cancel.cancel();
 
             let res = wait::wait_for_tasks_with_timeout(
                 &mut kafka_offset_committer_task_set,
-                Duration::from_secs(5),
+                Duration::from_secs(3),
             )
             .await;
+
             if let Err(e) = res {
                 warn!("Kafka offset committer did not exit within timeout: {}", e);
             } else {

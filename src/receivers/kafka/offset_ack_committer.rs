@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
@@ -99,8 +100,9 @@ impl KafkaOffsetCommitter {
                 );
                 break;
             }
-            match self.ack_receiver.next().await {
-                Some(ack) => {
+            let poll_res = timeout(Duration::from_millis(500), self.ack_receiver.next()).await;
+            match poll_res {
+                Ok(Some(ack)) => {
                     match ack {
                         payload::KafkaAcknowledgement::Ack(kafka_ack) => {
                             debug!(
@@ -119,9 +121,15 @@ impl KafkaOffsetCommitter {
                         }
                     }
                 }
-                None => {
+                Ok(None) => {
                     debug!("Ack channel closed during drain after {} acks", ack_count);
                     break;
+                }
+                Err(_) => {
+                    debug!(
+                        "Error polling ack channel with time out during drain after {} acks",
+                        ack_count
+                    );
                 }
             }
         }
@@ -152,40 +160,43 @@ pub fn commit_offset<F>(
         CommitMode,
     ) -> rdkafka::error::KafkaResult<()>,
 {
-    // Lock and clone assigned partitions
-    let assigned = assigned_partitions.lock().unwrap().clone();
-
-    // Build list of topic/partition/offset to commit
     let mut commits = Vec::new();
-    for (topic_name, partitions) in assigned.topics.iter() {
-        let topic_id = match topic_name_to_id.get(topic_name) {
-            Some(id) => *id,
-            None => {
-                debug!("Unknown topic name in assigned partitions: {}", topic_name);
-                continue;
-            }
-        };
 
-        // For each assigned partition, determine the offset to commit
-        for &partition in partitions.iter() {
-            // Try to get lowest pending offset first
-            if let Some(offset) = topic_trackers.lowest_pending_offset(topic_id, partition) {
-                debug!(
-                    "Topic {} (id {}) partition {} has pending offset: {}",
-                    topic_name, topic_id, partition, offset
-                );
-                commits.push((topic_name, partition, offset));
-            } else if let Some(hwm) = topic_trackers.high_water_mark(topic_id, partition) {
-                debug!(
-                    "Topic {} (id {}) partition {} has no pending offsets, using high water mark: {}",
-                    topic_name, topic_id, partition, hwm
-                );
-                commits.push((topic_name, partition, hwm + 1));
-            } else {
-                debug!(
-                    "Topic {} (id {}) partition {} has no pending offsets and no high water mark",
-                    topic_name, topic_id, partition
-                );
+    {
+        // Lock and clone assigned partitions
+        let assigned = assigned_partitions.lock().unwrap();
+
+        // Build list of topic/partition/offset to commit
+        for (topic_name, partitions) in assigned.topics.iter() {
+            let topic_id = match topic_name_to_id.get(topic_name) {
+                Some(id) => *id,
+                None => {
+                    debug!("Unknown topic name in assigned partitions: {}", topic_name);
+                    continue;
+                }
+            };
+
+            // For each assigned partition, determine the offset to commit
+            for &partition in partitions.iter() {
+                // Try to get lowest pending offset first
+                if let Some(offset) = topic_trackers.lowest_pending_offset(topic_id, partition) {
+                    debug!(
+                        "Topic {} (id {}) partition {} has pending offset: {}",
+                        topic_name, topic_id, partition, offset
+                    );
+                    commits.push((topic_name.clone(), partition, offset));
+                } else if let Some(hwm) = topic_trackers.high_water_mark(topic_id, partition) {
+                    debug!(
+                        "Topic {} (id {}) partition {} has no pending offsets, using high water mark: {}",
+                        topic_name, topic_id, partition, hwm
+                    );
+                    commits.push((topic_name.clone(), partition, hwm + 1));
+                } else {
+                    debug!(
+                        "Topic {} (id {}) partition {} has no pending offsets and no high water mark",
+                        topic_name, topic_id, partition
+                    );
+                }
             }
         }
     }
