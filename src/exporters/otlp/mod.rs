@@ -935,6 +935,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_response_204() {
+        init_crypto();
+        let server = MockServer::start();
+
+        let resp = ExportTraceServiceResponse::default();
+        let mut resp_buf = BytesMut::with_capacity(1024);
+        resp.encode(&mut resp_buf).unwrap();
+
+        //
+        // Return with 204
+        //
+        let hello_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/traces");
+            then.status(204);
+        });
+
+        let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
+        let traces_config = trace_config_builder(
+            Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
+            Protocol::Http,
+        );
+
+        let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
+        assert!(otlp_res.is_ok());
+
+        let res = send_test_traces_msgs_and_stop(otlp_res.unwrap(), trace_btx, 1).await;
+        assert_ok!(res);
+
+        hello_mock.assert_hits(1);
+    }
+
+    #[tokio::test]
     async fn draining_completes() {
         init_crypto();
         let server = MockServer::start();

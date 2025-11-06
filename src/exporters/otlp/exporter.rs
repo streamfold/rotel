@@ -415,7 +415,8 @@ where
                     match &result {
                         Ok(r) => {
                             self.acknowledger.acknowledge(r).await
-                        }Err(_e) => {
+                        }
+                        Err(_e) => {
                            // TODO - We'll need to propagate MessageMetadata in Errors as well
                         }
                     }
@@ -645,7 +646,7 @@ where
         match res {
             Ok(r) => match r {
                 HttpResponse::Http(parts, _, _) => match parts.status.as_u16() {
-                    200..=202 => return false,
+                    200..=204 => return false,
                     _ => {
                         error!(
                             type_name,
