@@ -12,9 +12,9 @@ use futures_util::stream::FuturesOrdered;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
-use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
-use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use opentelemetry_proto::tonic::logs::v1::{LogsData, ResourceLogs};
+use opentelemetry_proto::tonic::metrics::v1::{MetricsData, ResourceMetrics};
+use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, TracesData};
 use rdkafka::Message;
 use rdkafka::client::ClientContext;
 use rdkafka::config::FromClientConfigAndContext;
@@ -441,31 +441,64 @@ impl KafkaReceiver {
                                             // Track the offset when we receive it
                                             self.topic_trackers.track(TRACES_TOPIC_ID, partition, offset);
                                             let metadata = KafkaMetadata::new(offset, partition, TRACES_TOPIC_ID, Some(self.ack_sender.clone()));
-                                            self.spawn_decode(
-                                                data, metadata,
-                                                |req: ExportTraceServiceRequest| req.resource_spans,
-                                                |resources, metadata| DecodedResult::Traces { resources, metadata }
-                                            );
+                                            match self.format {
+                                                DeserializationFormat::Json => {
+                                                    self.spawn_decode(
+                                                        data, metadata,
+                                                        |req: TracesData| req.resource_spans,
+                                                        |resources, metadata| DecodedResult::Traces { resources, metadata }
+                                                    );
+                                                }
+                                                DeserializationFormat::Protobuf => {
+                                                    self.spawn_decode(
+                                                        data, metadata,
+                                                        |req: ExportTraceServiceRequest| req.resource_spans,
+                                                        |resources, metadata| DecodedResult::Traces { resources, metadata }
+                                                    );
+                                                }
+                                            }
                                         }
                                         t if t == self.metrics_topic => {
                                             // Track the offset when we receive it
                                             self.topic_trackers.track(METRICS_TOPIC_ID, partition, offset);
                                             let metadata = KafkaMetadata::new(offset, partition, METRICS_TOPIC_ID, Some(self.ack_sender.clone()));
-                                            self.spawn_decode(
-                                                data, metadata,
-                                                |req: ExportMetricsServiceRequest| req.resource_metrics,
-                                                |resources, metadata| DecodedResult::Metrics { resources, metadata }
-                                            );
+                                            match self.format {
+                                                DeserializationFormat::Json => {
+                                                    self.spawn_decode(
+                                                        data, metadata,
+                                                        |req: MetricsData| req.resource_metrics,
+                                                        |resources, metadata| DecodedResult::Metrics { resources, metadata }
+                                                    );
+                                                }
+                                                DeserializationFormat::Protobuf => {
+                                                    self.spawn_decode(
+                                                        data, metadata,
+                                                        |req: ExportMetricsServiceRequest| req.resource_metrics,
+                                                        |resources, metadata| DecodedResult::Metrics { resources, metadata }
+                                                    );
+                                                }
+                                            }
                                         }
                                         t if t == self.logs_topic => {
                                             // Track the offset when we receive it
                                             self.topic_trackers.track(LOGS_TOPIC_ID, partition, offset);
                                             let metadata = KafkaMetadata::new(offset, partition, LOGS_TOPIC_ID, Some(self.ack_sender.clone()));
-                                            self.spawn_decode(
-                                                data, metadata,
-                                                |req: ExportLogsServiceRequest| req.resource_logs,
-                                                |resources, metadata| DecodedResult::Logs { resources, metadata }
-                                            );
+                                            match self.format {
+                                                DeserializationFormat::Json => {
+                                                    self.spawn_decode(
+                                                        data, metadata,
+                                                        |req: LogsData| req.resource_logs,
+                                                        |resources, metadata| DecodedResult::Logs { resources, metadata }
+                                                    );
+                                                }
+                                                DeserializationFormat::Protobuf => {
+                                                    self.spawn_decode(
+                                                        data, metadata,
+                                                        |req: ExportLogsServiceRequest| req.resource_logs,
+                                                        |resources, metadata| DecodedResult::Logs { resources, metadata }
+                                                    );
+                                                }
+                                            }
                                         }
                                         _ => {
                                             debug!("Received data from kafka for unknown topic: {}", topic);
@@ -828,12 +861,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_kafka_message_json_metrics() {
-        let test_data = ExportMetricsServiceRequest {
+        let test_data = MetricsData {
             resource_metrics: create_test_resource_metrics(),
         };
         let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
 
-        let result = KafkaReceiver::decode_kafka_message::<ExportMetricsServiceRequest>(
+        let result = KafkaReceiver::decode_kafka_message::<MetricsData>(
             json_data,
             DeserializationFormat::Json,
         );
@@ -849,12 +882,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_kafka_message_json_traces() {
-        let test_data = ExportTraceServiceRequest {
+        let test_data = TracesData {
             resource_spans: create_test_resource_spans(),
         };
         let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
 
-        let result = KafkaReceiver::decode_kafka_message::<ExportTraceServiceRequest>(
+        let result = KafkaReceiver::decode_kafka_message::<TracesData>(
             json_data,
             DeserializationFormat::Json,
         );
@@ -872,15 +905,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_kafka_message_json_logs() {
-        let test_data = ExportLogsServiceRequest {
+        let test_data = LogsData {
             resource_logs: create_test_resource_logs(),
         };
         let json_data = serde_json::to_vec(&test_data).expect("Failed to encode JSON");
 
-        let result = KafkaReceiver::decode_kafka_message::<ExportLogsServiceRequest>(
-            json_data,
-            DeserializationFormat::Json,
-        );
+        let result =
+            KafkaReceiver::decode_kafka_message::<LogsData>(json_data, DeserializationFormat::Json);
 
         assert!(result.is_ok());
         let decoded = result.unwrap();
