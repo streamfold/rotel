@@ -137,6 +137,10 @@ impl DatadogExporterConfigBuilder {
         self
     }
 
+    pub fn set_indefinite_retry(&mut self) {
+        self.retry_config.max_elapsed_time = Duration::from_secs(u64::MAX);
+    }
+
     pub fn build(self) -> DatadogExporterBuilder {
         DatadogExporterBuilder {
             region: self.region,

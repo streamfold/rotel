@@ -146,6 +146,15 @@ impl ClickhouseExporterConfigBuilder {
         self
     }
 
+    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.retry_config = retry_config;
+        self
+    }
+
+    pub fn set_indefinite_retry(&mut self) {
+        self.retry_config.max_elapsed_time = Duration::from_secs(u64::MAX);
+    }
+
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
         let config = ConnectionConfig {
             endpoint: self.endpoint,

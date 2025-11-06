@@ -92,6 +92,10 @@ impl XRayExporterConfigBuilder {
         self
     }
 
+    pub fn set_indefinite_retry(&mut self) {
+        self.retry_config.max_elapsed_time = Duration::from_secs(u64::MAX);
+    }
+
     pub fn build(self) -> XRayExporterBuilder {
         XRayExporterBuilder {
             region: self.region,

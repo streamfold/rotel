@@ -179,6 +179,9 @@ pub struct KafkaReceiverConfig {
     /// Check CRC32 of consumed messages
     pub check_crcs: bool,
 
+    /// Disable indefinite retry for exporters when offset tracking is enabled
+    pub disable_exporter_indefinite_retry: bool,
+
     /// SASL username for authentication - same name as exporter
     pub sasl_username: Option<String>,
 
@@ -235,6 +238,7 @@ impl Default for KafkaReceiverConfig {
             isolation_level: IsolationLevel::default(),
             enable_partition_eof: false,
             check_crcs: true,
+            disable_exporter_indefinite_retry: false,
             sasl_username: None,
             sasl_password: None,
             sasl_mechanism: None,
