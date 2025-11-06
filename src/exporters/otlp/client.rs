@@ -10,7 +10,7 @@ use crate::exporters::otlp::{Protocol, grpc_codec, http_codec};
 use crate::exporters::shared::aws_signing_service::{AwsSigningService, AwsSigningServiceBuilder};
 use crate::telemetry::{Counter, RotelCounter};
 use bytes::Bytes;
-use http::{Request, StatusCode};
+use http::Request;
 use http_body_util::Full;
 use opentelemetry::KeyValue;
 use std::error::Error;
@@ -136,16 +136,19 @@ where
             match result {
                 Ok(resp) => match &resp {
                     HttpResponse::Http(parts, _, _) => {
-                        if parts.status == StatusCode::OK {
-                            sent.add(req_size as u64, &[]);
-                        } else {
-                            send_failed.add(
-                                req_size as u64,
-                                &[
-                                    KeyValue::new("error", "http_status"),
-                                    KeyValue::new("value", parts.status.to_string()),
-                                ],
-                            );
+                        match parts.status.as_u16() {
+                            200..=204 => {
+                                sent.add(req_size as u64, &[]);
+                            }
+                            _ => {
+                                send_failed.add(
+                                    req_size as u64,
+                                    &[
+                                        KeyValue::new("error", "http_status"),
+                                        KeyValue::new("value", parts.status.to_string()),
+                                    ],
+                                );
+                            }
                         }
 
                         Ok(resp)
