@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 const MAX_CONCURRENT_ENCODERS: usize = 1000;
-const MAX_CONCURRENT_SENDS: usize = 5000;
+const MAX_CONCURRENT_SENDS: usize = 10000;
 
 #[rustfmt::skip]
 type EncodingFuture = Pin<Box<dyn Future<Output = std::result::Result<Result<EncodedMessage>, JoinError>> + Send>>;
