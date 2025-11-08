@@ -51,10 +51,7 @@ type SendFutureWithMetadata = Pin<
     Box<
         dyn Future<
                 Output = (
-                    std::result::Result<
-                        Delivery,
-                        (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage),
-                    >,
+                    std::result::Result<Delivery, rdkafka::error::KafkaError>,
                     Option<Vec<MessageMetadata>>,
                 ),
             > + Send,
@@ -586,7 +583,7 @@ where
                             // Acknowledge successful send
                             self.acknowledger.acknowledge_metadata(metadata).await;
                         }
-                        Err((e, _)) => {
+                        Err(e) => {
                             error!("Failed to send {}: {}", telemetry_type, e);
                             // Don't acknowledge on failure - messages remain unacknowledged
                         }
@@ -602,12 +599,23 @@ where
                             let payload = encoded_msg.payload;
                             let metadata = encoded_msg.metadata;
                             let producer = self.producer.clone();
-                            let timeout = Duration::from_millis(self.config.request_timeout_ms as u64);
+                            //let timeout = Duration::from_millis(self.config.request_timeout_ms as u64);
                             let send_future = async move {
                                 let record = FutureRecord::to(&topic)
                                     .key(&key)
                                     .payload(payload.as_ref());
-                                let result = producer.send(record, timeout).await;
+                                //let result = producer.send_result(record);
+                                let result = match producer.send_result(record) {
+                                  Ok(fut) => match fut.await {
+                                    Ok(Ok(delivery))=> Ok(delivery),
+                                    Ok(Err((kafka_err, _))) => Err(kafka_err),
+                                    Err(_e) => Err(rdkafka::error::KafkaError::Canceled),
+                                  },
+                                  Err((err, _)) => {
+                                      Err(err)
+                                  }
+                                };
+
                                 (result, metadata)
                             };
                             self.send_futures.push(Box::pin(send_future));
@@ -687,15 +695,19 @@ where
                         let key = encoded_msg.key;
                         let payload = encoded_msg.payload;
                         let producer = self.producer.clone();
-                        let timeout = self.config.request_timeout_ms as u64;
 
                         let metadata = encoded_msg.metadata;
                         let send_future = async move {
                             let record =
                                 FutureRecord::to(&topic).key(&key).payload(payload.as_ref());
-                            let result = producer
-                                .send(record, Timeout::After(Duration::from_millis(timeout)))
-                                .await;
+                            let result = match producer.send_result(record) {
+                                Ok(fut) => match fut.await {
+                                    Ok(Ok(delivery)) => Ok(delivery),
+                                    Ok(Err((kafka_err, _))) => Err(kafka_err),
+                                    Err(_e) => Err(rdkafka::error::KafkaError::Canceled),
+                                },
+                                Err((err, _)) => Err(err),
+                            };
                             (result, metadata)
                         };
 
@@ -726,7 +738,7 @@ where
                         // Acknowledge successful send during drain
                         self.acknowledger.acknowledge_metadata(metadata).await;
                     }
-                    Err((e, _)) => {
+                    Err(e) => {
                         error!("Failed to send {} during drain: {}", telemetry_type, e);
                         // Don't acknowledge on failure - messages remain unacknowledged
                     }
