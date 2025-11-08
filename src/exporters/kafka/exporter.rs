@@ -600,25 +600,45 @@ where
                             let metadata = encoded_msg.metadata;
                             let producer = self.producer.clone();
                             //let timeout = Duration::from_millis(self.config.request_timeout_ms as u64);
-                            let send_future = async move {
-                                let record = FutureRecord::to(&topic)
-                                    .key(&key)
-                                    .payload(payload.as_ref());
-                                //let result = producer.send_result(record);
-                                let result = match producer.send_result(record) {
-                                  Ok(fut) => match fut.await {
-                                    Ok(Ok(delivery))=> Ok(delivery),
-                                    Ok(Err((kafka_err, _))) => Err(kafka_err),
-                                    Err(_e) => Err(rdkafka::error::KafkaError::Canceled),
-                                  },
-                                  Err((err, _)) => {
-                                      Err(err)
-                                  }
-                                };
+                            //
+                            let record = FutureRecord::to(&topic)
+                                .key(&key)
+                                .payload(payload.as_ref());
 
-                                (result, metadata)
-                            };
-                            self.send_futures.push(Box::pin(send_future));
+                            match producer.send_result(record) {
+                                Ok(fut) => {
+                                    let send_future = async move {
+                                        match fut.await {
+                                          Ok(Ok(delivery))=> (Ok(delivery), metadata),
+                                          Ok(Err((kafka_err, _))) => (Err(kafka_err), metadata),
+                                          Err(_e) => (Err(rdkafka::error::KafkaError::Canceled), metadata)
+                                        }
+                                    };
+
+                                    self.send_futures.push(Box::pin(send_future));
+                                },
+                                Err((err, _)) => {
+                                    error!("Failed to enqueue record to Kafka:{}", err);
+                                }
+                            }
+
+
+                            // let send_future = async move {
+                            //     //let result = producer.send_result(record);
+                            //     let result = match producer.send_result(record) {
+                            //       Ok(fut) => match fut.await {
+                            //         Ok(Ok(delivery))=> Ok(delivery),
+                            //         Ok(Err((kafka_err, _))) => Err(kafka_err),
+                            //         Err(_e) => Err(rdkafka::error::KafkaError::Canceled),
+                            //       },
+                            //       Err((err, _)) => {
+                            //           Err(err)
+                            //       }
+                            //     };
+
+                            //     (result, metadata)
+                            // };
+                            // self.send_futures.push(Box::pin(send_future));
                         }
                         Ok(Err(e)) => {
                             error!("Failed to encode {}: {}", telemetry_type, e);
