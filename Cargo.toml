@@ -72,7 +72,7 @@ indexmap = "2.9.0"
 hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
-rdkafka = { version = "0.38", features = [
+rdkafka = { git = "https://github.com/streamfold/rust-rdkafka", branch = "librdkafka-v2.12.1", features = [
     "tokio",
     "libz-static",
     "ssl-vendored",
@@ -96,7 +96,7 @@ httpmock = "0.7.0"
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tracing-test = "0.2.5"
 tempfile = "3.19.1"
-rdkafka = { version = "0.38", features = [
+rdkafka = { git = "https://github.com/streamfold/rust-rdkafka", branch = "librdkafka-v2.12.1", features = [
     "tokio",
     "libz-static",
     "ssl-vendored",
