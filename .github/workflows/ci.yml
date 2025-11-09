@@ -30,13 +30,13 @@ jobs:
         if: matrix.os == 'macos'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: "3.13"
       - name: update apt cache on linux
         if: matrix.os == 'ubuntu'
         run: sudo apt-get update
       - name: install protoc linux
         if: matrix.os == 'ubuntu'
-        run: sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get install -y protobuf-compiler libcurl-dev
       - name: install protoc macos
         if: matrix.os == 'macos'
         run: brew install protobuf
