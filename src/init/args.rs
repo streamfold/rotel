@@ -14,7 +14,7 @@ use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
-use std::str::FromStr;
+use std::{net::SocketAddr, str::FromStr};
 
 use super::awsemf_exporter::AwsEmfExporterArgs;
 
@@ -44,6 +44,10 @@ pub struct AgentRun {
         default_value = "basic"
     )]
     pub debug_log_verbosity: DebugLogVerbosity,
+
+    /// Prometheus endpoint
+    #[arg(long, env = "ROTEL_PROMETHEUS_ENDPOINT", value_parser = parse::parse_endpoint)]
+    pub prometheus_endpoint: Option<SocketAddr>,
 
     #[command(flatten)]
     pub otlp_receiver: OTLPReceiverArgs,
@@ -140,6 +144,7 @@ impl Default for AgentRun {
             log_file: "/tmp/rotel-agent.log".to_string(),
             debug_log: vec![DebugLogParam::None],
             debug_log_verbosity: DebugLogVerbosity::Basic,
+            prometheus_endpoint: None,
             receiver: None,
             receivers: None,
             otlp_receiver: OTLPReceiverArgs::default(),

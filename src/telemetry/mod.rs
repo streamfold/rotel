@@ -1,4 +1,5 @@
 pub mod internal_exporter;
+pub mod metrics_server;
 
 use opentelemetry::KeyValue;
 

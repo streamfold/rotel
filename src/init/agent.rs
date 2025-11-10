@@ -24,6 +24,7 @@ use crate::receivers::kafka::receiver::KafkaReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
+use crate::telemetry::metrics_server::MetricsServer;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
 use crate::topology::fanout::FanoutBuilder;
@@ -31,6 +32,7 @@ use crate::topology::flush_control::FlushSubscriber;
 use crate::topology::payload::Message;
 use crate::{telemetry, topology};
 use opentelemetry::global;
+use opentelemetry_prometheus_text_exporter::PrometheusExporter;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -107,12 +109,14 @@ impl Agent {
         let mut receivers_task_set = JoinSet::new();
         let mut pipeline_task_set = JoinSet::new();
         let mut exporters_task_set = JoinSet::new();
+        let mut metrics_srv_task_set = JoinSet::new();
         let mut kafka_offset_committer: Option<KafkaOffsetCommitter> = None;
 
         let receivers_cancel = CancellationToken::new();
         let pipeline_cancel = CancellationToken::new();
         let exporters_cancel = CancellationToken::new();
         let kafka_offset_committer_cancel = CancellationToken::new();
+        let metrics_srv_cancel = CancellationToken::new();
 
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
             bounded::<Message<ResourceSpans>>(max(4, num_cpus));
@@ -258,8 +262,36 @@ impl Agent {
             .with_interval(Duration::from_secs(10))
             .build();
 
-        let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-            .with_reader(periodic_reader)
+        let mut meter_provider_builder =
+            opentelemetry_sdk::metrics::SdkMeterProvider::builder().with_reader(periodic_reader);
+
+        //
+        // Start the Prometheus metrics server if configured
+        //
+
+        if let Some(endpoint) = &config.prometheus_endpoint {
+            info!(
+                ?endpoint,
+                "Starting Prometheus metrics server"
+            );
+
+            let prom_exporter = PrometheusExporter::new();
+
+            meter_provider_builder = meter_provider_builder.with_reader(prom_exporter.clone());
+
+            let metrics_listener = Listener::listen_std(*endpoint)?;
+            let metrics_server = MetricsServer::with_addr(*endpoint, prom_exporter);
+            let cancel_token = metrics_srv_cancel.clone();
+
+            metrics_srv_task_set.spawn(async move {
+                if let Err(e) = metrics_server.serve(metrics_listener, cancel_token).await {
+                    error!("Metrics server error: {:?}", e);
+                }
+                Ok(())
+            });
+        }
+
+        let meter_provider = meter_provider_builder
             .with_resource(Resource::builder().with_service_name("rotel").build())
             .build();
 
@@ -1015,6 +1047,13 @@ impl Agent {
             }
         }
 
+        metrics_srv_cancel.cancel();
+        if let Err(e) =
+            wait::wait_for_tasks_with_timeout(&mut metrics_srv_task_set, Duration::from_secs(1))
+                .await
+        {
+            warn!("Metrics server did not exit within timeout: {}", e);
+        }
         Ok(())
     }
 }
