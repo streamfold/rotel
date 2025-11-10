@@ -8,6 +8,7 @@ use crate::topology::payload::{Ack, Message, MessageMetadata, OTLPFrom};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures_util::stream::FuturesOrdered;
+use opentelemetry::{KeyValue, global};
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -21,9 +22,12 @@ use serde::Serialize;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::select;
 use tokio::task::JoinError;
+use tokio::time::interval;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
@@ -474,6 +478,8 @@ where
     acknowledger: KafkaAcknowledger,
     encoding_futures: FuturesOrdered<EncodingFuture>,
     send_futures: FuturesUnordered<SendFutureWithMetadata>,
+    encoding_futures_count: Arc<AtomicUsize>,
+    send_futures_count: Arc<AtomicUsize>,
 }
 
 impl<Resource> Debug for KafkaExporter<Resource>
@@ -516,6 +522,8 @@ where
             acknowledger: KafkaAcknowledger::default(),
             encoding_futures: FuturesOrdered::new(),
             send_futures: FuturesUnordered::new(),
+            encoding_futures_count: Arc::new(AtomicUsize::new(0)),
+            send_futures_count: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -527,9 +535,47 @@ where
             telemetry_type, self.config.brokers, self.topic
         );
 
+        let enc_futures_count = self.encoding_futures_count.clone();
+        let send_futures_count = self.send_futures_count.clone();
+
+        let _ = global::meter("exporter")
+            .i64_observable_gauge("task_queues")
+            .with_callback(move |observer| {
+                let telemetry_type_kv = KeyValue::new("telemetry_type", telemetry_type.to_string());
+                let exporter_type_kv = KeyValue::new("exporter_type", "kafka");
+
+                let task_type = KeyValue::new("task_type", "encoding");
+                observer.observe(
+                    enc_futures_count.load(Ordering::Relaxed) as i64,
+                    &[
+                        telemetry_type_kv.clone(),
+                        exporter_type_kv.clone(),
+                        task_type,
+                    ],
+                );
+
+                let task_type = KeyValue::new("task_type", "sending");
+                observer.observe(
+                    send_futures_count.load(Ordering::Relaxed) as i64,
+                    &[telemetry_type_kv, exporter_type_kv, task_type],
+                );
+            })
+            .build();
+
+        // Create a timer that fires every 1 second to record stats
+        let mut stats_timer = interval(Duration::from_secs(1));
+
         loop {
             select! {
                 biased;
+
+                // Record futures counts periodically
+                _ = stats_timer.tick() => {
+                    let encoding_count = self.encoding_futures.len();
+                    let send_count = self.send_futures.len();
+                    self.encoding_futures_count.store(encoding_count, Ordering::Relaxed);
+                    self.send_futures_count.store(send_count, Ordering::Relaxed);
+                }
 
                 // Process completed sends
                 Some((send_result, metadata)) = self.send_futures.next() => {
