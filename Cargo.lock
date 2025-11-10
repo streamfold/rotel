@@ -3144,8 +3144,7 @@ dependencies = [
 [[package]]
 name = "opentelemetry-prometheus-text-exporter"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddbb5743c13741bd9207de7c449f9797c0e513ac07551eac807da94056c530d9"
+source = "git+https://github.com/mheffner/opentelemetry-prometheus-text-exporter?branch=sorted-otel-0.30.0#e71e9ff0da4dbbfcd015baab91962e5f714b4b15"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",

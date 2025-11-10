@@ -86,7 +86,7 @@ base64 = { version = "0.22.1", optional = true }
 wildcard = "0.3.0"
 aws-config = { version = "1.8.6", optional = true }
 aws-credential-types = { version = "1.2.6", optional = true }
-opentelemetry-prometheus-text-exporter = "0.2.0"
+opentelemetry-prometheus-text-exporter = { git = "https://github.com/mheffner/opentelemetry-prometheus-text-exporter", branch = "sorted-otel-0.30.0" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
