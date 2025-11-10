@@ -94,10 +94,7 @@ where
     }
 }
 
-impl<'a, T> FanoutFuture<'a, T>
-where
-//T: Clone,
-{
+impl<'a, T> FanoutFuture<'a, T> {
     fn new(consumers: &'a [BoundedSender<T>], message: T) -> Self {
         Self {
             consumers,
