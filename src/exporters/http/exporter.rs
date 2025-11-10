@@ -4,16 +4,19 @@ use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt, poll};
 use http::Request;
+use opentelemetry::{KeyValue, global};
 use std::error::Error;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Add;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::broadcast::Sender as BroadcastSender;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{Instant, interval, timeout_at};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tower::Service;
@@ -101,9 +104,52 @@ where
             ExportFuture<<Svc as Service<Request<Payload>>>::Future>,
         > = FuturesUnordered::new();
         let mut flush_receiver = self.flush_receiver.take();
+
+        // Atomic counter for tracking export futures size
+        let encode_futures_count = Arc::new(AtomicUsize::new(0));
+        let send_futures_count = Arc::new(AtomicUsize::new(0));
+
+        let meta_gauge = meta.clone();
+        let encode_futures_count_clone = encode_futures_count.clone();
+        let send_futures_count_clone = send_futures_count.clone();
+        let _ = global::meter("exporter")
+            .i64_observable_gauge("task_queues")
+            .with_callback(move |observer| {
+                let telemetry_type_kv =
+                    KeyValue::new("telemetry_type", meta_gauge.telemetry_type.clone());
+                let exporter_type_kv =
+                    KeyValue::new("exporter_type", meta_gauge.exporter_name.clone());
+
+                let task_type = KeyValue::new("task_type", "encoding");
+                observer.observe(
+                    encode_futures_count_clone.load(Ordering::Relaxed) as i64,
+                    &[
+                        telemetry_type_kv.clone(),
+                        exporter_type_kv.clone(),
+                        task_type,
+                    ],
+                );
+
+                let task_type = KeyValue::new("task_type", "sending");
+                observer.observe(
+                    send_futures_count_clone.load(Ordering::Relaxed) as i64,
+                    &[telemetry_type_kv, exporter_type_kv, task_type],
+                );
+            })
+            .build();
+
+        // Create a timer that fires every 1 second to record stats
+        let mut stats_timer = interval(Duration::from_secs(1));
+
         loop {
             select! {
                 biased;
+
+                // Record futures count periodically
+                _ = stats_timer.tick() => {
+                    encode_futures_count.store(self.input.size_hint().0, Ordering::Relaxed);
+                    send_futures_count.store(export_futures.len(), Ordering::Relaxed);
+                }
 
                 Some(resp) = export_futures.next() => {
                     match resp {
