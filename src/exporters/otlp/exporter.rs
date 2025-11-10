@@ -417,7 +417,7 @@ where
         let encode_futures_count = self.encoding_futures_count.clone();
         let send_futures_count = self.export_futures_count.clone();
         let type_name_clone = type_name.clone();
-        let _ = global::meter("exporter")
+        let _ = global::meter("exporters")
             .i64_observable_gauge("task_queues")
             .with_callback(move |observer| {
                 let telemetry_type_kv = KeyValue::new("telemetry_type", type_name_clone.clone());

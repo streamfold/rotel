@@ -112,7 +112,7 @@ where
         let meta_gauge = meta.clone();
         let encode_futures_count_clone = encode_futures_count.clone();
         let send_futures_count_clone = send_futures_count.clone();
-        let _ = global::meter("exporter")
+        let _ = global::meter("exporters")
             .i64_observable_gauge("task_queues")
             .with_callback(move |observer| {
                 let telemetry_type_kv =
