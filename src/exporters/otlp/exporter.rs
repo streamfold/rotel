@@ -28,6 +28,7 @@ use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::{Message, MessageMetadata, OTLPFrom};
 use futures::stream::FuturesUnordered;
 use http::Request;
+use opentelemetry::{KeyValue, global};
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -44,11 +45,13 @@ use std::error::Error;
 use std::future::Future;
 use std::ops::Add;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::broadcast::Sender;
 use tokio::task::JoinError;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{Instant, interval, timeout_at};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tower::retry::{Retry, RetryLayer};
@@ -350,6 +353,8 @@ where
     export_drain_max_time: Duration,
     flush_receiver: Option<FlushReceiver>,
     retry_broadcast: Sender<bool>,
+    encoding_futures_count: Arc<AtomicUsize>,
+    export_futures_count: Arc<AtomicUsize>,
 }
 
 impl<Resource, Request, Response> Exporter<Resource, Request, Response>
@@ -388,6 +393,8 @@ where
             export_drain_max_time,
             flush_receiver,
             retry_broadcast,
+            encoding_futures_count: Arc::new(AtomicUsize::new(0)),
+            export_futures_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -406,9 +413,46 @@ where
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let type_name = self.type_name.to_string();
         let mut flush_receiver = self.flush_receiver.take();
+
+        let encode_futures_count = self.encoding_futures_count.clone();
+        let send_futures_count = self.export_futures_count.clone();
+        let type_name_clone = type_name.clone();
+        let _ = global::meter("exporter")
+            .i64_observable_gauge("task_queues")
+            .with_callback(move |observer| {
+                let telemetry_type_kv = KeyValue::new("telemetry_type", type_name_clone.clone());
+                let exporter_type_kv = KeyValue::new("exporter_type", "otlp");
+
+                let task_type = KeyValue::new("task_type", "encoding");
+                observer.observe(
+                    encode_futures_count.load(Ordering::Relaxed) as i64,
+                    &[
+                        telemetry_type_kv.clone(),
+                        exporter_type_kv.clone(),
+                        task_type,
+                    ],
+                );
+
+                let task_type = KeyValue::new("task_type", "sending");
+                observer.observe(
+                    send_futures_count.load(Ordering::Relaxed) as i64,
+                    &[telemetry_type_kv, exporter_type_kv, task_type],
+                );
+            })
+            .build();
+
+        // Create a timer that fires every 1 second to record stats
+        let mut stats_timer = interval(Duration::from_secs(1));
+
         loop {
             select! {
                 biased;
+
+                // Record futures counts periodically
+                _ = stats_timer.tick() => {
+                    self.encoding_futures_count.store(self.encoding_futures.len(), Ordering::Relaxed);
+                    self.export_futures_count.store(self.export_futures.len(), Ordering::Relaxed);
+                }
 
                 Some(resp) = self.export_futures.next() => {
                     let (result, metadata) = resp;
