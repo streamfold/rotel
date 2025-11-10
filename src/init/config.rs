@@ -180,6 +180,20 @@ pub(crate) enum ExporterConfig {
     File(crate::exporters::file::config::FileExporterConfig),
 }
 
+impl ExporterConfig {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ExporterConfig::Blackhole => "blackhole",
+            ExporterConfig::Otlp(_) => "otlp",
+            ExporterConfig::Datadog(_) => "datadog",
+            ExporterConfig::Clickhouse(_) => "clickhouse",
+            ExporterConfig::Xray(_) => "awsxray",
+            ExporterConfig::Awsemf(_) => "awsemf",
+            ExporterConfig::Kafka(_) => "kafka",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ReceiverConfig {
     Otlp(OTLPReceiverConfig),

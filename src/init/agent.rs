@@ -270,10 +270,7 @@ impl Agent {
         //
 
         if let Some(endpoint) = &config.prometheus_endpoint {
-            info!(
-                ?endpoint,
-                "Starting Prometheus metrics server"
-            );
+            info!(?endpoint, "Starting Prometheus metrics server");
 
             let prom_exporter = PrometheusExporter::new();
 
@@ -301,10 +298,10 @@ impl Agent {
         // Build the exporters now
         //
 
-        let mut trace_fanout = FanoutBuilder::new();
-        let mut metrics_fanout = FanoutBuilder::new();
-        let mut logs_fanout = FanoutBuilder::new();
-        let mut internal_metrics_fanout = FanoutBuilder::new();
+        let mut trace_fanout = FanoutBuilder::new("traces");
+        let mut metrics_fanout = FanoutBuilder::new("metrics");
+        let mut logs_fanout = FanoutBuilder::new("logs");
+        let mut internal_metrics_fanout = FanoutBuilder::new("internal_metrics");
 
         //
         // TRACES
@@ -313,7 +310,7 @@ impl Agent {
             for cfg in exp_config.traces {
                 let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
                     bounded::<Vec<Message<ResourceSpans>>>(self.sending_queue_size);
-                trace_fanout = trace_fanout.add_tx(trace_pipeline_out_tx);
+                trace_fanout = trace_fanout.add_tx(cfg.name(), trace_pipeline_out_tx);
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
@@ -472,9 +469,9 @@ impl Agent {
 
                 if is_internal_metrics {
                     internal_metrics_fanout =
-                        internal_metrics_fanout.add_tx(metrics_pipeline_out_tx);
+                        internal_metrics_fanout.add_tx(cfg.name(), metrics_pipeline_out_tx);
                 } else {
-                    metrics_fanout = metrics_fanout.add_tx(metrics_pipeline_out_tx);
+                    metrics_fanout = metrics_fanout.add_tx(cfg.name(), metrics_pipeline_out_tx);
                 }
 
                 let telemetry_type = match is_internal_metrics {
@@ -608,7 +605,7 @@ impl Agent {
             for cfg in exp_config.logs {
                 let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
                     bounded::<Vec<Message<ResourceLogs>>>(self.sending_queue_size);
-                logs_fanout = logs_fanout.add_tx(logs_pipeline_out_tx);
+                logs_fanout = logs_fanout.add_tx(cfg.name(), logs_pipeline_out_tx);
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
@@ -704,6 +701,7 @@ impl Agent {
                 .expect("Failed to build trace fanout with single consumer");
 
             let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
+                "traces",
                 trace_pipeline_in_rx.clone(),
                 trace_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -730,6 +728,7 @@ impl Agent {
                 .expect("Failed to build metrics fanout with single consumer");
 
             let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                "metrics",
                 metrics_pipeline_in_rx.clone(),
                 metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -756,6 +755,7 @@ impl Agent {
                 .expect("Failed to build logs fanout with single consumer");
 
             let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
+                "logs",
                 logs_pipeline_in_rx.clone(),
                 logs_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -782,6 +782,7 @@ impl Agent {
                 .expect("Failed to build internal metrics fanout with single consumer");
 
             let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                "internal_metrics",
                 internal_metrics_pipeline_in_rx.clone(),
                 internal_metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
