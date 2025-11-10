@@ -571,10 +571,8 @@ where
 
                 // Record futures counts periodically
                 _ = stats_timer.tick() => {
-                    let encoding_count = self.encoding_futures.len();
-                    let send_count = self.send_futures.len();
-                    self.encoding_futures_count.store(encoding_count, Ordering::Relaxed);
-                    self.send_futures_count.store(send_count, Ordering::Relaxed);
+                    self.encoding_futures_count.store(self.encoding_futures.len(), Ordering::Relaxed);
+                    self.send_futures_count.store(self.send_futures.len(), Ordering::Relaxed);
                 }
 
                 // Process completed sends
