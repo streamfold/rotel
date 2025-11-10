@@ -63,9 +63,16 @@ impl KafkaOffsetCommitter {
                                     debug!("Received ack for topic {} partition {} offset {}", kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
                                     self.topic_trackers.acknowledge(kafka_ack.topic_id, kafka_ack.partition, kafka_ack.offset);
                                 }
-                                payload::KafkaAcknowledgement::Nack(_kafka_nack) => {
-                                    // TODO: Implement nack
-                                    //self.topic_trackers.nack(kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset);
+                                payload::KafkaAcknowledgement::Nack(kafka_nack) => {
+                                    warn!(
+                                        "Message export failed - topic {} partition {} offset {}: {:?}",
+                                        kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset, kafka_nack.reason
+                                    );
+                                    debug!("Current tracker pending is {}", self.topic_trackers.pending_count(kafka_nack.topic_id, kafka_nack.partition));
+                                    debug!("Received nack for topic {} partition {} offset {}", kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset);
+                                    // Treat nack like ack when disable_exporter_indefinite_retry is enabled
+                                    // This acknowledges the offset to prevent blocking further processing
+                                    self.topic_trackers.nack(kafka_nack.topic_id, kafka_nack.partition, kafka_nack.offset);
                                 }
                             }
                         }
@@ -116,8 +123,22 @@ impl KafkaOffsetCommitter {
                             );
                             ack_count += 1;
                         }
-                        payload::KafkaAcknowledgement::Nack(_) => {
-                            // TODO: Implement nack handling
+                        payload::KafkaAcknowledgement::Nack(kafka_nack) => {
+                            warn!(
+                                "Message export failed - topic {} partition {} offset {}: {:?}",
+                                kafka_nack.topic_id,
+                                kafka_nack.partition,
+                                kafka_nack.offset,
+                                kafka_nack.reason
+                            );
+                            // Treat nack like ack when disable_exporter_indefinite_retry is enabled
+                            // This acknowledges the offset to prevent blocking further processing
+                            self.topic_trackers.nack(
+                                kafka_nack.topic_id,
+                                kafka_nack.partition,
+                                kafka_nack.offset,
+                            );
+                            ack_count += 1;
                         }
                     }
                 }

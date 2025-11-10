@@ -100,6 +100,20 @@ impl BTreeMapOffsetTracker {
         }
     }
 
+    /// Handle a nacked message - behaves like acknowledge when disable_exporter_indefinite_retry is true
+    /// in the future we might add support for different behavior, like ack and continue for 400s but panic/exit
+    /// if you receive a 500, or for example, write metadata as an audit log to a DLQ so it can later be re-attempted.
+    fn nack(&mut self, partition: i32, offset: i64) {
+        tracing::debug!(
+            partition = partition,
+            offset = offset,
+            "Received nack for message, treating as acknowledge to prevent blocking"
+        );
+        // When disable_exporter_indefinite_retry is enabled, nack behaves exactly like ack
+        // We acknowledge the offset to prevent it from blocking further processing
+        self.acknowledge(partition, offset);
+    }
+
     // Returns the highest acknowledged offset for a partition (high water mark)
     pub fn get_high_water_mark(&self, partition: i32) -> Option<i64> {
         self.high_water_marks.get(&partition).copied()
@@ -158,13 +172,16 @@ impl BTreeMapOffsetTracker {
 pub struct TopicTrackers {
     /// Maps topic_id to its dedicated offset tracker
     trackers: RwLock<HashMap<u8, BTreeMapOffsetTracker>>,
+    /// Whether finite retry is enabled (when false, nacks should panic)
+    finite_retry_enabled: bool,
 }
 
 impl TopicTrackers {
     /// Create a new TopicTrackers using BTreeMap implementation as default
-    pub fn new() -> Self {
+    pub fn new(finite_retry_enabled: bool) -> Self {
         Self {
             trackers: RwLock::new(HashMap::new()),
+            finite_retry_enabled,
         }
     }
 
@@ -197,6 +214,39 @@ impl TopicTrackers {
                 partition = partition,
                 offset = offset,
                 "Received acknowledgment for unknown topic"
+            );
+        }
+    }
+
+    /// Handle a nacked message for a specific topic and partition
+    pub fn nack(&self, topic_id: u8, partition: i32, offset: i64) {
+        // CRITICAL: If we're here with indefinite retry enabled, something is fundamentally broken
+        if !self.finite_retry_enabled {
+            panic!(
+                "CRITICAL BUG: nack() called on offset tracker with indefinite retry enabled. \
+                This indicates exporter retry logic failure with infinite retries configured. \
+                Cannot safely acknowledge nacked offset - would cause data loss. \
+                System must abort to prevent silent data corruption. \
+                topic_id={}, partition={}, offset={}",
+                topic_id, partition, offset
+            );
+        }
+
+        tracing::debug!(
+            topic_id = topic_id,
+            partition = partition,
+            offset = offset,
+            "Received nack for message, treating as acknowledge to prevent blocking"
+        );
+        let mut trackers = self.trackers.write().unwrap();
+        if let Some(tracker) = trackers.get_mut(&topic_id) {
+            tracker.nack(partition, offset);
+        } else {
+            tracing::warn!(
+                topic_id = topic_id,
+                partition = partition,
+                offset = offset,
+                "Received nack for unknown topic"
             );
         }
     }
@@ -271,7 +321,7 @@ impl TopicTrackers {
 
 impl Default for TopicTrackers {
     fn default() -> Self {
-        Self::new()
+        Self::new(false) // Default to indefinite retry (safer default)
     }
 }
 
@@ -587,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_topic_trackers_basic() {
-        let trackers = TopicTrackers::new();
+        let trackers = TopicTrackers::new(false);
 
         // Track offsets for multiple topics
         trackers.track(1, 0, 100);
@@ -622,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_topic_trackers_acknowledge() {
-        let trackers = TopicTrackers::new();
+        let trackers = TopicTrackers::new(false);
 
         // Track some offsets
         trackers.track(1, 0, 100);
@@ -647,7 +697,7 @@ mod tests {
 
     #[test]
     fn test_topic_trackers_lowest_pending_offset() {
-        let trackers = TopicTrackers::new();
+        let trackers = TopicTrackers::new(false);
 
         // Initially empty
         assert_eq!(trackers.lowest_pending_offset(1, 0), None);
@@ -670,7 +720,7 @@ mod tests {
 
     #[test]
     fn test_topic_trackers_unknown_topic() {
-        let trackers = TopicTrackers::new();
+        let trackers = TopicTrackers::new(false);
 
         // Query unknown topic should return defaults
         assert_eq!(trackers.topic_pending(99), 0);
@@ -686,7 +736,7 @@ mod tests {
         use std::sync::{Arc, Barrier};
         use std::thread;
 
-        let trackers = Arc::new(TopicTrackers::new());
+        let trackers = Arc::new(TopicTrackers::new(false));
         let mut handles = vec![];
         let barrier = Arc::new(Barrier::new(10));
 
@@ -731,5 +781,288 @@ mod tests {
         for topic_id in 0..10 {
             assert_eq!(all_committable.get(&(topic_id, 0)), Some(&50));
         }
+    }
+
+    #[test]
+    fn test_btree_tracker_nack_basic() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Track some offsets
+        tracker.track(0, 100);
+        tracker.track(0, 101);
+        tracker.track(0, 102);
+
+        assert_eq!(tracker.pending_count(0), 3);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
+
+        // Nack the first offset - should behave exactly like an ack
+        tracker.nack(0, 100);
+
+        // Verify nack behaves like acknowledge - removes the offset from pending
+        assert_eq!(tracker.pending_count(0), 2);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(101));
+
+        // Committable should now be 101
+        let committable = tracker.get_committable_offsets();
+        assert_eq!(committable.get(&0), Some(&101));
+    }
+
+    #[test]
+    fn test_btree_tracker_nack_out_of_order() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Track sequential offsets
+        tracker.track(0, 100);
+        tracker.track(0, 101);
+        tracker.track(0, 102);
+        tracker.track(0, 103);
+        tracker.track(0, 104);
+
+        // Nack out of order: 102, 104
+        tracker.nack(0, 102);
+        tracker.nack(0, 104);
+
+        // Committable should still be 100 (lowest pending)
+        let committable = tracker.get_committable_offsets();
+        assert_eq!(committable.get(&0), Some(&100));
+
+        // Nack 100
+        tracker.nack(0, 100);
+
+        // Committable should now be 101
+        let committable = tracker.get_committable_offsets();
+        assert_eq!(committable.get(&0), Some(&101));
+
+        // Nack 101
+        tracker.nack(0, 101);
+
+        // Committable should now be 103 (102 was already nacked)
+        let committable = tracker.get_committable_offsets();
+        assert_eq!(committable.get(&0), Some(&103));
+    }
+
+    #[test]
+    fn test_btree_tracker_nack_all_offsets() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Track 3 offsets for partition 0
+        tracker.track(0, 100);
+        tracker.track(0, 101);
+        tracker.track(0, 102);
+
+        // Verify they are tracked
+        assert_eq!(tracker.pending_count(0), 3);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(100));
+
+        // Nack all offsets
+        tracker.nack(0, 100);
+        tracker.nack(0, 101);
+        tracker.nack(0, 102);
+
+        // Verify all are nacked - lowest pending should be None
+        assert_eq!(tracker.lowest_pending_offset(0), None);
+        assert_eq!(tracker.pending_count(0), 0);
+
+        // Check high water mark - should be the highest nacked offset
+        assert_eq!(tracker.get_high_water_mark(0), Some(102));
+
+        // Should return empty map when all offsets nacked
+        let committable = tracker.get_committable_offsets();
+        assert!(committable.is_empty());
+    }
+
+    #[test]
+    fn test_btree_tracker_nack_non_existent() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Nacking non-existent offset should be safe no-op
+        tracker.nack(0, 999);
+
+        // Track some offsets
+        tracker.track(0, 100);
+
+        // Nack wrong partition - should be no-op
+        tracker.nack(1, 100);
+        assert_eq!(tracker.pending_count(0), 1);
+
+        // Nack wrong offset - should be no-op
+        tracker.nack(0, 999);
+        assert_eq!(tracker.pending_count(0), 1);
+    }
+
+    #[test]
+    fn test_btree_tracker_mixed_ack_nack() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Track sequential offsets
+        tracker.track(0, 100);
+        tracker.track(0, 101);
+        tracker.track(0, 102);
+        tracker.track(0, 103);
+        tracker.track(0, 104);
+
+        // Mix of acks and nacks
+        tracker.acknowledge(0, 100); // ack
+        tracker.nack(0, 102); // nack
+        tracker.acknowledge(0, 101); // ack
+        tracker.nack(0, 104); // nack
+
+        // Should have one pending offset left (103)
+        assert_eq!(tracker.pending_count(0), 1);
+        assert_eq!(tracker.lowest_pending_offset(0), Some(103));
+
+        // Committable should be 103
+        let committable = tracker.get_committable_offsets();
+        assert_eq!(committable.get(&0), Some(&103));
+
+        // High water mark should be highest processed offset
+        assert_eq!(tracker.get_high_water_mark(0), Some(104));
+    }
+
+    #[test]
+    fn test_btree_tracker_nack_multiple_partitions() {
+        let mut tracker = BTreeMapOffsetTracker::new();
+
+        // Track offsets for different partitions
+        tracker.track(0, 100);
+        tracker.track(0, 101);
+        tracker.track(1, 200);
+        tracker.track(1, 201);
+        tracker.track(2, 300);
+
+        // Verify initial counts
+        assert_eq!(tracker.pending_count(0), 2);
+        assert_eq!(tracker.pending_count(1), 2);
+        assert_eq!(tracker.pending_count(2), 1);
+        assert_eq!(tracker.total_pending(), 5);
+
+        // Nack some offsets from different partitions
+        tracker.nack(0, 100);
+        tracker.nack(1, 200);
+
+        // Verify updated counts
+        assert_eq!(tracker.pending_count(0), 1);
+        assert_eq!(tracker.pending_count(1), 1);
+        assert_eq!(tracker.pending_count(2), 1);
+        assert_eq!(tracker.total_pending(), 3);
+
+        // Verify updated committable
+        let committable = tracker.get_committable_offsets();
+        assert_eq!(committable.get(&0), Some(&101));
+        assert_eq!(committable.get(&1), Some(&201));
+        assert_eq!(committable.get(&2), Some(&300));
+    }
+
+    #[test]
+    fn test_topic_trackers_nack_basic() {
+        let trackers = TopicTrackers::new(true);
+
+        // Track offsets for multiple topics
+        trackers.track(1, 0, 100);
+        trackers.track(1, 0, 101);
+        trackers.track(2, 0, 200);
+        trackers.track(2, 1, 300);
+
+        // Verify initial state
+        assert_eq!(trackers.topic_pending(1), 2);
+        assert_eq!(trackers.topic_pending(2), 2);
+        assert_eq!(trackers.total_pending(), 4);
+
+        // Nack some offsets
+        trackers.nack(1, 0, 100);
+        trackers.nack(2, 1, 300);
+
+        // Verify updated state
+        assert_eq!(trackers.pending_count(1, 0), 1);
+        assert_eq!(trackers.pending_count(2, 0), 1);
+        assert_eq!(trackers.pending_count(2, 1), 0);
+        assert_eq!(trackers.total_pending(), 2);
+
+        // Verify committable offsets
+        let topic1_committable = trackers.get_committable_offsets(1);
+        assert_eq!(topic1_committable.get(&0), Some(&101));
+
+        let topic2_committable = trackers.get_committable_offsets(2);
+        assert_eq!(topic2_committable.get(&0), Some(&200));
+        assert!(topic2_committable.get(&1).is_none()); // All nacked for this partition
+    }
+
+    #[test]
+    fn test_topic_trackers_nack_unknown_topic() {
+        let trackers = TopicTrackers::new(true);
+
+        // Track some offsets for topic 1
+        trackers.track(1, 0, 100);
+        trackers.track(1, 0, 101);
+
+        // Nack unknown topic should be safe no-op and log warning
+        trackers.nack(99, 0, 100);
+
+        // Verify original state unchanged
+        assert_eq!(trackers.pending_count(1, 0), 2);
+        assert_eq!(trackers.total_pending(), 2);
+    }
+
+    #[test]
+    fn test_topic_trackers_nack_mixed_operations() {
+        let trackers = TopicTrackers::new(true);
+
+        // Track offsets for topic 1
+        trackers.track(1, 0, 100);
+        trackers.track(1, 0, 101);
+        trackers.track(1, 0, 102);
+        trackers.track(1, 0, 103);
+
+        // Mix of acks and nacks
+        trackers.acknowledge(1, 0, 100); // ack first
+        trackers.nack(1, 0, 102); // nack third
+        trackers.acknowledge(1, 0, 101); // ack second
+
+        // Should have one pending offset left (103)
+        assert_eq!(trackers.pending_count(1, 0), 1);
+        assert_eq!(trackers.lowest_pending_offset(1, 0), Some(103));
+
+        // Verify high water mark
+        assert_eq!(trackers.high_water_mark(1, 0), Some(102));
+    }
+
+    #[test]
+    fn test_topic_trackers_nack_all_partitions() {
+        let trackers = TopicTrackers::new(true);
+
+        // Track offsets for multiple partitions of same topic
+        trackers.track(1, 0, 100);
+        trackers.track(1, 0, 101);
+        trackers.track(1, 1, 200);
+        trackers.track(1, 2, 300);
+
+        // Nack all offsets from different partitions
+        trackers.nack(1, 0, 100);
+        trackers.nack(1, 0, 101);
+        trackers.nack(1, 1, 200);
+        trackers.nack(1, 2, 300);
+
+        // All partitions should be empty
+        assert_eq!(trackers.topic_pending(1), 0);
+        assert_eq!(trackers.total_pending(), 0);
+
+        // No committable offsets should remain
+        let committable = trackers.get_committable_offsets(1);
+        assert!(committable.is_empty());
+
+        // All committable should also be empty
+        let all_committable = trackers.get_all_committable_offsets();
+        assert!(all_committable.is_empty());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "CRITICAL BUG: nack() called on offset tracker with indefinite retry enabled"
+    )]
+    fn test_topic_trackers_nack_panics_with_indefinite_retry() {
+        let trackers = TopicTrackers::new(false); // indefinite retry enabled
+
+        // This should panic since finite_retry_enabled = false
+        trackers.nack(1, 0, 100);
     }
 }

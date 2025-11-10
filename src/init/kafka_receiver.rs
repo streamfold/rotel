@@ -95,13 +95,13 @@ pub struct KafkaReceiverArgs {
     #[serde(deserialize_with = "crate::init::parse::deser_into_string")]
     pub client_id: String,
 
-    /// Enable auto commit of offsets
+    /// Enable auto commit of offsets (disables offset tracking)
     #[arg(
-        long("kafka-receiver-enable-offset-tracking"),
-        env = "ROTEL_KAFKA_RECEIVER_ENABLE_OFFSET_TRACKING",
+        long("kafka-receiver-enable-auto-commit"),
+        env = "ROTEL_KAFKA_RECEIVER_ENABLE_AUTO_COMMIT",
         default_value = "false"
     )]
-    pub enable_offset_tracking: bool,
+    pub enable_auto_commit: bool,
 
     /// Disable indefinite retry for exporters when offset tracking is enabled
     /// When offset tracking is enabled, exporters will retry indefinitely by default to ensure no data loss.
@@ -310,7 +310,7 @@ impl KafkaReceiverArgs {
             .with_logs(self.logs)
             .with_deserialization_format(self.format)
             .with_client_id(self.client_id.clone())
-            .with_auto_commit(!self.enable_offset_tracking, self.auto_commit_interval_ms)
+            .with_auto_commit(self.enable_auto_commit, self.auto_commit_interval_ms)
             .with_auto_offset_reset(self.auto_offset_reset)
             .with_session_timeout_ms(self.session_timeout_ms)
             .with_heartbeat_interval_ms(self.heartbeat_interval_ms)

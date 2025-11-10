@@ -139,6 +139,29 @@ impl Agent {
             matches!(cfg, ReceiverConfig::Kafka(k) if !k.enable_auto_commit && !k.disable_exporter_indefinite_retry)
         });
 
+        // Check if finite retry is explicitly enabled (when Kafka offset tracking with disable infinite retry is set)
+        let finite_retry_enabled = rec_config.iter().any(|(_, cfg)| {
+            matches!(cfg, ReceiverConfig::Kafka(k) if !k.enable_auto_commit && k.disable_exporter_indefinite_retry)
+        });
+
+        // Validate configuration: disable_exporter_indefinite_retry requires auto_commit to be disabled
+        for (name, cfg) in &rec_config {
+            if let ReceiverConfig::Kafka(k) = cfg {
+                if k.enable_auto_commit && k.disable_exporter_indefinite_retry {
+                    return Err(format!(
+                        "Invalid Kafka receiver configuration for '{:?}': \
+                        disable_exporter_indefinite_retry=true requires enable_auto_commit=false. \
+                        When auto-commit is enabled, Kafka handles offset management automatically \
+                        and exporter acknowledgment is not used for offset tracking.",
+                        name
+                    )
+                    .into());
+                }
+            }
+        }
+
+        // HTTP acknowledger will be created per exporter that needs it
+
         // If Kafka offset tracking is enabled, modify retry configs to be indefinite
         if kafka_offset_tracking_enabled {
             info!(
@@ -824,6 +847,7 @@ impl Agent {
                         traces_output.clone(),
                         metrics_output.clone(),
                         logs_output.clone(),
+                        finite_retry_enabled,
                     )?;
 
                     // Extract the offset committer before starting the receiver

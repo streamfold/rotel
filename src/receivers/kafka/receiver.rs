@@ -228,6 +228,7 @@ impl KafkaReceiver {
         traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
         metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
         logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+        finite_retry_enabled: bool,
     ) -> Result<Self> {
         // Get the list of topics to subscribe to
         let topics = config.get_topics();
@@ -240,7 +241,7 @@ impl KafkaReceiver {
 
         // Create an assigned partitions tracker
         let assigned_partitions = Arc::new(std::sync::Mutex::new(AssignedPartitions::new()));
-        let topic_trackers = Arc::new(TopicTrackers::new());
+        let topic_trackers = Arc::new(TopicTrackers::new(finite_retry_enabled));
 
         let traces_topic = config.traces_topic.clone();
         let traces_topic = traces_topic.unwrap_or("".into());
@@ -784,7 +785,7 @@ mod tests {
         let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, Some(traces_output), None, None);
+        let receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false);
         assert!(receiver.is_ok());
     }
 
@@ -955,7 +956,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false)
             .expect("Failed to create receiver");
 
         // Create test data
@@ -1029,7 +1030,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
+        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None, false)
             .expect("Failed to create receiver");
 
         // Create test data
@@ -1093,7 +1094,7 @@ mod tests {
         let config =
             KafkaReceiverConfig::new("localhost:9092".to_string(), "test-group".to_string());
 
-        let result = KafkaReceiver::new(config, None, None, None);
+        let result = KafkaReceiver::new(config, None, None, None, false);
         assert!(result.is_err());
         match result {
             Err(e) => assert!(e.to_string().contains("No topics configured")),
@@ -1121,7 +1122,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -1191,7 +1192,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None)
+        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None, false)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -1258,7 +1259,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(100);
         let logs_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, None, None, Some(logs_output))
+        let mut receiver = KafkaReceiver::new(config, None, None, Some(logs_output), false)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -1350,6 +1351,7 @@ mod tests {
             Some(traces_output),
             Some(metrics_output),
             Some(logs_output),
+            false,
         )
         .expect("Failed to create receiver");
 
@@ -1463,7 +1465,7 @@ mod tests {
         let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
@@ -1514,7 +1516,7 @@ mod tests {
         let (tx, _rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false)
             .expect("Failed to create receiver");
 
         let cancel_token = CancellationToken::new();
