@@ -82,11 +82,9 @@ where
             if let Some(transport_error) = error.downcast_ref::<TransportErrorWithMetadata>() {
                 if let Some(metadata_vec) = &transport_error.metadata {
                     for metadata in metadata_vec {
-                        let error_reason = ExporterError::RetryExhausted {
-                            last_error: format!("{}", transport_error.original_error),
-                            last_error_code: None,
-                            elapsed_time_ms: 0, // TODO: capture actual elapsed time
-                            attempt_count: 0,   // TODO: capture actual attempt count
+                        let error_reason = ExporterError::ExportFailed {
+                            error_code: 0,
+                            error_message: format!("{}", transport_error.original_error),
                         };
 
                         if let Err(nack_err) = metadata.nack(error_reason).await {

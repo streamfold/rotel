@@ -333,17 +333,6 @@ pub struct KafkaNack {
 /// Error types that can occur during export operations
 #[derive(Debug, Clone)]
 pub enum ExporterError {
-    /// Retry attempts were exhausted (max_elapsed_time reached)
-    RetryExhausted {
-        /// The final error that caused the failure
-        last_error: String,
-        /// The final error code encountered
-        last_error_code: Option<u16>,
-        /// Duration of retry attempts
-        elapsed_time_ms: u64,
-        /// Number of retry attempts made
-        attempt_count: u32,
-    },
     /// Generic export error with code and message
     ExportFailed {
         /// Error code (e.g., HTTP status code, internal error code)
