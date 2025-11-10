@@ -14,7 +14,9 @@ use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
-use std::{net::SocketAddr, str::FromStr};
+#[cfg(feature = "prometheus")]
+use std::net::SocketAddr;
+use std::str::FromStr;
 
 use super::awsemf_exporter::AwsEmfExporterArgs;
 
@@ -46,8 +48,9 @@ pub struct AgentRun {
     pub debug_log_verbosity: DebugLogVerbosity,
 
     /// Prometheus endpoint
-    #[arg(long, env = "ROTEL_PROMETHEUS_ENDPOINT", value_parser = parse::parse_endpoint)]
-    pub prometheus_endpoint: Option<SocketAddr>,
+    #[arg(long, env = "ROTEL_PROMETHEUS_ENDPOINT", default_value = "localhost:9090", value_parser = parse::parse_endpoint)]
+    #[cfg(feature = "prometheus")]
+    pub prometheus_endpoint: SocketAddr,
 
     #[command(flatten)]
     pub otlp_receiver: OTLPReceiverArgs,
@@ -144,7 +147,6 @@ impl Default for AgentRun {
             log_file: "/tmp/rotel-agent.log".to_string(),
             debug_log: vec![DebugLogParam::None],
             debug_log_verbosity: DebugLogVerbosity::Basic,
-            prometheus_endpoint: None,
             receiver: None,
             receivers: None,
             otlp_receiver: OTLPReceiverArgs::default(),
@@ -167,6 +169,8 @@ impl Default for AgentRun {
             clickhouse_exporter: ClickhouseExporterArgs::default(),
             aws_xray_exporter: XRayExporterArgs::default(),
             aws_emf_exporter: AwsEmfExporterArgs::default(),
+            #[cfg(feature = "prometheus")]
+            prometheus_endpoint: "127.0.0.1:9090".parse().unwrap(),
             #[cfg(feature = "rdkafka")]
             kafka_exporter: KafkaExporterArgs::default(),
             #[cfg(feature = "file_exporter")]

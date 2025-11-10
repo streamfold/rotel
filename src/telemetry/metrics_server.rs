@@ -29,16 +29,8 @@ pub struct MetricsServer {
 }
 
 impl MetricsServer {
-    /// Creates a new MetricsServer that will listen on localhost:9090
-    pub fn new(exporter: PrometheusExporter) -> Self {
-        Self {
-            addr: "127.0.0.1:9090".parse().unwrap(),
-            exporter,
-        }
-    }
-
-    /// Creates a new MetricsServer with a custom address
-    pub fn with_addr(addr: SocketAddr, exporter: PrometheusExporter) -> Self {
+    /// Creates a new MetricsServer
+    pub fn new(addr: SocketAddr, exporter: PrometheusExporter) -> Self {
         Self { addr, exporter }
     }
 
@@ -178,73 +170,6 @@ mod tests {
         let provider = SdkMeterProvider::builder()
             .with_reader(exporter.clone())
             .build();
-        global::set_meter_provider(provider);
-
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let listener = Listener::listen_async(addr).await.unwrap();
-        let bound_addr = listener.bound_address().unwrap();
-
-        let server = MetricsServer::with_addr(bound_addr, exporter);
-        let cancellation = CancellationToken::new();
-        let cancel_handle = cancellation.clone();
-
-        let server_handle = tokio::spawn(async move { server.serve(listener, cancellation).await });
-
-        // Give the server time to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Test GET /metrics
-        let client: Client<HttpConnector, Full<Bytes>> =
-            hyper_util::client::legacy::Client::builder(TokioExecutor::new())
-                .pool_idle_timeout(Duration::from_secs(2))
-                .pool_max_idle_per_host(2)
-                .timer(TokioTimer::new())
-                .build::<_, Full<Bytes>>(HttpConnector::new());
-        let uri = format!("http://{}/metrics", bound_addr);
-        let response = timeout(Duration::from_secs(5), client.get(uri.parse().unwrap()))
-            .await
-            .expect("Request timed out")
-            .expect("Request failed");
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let body_bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("Failed to read body")
-            .to_bytes();
-
-        // Should return Prometheus formatted metrics (may be empty if no metrics recorded)
-        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-        // The response should be valid text (empty or containing prometheus format)
-        assert!(body_str.is_empty() || body_str.contains("# HELP") || body_str.contains("# TYPE"));
-
-        // Test 404 on other paths
-        let uri = format!("http://{}/invalid", bound_addr);
-        let response = timeout(Duration::from_secs(5), client.get(uri.parse().unwrap()))
-            .await
-            .expect("Request timed out")
-            .expect("Request failed");
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-
-        // Cancel the server
-        cancel_handle.cancel();
-        timeout(Duration::from_secs(5), server_handle)
-            .await
-            .expect("Server shutdown timed out")
-            .expect("Server task failed")
-            .expect("Server returned error");
-    }
-
-    #[tokio::test]
-    async fn test_metrics_endpoint_with_actual_metrics() {
-        // Create a PrometheusExporter for testing
-        let exporter = PrometheusExporter::default();
-
-        let provider = SdkMeterProvider::builder()
-            .with_reader(exporter.clone())
-            .build();
 
         // Create and record some test metrics using the provider directly
         let meter = provider.meter("test_meter");
@@ -261,7 +186,7 @@ mod tests {
         let listener = Listener::listen_async(addr).await.unwrap();
         let bound_addr = listener.bound_address().unwrap();
 
-        let server = MetricsServer::with_addr(bound_addr, exporter);
+        let server = MetricsServer::new(bound_addr, exporter);
         let cancellation = CancellationToken::new();
         let cancel_handle = cancellation.clone();
 
@@ -295,6 +220,15 @@ mod tests {
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(body_str.contains("test_counter"));
         assert!(body_str.contains("test_gauge"));
+
+        // Test 404 on other paths
+        let uri = format!("http://{}/invalid", bound_addr);
+        let response = timeout(Duration::from_secs(5), client.get(uri.parse().unwrap()))
+            .await
+            .expect("Request timed out")
+            .expect("Request failed");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         // Cancel the server
         cancel_handle.cancel();
