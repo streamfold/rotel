@@ -47,19 +47,8 @@ struct EncodedMessage {
 }
 
 /// Wrapper for send future that includes metadata for acknowledgment
-type SendFutureWithMetadata = Pin<
-    Box<
-        dyn Future<
-                Output = (
-                    std::result::Result<
-                        Delivery,
-                        (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage),
-                    >,
-                    Option<Vec<MessageMetadata>>,
-                ),
-            > + Send,
-    >,
->;
+#[rustfmt::skip]
+type SendFutureWithMetadata = Pin<Box<dyn Future<Output = (std::result::Result<Delivery,(rdkafka::error::KafkaError,rdkafka::message::OwnedMessage)>, Option<Vec<MessageMetadata>>)> + Send>>;
 
 /// Kafka-specific acknowledger that acknowledges messages on successful send
 #[derive(Default, Clone)]
@@ -71,6 +60,33 @@ impl KafkaAcknowledger {
             for metadata in metadata_vec {
                 if let Err(e) = metadata.ack().await {
                     tracing::warn!("Failed to acknowledge Kafka message: {:?}", e);
+                }
+            }
+        }
+    }
+
+    pub async fn handle_error(
+        &self,
+        kafka_error: &rdkafka::error::KafkaError,
+        metadata: Option<Vec<MessageMetadata>>,
+    ) {
+        // Send nacks on export failures with detailed Kafka error information
+        if let Some(metadata_vec) = metadata {
+            for metadata in metadata_vec {
+                // Extract Kafka error details
+                let error_code = kafka_error
+                    .rdkafka_error_code()
+                    .map(|code| (code as i32).try_into().unwrap_or(0u16))
+                    .unwrap_or(0u16);
+                let error_message = format!("Kafka export failed: {}", kafka_error);
+
+                let error_reason = crate::topology::payload::ExporterError::ExportFailed {
+                    error_code,
+                    error_message,
+                };
+
+                if let Err(nack_err) = metadata.nack(error_reason).await {
+                    tracing::warn!("Failed to nack message after Kafka error: {:?}", nack_err);
                 }
             }
         }
@@ -588,7 +604,8 @@ where
                         }
                         Err((e, _)) => {
                             error!("Failed to send {}: {}", telemetry_type, e);
-                            // Don't acknowledge on failure - messages remain unacknowledged
+                            // Handle error via acknowledger with detailed Kafka error
+                            self.acknowledger.handle_error(&e, metadata).await;
                         }
                     }
                 }
@@ -728,7 +745,8 @@ where
                     }
                     Err((e, _)) => {
                         error!("Failed to send {} during drain: {}", telemetry_type, e);
-                        // Don't acknowledge on failure - messages remain unacknowledged
+                        // Handle error via acknowledger during drain with detailed Kafka error
+                        self.acknowledger.handle_error(&e, metadata).await;
                     }
                 }
             }

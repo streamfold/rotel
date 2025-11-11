@@ -9,6 +9,7 @@ use crate::exporters::http::metadata_extractor::MetadataExtractor;
 use crate::exporters::http::response::Response;
 use crate::exporters::http::tls::Config;
 use crate::exporters::http::types::ContentEncoding;
+use crate::topology::payload::MessageMetadata;
 use bytes::Bytes;
 use http::Request;
 use http::header::CONTENT_ENCODING;
@@ -43,6 +44,24 @@ impl Display for ConnectError {
     }
 }
 impl Error for ConnectError {}
+
+#[derive(Debug)]
+pub struct TransportErrorWithMetadata {
+    pub original_error: BoxError,
+    pub metadata: Option<Vec<MessageMetadata>>,
+}
+
+impl Display for TransportErrorWithMetadata {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Transport error: {}", self.original_error)
+    }
+}
+
+impl Error for TransportErrorWithMetadata {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.original_error.as_ref())
+    }
+}
 
 #[derive(Clone)]
 pub struct Client<ReqBody, Resp, Dec> {
@@ -247,7 +266,14 @@ where
                     resp = resp.with_metadata(metadata);
                     Ok(resp)
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    // For transport errors, wrap the error with metadata
+                    let wrapped_error: BoxError = Box::new(TransportErrorWithMetadata {
+                        original_error: e,
+                        metadata,
+                    });
+                    Err(wrapped_error)
+                }
             }
         })
     }

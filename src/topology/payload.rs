@@ -153,7 +153,8 @@ impl PartialEq for KafkaMetadata {
 pub trait Ack {
     #[allow(async_fn_in_trait)]
     async fn ack(&self) -> Result<(), SendError>;
-    fn nack(&self);
+    #[allow(async_fn_in_trait)]
+    async fn nack(&self, reason: ExporterError) -> Result<(), SendError>;
 }
 
 impl Ack for MessageMetadata {
@@ -180,8 +181,28 @@ impl Ack for MessageMetadata {
         Ok(())
     }
 
-    fn nack(&self) {
-        todo!()
+    async fn nack(&self, reason: ExporterError) -> Result<(), SendError> {
+        // Decrement reference count atomically
+        let prev_count = self.ref_count.fetch_sub(1, Ordering::AcqRel);
+
+        // Only send nack when count reaches 0
+        if prev_count == 1 {
+            match &self.data {
+                MessageMetadataInner::Kafka(km) => {
+                    if let Some(ack_chan) = &km.ack_chan {
+                        ack_chan
+                            .send(KafkaAcknowledgement::Nack(KafkaNack {
+                                offset: km.offset,
+                                partition: km.partition,
+                                topic_id: km.topic_id,
+                                reason,
+                            }))
+                            .await?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -309,9 +330,21 @@ pub struct KafkaNack {
     pub reason: ExporterError,
 }
 
-// We'll likely want to have a single shared ExporterError type, perhaps residing outside of both
-// the payload and exporter modules that both can share. For now this is just serving as a placeholder
-pub enum ExporterError {}
+/// Error types that can occur during export operations
+#[derive(Debug, Clone)]
+pub enum ExporterError {
+    /// Generic export error with code and message
+    ExportFailed {
+        /// Error code (e.g., HTTP status code, internal error code)
+        error_code: u16,
+        /// Human-readable error message
+        error_message: String,
+    },
+    /// Export was cancelled before completion
+    Cancelled,
+    /// Configuration error preventing export
+    Configuration(String),
+}
 
 /// Trait for converting telemetry data into OTLP protocol format
 pub trait OTLPFrom<T> {

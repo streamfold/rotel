@@ -94,7 +94,7 @@ where
     <Svc as Service<Request<Payload>>>::Error: Debug,
     T: Debug + Send + Sync,
     Finalizer: ResultFinalizer<Result<Response<T>, <Svc as Service<Request<Payload>>>::Error>>,
-    Ack: Acknowledger<T>,
+    Ack: Acknowledger<T, Error = <Svc as Service<Request<Payload>>>::Error>,
     Payload: Clone,
 {
     pub async fn start(mut self, token: CancellationToken) -> Result<(), BoxError> {
@@ -167,7 +167,10 @@ where
                             }
                         },
                         Err(e) => {
-                            // On error, just pass to finalizer (no acknowledgment)
+                            // Handle error acknowledgment (potentially sending nacks)
+                            self.acknowledger.handle_error(&e).await;
+
+                            // Then pass to finalizer
                             match self.result_finalizer.finalize(Err(e)) {
                                 Err(e) => {
                                     error!(error = ?e, ?meta, "Exporting failed, dropping data.")
@@ -332,7 +335,10 @@ where
                                 }
                             }
                             Err(e) => {
-                                // On error, just finalize (no acknowledgment)
+                                // Handle error acknowledgment (potentially sending nacks)
+                                self.acknowledger.handle_error(&e).await;
+
+                                // Then finalize
                                 if let Err(e) = self.result_finalizer.finalize(Err(e)) {
                                     error!(meta = ?self.meta,
                                         error = ?e,
