@@ -180,6 +180,20 @@ pub(crate) enum ExporterConfig {
     File(crate::exporters::file::config::FileExporterConfig),
 }
 
+impl ExporterConfig {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ExporterConfig::Blackhole => "blackhole",
+            ExporterConfig::Otlp(_) => "otlp",
+            ExporterConfig::Datadog(_) => "datadog",
+            ExporterConfig::Clickhouse(_) => "clickhouse",
+            ExporterConfig::Xray(_) => "awsxray",
+            ExporterConfig::Awsemf(_) => "awsemf",
+            ExporterConfig::Kafka(_) => "kafka",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ReceiverConfig {
     Otlp(OTLPReceiverConfig),
@@ -212,11 +226,11 @@ impl TryIntoConfig for ExporterArgs {
 
                         if pipeline_type == PipelineType::Metrics {
                             Ok(ExporterConfig::Otlp(
-                                otlp.into_exporter_config("otlp_metrics", endpoint),
+                                otlp.into_exporter_config("metrics", endpoint),
                             ))
                         } else {
                             Ok(ExporterConfig::Otlp(
-                                otlp.into_exporter_config("otlp_internal_metrics", endpoint),
+                                otlp.into_exporter_config("internal_metrics", endpoint),
                             ))
                         }
                     }
@@ -231,7 +245,7 @@ impl TryIntoConfig for ExporterArgs {
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
                         Ok(ExporterConfig::Otlp(
-                            otlp.into_exporter_config("otlp_logs", endpoint),
+                            otlp.into_exporter_config("logs", endpoint),
                         ))
                     }
                     PipelineType::Traces => {
@@ -245,7 +259,7 @@ impl TryIntoConfig for ExporterArgs {
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
                         Ok(ExporterConfig::Otlp(
-                            otlp.into_exporter_config("otlp_traces", endpoint),
+                            otlp.into_exporter_config("traces", endpoint),
                         ))
                     }
                 }

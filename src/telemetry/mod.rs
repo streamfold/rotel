@@ -1,5 +1,8 @@
 pub mod internal_exporter;
 
+#[cfg(feature = "prometheus")]
+pub mod metrics_server;
+
 use opentelemetry::KeyValue;
 
 pub trait Counter<T> {

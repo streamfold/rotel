@@ -48,6 +48,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::log::warn;
 use tracing::{debug, error, info};
 
+#[cfg(feature = "prometheus")]
+use crate::telemetry::metrics_server::MetricsServer;
+#[cfg(feature = "prometheus")]
+use opentelemetry_prometheus_text_exporter::PrometheusExporter;
+
 pub struct Agent {
     config: Box<AgentRun>,
     port_map: HashMap<SocketAddr, Listener>,
@@ -258,8 +263,39 @@ impl Agent {
             .with_interval(Duration::from_secs(10))
             .build();
 
-        let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-            .with_reader(periodic_reader)
+        #[allow(unused_mut)]
+        let mut meter_provider_builder =
+            opentelemetry_sdk::metrics::SdkMeterProvider::builder().with_reader(periodic_reader);
+
+        //
+        // Start the Prometheus metrics server if configured
+        //
+
+        #[cfg(feature = "prometheus")]
+        let (mut prom_task_set, prom_cancel) = {
+            info!(?config.prometheus_endpoint, "Starting Prometheus metrics server");
+            let mut prom_task_set = JoinSet::new();
+            let prom_cancel = CancellationToken::new();
+
+            let prom_exporter = PrometheusExporter::new();
+
+            meter_provider_builder = meter_provider_builder.with_reader(prom_exporter.clone());
+
+            let metrics_listener = Listener::listen_std(config.prometheus_endpoint)?;
+            let metrics_server = MetricsServer::new(config.prometheus_endpoint, prom_exporter);
+            let cancel_token = prom_cancel.clone();
+
+            prom_task_set.spawn(async move {
+                if let Err(e) = metrics_server.serve(metrics_listener, cancel_token).await {
+                    error!("Metrics server error: {:?}", e);
+                }
+                Ok(())
+            });
+
+            (prom_task_set, prom_cancel)
+        };
+
+        let meter_provider = meter_provider_builder
             .with_resource(Resource::builder().with_service_name("rotel").build())
             .build();
 
@@ -269,10 +305,10 @@ impl Agent {
         // Build the exporters now
         //
 
-        let mut trace_fanout = FanoutBuilder::new();
-        let mut metrics_fanout = FanoutBuilder::new();
-        let mut logs_fanout = FanoutBuilder::new();
-        let mut internal_metrics_fanout = FanoutBuilder::new();
+        let mut trace_fanout = FanoutBuilder::new("traces");
+        let mut metrics_fanout = FanoutBuilder::new("metrics");
+        let mut logs_fanout = FanoutBuilder::new("logs");
+        let mut internal_metrics_fanout = FanoutBuilder::new("internal_metrics");
 
         //
         // TRACES
@@ -281,7 +317,7 @@ impl Agent {
             for cfg in exp_config.traces {
                 let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
                     bounded::<Vec<Message<ResourceSpans>>>(self.sending_queue_size);
-                trace_fanout = trace_fanout.add_tx(trace_pipeline_out_tx);
+                trace_fanout = trace_fanout.add_tx(cfg.name(), trace_pipeline_out_tx);
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
@@ -440,9 +476,9 @@ impl Agent {
 
                 if is_internal_metrics {
                     internal_metrics_fanout =
-                        internal_metrics_fanout.add_tx(metrics_pipeline_out_tx);
+                        internal_metrics_fanout.add_tx(cfg.name(), metrics_pipeline_out_tx);
                 } else {
-                    metrics_fanout = metrics_fanout.add_tx(metrics_pipeline_out_tx);
+                    metrics_fanout = metrics_fanout.add_tx(cfg.name(), metrics_pipeline_out_tx);
                 }
 
                 let telemetry_type = match is_internal_metrics {
@@ -576,7 +612,7 @@ impl Agent {
             for cfg in exp_config.logs {
                 let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
                     bounded::<Vec<Message<ResourceLogs>>>(self.sending_queue_size);
-                logs_fanout = logs_fanout.add_tx(logs_pipeline_out_tx);
+                logs_fanout = logs_fanout.add_tx(cfg.name(), logs_pipeline_out_tx);
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
@@ -672,6 +708,7 @@ impl Agent {
                 .expect("Failed to build trace fanout with single consumer");
 
             let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
+                "traces",
                 trace_pipeline_in_rx.clone(),
                 trace_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -698,6 +735,7 @@ impl Agent {
                 .expect("Failed to build metrics fanout with single consumer");
 
             let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                "metrics",
                 metrics_pipeline_in_rx.clone(),
                 metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -724,6 +762,7 @@ impl Agent {
                 .expect("Failed to build logs fanout with single consumer");
 
             let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
+                "logs",
                 logs_pipeline_in_rx.clone(),
                 logs_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -750,6 +789,7 @@ impl Agent {
                 .expect("Failed to build internal metrics fanout with single consumer");
 
             let mut internal_metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                "internal_metrics",
                 internal_metrics_pipeline_in_rx.clone(),
                 internal_metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
@@ -1012,6 +1052,19 @@ impl Agent {
                 warn!("Kafka offset committer did not exit within timeout: {}", e);
             } else {
                 debug!("Kafka offset committer shut down successfully");
+            }
+        }
+
+        #[cfg(feature = "prometheus")]
+        {
+            prom_cancel.cancel();
+            if let Err(e) =
+                wait::wait_for_tasks_with_timeout(&mut prom_task_set, Duration::from_secs(1)).await
+            {
+                warn!(
+                    "Prometheus metrics server did not exit within timeout: {}",
+                    e
+                );
             }
         }
 

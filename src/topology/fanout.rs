@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use futures::FutureExt;
+use opentelemetry::metrics::ObservableGauge;
+use opentelemetry::{KeyValue, global};
 
 use crate::bounded_channel::BoundedSender;
 use std::future::Future;
@@ -14,11 +16,13 @@ use std::task::{Context, Poll};
 ///
 pub struct Fanout<T> {
     consumers: Vec<BoundedSender<T>>,
+    _send_queue_gauge: ObservableGauge<i64>,
 }
 
 #[derive(Default)]
 pub struct FanoutBuilder<T> {
-    consumers: Vec<BoundedSender<T>>,
+    telemetry_type: &'static str,
+    consumers: Vec<(&'static str, BoundedSender<T>)>,
 }
 
 pub struct FanoutFuture<'a, T> {
@@ -33,7 +37,7 @@ impl<'a, T> Unpin for FanoutFuture<'a, T> {}
 
 impl<T> Fanout<T>
 where
-    T: Clone,
+    T: Send + 'static,
 {
     /// Creates a new fanout component with the given consumers.
     ///
@@ -42,12 +46,33 @@ where
     ///
     /// # Panics
     /// Panics if the consumers vector is empty.
-    pub fn new(consumers: Vec<BoundedSender<T>>) -> Self {
+    pub fn new(
+        telemetry_type: &'static str,
+        consumers: Vec<(&'static str, BoundedSender<T>)>,
+    ) -> Self {
         if consumers.is_empty() {
             panic!("Fanout requires at least one consumer");
         }
 
-        Self { consumers }
+        let consumers_clone: Vec<(&'static str, BoundedSender<T>)> =
+            consumers.iter().map(|c| (c.0, c.1.clone())).collect();
+        let send_queue_gauge = global::meter("fanout")
+            .i64_observable_gauge("sender_queue_len")
+            .with_callback(move |observer| {
+                for consumer in &consumers_clone {
+                    let len = consumer.1.len();
+                    let telemetry_type_kv =
+                        KeyValue::new("telemetry_type", telemetry_type.to_string());
+                    let exporter_type_kv = KeyValue::new("exporter_type", consumer.0.to_string());
+                    observer.observe(len as i64, &[telemetry_type_kv, exporter_type_kv]);
+                }
+            })
+            .build();
+
+        Self {
+            consumers: consumers.iter().map(|c| c.1.clone()).collect(),
+            _send_queue_gauge: send_queue_gauge,
+        }
     }
 
     /// Creates a future that will send a message to all consumers sequentially.
@@ -69,10 +94,7 @@ where
     }
 }
 
-impl<'a, T> FanoutFuture<'a, T>
-where
-    T: Clone,
-{
+impl<'a, T> FanoutFuture<'a, T> {
     fn new(consumers: &'a [BoundedSender<T>], message: T) -> Self {
         Self {
             consumers,
@@ -137,10 +159,14 @@ where
     }
 }
 
-impl<T> FanoutBuilder<T> {
+impl<T> FanoutBuilder<T>
+where
+    T: Send + 'static,
+{
     /// Creates a new FanoutBuilder.
-    pub fn new() -> Self {
+    pub fn new(telemetry_type: &'static str) -> Self {
         Self {
+            telemetry_type,
             consumers: Vec::new(),
         }
     }
@@ -152,8 +178,8 @@ impl<T> FanoutBuilder<T> {
     ///
     /// # Returns
     /// Returns self for method chaining
-    pub fn add_tx(mut self, tx: BoundedSender<T>) -> Self {
-        self.consumers.push(tx);
+    pub fn add_tx(mut self, exporter_name: &'static str, tx: BoundedSender<T>) -> Self {
+        self.consumers.push((exporter_name, tx));
         self
     }
 
@@ -166,9 +192,7 @@ impl<T> FanoutBuilder<T> {
         if self.consumers.is_empty() {
             Err(FanoutBuilderError::NoConsumers)
         } else {
-            Ok(Fanout {
-                consumers: self.consumers,
-            })
+            Ok(Fanout::new(self.telemetry_type, self.consumers))
         }
     }
 }
@@ -220,7 +244,10 @@ mod tests {
     #[tokio::test]
     async fn test_fanout_single_consumer() {
         let (tx, mut rx) = bounded(10);
-        let fanout = Fanout::new(vec![tx]);
+        let fanout = Fanout::new(
+            "test",
+            vec![tx].into_iter().map(|t| ("test_exporter", t)).collect(),
+        );
 
         let message = vec![1, 2, 3];
         let send_result = fanout.send_async(message.clone()).await;
@@ -237,7 +264,13 @@ mod tests {
         let (tx2, mut rx2) = bounded(10);
         let (tx3, mut rx3) = bounded(10);
 
-        let fanout = Fanout::new(vec![tx1, tx2, tx3]);
+        let fanout = Fanout::new(
+            "test",
+            vec![tx1, tx2, tx3]
+                .into_iter()
+                .map(|t| ("test_exporter", t))
+                .collect(),
+        );
 
         let message = vec![1, 2, 3];
         let send_result = fanout.send_async(message.clone()).await;
@@ -255,7 +288,13 @@ mod tests {
         let (tx1, mut rx1) = bounded(10);
         let (tx2, _rx2) = bounded(10); // rx2 will be dropped
 
-        let fanout = Fanout::new(vec![tx1, tx2]);
+        let fanout = Fanout::new(
+            "test",
+            vec![tx1, tx2]
+                .into_iter()
+                .map(|t| ("test_exporter", t))
+                .collect(),
+        );
 
         // Drop rx2 to simulate disconnection
         drop(_rx2);
@@ -287,7 +326,13 @@ mod tests {
         let (tx2, mut rx2) = bounded(10);
         let (tx3, mut rx3) = bounded(10);
 
-        let fanout = Fanout::new(vec![tx1, tx2, tx3]);
+        let fanout = Fanout::new(
+            "test",
+            vec![tx1, tx2, tx3]
+                .into_iter()
+                .map(|t| ("test_exporter", t))
+                .collect(),
+        );
 
         // Create acknowledgment channel
         let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);

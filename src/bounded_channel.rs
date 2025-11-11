@@ -32,6 +32,10 @@ impl<T> BoundedSender<T> {
     pub fn send_async(&self, item: T) -> SendFut<'_, T> {
         self.tx.send_async(item)
     }
+
+    pub fn len(&self) -> usize {
+        self.tx.len()
+    }
 }
 
 impl<T> Clone for BoundedSender<T> {
@@ -62,6 +66,10 @@ impl<T> BoundedReceiver<T> {
 
     pub fn into_stream<'a>(self) -> RecvStream<'a, T> {
         self.rx.into_stream()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rx.len()
     }
 }
 

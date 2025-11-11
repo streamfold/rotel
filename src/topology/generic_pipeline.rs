@@ -5,6 +5,8 @@ use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBat
 use crate::topology::fanout::{Fanout, FanoutFuture};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::Message;
+use opentelemetry::KeyValue as InstKeyValue;
+use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -30,6 +32,7 @@ use tracing::{Level, debug, error};
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
 pub struct Pipeline<T> {
+    telemetry_type: &'static str,
     receiver: BoundedReceiver<Message<T>>,
     fanout: Fanout<Vec<Message<T>>>,
     batch_config: BatchConfig,
@@ -147,10 +150,16 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
 
 impl<T> Pipeline<T>
 where
-    T: BatchSizer + BatchSplittable + PythonProcessable + ResourceAttributeSettable + Clone,
+    T: BatchSizer
+        + BatchSplittable
+        + PythonProcessable
+        + ResourceAttributeSettable
+        + Clone
+        + 'static,
     Vec<T>: Send,
 {
     pub fn new(
+        telemetry_type: &'static str,
         receiver: BoundedReceiver<Message<T>>,
         fanout: Fanout<Vec<Message<T>>>,
         flush_listener: Option<FlushReceiver>,
@@ -169,6 +178,7 @@ where
             .collect();
 
         Self {
+            telemetry_type,
             receiver,
             fanout,
             flush_listener,
@@ -183,6 +193,19 @@ where
         inspector: impl Inspect<T>,
         pipeline_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let receiver = self.receiver.clone();
+        let telemetry_type = self.telemetry_type;
+
+        global::meter("pipeline")
+            .i64_observable_gauge("receiver_queue_len")
+            .with_callback(move |observer| {
+                let len = receiver.len();
+                let telemetry_type_kv =
+                    InstKeyValue::new("telemetry_type", telemetry_type.to_string());
+                observer.observe(len as i64, &[telemetry_type_kv]);
+            })
+            .build();
+
         let res = self.run(inspector, pipeline_token).await;
         if let Err(e) = res {
             error!(error = e, "Pipeline returned from run loop with error");
