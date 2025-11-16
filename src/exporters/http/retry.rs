@@ -21,6 +21,7 @@ pub struct RetryConfig {
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
     pub max_elapsed_time: Duration,
+    pub indefinite_retry: bool,
 }
 
 impl Default for RetryConfig {
@@ -29,6 +30,7 @@ impl Default for RetryConfig {
             initial_backoff: Duration::from_secs(5),
             max_backoff: Duration::from_secs(30),
             max_elapsed_time: Duration::from_secs(300),
+            indefinite_retry: false,
         }
     }
 }
@@ -52,7 +54,12 @@ pub struct RetryPolicy<Resp> {
 impl<Resp> RetryPolicy<Resp> {
     fn should_retry(&self, now: Instant, result: &Result<Response<Resp>, BoxError>) -> bool {
         let start = self.request_start.unwrap();
-        if now.gt(&start) && now.sub(start) >= self.config.max_elapsed_time {
+
+        // If not indefinite retry, check if we've exceeded the max elapsed time
+        if !self.config.indefinite_retry
+            && now.gt(&start)
+            && now.sub(start) >= self.config.max_elapsed_time
+        {
             return false;
         }
 
@@ -167,10 +174,20 @@ where
                 let sleep_duration = Duration::from_millis(sleep_ms as u64);
 
                 // If the sleep duration would put us over the maximum elapsed time, then
-                // return false to stop retries.
-                if now + sleep_duration > self.request_start.unwrap() + self.config.max_elapsed_time
-                {
-                    return None;
+                // return false to stop retries. Skip this check for indefinite retry.
+                if !self.config.indefinite_retry {
+                    // Use checked_add to avoid overflow
+                    if let Some(deadline) = self
+                        .request_start
+                        .unwrap()
+                        .checked_add(self.config.max_elapsed_time)
+                    {
+                        if let Some(sleep_end) = now.checked_add(sleep_duration) {
+                            if sleep_end > deadline {
+                                return None;
+                            }
+                        }
+                    }
                 }
 
                 // Log the retry attempt
@@ -317,6 +334,7 @@ mod tests {
             initial_backoff: Duration::from_millis(100),
             max_backoff: Duration::from_secs(1),
             max_elapsed_time: Duration::from_millis(500),
+            indefinite_retry: false,
         };
         let mut policy = RetryPolicy::<()>::new(config, None);
 
@@ -395,6 +413,7 @@ mod tests {
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(100),
             max_elapsed_time: Duration::from_secs(10),
+            indefinite_retry: false,
         };
         let mut policy = RetryPolicy::<()>::new(config, None);
         let mut request = create_test_request();
@@ -420,6 +439,7 @@ mod tests {
             initial_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_millis(1_000),
             max_elapsed_time: Duration::from_secs(5),
+            indefinite_retry: false,
         };
         let mut policy = RetryPolicy::<()>::new(config.clone(), None);
         let mut request = create_test_request();
@@ -455,6 +475,7 @@ mod tests {
             initial_backoff: Duration::from_millis(100),
             max_backoff: Duration::from_millis(1000),
             max_elapsed_time: Duration::from_secs(10),
+            indefinite_retry: false,
         };
         let mut policy = RetryPolicy::<()>::new(config.clone(), None);
         let mut request = create_test_request();
@@ -486,6 +507,7 @@ mod tests {
             initial_backoff: Duration::from_millis(1), // Very small backoff
             max_backoff: Duration::from_millis(2),
             max_elapsed_time: Duration::from_secs(10),
+            indefinite_retry: false,
         };
         let mut policy = RetryPolicy::<()>::new(config, None);
         let mut request = create_test_request();
@@ -515,5 +537,49 @@ mod tests {
         // Generic errors are not
         let conn_error = create_exporter_error(ExporterError::Generic("unknown".to_string()));
         assert!(!policy.should_retry(Instant::now(), &conn_error));
+    }
+
+    #[test]
+    fn test_indefinite_retry_no_overflow() {
+        // Test that indefinite retry doesn't overflow when checking elapsed time
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_millis(1000),
+            max_elapsed_time: Duration::from_secs(300), // Doesn't matter for indefinite retry
+            indefinite_retry: true,
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        // Even after a very long time, should still retry with indefinite_retry enabled
+        let far_future = Instant::now() + Duration::from_secs(365 * 24 * 60 * 60); // 1 year in the future
+        let response = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(policy.should_retry(far_future, &response));
+    }
+
+    #[tokio::test]
+    async fn test_indefinite_retry_returns_future() {
+        // Test that retry() method returns a future for indefinite retry
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(100),
+            max_elapsed_time: Duration::from_secs(1), // Doesn't matter for indefinite retry
+            indefinite_retry: true,
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Even if we've exceeded max_elapsed_time, indefinite retry should still return a future
+        policy.request_start = Some(Instant::now() - Duration::from_secs(10)); // Started 10 seconds ago
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(
+            future_opt.is_some(),
+            "Indefinite retry should return a future even after max_elapsed_time"
+        );
+
+        if let Some(future) = future_opt {
+            future.await;
+        }
     }
 }

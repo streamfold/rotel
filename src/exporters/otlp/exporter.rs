@@ -43,7 +43,6 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::error::Error;
 use std::future::Future;
-use std::ops::Add;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -570,8 +569,13 @@ where
     ///
     /// Times out after configured durations to prevent hanging
     async fn drain_futures(&mut self) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        let finish_encoding = Instant::now().add(self.encode_drain_max_time);
-        let finish_sending = Instant::now().add(self.export_drain_max_time);
+        // Use checked_add to prevent overflow with very large drain times, fall back to defaults
+        let finish_encoding = Instant::now()
+            .checked_add(self.encode_drain_max_time)
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(2)); // Default: 2s
+        let finish_sending = Instant::now()
+            .checked_add(self.export_drain_max_time)
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(3)); // Default: 3s
         let type_name = self.type_name.to_string();
 
         // First we must wait on currently encoding futures

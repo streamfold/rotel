@@ -152,7 +152,7 @@ impl ClickhouseExporterConfigBuilder {
     }
 
     pub fn set_indefinite_retry(&mut self) {
-        self.retry_config.max_elapsed_time = Duration::from_secs(u64::MAX);
+        self.retry_config.indefinite_retry = true;
     }
 
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {

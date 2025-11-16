@@ -92,10 +92,6 @@ pub(crate) struct ExporterConfigs {
 impl ExporterConfigs {
     /// Set all exporters to use indefinite retry (for Kafka offset tracking)
     pub(crate) fn set_indefinite_retry(&mut self) {
-        use std::time::Duration;
-
-        let indefinite_duration = Duration::from_secs(u64::MAX);
-
         for exporter in self
             .traces
             .iter_mut()
@@ -105,7 +101,7 @@ impl ExporterConfigs {
         {
             match exporter {
                 ExporterConfig::Otlp(config) => {
-                    config.retry_config.max_elapsed_time = indefinite_duration;
+                    config.retry_config.indefinite_retry = true;
                 }
                 ExporterConfig::Datadog(config) => {
                     config.set_indefinite_retry();
