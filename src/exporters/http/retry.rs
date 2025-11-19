@@ -82,11 +82,7 @@ impl<Resp> RetryPolicy<Resp> {
     fn should_retry(&self, now: Instant, result: &Result<Response<Resp>, BoxError>) -> bool {
         let start = self.request_start.unwrap();
 
-        // If not indefinite retry, check if we've exceeded the max elapsed time
-        if !self.config.indefinite_retry
-            && now.gt(&start)
-            && now.sub(start) >= self.config.max_elapsed_time
-        {
+        if now.gt(&start) && now.sub(start) >= self.config.max_elapsed_time {
             return false;
         }
 
@@ -174,7 +170,8 @@ where
         }
 
         let now = Instant::now();
-        match self.should_retry(now, result) {
+        // With indefinite_retry, we must retry all requests, so simply short-circuit the retry check
+        match self.config.indefinite_retry || self.should_retry(now, result) {
             true => {
                 self.attempts += 1;
 
@@ -576,24 +573,6 @@ mod tests {
         assert!(!policy.should_retry(Instant::now(), &conn_error));
     }
 
-    #[test]
-    fn test_indefinite_retry_no_overflow() {
-        // Test that indefinite retry doesn't overflow when checking elapsed time
-        let config = RetryConfig {
-            initial_backoff: Duration::from_millis(100),
-            max_backoff: Duration::from_millis(1000),
-            max_elapsed_time: Duration::from_secs(300), // Doesn't matter for indefinite retry
-            indefinite_retry: true,
-        };
-        let mut policy = RetryPolicy::<()>::new(config, None);
-        policy.request_start = Some(Instant::now());
-
-        // Even after a very long time, should still retry with indefinite_retry enabled
-        let far_future = Instant::now() + Duration::from_secs(365 * 24 * 60 * 60); // 1 year in the future
-        let response = create_response(StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(policy.should_retry(far_future, &response));
-    }
-
     #[tokio::test]
     async fn test_indefinite_retry_returns_future() {
         // Test that retry() method returns a future for indefinite retry
@@ -613,6 +592,31 @@ mod tests {
         assert!(
             future_opt.is_some(),
             "Indefinite retry should return a future even after max_elapsed_time"
+        );
+
+        if let Some(future) = future_opt {
+            future.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_indefinite_retry_on_400() {
+        // Test that retry() method returns a future for indefinite retry
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(100),
+            max_elapsed_time: Duration::from_secs(10),
+            indefinite_retry: true,
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::BAD_REQUEST); // 400 would normally stop immediately
+
+        policy.request_start = Some(Instant::now());
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(
+            future_opt.is_some(),
+            "Indefinite retry should return a future even on hard fail"
         );
 
         if let Some(future) = future_opt {
