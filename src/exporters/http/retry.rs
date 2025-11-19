@@ -2,11 +2,11 @@
 
 use crate::exporters::http::client::ConnectError;
 use crate::exporters::http::response::Response;
-use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
+use std::{error::Error, fmt::Debug};
 use tokio::{
     select,
     sync::broadcast::{self, Sender},
@@ -52,6 +52,33 @@ pub struct RetryPolicy<Resp> {
 }
 
 impl<Resp> RetryPolicy<Resp> {
+    /// Recursively checks if an error or any of its sources are retryable
+    /// (ConnectError or tower::timeout::error::Elapsed)
+    fn is_retryable_error(mut err: &(dyn Error + 'static)) -> bool {
+        loop {
+            // Check if current error is a timeout error
+            if err
+                .downcast_ref::<tower::timeout::error::Elapsed>()
+                .is_some()
+            {
+                return true;
+            }
+
+            // Check if current error is a connection error
+            if err.downcast_ref::<ConnectError>().is_some() {
+                return true;
+            }
+
+            // Move to the source error, or break if there is none
+            match err.source() {
+                Some(source) => err = source,
+                None => break,
+            }
+        }
+
+        false
+    }
+
     fn should_retry(&self, now: Instant, result: &Result<Response<Resp>, BoxError>) -> bool {
         let start = self.request_start.unwrap();
 
@@ -66,15 +93,9 @@ impl<Resp> RetryPolicy<Resp> {
         if result.is_err() {
             let err = result.as_ref().err().unwrap();
 
-            // Timeouts are always retried
-            let elapsed_err = err.downcast_ref::<tower::timeout::error::Elapsed>();
-            if elapsed_err.is_some() {
-                return true;
-            }
-
-            // As are connection errors
-            let connect_err = err.downcast_ref::<ConnectError>();
-            if connect_err.is_some() {
+            // Check if the error or any of its sources are retryable
+            // (ConnectError or Elapsed errors)
+            if Self::is_retryable_error(err.as_ref()) {
                 return true;
             }
         }
@@ -233,7 +254,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{RetryConfig, RetryPolicy};
-    use crate::exporters::http::client::ConnectError;
+    use crate::exporters::http::client::{ConnectError, TransportErrorWithMetadata};
     use crate::exporters::http::response::Response;
     use crate::exporters::otlp::errors::{ExporterError, is_retryable_error};
     use http::{Request, StatusCode};
@@ -326,6 +347,22 @@ mod tests {
 
         let connection_error = create_connection_error();
         assert!(policy.should_retry(Instant::now(), &connection_error));
+    }
+
+    #[test]
+    fn test_should_retry_nested_connect_error() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        // Unable to test Elapsed error due to private constructor
+        let wrapped_error: Result<Response<()>, BoxError> =
+            Err(Box::new(TransportErrorWithMetadata {
+                original_error: ConnectError {}.into(),
+                metadata: None,
+            }));
+
+        assert!(policy.should_retry(Instant::now(), &wrapped_error));
     }
 
     #[test]
