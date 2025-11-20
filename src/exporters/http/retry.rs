@@ -52,7 +52,7 @@ pub struct RetryPolicy<Resp> {
 }
 
 impl<Resp> RetryPolicy<Resp> {
-    /// Recursively checks if an error or any of its sources are retryable
+    /// Iteratively checks if an error or any of its wrapped sources are retryable
     /// (ConnectError or tower::timeout::error::Elapsed)
     fn is_retryable_error(mut err: &(dyn Error + 'static)) -> bool {
         loop {
