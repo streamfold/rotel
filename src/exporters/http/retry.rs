@@ -2,11 +2,11 @@
 
 use crate::exporters::http::client::ConnectError;
 use crate::exporters::http::response::Response;
-use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Sub;
 use std::pin::Pin;
 use std::time::Duration;
+use std::{error::Error, fmt::Debug};
 use tokio::{
     select,
     sync::broadcast::{self, Sender},
@@ -52,36 +52,58 @@ pub struct RetryPolicy<Resp> {
 }
 
 impl<Resp> RetryPolicy<Resp> {
-    fn should_retry(&self, now: Instant, result: &Result<Response<Resp>, BoxError>) -> bool {
+    /// Iteratively checks if an error or any of its wrapped sources are retryable
+    /// (ConnectError or tower::timeout::error::Elapsed)
+    fn is_retryable_error(mut err: &(dyn Error + 'static)) -> bool {
+        loop {
+            // Check if current error is a timeout error
+            if err
+                .downcast_ref::<tower::timeout::error::Elapsed>()
+                .is_some()
+            {
+                return true;
+            }
+
+            // Check if current error is a connection error
+            if err.downcast_ref::<ConnectError>().is_some() {
+                return true;
+            }
+
+            // Move to the source error, or break if there is none
+            match err.source() {
+                Some(source) => err = source,
+                None => break,
+            }
+        }
+
+        false
+    }
+
+    /// should_retry returns a bool tuple of (success, should_retry)
+    fn should_retry(
+        &self,
+        now: Instant,
+        result: &Result<Response<Resp>, BoxError>,
+    ) -> (bool, bool) {
         let start = self.request_start.unwrap();
 
-        // If not indefinite retry, check if we've exceeded the max elapsed time
-        if !self.config.indefinite_retry
-            && now.gt(&start)
-            && now.sub(start) >= self.config.max_elapsed_time
-        {
-            return false;
+        if now.gt(&start) && now.sub(start) >= self.config.max_elapsed_time {
+            return (false, false);
         }
 
         if result.is_err() {
             let err = result.as_ref().err().unwrap();
 
-            // Timeouts are always retried
-            let elapsed_err = err.downcast_ref::<tower::timeout::error::Elapsed>();
-            if elapsed_err.is_some() {
-                return true;
-            }
-
-            // As are connection errors
-            let connect_err = err.downcast_ref::<ConnectError>();
-            if connect_err.is_some() {
-                return true;
+            // Check if the error or any of its sources are retryable
+            // (ConnectError or Elapsed errors)
+            if Self::is_retryable_error(err.as_ref()) {
+                return (false, true);
             }
         }
 
         if let Some(is_retryable) = self.is_retryable {
             match (is_retryable)(result) {
-                Some(res) => return res,
+                Some(res) => return (false, res),
                 None => {}
             }
         }
@@ -92,25 +114,29 @@ impl<Resp> RetryPolicy<Resp> {
                 Response::Http(parts, _, _) => {
                     match parts.status.as_u16() {
                         // No need to retry success
-                        200..=202 => false,
-                        408 | 429 => true,
-                        500..=504 => true,
-                        _ => false,
+                        200..=202 => (true, false),
+                        408 | 429 => (false, true),
+                        500..=504 => (false, true),
+                        _ => (false, false),
                     }
                 }
                 Response::Grpc(status, _, _) => {
-                    matches!(
+                    if status.code() == tonic::Code::Ok {
+                        return (true, false);
+                    }
+                    let r = matches!(
                         status.code(),
                         tonic::Code::Unavailable |     // Service temporarily unavailable
                             tonic::Code::Internal |        // Internal server error
                             tonic::Code::DeadlineExceeded| // Request timeout
                             tonic::Code::ResourceExhausted // Server overloaded
-                    )
+                    );
+                    (false, r)
                 }
             };
         }
 
-        false
+        (false, false)
     }
 
     pub fn new(retry_config: RetryConfig, is_retryable: Option<RetryableFn<Resp>>) -> Self {
@@ -153,7 +179,14 @@ where
         }
 
         let now = Instant::now();
-        match self.should_retry(now, result) {
+
+        let (was_success, should_retry) = self.should_retry(now, result);
+        if was_success {
+            return None;
+        }
+
+        // With indefinite_retry, we must retry all requests
+        match self.config.indefinite_retry || should_retry {
             true => {
                 self.attempts += 1;
 
@@ -233,7 +266,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{RetryConfig, RetryPolicy};
-    use crate::exporters::http::client::ConnectError;
+    use crate::exporters::http::client::{ConnectError, TransportErrorWithMetadata};
     use crate::exporters::http::response::Response;
     use crate::exporters::otlp::errors::{ExporterError, is_retryable_error};
     use http::{Request, StatusCode};
@@ -278,7 +311,9 @@ mod tests {
         // Test 200-202 should not retry
         for status in [200, 201, 202] {
             let response = create_response(StatusCode::from_u16(status).unwrap());
-            assert!(!policy.should_retry(Instant::now(), &response));
+            let (was_success, should_retry) = policy.should_retry(Instant::now(), &response);
+            assert!(was_success);
+            assert!(!should_retry);
         }
     }
 
@@ -291,7 +326,9 @@ mod tests {
         // Test 408, 429, 500-504 should retry
         for status in [408, 429, 500, 501, 502, 503, 504] {
             let response = create_response(StatusCode::from_u16(status).unwrap());
-            assert!(policy.should_retry(Instant::now(), &response));
+            let (was_success, should_retry) = policy.should_retry(Instant::now(), &response);
+            assert!(!was_success);
+            assert!(should_retry);
         }
     }
 
@@ -304,7 +341,9 @@ mod tests {
         // Test other status codes should not retry
         for status in [400, 401, 403, 404, 410] {
             let response = create_response(StatusCode::from_u16(status).unwrap());
-            assert!(!policy.should_retry(Instant::now(), &response));
+            let (was_success, should_retry) = policy.should_retry(Instant::now(), &response);
+            assert!(!was_success);
+            assert!(!should_retry);
         }
     }
 
@@ -315,7 +354,9 @@ mod tests {
         policy.request_start = Some(Instant::now());
 
         let timeout_error = create_timeout_error();
-        assert!(policy.should_retry(Instant::now(), &timeout_error));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &timeout_error);
+        assert!(!was_success);
+        assert!(should_retry);
     }
 
     #[test]
@@ -325,7 +366,27 @@ mod tests {
         policy.request_start = Some(Instant::now());
 
         let connection_error = create_connection_error();
-        assert!(policy.should_retry(Instant::now(), &connection_error));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &connection_error);
+        assert!(!was_success);
+        assert!(should_retry);
+    }
+
+    #[test]
+    fn test_should_retry_nested_connect_error() {
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
+
+        // Unable to test Elapsed error due to private constructor
+        let wrapped_error: Result<Response<()>, BoxError> =
+            Err(Box::new(TransportErrorWithMetadata {
+                original_error: ConnectError {}.into(),
+                metadata: None,
+            }));
+
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &wrapped_error);
+        assert!(!was_success);
+        assert!(should_retry);
     }
 
     #[test]
@@ -349,7 +410,9 @@ mod tests {
         let future_time = start + Duration::from_millis(600);
         let response = create_response(StatusCode::INTERNAL_SERVER_ERROR);
 
-        assert!(!policy.should_retry(future_time, &response));
+        let (was_success, should_retry) = policy.should_retry(future_time, &response);
+        assert!(!was_success);
+        assert!(!should_retry);
     }
 
     #[test]
@@ -366,15 +429,21 @@ mod tests {
 
         // Test custom retryable logic
         let bad_request = create_response(StatusCode::BAD_REQUEST);
-        assert!(policy.should_retry(Instant::now(), &bad_request));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &bad_request);
+        assert!(!was_success);
+        assert!(should_retry);
 
         let not_found = create_response(StatusCode::NOT_FOUND);
-        assert!(!policy.should_retry(Instant::now(), &not_found));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &not_found);
+        assert!(!was_success);
+        assert!(!should_retry);
 
         // Custom function is called for errors too, but timeout/connection errors
         // are handled before the custom function, so they will still retry
         let timeout_error = create_timeout_error();
-        assert!(policy.should_retry(Instant::now(), &timeout_error));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &timeout_error);
+        assert!(!was_success);
+        assert!(should_retry);
     }
 
     #[test]
@@ -397,14 +466,20 @@ mod tests {
 
         // Test custom retryable logic
         let bad_request = create_response(StatusCode::BAD_REQUEST);
-        assert!(policy.should_retry(Instant::now(), &bad_request));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &bad_request);
+        assert!(!was_success);
+        assert!(should_retry);
 
         // Next two fall back to status code check
         let not_found = create_response(StatusCode::NOT_FOUND);
-        assert!(!policy.should_retry(Instant::now(), &not_found));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &not_found);
+        assert!(!was_success);
+        assert!(!should_retry);
 
         let too_many = create_response(StatusCode::TOO_MANY_REQUESTS);
-        assert!(policy.should_retry(Instant::now(), &too_many));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &too_many);
+        assert!(!was_success);
+        assert!(should_retry);
     }
 
     #[tokio::test]
@@ -532,29 +607,15 @@ mod tests {
 
         // Test connect error, should be retried
         let conn_error = create_exporter_error(ExporterError::Connect);
-        assert!(policy.should_retry(Instant::now(), &conn_error));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &conn_error);
+        assert!(!was_success);
+        assert!(should_retry);
 
         // Generic errors are not
         let conn_error = create_exporter_error(ExporterError::Generic("unknown".to_string()));
-        assert!(!policy.should_retry(Instant::now(), &conn_error));
-    }
-
-    #[test]
-    fn test_indefinite_retry_no_overflow() {
-        // Test that indefinite retry doesn't overflow when checking elapsed time
-        let config = RetryConfig {
-            initial_backoff: Duration::from_millis(100),
-            max_backoff: Duration::from_millis(1000),
-            max_elapsed_time: Duration::from_secs(300), // Doesn't matter for indefinite retry
-            indefinite_retry: true,
-        };
-        let mut policy = RetryPolicy::<()>::new(config, None);
-        policy.request_start = Some(Instant::now());
-
-        // Even after a very long time, should still retry with indefinite_retry enabled
-        let far_future = Instant::now() + Duration::from_secs(365 * 24 * 60 * 60); // 1 year in the future
-        let response = create_response(StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(policy.should_retry(far_future, &response));
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &conn_error);
+        assert!(!was_success);
+        assert!(!should_retry);
     }
 
     #[tokio::test]
@@ -581,5 +642,51 @@ mod tests {
         if let Some(future) = future_opt {
             future.await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_indefinite_retry_on_400() {
+        // Test that retry() method returns a future for indefinite retry
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(100),
+            max_elapsed_time: Duration::from_secs(10),
+            indefinite_retry: true,
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::BAD_REQUEST); // 400 would normally stop immediately
+
+        policy.request_start = Some(Instant::now());
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(
+            future_opt.is_some(),
+            "Indefinite retry should return a future even on hard fail"
+        );
+
+        if let Some(future) = future_opt {
+            future.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_indefinite_noretry_on_200() {
+        // We should not return a future on a 200
+        let config = RetryConfig {
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(100),
+            max_elapsed_time: Duration::from_secs(10),
+            indefinite_retry: true,
+        };
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        let mut request = create_test_request();
+        let mut result = create_response(StatusCode::OK);
+
+        policy.request_start = Some(Instant::now());
+        let future_opt = policy.retry(&mut request, &mut result);
+        assert!(
+            future_opt.is_none(),
+            "Indefinite retry should not return future when success"
+        );
     }
 }

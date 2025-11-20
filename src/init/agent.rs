@@ -977,7 +977,13 @@ impl Agent {
             },
             e = wait::wait_for_any_task(&mut exporters_task_set) => {
                 match e {
-                    Ok(()) => warn!("Unexpected early exit of task."),
+                    Ok(()) => warn!("Unexpected early exit of exporter task."),
+                    Err(e) => result = Err(e),
+                }
+            }
+            e = wait::wait_for_any_task(&mut kafka_offset_committer_task_set), if !kafka_offset_committer_task_set.is_empty() => {
+                match e {
+                    Ok(()) => warn!("Unexpected early exit of Kafka offset committer."),
                     Err(e) => result = Err(e),
                 }
             }
