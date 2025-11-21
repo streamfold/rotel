@@ -19,6 +19,7 @@ use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
+use crate::receivers::fluent::receiver::FluentReceiver;
 use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 use crate::receivers::kafka::receiver::KafkaReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
@@ -896,6 +897,17 @@ impl Agent {
 
                     let receivers_cancel = receivers_cancel.clone();
                     receivers_task_set.spawn(async move { kafka.run(receivers_cancel).await });
+                }
+                ReceiverConfig::Fluent(config) => {
+                    let mut fluent = FluentReceiver::new(
+                        config.clone(),
+                        traces_output.clone(),
+                        metrics_output.clone(),
+                        logs_output.clone(),
+                    )?;
+
+                    let receivers_cancel = receivers_cancel.clone();
+                    receivers_task_set.spawn(async move { fluent.run(receivers_cancel).await });
                 }
             }
         }
