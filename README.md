@@ -514,7 +514,7 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 | --kafka-receiver-format                    | protobuf       | json, protobuf                                       |
 | --kafka-receiver-group-id                  | rotel-consumer | Consumer group ID for coordinated consumption        |
 | --kafka-receiver-client-id                 | rotel          | Client ID for the Kafka consumer                     |
-| --kafka-receiver-enable-auto-commit        | true           | Enable auto commit of offsets                        |
+| --kafka-receiver-enable-auto-commit        | false          | Enable auto commit of offsets                        |
 | --kafka-receiver-auto-commit-interval-ms   | 5000           | Auto commit interval in milliseconds                 |
 | --kafka-receiver-auto-offset-reset         | latest         | earliest, latest, error                              |
 | --kafka-receiver-session-timeout-ms        | 30000          | Session timeout in milliseconds                      |
@@ -528,6 +528,7 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 | --kafka-receiver-isolation-level           | read-committed | read-uncommitted, read-committed                     |
 | --kafka-receiver-enable-partition-eof      | false          | Enable partition EOF notifications                   |
 | --kafka-receiver-check-crcs                | true           | Check CRC32 of consumed messages                     |
+| --kafka-receiver-disable-exporter-indefinite-retry |        | Disable indefinite retry for exporters when offset tracking is enabled |
 | --kafka-receiver-custom-config             |                | Custom consumer config (comma-separated key=value)   |
 | --kafka-receiver-sasl-username             |                | SASL username for authentication                     |
 | --kafka-receiver-sasl-password             |                | SASL password for authentication                     |
@@ -538,6 +539,34 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 | --kafka-receiver-ssl-key-location          |                | SSL key location                                     |
 | --kafka-receiver-ssl-key-password          |                | SSL key password                                     |
 
+#### Offset Tracking and Data Reliability
+
+By default, the Kafka receiver uses **manual offset tracking** (`enable-auto-commit=false`) to ensure data reliability. With offset tracking enabled:
+
+- **Guaranteed Delivery**: Kafka offsets are only committed after telemetry data is successfully exported
+- **Indefinite Retry**: Exporters retry indefinitely by default to prevent data loss. If an export fails, the receiver will keep retrying until it succeeds.
+- **Backpressure Handling**: The Kafka receiver will pause consuming when the receiver pipeline reaches its maximum in-memory capacity
+
+**Disabling Indefinite Retry:**
+
+If you prefer to revert to timeout-based retry behavior (which may result in data loss on persistent export failures), use:
+
+```shell
+--kafka-receiver-disable-exporter-indefinite-retry
+```
+
+With this flag, failed exports that exceed the retry timeout will be negatively acknowledged (NACK'd), allowing the receiver to continue processing new messages.
+
+**Using Auto-Commit (Legacy Behavior):**
+
+To revert to the legacy auto-commit behavior where offsets are committed immediately regardless of export success:
+
+```shell
+--kafka-receiver-enable-auto-commit true
+```
+
+**Warning**: Auto-commit mode may result in data loss if exports fail, as Kafka will mark messages as consumed even if they weren't successfully exported.
+
 #### Consumer Configuration
 
 The Kafka receiver acts as a consumer and supports standard Kafka consumer configurations:
@@ -545,8 +574,9 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 **Consumer Group Management:**
 
 - `--kafka-receiver-group-id`: Sets the consumer group ID for coordinated consumption across multiple Rotel instances
-- `--kafka-receiver-enable-auto-commit`: Controls whether offsets are automatically committed
-- `--kafka-receiver-auto-commit-interval-ms`: How often to commit offsets when auto-commit is enabled
+- `--kafka-receiver-enable-auto-commit`: Controls whether offsets are automatically committed by Kafka (default: false). When disabled, Rotel uses manual offset tracking to ensure data reliability.
+- `--kafka-receiver-auto-commit-interval-ms`: How often to commit offsets when auto-commit is enabled (only applies when auto-commit is true)
+- `--kafka-receiver-disable-exporter-indefinite-retry`: When using manual offset tracking, exporters retry indefinitely by default. Set this flag to revert to timeout-based retries.
 
 **Offset Management:**
 
