@@ -64,11 +64,7 @@ fn all_traces_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool
                     return false;
                 }
             }
-            ReceiverConfig::Fluent(f) => {
-                if f.traces {
-                    return false;
-                }
-            }
+            ReceiverConfig::Fluent(_) => {}
         }
     }
     true
@@ -87,11 +83,7 @@ fn all_metrics_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> boo
                     return false;
                 }
             }
-            ReceiverConfig::Fluent(f) => {
-                if f.metrics {
-                    return false;
-                }
-            }
+            ReceiverConfig::Fluent(_) => {}
         }
     }
     true
@@ -110,11 +102,7 @@ fn all_logs_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool {
                     return false;
                 }
             }
-            ReceiverConfig::Fluent(f) => {
-                if f.logs {
-                    return false;
-                }
-            }
+            ReceiverConfig::Fluent(_) => return false,
         }
     }
     true

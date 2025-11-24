@@ -21,6 +21,8 @@ use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tracing::{debug, error, info, warn};
 
+const MAX_CONCURRENT_DECODERS: usize = 20;
+
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
 
 /// MessagePack decoder that extracts complete MessagePack messages from a stream
@@ -87,8 +89,6 @@ impl Decoder for MessagePackDecoder {
 
 pub struct FluentReceiver {
     config: FluentReceiverConfig,
-    traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     unix_listener: Option<UnixListener>,
     tcp_listener: Option<TcpListener>,
@@ -96,8 +96,6 @@ pub struct FluentReceiver {
 
 #[derive(Clone)]
 struct ConnectionHandler {
-    traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
-    metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     cancel_token: CancellationToken,
 }
@@ -105,17 +103,8 @@ struct ConnectionHandler {
 impl FluentReceiver {
     pub async fn new(
         config: FluentReceiverConfig,
-        traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
-        metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
         logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     ) -> Result<Self> {
-        // Validate that at least one signal type is enabled
-        if !config.traces && !config.metrics && !config.logs {
-            return Err(FluentReceiverError::ConfigurationError(
-                "At least one signal type (traces, metrics, or logs) must be enabled".to_string(),
-            ));
-        }
-
         // Validate that at least one listener type is configured
         if config.socket_path.is_none() && config.endpoint.is_none() {
             return Err(FluentReceiverError::ConfigurationError(
@@ -189,8 +178,6 @@ impl FluentReceiver {
 
         Ok(Self {
             config,
-            traces_output,
-            metrics_output,
             logs_output,
             unix_listener,
             tcp_listener,
@@ -199,8 +186,6 @@ impl FluentReceiver {
 
     fn create_handler(&self, cancel_token: CancellationToken) -> ConnectionHandler {
         ConnectionHandler {
-            traces_output: self.traces_output.clone(),
-            metrics_output: self.metrics_output.clone(),
             logs_output: self.logs_output.clone(),
             cancel_token,
         }
@@ -227,12 +212,12 @@ impl ConnectionHandler {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         // Track processing tasks in order
-        let mut processing_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<Message>>> =
+        let mut encoding_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<Message>>> =
             FuturesOrdered::new();
 
         loop {
             select! {
-                frame_result = TokioStreamExt::next(&mut framed) => {
+                frame_result = TokioStreamExt::next(&mut framed), if encoding_tasks.len() < MAX_CONCURRENT_DECODERS => {
                     match frame_result {
                         Some(Ok(message_bytes)) => {
                             debug!(
@@ -247,7 +232,7 @@ impl ConnectionHandler {
                             let task = tokio::task::spawn_blocking(move || {
                                 Self::process_message(&data)
                             });
-                            processing_tasks.push_back(task);
+                            encoding_tasks.push_back(task);
                         }
                         Some(Err(e)) => {
                             error!(
@@ -265,20 +250,18 @@ impl ConnectionHandler {
                         }
                     }
                 }
-                task_result = FuturesStreamExt::next(&mut processing_tasks), if !processing_tasks.is_empty() => {
+                task_result = encoding_tasks.select_next_some(), if !encoding_tasks.is_empty() => {
                     match task_result {
-                        Some(Ok(Ok(message))) => {
+                        Ok(Ok(message)) => {
                             debug!("Successfully processed message: {:?}", message);
                             // TODO: Send message to appropriate output channel
                         }
-                        Some(Ok(Err(e))) => {
+                        Ok(Err(e)) => {
                             warn!("Failed to process message: {}", e);
                         }
-                        Some(Err(e)) => {
+                        Err(e) => {
                             error!("Processing task panicked: {}", e);
-                        }
-                        None => {
-                            // This shouldn't happen due to the if guard, but handle it anyway
+                            panic!("Fluent receiver processing task panicked");
                         }
                     }
                 }
@@ -293,7 +276,7 @@ impl ConnectionHandler {
         }
 
         // Wait for remaining processing tasks to complete
-        while let Some(task_result) = FuturesStreamExt::next(&mut processing_tasks).await {
+        while let Some(task_result) = FuturesStreamExt::next(&mut encoding_tasks).await {
             match task_result {
                 Ok(Ok(message)) => {
                     debug!("Successfully processed remaining message: {:?}", message);

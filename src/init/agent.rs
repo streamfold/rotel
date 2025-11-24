@@ -899,13 +899,8 @@ impl Agent {
                     receivers_task_set.spawn(async move { kafka.run(receivers_cancel).await });
                 }
                 ReceiverConfig::Fluent(config) => {
-                    let mut fluent = FluentReceiver::new(
-                        config.clone(),
-                        traces_output.clone(),
-                        metrics_output.clone(),
-                        logs_output.clone(),
-                    )
-                    .await?;
+                    let mut fluent =
+                        FluentReceiver::new(config.clone(), logs_output.clone()).await?;
 
                     // Fluent receiver may spawn multiple listener tasks
                     fluent.start(&mut receivers_task_set, &receivers_cancel);
