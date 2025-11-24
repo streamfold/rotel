@@ -104,6 +104,7 @@ struct ConnectionHandler {
     traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
     metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+    cancel_token: CancellationToken,
 }
 
 impl FluentReceiver {
@@ -201,11 +202,12 @@ impl FluentReceiver {
         })
     }
 
-    fn create_handler(&self) -> ConnectionHandler {
+    fn create_handler(&self, cancel_token: CancellationToken) -> ConnectionHandler {
         ConnectionHandler {
             traces_output: self.traces_output.clone(),
             metrics_output: self.metrics_output.clone(),
             logs_output: self.logs_output.clone(),
+            cancel_token,
         }
     }
 }
@@ -227,24 +229,42 @@ impl ConnectionHandler {
         // Use StreamExt to read frames
         use tokio_stream::StreamExt;
 
-        while let Some(frame_result) = framed.next().await {
-            match frame_result {
-                Ok(message_bytes) => {
-                    debug!(
-                        "Received complete message of {} bytes from Fluent {}",
-                        message_bytes.len(),
-                        connection_type
-                    );
+        loop {
+            select! {
+                frame_result = framed.next() => {
+                    match frame_result {
+                        Some(Ok(message_bytes)) => {
+                            debug!(
+                                "Received complete message of {} bytes from Fluent {}",
+                                message_bytes.len(),
+                                connection_type
+                            );
 
-                    // Process the received message
-                    if let Err(e) = self.process_message(&message_bytes).await {
-                        warn!("Failed to process message: {}", e);
+                            // Process the received message
+                            if let Err(e) = self.process_message(&message_bytes).await {
+                                warn!("Failed to process message: {}", e);
+                            }
+                        }
+                        Some(Err(e)) => {
+                            error!(
+                                connection_type = connection_type,
+                                "Error reading frame: {}", e
+                            );
+                            break;
+                        }
+                        None => {
+                            debug!(
+                                connection_type = connection_type,
+                                "Connection closed by peer"
+                            );
+                            break;
+                        }
                     }
                 }
-                Err(e) => {
-                    error!(
+                _ = self.cancel_token.cancelled() => {
+                    debug!(
                         connection_type = connection_type,
-                        "Error reading frame: {}", e
+                        "Connection handler cancelled"
                     );
                     break;
                 }
@@ -387,7 +407,7 @@ impl FluentReceiver {
 
         // Spawn Unix socket listener task if configured
         if let Some(unix_listener) = self.unix_listener.take() {
-            let handler = self.create_handler();
+            let handler = self.create_handler(receivers_cancel.clone());
             let cancel = receivers_cancel.clone();
             let socket_path = self.config.socket_path.clone();
 
@@ -432,7 +452,7 @@ impl FluentReceiver {
 
         // Spawn TCP listener task if configured
         if let Some(tcp_listener) = self.tcp_listener.take() {
-            let handler = self.create_handler();
+            let handler = self.create_handler(receivers_cancel.clone());
             let cancel = receivers_cancel.clone();
             let endpoint = self.config.endpoint;
 
@@ -545,7 +565,8 @@ mod tests {
 
         let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
         let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let handler = receiver.create_handler();
+        let cancel_token = CancellationToken::new();
+        let handler = receiver.create_handler(cancel_token);
 
         // Create a test MessagePack message
         // Fluentd forward protocol format: [tag, [[timestamp, record], ...]]
@@ -581,7 +602,8 @@ mod tests {
 
         let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
         let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let handler = receiver.create_handler();
+        let cancel_token = CancellationToken::new();
+        let handler = receiver.create_handler(cancel_token);
 
         // Test various MessagePack types
         let test_values = vec![
@@ -617,7 +639,8 @@ mod tests {
 
         let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
         let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let handler = receiver.create_handler();
+        let cancel_token = CancellationToken::new();
+        let handler = receiver.create_handler(cancel_token);
 
         // Test with incomplete MessagePack data
         // This is an incomplete MessagePack array that should fail to decode
@@ -634,7 +657,8 @@ mod tests {
 
         let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
         let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let handler = receiver.create_handler();
+        let cancel_token = CancellationToken::new();
+        let handler = receiver.create_handler(cancel_token);
 
         // Even some random bytes might decode as valid MessagePack
         // (e.g., 0xFF is a valid negative fixint in MessagePack)
