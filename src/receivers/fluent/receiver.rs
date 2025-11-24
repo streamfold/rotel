@@ -5,6 +5,7 @@ use crate::receivers::fluent::error::{FluentReceiverError, Result};
 use crate::receivers::fluent::message::Message;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
+use bytes::BytesMut;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -12,13 +13,80 @@ use rmpv::Value;
 use std::error::Error;
 use std::fs;
 use std::io::Cursor;
-use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
+use tokio_util::codec::{Decoder, FramedRead};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
+
+/// MessagePack decoder that extracts complete MessagePack messages from a stream
+struct MessagePackDecoder {
+    max_message_size: usize,
+}
+
+impl MessagePackDecoder {
+    fn new(max_message_size: usize) -> Self {
+        Self { max_message_size }
+    }
+}
+
+impl Decoder for MessagePackDecoder {
+    type Item = BytesMut;
+    type Error = std::io::Error;
+
+    fn decode(
+        &mut self,
+        src: &mut BytesMut,
+    ) -> std::result::Result<Option<Self::Item>, Self::Error> {
+        if src.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if we have enough data to determine message size
+        if src.len() == 0 {
+            return Ok(None);
+        }
+
+        // Try to read a complete MessagePack value to determine its size
+        let mut cursor = Cursor::new(&src[..]);
+        match rmpv::decode::read_value(&mut cursor) {
+            Ok(_value) => {
+                // Successfully decoded a value, get the position after reading
+                let position = cursor.position() as usize;
+
+                // Check if the message exceeds max size
+                if position > self.max_message_size {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "Message size {} exceeds maximum {}",
+                            position, self.max_message_size
+                        ),
+                    ));
+                }
+
+                // Extract the message bytes
+                let message_bytes = src.split_to(position);
+                Ok(Some(message_bytes))
+            }
+            Err(rmpv::decode::Error::InvalidMarkerRead(ref io_err))
+                if io_err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                // Need more data
+                Ok(None)
+            }
+            Err(e) => {
+                // Other decoding errors
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("MessagePack decode error: {}", e),
+                ))
+            }
+        }
+    }
+}
 
 pub struct FluentReceiver {
     config: FluentReceiverConfig,
@@ -107,28 +175,31 @@ impl FluentReceiver {
 }
 
 impl ConnectionHandler {
-    async fn handle_connection(self, mut stream: UnixStream) {
+    async fn handle_connection(self, stream: UnixStream) {
         debug!("New connection accepted on Fluent receiver");
 
-        let mut buffer = vec![0u8; MAX_MESSAGE_SIZE];
+        // Create a framed reader with MessagePack decoder
+        let decoder = MessagePackDecoder::new(MAX_MESSAGE_SIZE);
+        let mut framed = FramedRead::new(stream, decoder);
 
-        loop {
-            match stream.read(&mut buffer).await {
-                Ok(0) => {
-                    // Connection closed
-                    debug!("Connection closed by peer");
-                    break;
-                }
-                Ok(n) => {
-                    debug!("Received {} bytes from Fluent socket", n);
+        // Use StreamExt to read frames
+        use tokio_stream::StreamExt;
 
-                    // Process the received data
-                    if let Err(e) = self.process_message(&buffer[..n]).await {
+        while let Some(frame_result) = framed.next().await {
+            match frame_result {
+                Ok(message_bytes) => {
+                    debug!(
+                        "Received complete message of {} bytes from Fluent socket",
+                        message_bytes.len()
+                    );
+
+                    // Process the received message
+                    if let Err(e) = self.process_message(&message_bytes).await {
                         warn!("Failed to process message: {}", e);
                     }
                 }
                 Err(e) => {
-                    error!("Error reading from socket: {}", e);
+                    error!("Error reading frame from socket: {}", e);
                     break;
                 }
             }

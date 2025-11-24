@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 pub(crate) enum Message {
     Message(EventTag, EventTimestamp, EventRecord),
     MessageWithOptions(EventTag, EventTimestamp, EventRecord, EventOptions),
-    
+
     Forward(EventTag, Vec<EventEntry>),
     ForwardWithOption(EventTag, Vec<EventEntry>, EventOptions),
 }
