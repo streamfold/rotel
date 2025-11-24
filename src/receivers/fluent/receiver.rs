@@ -10,13 +10,15 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rmpv::Value;
-use std::error::Error;
 use std::fs;
 use std::io::Cursor;
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::select;
+use tokio::task::JoinSet;
 use tokio_util::codec::{Decoder, FramedRead};
 use tokio_util::sync::CancellationToken;
+use tower::BoxError;
 use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
@@ -93,7 +95,8 @@ pub struct FluentReceiver {
     traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
     metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
-    listener: UnixListener,
+    unix_listener: Option<UnixListener>,
+    tcp_listener: Option<TcpListener>,
 }
 
 #[derive(Clone)]
@@ -104,7 +107,7 @@ struct ConnectionHandler {
 }
 
 impl FluentReceiver {
-    pub fn new(
+    pub async fn new(
         config: FluentReceiverConfig,
         traces_output: Option<OTLPOutput<payload::Message<ResourceSpans>>>,
         metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
@@ -117,51 +120,84 @@ impl FluentReceiver {
             ));
         }
 
-        // Remove the socket file if it already exists
-        let socket_path = &config.socket_path;
-        if socket_path.exists() {
-            fs::remove_file(socket_path).map_err(|e| {
-                FluentReceiverError::SocketBindError(format!(
-                    "Failed to remove existing socket file {}: {}",
-                    socket_path.display(),
-                    e
-                ))
-            })?;
+        // Validate that at least one listener type is configured
+        if config.socket_path.is_none() && config.endpoint.is_none() {
+            return Err(FluentReceiverError::ConfigurationError(
+                "At least one of socket_path or endpoint must be configured".to_string(),
+            ));
         }
 
-        // Create parent directories if they don't exist
-        if let Some(parent) = socket_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).map_err(|e| {
+        // Setup Unix socket listener if configured
+        let unix_listener = if let Some(socket_path) = &config.socket_path {
+            // Remove the socket file if it already exists
+            if socket_path.exists() {
+                fs::remove_file(socket_path).map_err(|e| {
                     FluentReceiverError::SocketBindError(format!(
-                        "Failed to create parent directories for {}: {}",
+                        "Failed to remove existing socket file {}: {}",
                         socket_path.display(),
                         e
                     ))
                 })?;
             }
-        }
 
-        // Bind to the UNIX socket
-        let listener = UnixListener::bind(socket_path).map_err(|e| {
-            FluentReceiverError::SocketBindError(format!(
-                "Failed to bind to UNIX socket {}: {}",
-                socket_path.display(),
-                e
-            ))
-        })?;
+            // Create parent directories if they don't exist
+            if let Some(parent) = socket_path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        FluentReceiverError::SocketBindError(format!(
+                            "Failed to create parent directories for {}: {}",
+                            socket_path.display(),
+                            e
+                        ))
+                    })?;
+                }
+            }
 
-        info!(
-            socket_path = socket_path.display().to_string(),
-            "Fluent receiver bound to UNIX socket"
-        );
+            // Bind to the UNIX socket
+            let listener = UnixListener::bind(socket_path).map_err(|e| {
+                FluentReceiverError::SocketBindError(format!(
+                    "Failed to bind to UNIX socket {}: {}",
+                    socket_path.display(),
+                    e
+                ))
+            })?;
+
+            info!(
+                socket_path = socket_path.display().to_string(),
+                "Fluent receiver bound to UNIX socket"
+            );
+
+            Some(listener)
+        } else {
+            None
+        };
+
+        // Setup TCP listener if configured
+        let tcp_listener = if let Some(endpoint) = config.endpoint {
+            let listener = TcpListener::bind(endpoint).await.map_err(|e| {
+                FluentReceiverError::SocketBindError(format!(
+                    "Failed to bind to TCP endpoint {}: {}",
+                    endpoint, e
+                ))
+            })?;
+
+            info!(
+                endpoint = endpoint.to_string(),
+                "Fluent receiver bound to TCP endpoint"
+            );
+
+            Some(listener)
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
             traces_output,
             metrics_output,
             logs_output,
-            listener,
+            unix_listener,
+            tcp_listener,
         })
     }
 
@@ -175,8 +211,14 @@ impl FluentReceiver {
 }
 
 impl ConnectionHandler {
-    async fn handle_connection(self, stream: UnixStream) {
-        debug!("New connection accepted on Fluent receiver");
+    async fn handle_connection_generic<S>(self, stream: S, connection_type: &str)
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        debug!(
+            connection_type = connection_type,
+            "New connection accepted on Fluent receiver"
+        );
 
         // Create a framed reader with MessagePack decoder
         let decoder = MessagePackDecoder::new(MAX_MESSAGE_SIZE);
@@ -189,8 +231,9 @@ impl ConnectionHandler {
             match frame_result {
                 Ok(message_bytes) => {
                     debug!(
-                        "Received complete message of {} bytes from Fluent socket",
-                        message_bytes.len()
+                        "Received complete message of {} bytes from Fluent {}",
+                        message_bytes.len(),
+                        connection_type
                     );
 
                     // Process the received message
@@ -199,13 +242,27 @@ impl ConnectionHandler {
                     }
                 }
                 Err(e) => {
-                    error!("Error reading frame from socket: {}", e);
+                    error!(
+                        connection_type = connection_type,
+                        "Error reading frame: {}", e
+                    );
                     break;
                 }
             }
         }
 
-        debug!("Connection handler finished");
+        debug!(
+            connection_type = connection_type,
+            "Connection handler finished"
+        );
+    }
+
+    async fn handle_unix_connection(self, stream: UnixStream) {
+        self.handle_connection_generic(stream, "unix socket").await
+    }
+
+    async fn handle_tcp_connection(self, stream: TcpStream) {
+        self.handle_connection_generic(stream, "tcp").await
     }
 
     async fn process_message(&self, data: &[u8]) -> Result<()> {
@@ -321,60 +378,106 @@ impl ConnectionHandler {
 }
 
 impl FluentReceiver {
-    pub async fn run(
+    pub fn start(
         &mut self,
-        receivers_cancel: CancellationToken,
-    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
-        info!(
-            socket_path = self.config.socket_path.display().to_string(),
-            "Starting Fluent receiver"
-        );
+        task_set: &mut JoinSet<std::result::Result<(), BoxError>>,
+        receivers_cancel: &CancellationToken,
+    ) {
+        info!("Starting Fluent receiver");
 
-        loop {
-            select! {
-                result = self.listener.accept() => {
-                    match result {
-                        Ok((stream, _addr)) => {
-                            debug!("Accepted new connection");
+        // Spawn Unix socket listener task if configured
+        if let Some(unix_listener) = self.unix_listener.take() {
+            let handler = self.create_handler();
+            let cancel = receivers_cancel.clone();
+            let socket_path = self.config.socket_path.clone();
 
-                            // Spawn a task to handle this connection
-                            let handler = self.create_handler();
-                            tokio::spawn(async move {
-                                handler.handle_connection(stream).await;
-                            });
+            task_set.spawn(async move {
+                info!("Unix socket listener task started");
+                loop {
+                    select! {
+                        result = unix_listener.accept() => {
+                            match result {
+                                Ok((stream, _addr)) => {
+                                    debug!("Accepted new Unix socket connection");
+
+                                    let handler_clone = handler.clone();
+                                    tokio::spawn(async move {
+                                        handler_clone.handle_unix_connection(stream).await;
+                                    });
+                                }
+                                Err(e) => {
+                                    error!("Error accepting Unix socket connection: {}", e);
+                                }
+                            }
                         }
-                        Err(e) => {
-                            error!("Error accepting connection: {}", e);
+                        _ = cancel.cancelled() => {
+                            info!("Unix socket listener shutting down");
+                            break;
                         }
                     }
                 }
-                _ = receivers_cancel.cancelled() => {
-                    println!("Fluent receiver shutting down");
-                    break;
+
+                // Cleanup: remove the socket file
+                if let Some(path) = socket_path {
+                    if path.exists() {
+                        if let Err(e) = fs::remove_file(&path) {
+                            warn!("Failed to remove socket file {}: {}", path.display(), e);
+                        }
+                    }
                 }
-            }
+
+                Ok(())
+            });
         }
 
-        // Cleanup: remove the socket file
-        if self.config.socket_path.exists() {
-            if let Err(e) = fs::remove_file(&self.config.socket_path) {
-                warn!(
-                    "Failed to remove socket file {}: {}",
-                    self.config.socket_path.display(),
-                    e
-                );
-            }
-        }
+        // Spawn TCP listener task if configured
+        if let Some(tcp_listener) = self.tcp_listener.take() {
+            let handler = self.create_handler();
+            let cancel = receivers_cancel.clone();
+            let endpoint = self.config.endpoint;
 
-        Ok(())
+            task_set.spawn(async move {
+                info!("TCP listener task started");
+                loop {
+                    select! {
+                        result = tcp_listener.accept() => {
+                            match result {
+                                Ok((stream, addr)) => {
+                                    debug!("Accepted new TCP connection from {}", addr);
+
+                                    let handler_clone = handler.clone();
+                                    tokio::spawn(async move {
+                                        handler_clone.handle_tcp_connection(stream).await;
+                                    });
+                                }
+                                Err(e) => {
+                                    error!("Error accepting TCP connection: {}", e);
+                                }
+                            }
+                        }
+                        _ = cancel.cancelled() => {
+                            info!(
+                                endpoint = endpoint.map(|e| e.to_string()).unwrap_or_default(),
+                                "TCP listener shutting down"
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                Ok(())
+            });
+        };
     }
 }
 
 impl Drop for FluentReceiver {
     fn drop(&mut self) {
         // Ensure socket file is cleaned up
-        if self.config.socket_path.exists() {
-            let _ = fs::remove_file(&self.config.socket_path);
+        if let Some(socket_path) = &self.config.socket_path {
+            if socket_path.exists() {
+                let _ = fs::remove_file(socket_path);
+            }
         }
     }
 }
@@ -389,9 +492,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path.clone()).with_logs(true);
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
 
-        let receiver = FluentReceiver::new(config, None, None, None);
+        let receiver = FluentReceiver::new(config, None, None, None).await;
         assert!(receiver.is_ok());
 
         // Cleanup
@@ -404,12 +507,12 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path)
+        let config = FluentReceiverConfig::new(Some(socket_path), None)
             .with_traces(false)
             .with_metrics(false)
             .with_logs(false);
 
-        let receiver = FluentReceiver::new(config, None, None, None);
+        let receiver = FluentReceiver::new(config, None, None, None).await;
         assert!(receiver.is_err());
 
         if let Err(FluentReceiverError::ConfigurationError(msg)) = receiver {
@@ -424,9 +527,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path.clone()).with_logs(true);
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
 
-        let receiver = FluentReceiver::new(config, None, None, None).unwrap();
+        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
         assert!(socket_path.exists());
 
         drop(receiver);
@@ -440,8 +543,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path.clone()).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).unwrap();
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
+        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
         let handler = receiver.create_handler();
 
         // Create a test MessagePack message
@@ -476,8 +579,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path.clone()).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).unwrap();
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
+        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
         let handler = receiver.create_handler();
 
         // Test various MessagePack types
@@ -512,8 +615,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path.clone()).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).unwrap();
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
+        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
         let handler = receiver.create_handler();
 
         // Test with incomplete MessagePack data
@@ -529,8 +632,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(socket_path.clone()).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).unwrap();
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
+        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
         let handler = receiver.create_handler();
 
         // Even some random bytes might decode as valid MessagePack
@@ -539,5 +642,57 @@ mod tests {
         let valid_msgpack = vec![0xc0]; // Nil in MessagePack
         let result = handler.process_message(&valid_msgpack).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_receiver_with_tcp_endpoint() {
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap(); // Use port 0 for automatic assignment
+        let config = FluentReceiverConfig::new(None, Some(addr)).with_logs(true);
+
+        let receiver = FluentReceiver::new(config, None, None, None).await;
+        assert!(receiver.is_ok());
+
+        let receiver = receiver.unwrap();
+        assert!(receiver.unix_listener.is_none());
+        assert!(receiver.tcp_listener.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_receiver_with_both_unix_and_tcp() {
+        use std::net::SocketAddr;
+
+        let temp_dir = TempDir::new().unwrap();
+        let socket_path = temp_dir.path().join("test.sock");
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+
+        let config =
+            FluentReceiverConfig::new(Some(socket_path.clone()), Some(addr)).with_logs(true);
+
+        let receiver = FluentReceiver::new(config, None, None, None).await;
+        assert!(receiver.is_ok());
+
+        let receiver = receiver.unwrap();
+        assert!(receiver.unix_listener.is_some());
+        assert!(receiver.tcp_listener.is_some());
+        assert!(socket_path.exists());
+
+        drop(receiver);
+        assert!(!socket_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_receiver_fails_without_listeners() {
+        let config = FluentReceiverConfig::new(None, None).with_logs(true);
+
+        let receiver = FluentReceiver::new(config, None, None, None).await;
+        assert!(receiver.is_err());
+
+        if let Err(FluentReceiverError::ConfigurationError(msg)) = receiver {
+            assert!(msg.contains("At least one of socket_path or endpoint"));
+        } else {
+            panic!("Expected ConfigurationError");
+        }
     }
 }
