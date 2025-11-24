@@ -57,19 +57,19 @@ To quickly get started with Rotel you can leverage the bundled [Python](https://
 follow these steps:
 
 1. **Running Rotel**
-   - We use the prebuilt docker image for this example, but you can also download a binary from the
-     [releases](https://github.com/streamfold/rotel/releases) page.
-   - Execute Rotel with the following arguments. To debug metrics or logs, add
-     an additional `--debug-log metrics|logs`.
+    - We use the prebuilt docker image for this example, but you can also download a binary from the
+      [releases](https://github.com/streamfold/rotel/releases) page.
+    - Execute Rotel with the following arguments. To debug metrics or logs, add
+      an additional `--debug-log metrics|logs`.
 
    ```bash
    docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
    ```
 
-   - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+    - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
 2. **Verify**
-   - Send OTLP traces to Rotel and verify that it is receiving data:
+    - Send OTLP traces to Rotel and verify that it is receiving data:
 
    ```bash
    go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
@@ -77,7 +77,7 @@ follow these steps:
    telemetrygen traces --otlp-insecure --duration 5s
    ```
 
-   - Check the output from Rotel and you should see several "Received traces" log lines.
+    - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
 
@@ -95,7 +95,7 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 Any option above that does not contain a default is considered false or unset by default.
 
 | Option                            | Default              | Options                                                            |
-| --------------------------------- | -------------------- | ------------------------------------------------------------------ |
+|-----------------------------------|----------------------|--------------------------------------------------------------------|
 | --daemon                          |                      |                                                                    |
 | --log-format                      | text                 | json                                                               |
 | --pid-file                        | /tmp/rotel-agent.pid |                                                                    |
@@ -124,7 +124,7 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
 | Option                                 | Default | Options    |
-| -------------------------------------- | ------- | ---------- |
+|----------------------------------------|---------|------------|
 | --otlp-exporter-endpoint               |         |            |
 | --otlp-exporter-protocol               | grpc    | grpc, http |
 | --otlp-exporter-custom-headers         |         |            |
@@ -152,7 +152,8 @@ The Rotel OTLP exporter can export to the
 [Cloudwatch OTLP endpoints](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OTLPEndpoint.html)
 for traces and logs. You'll need to select the HTTP protocol and enable the sigv4auth authenticator.
 
-The sigv4auth authenticator requires the AWS authentication credentials. See the [AWS Authentication](#aws-authentication) docs
+The sigv4auth authenticator requires the AWS authentication credentials. See
+the [AWS Authentication](#aws-authentication) docs
 for supported methods.
 
 **Traces**
@@ -194,7 +195,7 @@ The Datadog exporter can be selected by passing `--exporter datadog`. The Datado
 moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
 
 | Option                             | Default | Options                |
-| ---------------------------------- | ------- | ---------------------- |
+|------------------------------------|---------|------------------------|
 | --datadog-exporter-region          | us1     | us1, us3, us5, eu, ap1 |
 | --datadog-exporter-custom-endpoint |         |                        |
 | --datadog-exporter-api-key         |         |                        |
@@ -208,7 +209,7 @@ logs,
 and traces.
 
 | Option                                | Default | Options     |
-| ------------------------------------- | ------- | ----------- |
+|---------------------------------------|---------|-------------|
 | --clickhouse-exporter-endpoint        |         |             |
 | --clickhouse-exporter-database        | otel    |             |
 | --clickhouse-exporter-table-prefix    | otel    |             |
@@ -251,10 +252,11 @@ crate._
 
 The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ray exporter only supports traces.
 
-See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS X-Ray exporter.
+See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS
+X-Ray exporter.
 
 | Option                             | Default   | Options          |
-| ---------------------------------- | --------- | ---------------- |
+|------------------------------------|-----------|------------------|
 | --awsxray-exporter-region          | us-east-1 | aws region codes |
 | --awsxray-exporter-custom-endpoint |           |                  |
 
@@ -268,10 +270,11 @@ Cloudwatch [Embedded metric format](https://docs.aws.amazon.com/AmazonCloudWatch
 and
 send those as JSON log lines to Cloudwatch. Cloudwatch will convert the log lines into Cloudwatch Metrics.
 
-See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS EMF exporter.
+See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS EMF
+exporter.
 
 | Option                                                 | Default          | Options          |
-| ------------------------------------------------------ | ---------------- | ---------------- |
+|--------------------------------------------------------|------------------|------------------|
 | --awsemf-exporter-region                               | us-east-1        | aws region codes |
 | --awsemf-exporter-custom-endpoint                      |                  |                  |
 | --awsemf-exporter-log-group-name                       | /metrics/default |                  |
@@ -329,7 +332,7 @@ The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka expo
 logs, and traces.
 
 | Option                                                    | Default           | Options                                                                     |
-| --------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
+|-----------------------------------------------------------|-------------------|-----------------------------------------------------------------------------|
 | --kafka-exporter-brokers                                  | localhost:9092    |                                                                             |
 | --kafka-exporter-traces-topic                             | otlp_traces       |                                                                             |
 | --kafka-exporter-metrics-topic                            | otlp_metrics      |                                                                             |
@@ -476,7 +479,7 @@ out as periodic files on the local filesystem. Currently **Parquet** and
 **JSON** formats are supported.
 
 | Option                              | Default    | Description                                                                                                  |
-| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+|-------------------------------------|------------|--------------------------------------------------------------------------------------------------------------|
 | --file-exporter-format              | parquet    | `parquet` or `json`                                                                                          |
 | --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                              |
 | --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)   |
@@ -502,41 +505,75 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 - `--kafka-receiver-metrics` to consume metrics
 - `--kafka-receiver-logs` to consume logs
 
-| Option                                     | Default        | Options                                              |
-| ------------------------------------------ | -------------- | ---------------------------------------------------- |
-| --kafka-receiver-brokers                   | localhost:9092 | Kafka broker addresses (comma-separated)             |
-| --kafka-receiver-traces-topic              | otlp_traces    | Topic name for traces                                |
-| --kafka-receiver-metrics-topic             | otlp_metrics   | Topic name for metrics                               |
-| --kafka-receiver-logs-topic                | otlp_logs      | Topic name for logs                                  |
-| --kafka-receiver-traces                    | false          | Enable consuming traces                              |
-| --kafka-receiver-metrics                   | false          | Enable consuming metrics                             |
-| --kafka-receiver-logs                      | false          | Enable consuming logs                                |
-| --kafka-receiver-format                    | protobuf       | json, protobuf                                       |
-| --kafka-receiver-group-id                  | rotel-consumer | Consumer group ID for coordinated consumption        |
-| --kafka-receiver-client-id                 | rotel          | Client ID for the Kafka consumer                     |
-| --kafka-receiver-enable-auto-commit        | true           | Enable auto commit of offsets                        |
-| --kafka-receiver-auto-commit-interval-ms   | 5000           | Auto commit interval in milliseconds                 |
-| --kafka-receiver-auto-offset-reset         | latest         | earliest, latest, error                              |
-| --kafka-receiver-session-timeout-ms        | 30000          | Session timeout in milliseconds                      |
-| --kafka-receiver-heartbeat-interval-ms     | 3000           | Heartbeat interval in milliseconds                   |
-| --kafka-receiver-max-poll-interval-ms      | 300000         | Maximum poll interval in milliseconds                |
-| --kafka-receiver-max-partition-fetch-bytes | 1048576        | Maximum bytes per partition the consumer will buffer |
-| --kafka-receiver-fetch-min-bytes           | 1              | Minimum number of bytes for fetch requests           |
-| --kafka-receiver-fetch-max-wait-ms         | 500            | Maximum wait time for fetch requests in milliseconds |
-| --kafka-receiver-socket-timeout-ms         | 60000          | Socket timeout in milliseconds                       |
-| --kafka-receiver-metadata-max-age-ms       | 300000         | Maximum age of metadata in milliseconds              |
-| --kafka-receiver-isolation-level           | read-committed | read-uncommitted, read-committed                     |
-| --kafka-receiver-enable-partition-eof      | false          | Enable partition EOF notifications                   |
-| --kafka-receiver-check-crcs                | true           | Check CRC32 of consumed messages                     |
-| --kafka-receiver-custom-config             |                | Custom consumer config (comma-separated key=value)   |
-| --kafka-receiver-sasl-username             |                | SASL username for authentication                     |
-| --kafka-receiver-sasl-password             |                | SASL password for authentication                     |
-| --kafka-receiver-sasl-mechanism            |                | plain, scram-sha256, scram-sha512                    |
-| --kafka-receiver-security-protocol         |                | plaintext, ssl, sasl-plaintext, sasl-ssl             |
-| --kafka-receiver-ssl-ca-location           |                | SSL CA certificate location                          |
-| --kafka-receiver-ssl-certificate-location  |                | SSL certificate location                             |
-| --kafka-receiver-ssl-key-location          |                | SSL key location                                     |
-| --kafka-receiver-ssl-key-password          |                | SSL key password                                     |
+| Option                                             | Default        | Options                                                                |
+|----------------------------------------------------|----------------|------------------------------------------------------------------------|
+| --kafka-receiver-brokers                           | localhost:9092 | Kafka broker addresses (comma-separated)                               |
+| --kafka-receiver-traces-topic                      | otlp_traces    | Topic name for traces                                                  |
+| --kafka-receiver-metrics-topic                     | otlp_metrics   | Topic name for metrics                                                 |
+| --kafka-receiver-logs-topic                        | otlp_logs      | Topic name for logs                                                    |
+| --kafka-receiver-traces                            | false          | Enable consuming traces                                                |
+| --kafka-receiver-metrics                           | false          | Enable consuming metrics                                               |
+| --kafka-receiver-logs                              | false          | Enable consuming logs                                                  |
+| --kafka-receiver-format                            | protobuf       | json, protobuf                                                         |
+| --kafka-receiver-group-id                          | rotel-consumer | Consumer group ID for coordinated consumption                          |
+| --kafka-receiver-client-id                         | rotel          | Client ID for the Kafka consumer                                       |
+| --kafka-receiver-enable-auto-commit                | false          | Enable auto commit of offsets                                          |
+| --kafka-receiver-auto-commit-interval-ms           | 5000           | Auto commit interval in milliseconds                                   |
+| --kafka-receiver-auto-offset-reset                 | latest         | earliest, latest, error                                                |
+| --kafka-receiver-session-timeout-ms                | 30000          | Session timeout in milliseconds                                        |
+| --kafka-receiver-heartbeat-interval-ms             | 3000           | Heartbeat interval in milliseconds                                     |
+| --kafka-receiver-max-poll-interval-ms              | 300000         | Maximum poll interval in milliseconds                                  |
+| --kafka-receiver-max-partition-fetch-bytes         | 1048576        | Maximum bytes per partition the consumer will buffer                   |
+| --kafka-receiver-fetch-min-bytes                   | 1              | Minimum number of bytes for fetch requests                             |
+| --kafka-receiver-fetch-max-wait-ms                 | 500            | Maximum wait time for fetch requests in milliseconds                   |
+| --kafka-receiver-socket-timeout-ms                 | 60000          | Socket timeout in milliseconds                                         |
+| --kafka-receiver-metadata-max-age-ms               | 300000         | Maximum age of metadata in milliseconds                                |
+| --kafka-receiver-isolation-level                   | read-committed | read-uncommitted, read-committed                                       |
+| --kafka-receiver-enable-partition-eof              | false          | Enable partition EOF notifications                                     |
+| --kafka-receiver-check-crcs                        | true           | Check CRC32 of consumed messages                                       |
+| --kafka-receiver-disable-exporter-indefinite-retry |                | Disable indefinite retry for exporters when offset tracking is enabled |
+| --kafka-receiver-custom-config                     |                | Custom consumer config (comma-separated key=value)                     |
+| --kafka-receiver-sasl-username                     |                | SASL username for authentication                                       |
+| --kafka-receiver-sasl-password                     |                | SASL password for authentication                                       |
+| --kafka-receiver-sasl-mechanism                    |                | plain, scram-sha256, scram-sha512                                      |
+| --kafka-receiver-security-protocol                 |                | plaintext, ssl, sasl-plaintext, sasl-ssl                               |
+| --kafka-receiver-ssl-ca-location                   |                | SSL CA certificate location                                            |
+| --kafka-receiver-ssl-certificate-location          |                | SSL certificate location                                               |
+| --kafka-receiver-ssl-key-location                  |                | SSL key location                                                       |
+| --kafka-receiver-ssl-key-password                  |                | SSL key password                                                       |
+
+#### Offset Tracking and Data Reliability
+
+By default, the Kafka receiver uses **manual offset tracking** to ensure data reliability. With offset tracking enabled:
+
+- **At Least Once Guaranteed Delivery**: Kafka offsets are only committed after telemetry data is successfully exported
+- **Indefinite Retry**: Exporters retry indefinitely by default to prevent data loss. If an export fails, the exporter
+  will keep retrying until it succeeds.
+- **Backpressure Handling**: The Kafka receiver will pause consuming when the pipeline reaches its maximum
+  in-memory capacity
+
+**Disabling Indefinite Retry:**
+
+If you prefer to revert to timeout-based retry behavior (which may result in data loss on persistent export failures),
+use:
+
+```shell
+--kafka-receiver-disable-exporter-indefinite-retry
+```
+
+With this flag, failed exports that exceed the retry timeout will be negatively acknowledged (NACK'd), allowing the
+receiver to continue processing new messages.
+
+**Using Auto-Commit (Legacy Behavior):**
+
+To revert to the legacy auto-commit behavior where offsets are committed immediately regardless of export success:
+
+```shell
+--kafka-receiver-enable-auto-commit 
+```
+
+**Warning**: Auto-commit mode may result in data loss if exports fail, as Kafka will mark messages as consumed even if
+they weren't successfully exported.
 
 #### Consumer Configuration
 
@@ -545,15 +582,19 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 **Consumer Group Management:**
 
 - `--kafka-receiver-group-id`: Sets the consumer group ID for coordinated consumption across multiple Rotel instances
-- `--kafka-receiver-enable-auto-commit`: Controls whether offsets are automatically committed
-- `--kafka-receiver-auto-commit-interval-ms`: How often to commit offsets when auto-commit is enabled
+- `--kafka-receiver-enable-auto-commit`: Controls whether offsets are automatically committed by Kafka (default: false).
+  When disabled, Rotel uses manual offset tracking to ensure data reliability.
+- `--kafka-receiver-auto-commit-interval-ms`: How often to commit offsets when auto-commit is enabled (only applies when
+  auto-commit is true)
+- `--kafka-receiver-disable-exporter-indefinite-retry`: When using manual offset tracking, exporters retry indefinitely
+  by default. Set this flag to revert to timeout-based retries.
 
 **Offset Management:**
 
 - `--kafka-receiver-auto-offset-reset`: Controls behavior when no initial offset exists or the current offset is invalid
-  - `earliest`: Start consuming from the beginning of the topic
-  - `latest`: Start consuming from the end of the topic (default)
-  - `error`: Throw an error if no offset is found
+    - `earliest`: Start consuming from the beginning of the topic
+    - `latest`: Start consuming from the end of the topic (default)
+    - `error`: Throw an error if no offset is found
 
 **Session and Heartbeat Configuration:**
 
@@ -571,8 +612,8 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 
 - `--kafka-receiver-check-crcs`: Enables CRC32 checking of consumed messages for data integrity
 - `--kafka-receiver-isolation-level`: Controls which messages are visible to the consumer
-  - `read-uncommitted`: Read all messages including those from uncommitted transactions
-  - `read-committed`: Only read messages from committed transactions (default)
+    - `read-uncommitted`: Read all messages including those from uncommitted transactions
+    - `read-committed`: Only read messages from committed transactions (default)
 
 #### Security Configuration
 
@@ -657,7 +698,7 @@ logs,
 or traces). For example, `--traces-batch-max-size` will override the batch max size for traces only.
 
 | Option           | Default | Options |
-| ---------------- | ------- | ------- |
+|------------------|---------|---------|
 | --batch-max-size | 8192    |         |
 | --batch-timeout  | 200ms   |         |
 
@@ -711,7 +752,7 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 The following configuration parameters enable multiple receivers:
 
 | Option      | Default | Options                           |
-| ----------- | ------- | --------------------------------- |
+|-------------|---------|-----------------------------------|
 | --receiver  | otlp    | otlp, kafka                       |
 | --receivers |         | comma-separated list (otlp,kafka) |
 
@@ -798,7 +839,7 @@ environment variables as well. It is not possible to set `--exporter` and
 `--exporters` at the same time.
 
 | Option                       | Default | Options                          |
-| ---------------------------- | ------- | -------------------------------- |
+|------------------------------|---------|----------------------------------|
 | --exporters                  |         | name:type pairs, comma-separated |
 | --exporters-traces           |         | exporter name                    |
 | --exporters-metrics          |         | exporter name                    |
@@ -845,8 +886,10 @@ Alternatively, the following environment variables would do the same:
 - `ROTEL_EXPORTERS_METRICS=stats`
 - `ROTEL_EXPORTERS_LOGS=logging`
 
-You can send telemetry to multiple exporters by listing multiple comma-separated in the exporters configuration. Telemetry
-is sent sequentially to the sending queues for each exporter in-order. That means if one exporter is generating back pressure
+You can send telemetry to multiple exporters by listing multiple comma-separated in the exporters configuration.
+Telemetry
+is sent sequentially to the sending queues for each exporter in-order. That means if one exporter is generating back
+pressure
 it may impact the other exporters.
 
 For example, to send logs to both the stats and logging clickhouse exporters,
@@ -854,7 +897,7 @@ you would instead set the `ROTEL_EXPORTERS_LOGS` environment variable to:
 
 - `ROTEL_EXPORTERS_LOGS=stats,logging`
 
->[!NOTE]
+> [!NOTE]
 > Sending telemetry to multiple exporters at once is currently in alpha. The telemetry is copied between the
 > multiple exporter queues which may cause additional memory use under large volumes. This is an area of
 > improvement as we expand on this capability.
@@ -928,7 +971,7 @@ rotel_python_processor_sdk directory.
 Current prebuilt processors include...
 
 | Name                 | Supported telemetry types |
-| -------------------- | ------------------------- |
+|----------------------|---------------------------|
 | Attributes Processor | logs, metrics, traces,    |
 | Redaction Processor  | logs, metrics, traces     |
 

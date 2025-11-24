@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::exporters::http::client::{Client, Protocol as HttpProtocol, ResponseDecode};
+use crate::exporters::http::client::{
+    Client, Protocol as HttpProtocol, ResponseDecode, TransportErrorWithMetadata,
+};
 use crate::exporters::http::metadata_extractor::{MessagePayload, MetadataExtractor};
 use crate::exporters::http::response::Response as HttpResponse;
 use crate::exporters::http::tls::Config;
@@ -216,12 +218,24 @@ where
         // Extract metadata before making the call to preserve it for acknowledgment
         let metadata = request.body_mut().take_metadata();
 
-        let response = match client {
-            UnifiedClientType::Grpc(client) => client.call(request).await?,
-            UnifiedClientType::Http(client) => client.call(request).await?,
+        let result = match client {
+            UnifiedClientType::Grpc(client) => client.call(request).await,
+            UnifiedClientType::Http(client) => client.call(request).await,
         };
 
-        // Attach the metadata to the response for acknowledgment
-        Ok(response.with_metadata(metadata))
+        match result {
+            Ok(response) => {
+                // Attach the metadata to the response for acknowledgment
+                Ok(response.with_metadata(metadata))
+            }
+            Err(e) => {
+                // Wrap the error with metadata so it can be used for nacking
+                let wrapped_error: BoxError = Box::new(TransportErrorWithMetadata {
+                    original_error: e,
+                    metadata,
+                });
+                Err(wrapped_error)
+            }
+        }
     }
 }
