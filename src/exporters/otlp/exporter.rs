@@ -664,8 +664,13 @@ where
                         let (result, metadata) = r;
                         match &result {
                             Ok(r) => self.acknowledger.acknowledge(r).await,
-                            Err(_e) => {
-                                // TODO - We'll need to propagate MessageMetadata in Errors as well
+                            Err(e) => {
+                                // Handle error acknowledgment (potentially sending nacks)
+                                Acknowledger::<HttpResponse<Response>>::handle_error(
+                                    &self.acknowledger,
+                                    &e,
+                                )
+                                .await;
                             }
                         }
 
