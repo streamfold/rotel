@@ -5,7 +5,7 @@ use crate::receivers::fluent::error::{FluentReceiverError, Result};
 use crate::receivers::fluent::message::Message;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
@@ -43,11 +43,6 @@ impl Decoder for MessagePackDecoder {
         src: &mut BytesMut,
     ) -> std::result::Result<Option<Self::Item>, Self::Error> {
         if src.is_empty() {
-            return Ok(None);
-        }
-
-        // Check if we have enough data to determine message size
-        if src.len() == 0 {
             return Ok(None);
         }
 
@@ -227,11 +222,17 @@ impl ConnectionHandler {
         let mut framed = FramedRead::new(stream, decoder);
 
         // Use StreamExt to read frames
-        use tokio_stream::StreamExt;
+        use futures::StreamExt as FuturesStreamExt;
+        use futures::stream::FuturesOrdered;
+        use tokio_stream::StreamExt as TokioStreamExt;
+
+        // Track processing tasks in order
+        let mut processing_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<Message>>> =
+            FuturesOrdered::new();
 
         loop {
             select! {
-                frame_result = framed.next() => {
+                frame_result = TokioStreamExt::next(&mut framed) => {
                     match frame_result {
                         Some(Ok(message_bytes)) => {
                             debug!(
@@ -240,10 +241,13 @@ impl ConnectionHandler {
                                 connection_type
                             );
 
-                            // Process the received message
-                            if let Err(e) = self.process_message(&message_bytes).await {
-                                warn!("Failed to process message: {}", e);
-                            }
+                            // Spawn blocking task to process the message
+                            // Convert BytesMut to Bytes for cheap cloning (no copy)
+                            let data = message_bytes.freeze();
+                            let task = tokio::task::spawn_blocking(move || {
+                                Self::process_message(&data)
+                            });
+                            processing_tasks.push_back(task);
                         }
                         Some(Err(e)) => {
                             error!(
@@ -261,12 +265,44 @@ impl ConnectionHandler {
                         }
                     }
                 }
+                task_result = FuturesStreamExt::next(&mut processing_tasks), if !processing_tasks.is_empty() => {
+                    match task_result {
+                        Some(Ok(Ok(message))) => {
+                            debug!("Successfully processed message: {:?}", message);
+                            // TODO: Send message to appropriate output channel
+                        }
+                        Some(Ok(Err(e))) => {
+                            warn!("Failed to process message: {}", e);
+                        }
+                        Some(Err(e)) => {
+                            error!("Processing task panicked: {}", e);
+                        }
+                        None => {
+                            // This shouldn't happen due to the if guard, but handle it anyway
+                        }
+                    }
+                }
                 _ = self.cancel_token.cancelled() => {
                     debug!(
                         connection_type = connection_type,
                         "Connection handler cancelled"
                     );
                     break;
+                }
+            }
+        }
+
+        // Wait for remaining processing tasks to complete
+        while let Some(task_result) = FuturesStreamExt::next(&mut processing_tasks).await {
+            match task_result {
+                Ok(Ok(message)) => {
+                    debug!("Successfully processed remaining message: {:?}", message);
+                }
+                Ok(Err(e)) => {
+                    warn!("Failed to process remaining message: {}", e);
+                }
+                Err(e) => {
+                    error!("Processing task panicked: {}", e);
                 }
             }
         }
@@ -285,22 +321,21 @@ impl ConnectionHandler {
         self.handle_connection_generic(stream, "tcp").await
     }
 
-    async fn process_message(&self, data: &[u8]) -> Result<()> {
+    fn process_message(data: &Bytes) -> Result<Message> {
         debug!("Processing message of {} bytes", data.len());
 
         // Try to decode as Message struct first
         match rmp_serde::from_slice::<Message>(data) {
             Ok(message) => {
                 println!("Decoded Fluent Message: {:?}", message);
-                // TODO: Convert to OTLP format and send to appropriate output channel
-                return Ok(());
+                return Ok(message);
             }
             Err(e) => {
                 error!("Failed to decode as Message struct: {}", e);
             }
         }
 
-        // Fall back to generic MessagePack decoding
+        // Fall back to generic MessagePack decoding for debugging
         let mut cursor = Cursor::new(data);
         match rmpv::decode::read_value(&mut cursor) {
             Ok(value) => {
@@ -308,10 +343,12 @@ impl ConnectionHandler {
 
                 // Log the structure in a more readable format
                 println!("Received Fluent MessagePack");
-                self.log_msgpack_structure(&value, 0);
+                Self::log_msgpack_structure(&value, 0);
 
-                // TODO: Convert to OTLP format and send to appropriate output channel
-                Ok(())
+                // Return error since we couldn't parse as Message
+                Err(FluentReceiverError::DeserializationError(
+                    "Could not parse as Message struct".to_string(),
+                ))
             }
             Err(e) => {
                 // If MessagePack decoding fails, try to interpret as other formats
@@ -346,7 +383,7 @@ impl ConnectionHandler {
         }
     }
 
-    fn log_msgpack_structure(&self, value: &Value, indent: usize) {
+    fn log_msgpack_structure(value: &Value, indent: usize) {
         let prefix = "  ".repeat(indent);
         match value {
             Value::Nil => println!("{}Nil", prefix),
@@ -354,13 +391,10 @@ impl ConnectionHandler {
             Value::Integer(i) => println!("{}Integer: {}", prefix, i),
             Value::F32(f) => println!("{}F32: {}", prefix, f),
             Value::F64(f) => println!("{}F64: {}", prefix, f),
-            Value::String(s) => {
-                if let Some(utf8_str) = s.as_str() {
-                    println!("{}String: \"{}\"", prefix, utf8_str);
-                } else {
-                    println!("{}String (binary): {:?}", prefix, s);
-                }
-            }
+            Value::String(s) => match s.as_str() {
+                Some(utf8_str) => println!("{}String: {:?}", prefix, utf8_str),
+                None => println!("{}String (binary): {:?}", prefix, s),
+            },
             Value::Binary(b) => {
                 if b.len() <= 64 {
                     println!("{}Binary({} bytes): {:?}", prefix, b.len(), b);
@@ -372,16 +406,16 @@ impl ConnectionHandler {
                 println!("{}Array({} elements):", prefix, arr.len());
                 for (i, item) in arr.iter().enumerate() {
                     println!("{}[{}]:", prefix, i);
-                    self.log_msgpack_structure(item, indent + 1);
+                    Self::log_msgpack_structure(item, indent + 1);
                 }
             }
             Value::Map(map) => {
                 println!("{}Map({} entries):", prefix, map.len());
                 for (key, val) in map {
                     println!("{}Key:", prefix);
-                    self.log_msgpack_structure(key, indent + 1);
+                    Self::log_msgpack_structure(key, indent + 1);
                     println!("{}Value:", prefix);
-                    self.log_msgpack_structure(val, indent + 1);
+                    Self::log_msgpack_structure(val, indent + 1);
                 }
             }
             Value::Ext(tag, data) => {
@@ -589,9 +623,10 @@ mod tests {
         // Encode the message
         let mut buffer = Vec::new();
         rmpv::encode::write_value(&mut buffer, &message).unwrap();
+        let bytes = Bytes::from(buffer);
 
         // Process the message
-        let result = handler.process_message(&buffer).await;
+        let result = handler.process_message(&bytes).await;
         assert!(result.is_ok());
     }
 
@@ -626,9 +661,11 @@ mod tests {
         for test_value in test_values {
             let mut buffer = Vec::new();
             rmpv::encode::write_value(&mut buffer, &test_value).unwrap();
+            let bytes = Bytes::from(buffer);
 
-            let result = handler.process_message(&buffer).await;
-            assert!(result.is_ok());
+            let result = handler.process_message(&bytes).await;
+            // These are not valid Message structs, so they should fail
+            assert!(result.is_err());
         }
     }
 
@@ -644,7 +681,7 @@ mod tests {
 
         // Test with incomplete MessagePack data
         // This is an incomplete MessagePack array that should fail to decode
-        let invalid_msgpack = vec![0x93]; // Array with 3 elements but no data following
+        let invalid_msgpack = Bytes::from(vec![0x93]); // Array with 3 elements but no data following
         let result = handler.process_message(&invalid_msgpack).await;
         // This should fail because the MessagePack is incomplete
         assert!(result.is_err());
@@ -660,12 +697,11 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let handler = receiver.create_handler(cancel_token);
 
-        // Even some random bytes might decode as valid MessagePack
-        // (e.g., 0xFF is a valid negative fixint in MessagePack)
-        // So we just verify that valid MessagePack works
-        let valid_msgpack = vec![0xc0]; // Nil in MessagePack
+        // Test that a Nil value is valid MessagePack but not a valid Message struct
+        let valid_msgpack = Bytes::from(vec![0xc0]); // Nil in MessagePack
         let result = handler.process_message(&valid_msgpack).await;
-        assert!(result.is_ok());
+        // This should fail because Nil is not a valid Message
+        assert!(result.is_err());
     }
 
     #[tokio::test]
