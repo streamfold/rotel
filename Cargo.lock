@@ -3965,7 +3965,7 @@ dependencies = [
 
 [[package]]
 name = "rotel"
-version = "0.0.1-alpha27"
+version = "0.1.0"
 dependencies = [
  "arrow",
  "aws-config",

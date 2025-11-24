@@ -47,9 +47,6 @@ with minimal coldstart latency:
 
 Rotel is fully open-sourced and licensed under the Apache 2.0 license.
 
-_Rotel is currently in early development, and we are actively looking for feedback from the community. It is not
-recommended for production use at this time._
-
 ## Getting Started
 
 To quickly get started with Rotel you can leverage the bundled [Python](https://github.com/streamfold/pyrotel) or
@@ -896,11 +893,6 @@ For example, to send logs to both the stats and logging clickhouse exporters,
 you would instead set the `ROTEL_EXPORTERS_LOGS` environment variable to:
 
 - `ROTEL_EXPORTERS_LOGS=stats,logging`
-
-> [!NOTE]
-> Sending telemetry to multiple exporters at once is currently in alpha. The telemetry is copied between the
-> multiple exporter queues which may cause additional memory use under large volumes. This is an area of
-> improvement as we expand on this capability.
 
 ### AWS Authentication
 
