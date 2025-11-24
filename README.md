@@ -546,7 +546,7 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 
 By default, the Kafka receiver uses **manual offset tracking** to ensure data reliability. With offset tracking enabled:
 
-- **At least once guaranteed Delivery**: Kafka offsets are only committed after telemetry data is successfully exported
+- **At Least Once Guaranteed Delivery**: Kafka offsets are only committed after telemetry data is successfully exported
 - **Indefinite Retry**: Exporters retry indefinitely by default to prevent data loss. If an export fails, the exporter
   will keep retrying until it succeeds.
 - **Backpressure Handling**: The Kafka receiver will pause consuming when the pipeline reaches its maximum
@@ -569,7 +569,7 @@ receiver to continue processing new messages.
 To revert to the legacy auto-commit behavior where offsets are committed immediately regardless of export success:
 
 ```shell
---kafka-receiver-enable-auto-commit true
+--kafka-receiver-enable-auto-commit 
 ```
 
 **Warning**: Auto-commit mode may result in data loss if exports fail, as Kafka will mark messages as consumed even if
