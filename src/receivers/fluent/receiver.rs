@@ -211,7 +211,7 @@ impl ConnectionHandler {
         use tokio_stream::StreamExt as TokioStreamExt;
 
         // Track processing tasks in order
-        let mut encoding_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<Message>>> =
+        let mut encoding_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<ResourceLogs>>> =
             FuturesOrdered::new();
 
         loop {
@@ -229,7 +229,7 @@ impl ConnectionHandler {
                             // Convert BytesMut to Bytes for cheap cloning (no copy)
                             let data = message_bytes.freeze();
                             let task = tokio::task::spawn_blocking(move || {
-                                Self::process_message(&data)
+                                Self::process_message(&data).map(|msg| message_to_resource_logs(&msg))
                             });
                             encoding_tasks.push_back(task);
                         }
@@ -251,12 +251,7 @@ impl ConnectionHandler {
                 }
                 task_result = encoding_tasks.select_next_some(), if !encoding_tasks.is_empty() => {
                     match task_result {
-                        Ok(Ok(message)) => {
-                            debug!("Successfully processed message");
-
-                            // Convert to OTLP ResourceLogs
-                            let resource_logs = message_to_resource_logs(&message);
-
+                        Ok(Ok(resource_logs)) => {
                             // Send to logs output channel if configured
                             if let Some(ref logs_output) = self.logs_output {
                                 let payload_msg = payload::Message::new(None, vec![resource_logs]);
@@ -287,12 +282,7 @@ impl ConnectionHandler {
         // Wait for remaining processing tasks to complete
         while let Some(task_result) = FuturesStreamExt::next(&mut encoding_tasks).await {
             match task_result {
-                Ok(Ok(message)) => {
-                    debug!("Successfully processed remaining message");
-
-                    // Convert to OTLP ResourceLogs
-                    let resource_logs = message_to_resource_logs(&message);
-
+                Ok(Ok(resource_logs)) => {
                     // Send to logs output channel if configured
                     if let Some(ref logs_output) = self.logs_output {
                         let payload_msg = payload::Message::new(None, vec![resource_logs]);
@@ -331,6 +321,26 @@ impl ConnectionHandler {
         match rmp_serde::from_slice::<Message>(data) {
             Ok(message) => {
                 println!("Decoded Fluent Message: {:?}", message);
+
+                // We do not support compression at the moment
+                match &message {
+                    Message::MessageWithOptions(_, _, _, event_options) => {
+                        if let Some(compress) = &event_options.compressed {
+                            return Err(FluentReceiverError::UnsupportedCompression(
+                                compress.clone(),
+                            ));
+                        }
+                    }
+                    Message::ForwardWithOption(_, _, event_options) => {
+                        if let Some(compress) = &event_options.compressed {
+                            return Err(FluentReceiverError::UnsupportedCompression(
+                                compress.clone(),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+
                 return Ok(message);
             }
             Err(e) => {
@@ -542,51 +552,17 @@ impl Drop for FluentReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmpv::Value;
     use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_receiver_creation_with_valid_config() {
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
-
-        let receiver = FluentReceiver::new(config, None, None, None).await;
-        assert!(receiver.is_ok());
-
-        // Cleanup
-        drop(receiver);
-        assert!(!socket_path.exists());
-    }
-
-    #[tokio::test]
-    async fn test_receiver_creation_fails_without_signals() {
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path), None)
-            .with_traces(false)
-            .with_metrics(false)
-            .with_logs(false);
-
-        let receiver = FluentReceiver::new(config, None, None, None).await;
-        assert!(receiver.is_err());
-
-        if let Err(FluentReceiverError::ConfigurationError(msg)) = receiver {
-            assert!(msg.contains("At least one signal type"));
-        } else {
-            panic!("Expected ConfigurationError");
-        }
-    }
 
     #[tokio::test]
     async fn test_socket_cleanup_on_drop() {
         let temp_dir = TempDir::new().unwrap();
         let socket_path = temp_dir.path().join("test.sock");
 
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None);
 
-        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
+        let receiver = FluentReceiver::new(config, None).await.unwrap();
         assert!(socket_path.exists());
 
         drop(receiver);
@@ -595,16 +571,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_msgpack_decoding() {
-        use rmpv::Value;
-
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let cancel_token = CancellationToken::new();
-        let handler = receiver.create_handler(cancel_token);
-
         // Create a test MessagePack message
         // Fluentd forward protocol format: [tag, [[timestamp, record], ...]]
         let tag = Value::String("docker.container".into());
@@ -629,20 +595,12 @@ mod tests {
         let bytes = Bytes::from(buffer);
 
         // Process the message
-        let result = handler.process_message(&bytes).await;
+        let result = ConnectionHandler::process_message(&bytes);
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_msgpack_simple_types() {
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let cancel_token = CancellationToken::new();
-        let handler = receiver.create_handler(cancel_token);
-
         // Test various MessagePack types
         let test_values = vec![
             Value::Nil,
@@ -666,7 +624,7 @@ mod tests {
             rmpv::encode::write_value(&mut buffer, &test_value).unwrap();
             let bytes = Bytes::from(buffer);
 
-            let result = handler.process_message(&bytes).await;
+            let result = ConnectionHandler::process_message(&bytes);
             // These are not valid Message structs, so they should fail
             assert!(result.is_err());
         }
@@ -674,35 +632,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_msgpack_data() {
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let cancel_token = CancellationToken::new();
-        let handler = receiver.create_handler(cancel_token);
-
         // Test with incomplete MessagePack data
         // This is an incomplete MessagePack array that should fail to decode
         let invalid_msgpack = Bytes::from(vec![0x93]); // Array with 3 elements but no data following
-        let result = handler.process_message(&invalid_msgpack).await;
+        let result = ConnectionHandler::process_message(&invalid_msgpack);
         // This should fail because the MessagePack is incomplete
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_valid_msgpack_decodes_successfully() {
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None).with_logs(true);
-        let receiver = FluentReceiver::new(config, None, None, None).await.unwrap();
-        let cancel_token = CancellationToken::new();
-        let handler = receiver.create_handler(cancel_token);
-
         // Test that a Nil value is valid MessagePack but not a valid Message struct
         let valid_msgpack = Bytes::from(vec![0xc0]); // Nil in MessagePack
-        let result = handler.process_message(&valid_msgpack).await;
+        let result = ConnectionHandler::process_message(&valid_msgpack);
         // This should fail because Nil is not a valid Message
         assert!(result.is_err());
     }
@@ -712,9 +654,9 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap(); // Use port 0 for automatic assignment
-        let config = FluentReceiverConfig::new(None, Some(addr)).with_logs(true);
+        let config = FluentReceiverConfig::new(None, Some(addr));
 
-        let receiver = FluentReceiver::new(config, None, None, None).await;
+        let receiver = FluentReceiver::new(config, None).await;
         assert!(receiver.is_ok());
 
         let receiver = receiver.unwrap();
@@ -730,10 +672,9 @@ mod tests {
         let socket_path = temp_dir.path().join("test.sock");
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
 
-        let config =
-            FluentReceiverConfig::new(Some(socket_path.clone()), Some(addr)).with_logs(true);
+        let config = FluentReceiverConfig::new(Some(socket_path.clone()), Some(addr));
 
-        let receiver = FluentReceiver::new(config, None, None, None).await;
+        let receiver = FluentReceiver::new(config, None).await;
         assert!(receiver.is_ok());
 
         let receiver = receiver.unwrap();
@@ -747,9 +688,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_receiver_fails_without_listeners() {
-        let config = FluentReceiverConfig::new(None, None).with_logs(true);
+        let config = FluentReceiverConfig::new(None, None);
 
-        let receiver = FluentReceiver::new(config, None, None, None).await;
+        let receiver = FluentReceiver::new(config, None).await;
         assert!(receiver.is_err());
 
         if let Err(FluentReceiverError::ConfigurationError(msg)) = receiver {

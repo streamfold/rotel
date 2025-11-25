@@ -5,7 +5,10 @@ use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, Key
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 
-const LOG_BODY_KEY: &str = "log";
+const FLUENTD_LOG_BODY_KEY: &str = "message";
+const FLUENTBIT_LOG_BODY_KEY: &str = "log";
+
+const FLUENT_TAG_KEY: &str = "fluent.tag";
 
 /// Convert a Fluent Message to OTLP ResourceLogs
 pub(crate) fn message_to_resource_logs(message: &Message) -> ResourceLogs {
@@ -14,13 +17,13 @@ pub(crate) fn message_to_resource_logs(message: &Message) -> ResourceLogs {
     // Create log records from entries
     let log_records: Vec<LogRecord> = entries
         .into_iter()
-        .map(|(timestamp, record)| convert_event_to_log_record(timestamp, record))
+        .map(|(timestamp, record)| convert_event_to_log_record(timestamp, tag, record))
         .collect();
 
     // Create a single ScopeLogs with the tag as the scope name
     let scope_logs = ScopeLogs {
         scope: Some(InstrumentationScope {
-            name: tag.to_string(),
+            name: String::new(),
             version: String::new(),
             attributes: vec![],
             dropped_attributes_count: 0,
@@ -32,12 +35,7 @@ pub(crate) fn message_to_resource_logs(message: &Message) -> ResourceLogs {
     // Create ResourceLogs with a basic resource
     ResourceLogs {
         resource: Some(Resource {
-            attributes: vec![KeyValue {
-                key: "service.name".to_string(),
-                value: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue("fluent".to_string())),
-                }),
-            }],
+            attributes: vec![],
             dropped_attributes_count: 0,
             entity_refs: vec![],
         }),
@@ -47,29 +45,43 @@ pub(crate) fn message_to_resource_logs(message: &Message) -> ResourceLogs {
 }
 
 /// Convert an EventRecord to OTLP LogRecord
-fn convert_event_to_log_record(timestamp: &EventTimestamp, record: &EventRecord) -> LogRecord {
+fn convert_event_to_log_record(
+    timestamp: &EventTimestamp,
+    tag: &str,
+    record: &EventRecord,
+) -> LogRecord {
     let dt = timestamp.as_datetime();
     let time_unix_nano = dt.timestamp_nanos_opt().unwrap_or(0) as u64;
 
-    // Extract the "log" field as the body, if present
+    // Extract the appropriate field as the body, if present
     let body = record
-        .get(LOG_BODY_KEY)
+        .get(FLUENTBIT_LOG_BODY_KEY)
+        .or_else(|| record.get(FLUENTD_LOG_BODY_KEY))
         .map(|v| convert_event_value_to_any_value(v.as_value()));
 
     // Convert all other fields to attributes
     let attributes: Vec<KeyValue> = record
         .iter()
-        .filter(|(key, _)| key.as_str() != LOG_BODY_KEY)
+        .filter(|(key, _)| {
+            let k = key.as_str();
+            k != FLUENTBIT_LOG_BODY_KEY && k != FLUENTD_LOG_BODY_KEY
+        })
         .map(|(key, value)| KeyValue {
             key: key.clone(),
             value: Some(convert_event_value_to_any_value(value.as_value())),
         })
+        .chain(std::iter::once(KeyValue {
+            key: FLUENT_TAG_KEY.to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(tag.to_string())),
+            }),
+        }))
         .collect();
 
     LogRecord {
         time_unix_nano,
-        observed_time_unix_nano: time_unix_nano, // Use same timestamp for observed time
-        severity_number: 0,                      // Unspecified
+        observed_time_unix_nano: 0,
+        severity_number: 0, // Unspecified
         severity_text: String::new(),
         body,
         attributes,
@@ -144,7 +156,7 @@ fn convert_event_value_to_any_value(value: &rmpv::Value) -> AnyValue {
 mod tests {
     use super::*;
     use crate::receivers::fluent::message::EventTimestamp;
-    use chrono::{DateTime, Utc};
+    use chrono::DateTime;
     use std::collections::BTreeMap;
 
     #[test]
@@ -160,7 +172,7 @@ mod tests {
             rmpv::Value::String("abc123".into()).into(),
         );
 
-        let log_record = convert_event_to_log_record(&timestamp, &record);
+        let log_record = convert_event_to_log_record(&timestamp, "01234", &record);
 
         assert_eq!(log_record.time_unix_nano, 1234567890000000000);
         assert!(log_record.body.is_some());
@@ -176,8 +188,16 @@ mod tests {
         }
 
         // Check attributes
-        assert_eq!(log_record.attributes.len(), 1);
-        assert_eq!(log_record.attributes[0].key, "container_id");
+        assert_eq!(log_record.attributes.len(), 2);
+
+        let mut attribute_keys: Vec<String> = log_record
+            .attributes
+            .iter()
+            .map(|kv| kv.key.clone())
+            .collect();
+        attribute_keys.sort();
+        assert_eq!(attribute_keys[0], "container_id");
+        assert_eq!(attribute_keys[1], "fluent.tag");
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub enum FluentReceiverError {
     SocketBindError(String),
     DeserializationError(String),
     ConfigurationError(String),
+    UnsupportedCompression(String),
 }
 
 impl fmt::Display for FluentReceiverError {
@@ -22,6 +23,9 @@ impl fmt::Display for FluentReceiverError {
             }
             FluentReceiverError::ConfigurationError(s) => {
                 write!(f, "Configuration error: {}", s)
+            }
+            FluentReceiverError::UnsupportedCompression(s) => {
+                write!(f, "Unsupported compression: {}", s)
             }
         }
     }

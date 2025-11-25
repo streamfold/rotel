@@ -131,7 +131,7 @@ impl From<rmpv::Value> for EventValue {
 #[derive(Default, Debug, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct EventOptions {
-    size: u64,
-    compressed: Option<String>,
-    chunk: Option<String>,
+    pub(crate) size: u64,
+    pub(crate) compressed: Option<String>,
+    pub(crate) chunk: Option<String>,
 }
