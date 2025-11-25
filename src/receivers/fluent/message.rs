@@ -14,7 +14,31 @@ pub(crate) enum Message {
     ForwardWithOption(EventTag, Vec<EventEntry>, EventOptions),
 }
 
+impl Message {
+    /// Extract tag, entries for conversion to OTLP
+    pub(crate) fn entries(&self) -> (&str, Vec<(&EventTimestamp, &EventRecord)>) {
+        match self {
+            Message::Message(tag, ts, record) => (tag.as_str(), vec![(ts, record)]),
+            Message::MessageWithOptions(tag, ts, record, _) => (tag.as_str(), vec![(ts, record)]),
+            Message::Forward(tag, entries) => {
+                let items = entries.iter().map(|e| e.as_tuple()).collect();
+                (tag.as_str(), items)
+            }
+            Message::ForwardWithOption(tag, entries, _) => {
+                let items = entries.iter().map(|e| e.as_tuple()).collect();
+                (tag.as_str(), items)
+            }
+        }
+    }
+}
+
 pub(crate) type EventTag = String;
+
+impl EventTime {
+    pub(crate) fn as_datetime(&self) -> &DateTime<Utc> {
+        &self.0
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct EventTime(DateTime<Utc>);
@@ -69,13 +93,34 @@ pub(crate) enum EventTimestamp {
     Ext(EventTime),
 }
 
+impl EventTimestamp {
+    pub(crate) fn as_datetime(&self) -> &DateTime<Utc> {
+        match self {
+            EventTimestamp::Unix(dt) => dt,
+            EventTimestamp::Ext(et) => et.as_datetime(),
+        }
+    }
+}
+
 pub(crate) type EventRecord = BTreeMap<String, EventValue>;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct EventEntry(EventTimestamp, EventRecord);
 
+impl EventEntry {
+    pub(crate) fn as_tuple(&self) -> (&EventTimestamp, &EventRecord) {
+        (&self.0, &self.1)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct EventValue(rmpv::Value);
+
+impl EventValue {
+    pub(crate) fn as_value(&self) -> &rmpv::Value {
+        &self.0
+    }
+}
 
 impl From<rmpv::Value> for EventValue {
     fn from(value: rmpv::Value) -> Self {

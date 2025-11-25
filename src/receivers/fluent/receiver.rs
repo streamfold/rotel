@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::receivers::fluent::config::FluentReceiverConfig;
+use crate::receivers::fluent::convert::message_to_resource_logs;
 use crate::receivers::fluent::error::{FluentReceiverError, Result};
 use crate::receivers::fluent::message::Message;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use bytes::{Bytes, BytesMut};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
-use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
-use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rmpv::Value;
 use std::fs;
 use std::io::Cursor;
@@ -253,8 +252,18 @@ impl ConnectionHandler {
                 task_result = encoding_tasks.select_next_some(), if !encoding_tasks.is_empty() => {
                     match task_result {
                         Ok(Ok(message)) => {
-                            debug!("Successfully processed message: {:?}", message);
-                            // TODO: Send message to appropriate output channel
+                            debug!("Successfully processed message");
+
+                            // Convert to OTLP ResourceLogs
+                            let resource_logs = message_to_resource_logs(&message);
+
+                            // Send to logs output channel if configured
+                            if let Some(ref logs_output) = self.logs_output {
+                                let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                                if let Err(e) = logs_output.send(payload_msg).await {
+                                    error!("Failed to send logs to output channel: {}", e);
+                                }
+                            }
                         }
                         Ok(Err(e)) => {
                             warn!("Failed to process message: {}", e);
@@ -279,7 +288,18 @@ impl ConnectionHandler {
         while let Some(task_result) = FuturesStreamExt::next(&mut encoding_tasks).await {
             match task_result {
                 Ok(Ok(message)) => {
-                    debug!("Successfully processed remaining message: {:?}", message);
+                    debug!("Successfully processed remaining message");
+
+                    // Convert to OTLP ResourceLogs
+                    let resource_logs = message_to_resource_logs(&message);
+
+                    // Send to logs output channel if configured
+                    if let Some(ref logs_output) = self.logs_output {
+                        let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                        if let Err(e) = logs_output.send(payload_msg).await {
+                            error!("Failed to send remaining logs to output channel: {}", e);
+                        }
+                    }
                 }
                 Ok(Err(e)) => {
                     warn!("Failed to process remaining message: {}", e);
