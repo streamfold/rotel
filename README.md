@@ -29,7 +29,7 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - Built-in batching and retry mechanisms
 - Additional
   exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration),
-  and [Kafka](#kafka-exporter-configuration-experimental)
+  and [Kafka](#kafka-exporter-configuration)
 - [Kafka Receiver](#kafka-receiver-configuration)
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
@@ -323,7 +323,7 @@ With these options, here's how the following attributes would be handled:
   150, 180, 365, 400, 545,
   731, 1827, 2192, 2557, 2922, 3288, or 3653.
 
-### Kafka exporter configuration (Experimental)
+### Kafka exporter configuration
 
 The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka exporter supports metrics,
 logs, and traces.
