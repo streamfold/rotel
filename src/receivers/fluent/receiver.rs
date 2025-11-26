@@ -509,7 +509,6 @@ impl FluentReceiver {
             let socket_path = self.config.socket_path.clone();
 
             task_set.spawn(async move {
-                info!("Unix socket listener task started");
                 loop {
                     select! {
                         result = unix_listener.accept() => {
@@ -585,17 +584,6 @@ impl FluentReceiver {
                 Ok(())
             });
         };
-    }
-}
-
-impl Drop for FluentReceiver {
-    fn drop(&mut self) {
-        // Ensure socket file is cleaned up
-        if let Some(socket_path) = &self.config.socket_path {
-            if socket_path.exists() {
-                let _ = fs::remove_file(socket_path);
-            }
-        }
     }
 }
 
