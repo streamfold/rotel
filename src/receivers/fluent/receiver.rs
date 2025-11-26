@@ -553,7 +553,6 @@ impl FluentReceiver {
             let endpoint = self.config.endpoint;
 
             task_set.spawn(async move {
-                info!("TCP listener task started");
                 loop {
                     select! {
                         result = tcp_listener.accept() => {
