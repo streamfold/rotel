@@ -214,8 +214,21 @@ impl ConnectionHandler {
         let mut encoding_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<ResourceLogs>>> =
             FuturesOrdered::new();
 
+        // Track pending send operation
+        let mut pending_send = None;
+
         loop {
             select! {
+                biased;
+
+                send_result = pending_send.as_mut().unwrap(), if pending_send.is_some() => {
+                    pending_send = None;
+                    if let Err(e) = send_result {
+                        error!("Failed to emit fluent logs: {}", e);
+                        break;
+                    }
+                }
+
                 frame_result = TokioStreamExt::next(&mut framed), if encoding_tasks.len() < MAX_CONCURRENT_DECODERS => {
                     match frame_result {
                         Some(Ok(message_bytes)) => {
@@ -249,15 +262,13 @@ impl ConnectionHandler {
                         }
                     }
                 }
-                task_result = encoding_tasks.select_next_some(), if !encoding_tasks.is_empty() => {
+                task_result = encoding_tasks.select_next_some(), if !encoding_tasks.is_empty() && pending_send.is_none() => {
                     match task_result {
                         Ok(Ok(resource_logs)) => {
-                            // Send to logs output channel if configured
+                            // Initiate async send without awaiting
                             if let Some(ref logs_output) = self.logs_output {
                                 let payload_msg = payload::Message::new(None, vec![resource_logs]);
-                                if let Err(e) = logs_output.send(payload_msg).await {
-                                    error!("Failed to send logs to output channel: {}", e);
-                                }
+                                pending_send = Some(logs_output.send_async(payload_msg));
                             }
                         }
                         Ok(Err(e)) => {
