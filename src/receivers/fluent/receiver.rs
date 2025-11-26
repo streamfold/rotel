@@ -362,7 +362,7 @@ impl ConnectionHandler {
         // Try to decode as Message struct first
         match rmp_serde::from_slice::<Message>(data) {
             Ok(message) => {
-                println!("Decoded Fluent Message: {:?}", message);
+                //println!("Decoded Fluent Message: {:?}", message);
 
                 // We do not support compression at the moment
                 match &message {
@@ -502,8 +502,6 @@ impl FluentReceiver {
         task_set: &mut JoinSet<std::result::Result<(), BoxError>>,
         receivers_cancel: &CancellationToken,
     ) {
-        info!("Starting Fluent receiver");
-
         // Spawn Unix socket listener task if configured
         if let Some(unix_listener) = self.unix_listener.take() {
             let handler = self.create_handler(receivers_cancel.clone());

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::init::parse;
 use crate::receivers::fluent::config::FluentReceiverConfig;
 use clap::Args;
 use serde::Deserialize;
@@ -14,7 +15,7 @@ pub struct FluentReceiverArgs {
     pub fluent_receiver_socket: Option<PathBuf>,
 
     /// TCP endpoint for Fluent receiver (e.g., 127.0.0.1:23890)
-    #[arg(long, env = "ROTEL_FLUENT_RECEIVER_ENDPOINT")]
+    #[arg(long, env = "ROTEL_FLUENT_RECEIVER_ENDPOINT", value_parser = parse::parse_endpoint)]
     pub fluent_receiver_endpoint: Option<SocketAddr>,
 }
 
