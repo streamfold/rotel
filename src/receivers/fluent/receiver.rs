@@ -7,6 +7,7 @@ use crate::receivers::fluent::message::Message;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use bytes::{Bytes, BytesMut};
+use flume::r#async::SendFut;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use rmpv::Value;
 use std::fs;
@@ -15,12 +16,11 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::select;
 use tokio::task::JoinSet;
+use tokio::time::Instant;
 use tokio_util::codec::{Decoder, FramedRead};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tracing::{debug, error, info, warn};
-
-const MAX_CONCURRENT_DECODERS: usize = 20;
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
 
@@ -206,30 +206,47 @@ impl ConnectionHandler {
         let mut framed = FramedRead::new(stream, decoder);
 
         // Use StreamExt to read frames
-        use futures::StreamExt as FuturesStreamExt;
-        use futures::stream::FuturesOrdered;
         use tokio_stream::StreamExt as TokioStreamExt;
 
-        // Track processing tasks in order
-        let mut encoding_tasks: FuturesOrdered<tokio::task::JoinHandle<Result<ResourceLogs>>> =
-            FuturesOrdered::new();
+        // Track single pending encoding task
+        let mut pending_encode: Option<tokio::task::JoinHandle<Result<ResourceLogs>>> = None;
 
         // Track pending send operation
-        let mut pending_send = None;
+        let mut pending_send: Option<SendFut<'_, payload::Message<ResourceLogs>>> = None;
 
         loop {
             select! {
-                biased;
-
-                send_result = pending_send.as_mut().unwrap(), if pending_send.is_some() => {
-                    pending_send = None;
-                    if let Err(e) = send_result {
-                        error!("Failed to emit fluent logs: {}", e);
+                // Send to logs output
+                Some(send_result) = conditional_wait(&mut pending_send), if pending_send.is_some() => match send_result {
+                    Ok(_) => pending_send = None,
+                    Err(e) => {
+                        error!("Failed to send logs to output channel: {}", e);
                         break;
                     }
-                }
+                },
 
-                frame_result = TokioStreamExt::next(&mut framed), if encoding_tasks.len() < MAX_CONCURRENT_DECODERS => {
+                // Wait for encoding to finish
+                Some(encode_result) = conditional_wait(&mut pending_encode), if pending_send.is_none() => match encode_result {
+                    Ok(Ok(resource_logs)) => {
+                        pending_encode = None;
+
+                        // Initiate async send without awaiting
+                        if let Some(logs_output) = &self.logs_output {
+                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                            pending_send = Some(logs_output.send_async(payload_msg));
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        pending_encode = None;
+                        warn!("Failed to process message: {}", e);
+                    }
+                    Err(e) => {
+                        error!("Processing task panicked: {}", e);
+                        panic!("Fluent receiver processing task panicked");
+                    }
+                },
+
+                frame_result = TokioStreamExt::next(&mut framed), if pending_encode.is_none() => {
                     match frame_result {
                         Some(Ok(message_bytes)) => {
                             debug!(
@@ -241,10 +258,9 @@ impl ConnectionHandler {
                             // Spawn blocking task to process the message
                             // Convert BytesMut to Bytes for cheap cloning (no copy)
                             let data = message_bytes.freeze();
-                            let task = tokio::task::spawn_blocking(move || {
+                            pending_encode = Some(tokio::task::spawn_blocking(move || {
                                 Self::process_message(&data).map(|msg| message_to_resource_logs(&msg))
-                            });
-                            encoding_tasks.push_back(task);
+                            }));
                         }
                         Some(Err(e)) => {
                             error!(
@@ -262,24 +278,7 @@ impl ConnectionHandler {
                         }
                     }
                 }
-                task_result = encoding_tasks.select_next_some(), if !encoding_tasks.is_empty() && pending_send.is_none() => {
-                    match task_result {
-                        Ok(Ok(resource_logs)) => {
-                            // Initiate async send without awaiting
-                            if let Some(ref logs_output) = self.logs_output {
-                                let payload_msg = payload::Message::new(None, vec![resource_logs]);
-                                pending_send = Some(logs_output.send_async(payload_msg));
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            warn!("Failed to process message: {}", e);
-                        }
-                        Err(e) => {
-                            error!("Processing task panicked: {}", e);
-                            panic!("Fluent receiver processing task panicked");
-                        }
-                    }
-                }
+
                 _ = self.cancel_token.cancelled() => {
                     debug!(
                         connection_type = connection_type,
@@ -290,23 +289,55 @@ impl ConnectionHandler {
             }
         }
 
-        // Wait for remaining processing tasks to complete
-        while let Some(task_result) = FuturesStreamExt::next(&mut encoding_tasks).await {
-            match task_result {
-                Ok(Ok(resource_logs)) => {
-                    // Send to logs output channel if configured
-                    if let Some(ref logs_output) = self.logs_output {
-                        let payload_msg = payload::Message::new(None, vec![resource_logs]);
-                        if let Err(e) = logs_output.send(payload_msg).await {
-                            error!("Failed to send remaining logs to output channel: {}", e);
-                        }
+        let drain_timeout = tokio::time::Duration::from_secs(2); // TODO: make configurable
+        let drain_deadline = tokio::time::Instant::now()
+            .checked_sub(drain_timeout)
+            .unwrap();
+
+        // Wait for remaining processing task to complete with timeout
+        while pending_encode.is_some() || pending_send.is_some() {
+            let now = Instant::now();
+
+            let time_left = drain_deadline.saturating_duration_since(now);
+            if time_left.is_zero() {
+                error!("Timed out draining fluent receiver");
+                break;
+            }
+
+            select! {
+                biased;
+
+                Some(send_result) = conditional_wait(&mut pending_send), if pending_send.is_some() => {
+                    pending_send = None;
+                    if let Err(e) = send_result {
+                        error!("Failed to send logs to output channel: {}", e);
+                        break;
                     }
                 }
-                Ok(Err(e)) => {
-                    warn!("Failed to process remaining message: {}", e);
-                }
-                Err(e) => {
-                    error!("Processing task panicked: {}", e);
+
+                Some(encode_result) = conditional_wait(&mut pending_encode), if pending_send.is_none() => match encode_result {
+                    Ok(Ok(resource_logs)) => {
+                        pending_encode = None;
+
+                        // Initiate async send without awaiting
+                        if let Some(logs_output) = &self.logs_output {
+                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                            pending_send = Some(logs_output.send_async(payload_msg));
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        pending_encode = None;
+                        warn!("Failed to process message: {}", e);
+                    }
+                    Err(e) => {
+                        error!("Processing task panicked: {}", e);
+                        panic!("Fluent receiver processing task panicked");
+                    }
+                },
+
+                _ = tokio::time::sleep(time_left) => {
+                    debug!("Drain timeout reached during select loop");
+                    break;
                 }
             }
         }
@@ -452,6 +483,16 @@ impl ConnectionHandler {
                 );
             }
         }
+    }
+}
+
+pub async fn conditional_wait<F>(fut_opt: &mut Option<F>) -> Option<F::Output>
+where
+    F: std::future::Future + Unpin,
+{
+    match fut_opt.take() {
+        None => None,
+        Some(fut) => Some(fut.await),
     }
 }
 
