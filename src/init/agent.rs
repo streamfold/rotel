@@ -845,6 +845,7 @@ impl Agent {
                     info!(
                         grpc_endpoint = config.otlp_grpc_endpoint.to_string(),
                         http_endpoint = config.otlp_http_endpoint.to_string(),
+                        "OTLP receiver listening"
                     );
                     let grpc_srv = OTLPGrpcServer::builder()
                         .with_max_recv_msg_size_mib(config.otlp_grpc_max_recv_msg_size_mib as usize)

@@ -96,8 +96,9 @@ fn main() -> ExitCode {
                 .split(",")
                 .map(|s| s.to_string().to_lowercase())
                 .collect();
-            if matches!(agent.receiver, Some(Receiver::Otlp))
-                || receivers.contains(&"otlp".to_string())
+            if (agent.receiver.is_none() && agent.receivers.is_none()) || // Defaults to OTLP
+                matches!(agent.receiver, Some(Receiver::Otlp)) ||
+                receivers.contains(&"otlp".to_string())
             {
                 port_map = match bind_endpoints(&[
                     agent.otlp_receiver.otlp_grpc_endpoint,
