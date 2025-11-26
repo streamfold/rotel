@@ -4,6 +4,7 @@ use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "file_exporter")]
 use crate::init::file_exporter::FileExporterArgs;
+#[cfg(feature = "fluent_receiver")]
 use crate::init::fluent_receiver::FluentReceiverArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
@@ -61,6 +62,7 @@ pub struct AgentRun {
     pub kafka_receiver: KafkaReceiverArgs,
 
     #[command(flatten)]
+    #[cfg(feature = "fluent_receiver")]
     pub fluent_receiver: FluentReceiverArgs,
 
     /// Single receiver (type)
@@ -156,6 +158,7 @@ impl Default for AgentRun {
             otlp_receiver: OTLPReceiverArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_receiver: KafkaReceiverArgs::default(),
+            #[cfg(feature = "fluent_receiver")]
             fluent_receiver: FluentReceiverArgs::default(),
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
@@ -254,6 +257,7 @@ pub enum Receiver {
     Otlp,
     #[cfg(feature = "rdkafka")]
     Kafka,
+    #[cfg(feature = "fluent_receiver")]
     Fluent,
 }
 
@@ -262,7 +266,9 @@ impl FromStr for Receiver {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "otlp" => Ok(Receiver::Otlp),
+            #[cfg(feature = "rdkafka")]
             "kafka" => Ok(Receiver::Kafka),
+            #[cfg(feature = "fluent_receiver")]
             "fluent" => Ok(Receiver::Fluent),
             _ => Err("Unknown receiver"),
         }

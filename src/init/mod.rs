@@ -8,6 +8,7 @@ pub mod wait;
 #[cfg(feature = "rdkafka")]
 mod kafka_receiver;
 
+#[cfg(feature = "fluent_receiver")]
 mod fluent_receiver;
 
 mod awsemf_exporter;

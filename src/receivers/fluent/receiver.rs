@@ -89,8 +89,6 @@ impl Decoder for MessagePackDecoder {
 pub struct FluentReceiver {
     config: FluentReceiverConfig,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
-    unix_listener: Option<UnixListener>,
-    tcp_listener: Option<TcpListener>,
 }
 
 #[derive(Clone)]
@@ -111,8 +109,7 @@ impl FluentReceiver {
             ));
         }
 
-        // Setup Unix socket listener if configured
-        let unix_listener = if let Some(socket_path) = &config.socket_path {
+        if let Some(socket_path) = &config.socket_path {
             // Remove the socket file if it already exists
             if socket_path.exists() {
                 fs::remove_file(socket_path).map_err(|e| {
@@ -136,50 +133,11 @@ impl FluentReceiver {
                     })?;
                 }
             }
-
-            // Bind to the UNIX socket
-            let listener = UnixListener::bind(socket_path).map_err(|e| {
-                FluentReceiverError::SocketBindError(format!(
-                    "Failed to bind to UNIX socket {}: {}",
-                    socket_path.display(),
-                    e
-                ))
-            })?;
-
-            info!(
-                socket_path = socket_path.display().to_string(),
-                "Fluent receiver bound to UNIX socket"
-            );
-
-            Some(listener)
-        } else {
-            None
-        };
-
-        // Setup TCP listener if configured
-        let tcp_listener = if let Some(endpoint) = config.endpoint {
-            let listener = TcpListener::bind(endpoint).await.map_err(|e| {
-                FluentReceiverError::SocketBindError(format!(
-                    "Failed to bind to TCP endpoint {}: {}",
-                    endpoint, e
-                ))
-            })?;
-
-            info!(
-                endpoint = endpoint.to_string(),
-                "Fluent receiver bound to TCP endpoint"
-            );
-
-            Some(listener)
-        } else {
-            None
-        };
+        }
 
         Ok(Self {
             config,
             logs_output,
-            unix_listener,
-            tcp_listener,
         })
     }
 
@@ -497,13 +455,27 @@ where
 }
 
 impl FluentReceiver {
-    pub fn start(
-        &mut self,
+    pub async fn start(
+        self,
         task_set: &mut JoinSet<std::result::Result<(), BoxError>>,
         receivers_cancel: &CancellationToken,
-    ) {
-        // Spawn Unix socket listener task if configured
-        if let Some(unix_listener) = self.unix_listener.take() {
+    ) -> std::result::Result<(), BoxError> {
+        // Bind + spawn Unix socket listener task if configured
+        if let Some(socket_path) = &self.config.socket_path {
+            // Bind to the UNIX socket
+            let listener = UnixListener::bind(socket_path).map_err(|e| {
+                FluentReceiverError::SocketBindError(format!(
+                    "Failed to bind to UNIX socket {}: {}",
+                    socket_path.display(),
+                    e
+                ))
+            })?;
+
+            info!(
+                socket_path = socket_path.display().to_string(),
+                "Fluent receiver bound to UNIX socket"
+            );
+
             let handler = self.create_handler(receivers_cancel.clone());
             let cancel = receivers_cancel.clone();
             let socket_path = self.config.socket_path.clone();
@@ -511,7 +483,7 @@ impl FluentReceiver {
             task_set.spawn(async move {
                 loop {
                     select! {
-                        result = unix_listener.accept() => {
+                        result = listener.accept() => {
                             match result {
                                 Ok((stream, _addr)) => {
                                     debug!("Accepted new Unix socket connection");
@@ -547,7 +519,19 @@ impl FluentReceiver {
         }
 
         // Spawn TCP listener task if configured
-        if let Some(tcp_listener) = self.tcp_listener.take() {
+        if let Some(endpoint) = &self.config.endpoint {
+            let listener = TcpListener::bind(endpoint).await.map_err(|e| {
+                FluentReceiverError::SocketBindError(format!(
+                    "Failed to bind to TCP endpoint {}: {}",
+                    endpoint, e
+                ))
+            })?;
+
+            info!(
+                endpoint = endpoint.to_string(),
+                "Fluent receiver bound to TCP endpoint"
+            );
+
             let handler = self.create_handler(receivers_cancel.clone());
             let cancel = receivers_cancel.clone();
             let endpoint = self.config.endpoint;
@@ -555,7 +539,7 @@ impl FluentReceiver {
             task_set.spawn(async move {
                 loop {
                     select! {
-                        result = tcp_listener.accept() => {
+                        result = listener.accept() => {
                             match result {
                                 Ok((stream, addr)) => {
                                     debug!("Accepted new TCP connection from {}", addr);
@@ -583,6 +567,8 @@ impl FluentReceiver {
                 Ok(())
             });
         };
+
+        Ok(())
     }
 }
 
@@ -591,20 +577,6 @@ mod tests {
     use super::*;
     use rmpv::Value;
     use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_socket_cleanup_on_drop() {
-        let temp_dir = TempDir::new().unwrap();
-        let socket_path = temp_dir.path().join("test.sock");
-
-        let config = FluentReceiverConfig::new(Some(socket_path.clone()), None);
-
-        let receiver = FluentReceiver::new(config, None).await.unwrap();
-        assert!(socket_path.exists());
-
-        drop(receiver);
-        assert!(!socket_path.exists());
-    }
 
     #[tokio::test]
     async fn test_msgpack_decoding() {
@@ -687,21 +659,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_receiver_with_tcp_endpoint() {
-        use std::net::SocketAddr;
-
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap(); // Use port 0 for automatic assignment
-        let config = FluentReceiverConfig::new(None, Some(addr));
-
-        let receiver = FluentReceiver::new(config, None).await;
-        assert!(receiver.is_ok());
-
-        let receiver = receiver.unwrap();
-        assert!(receiver.unix_listener.is_none());
-        assert!(receiver.tcp_listener.is_some());
-    }
-
-    #[tokio::test]
     async fn test_receiver_with_both_unix_and_tcp() {
         use std::net::SocketAddr;
 
@@ -715,11 +672,17 @@ mod tests {
         assert!(receiver.is_ok());
 
         let receiver = receiver.unwrap();
-        assert!(receiver.unix_listener.is_some());
-        assert!(receiver.tcp_listener.is_some());
-        assert!(socket_path.exists());
 
-        drop(receiver);
+        let mut tasks = JoinSet::new();
+        let cancel_token = CancellationToken::new();
+
+        let r = receiver.start(&mut tasks, &cancel_token).await;
+        assert!(r.is_ok());
+
+        assert!(socket_path.exists());
+        cancel_token.cancel();
+
+        tasks.join_all().await;
         assert!(!socket_path.exists());
     }
 
