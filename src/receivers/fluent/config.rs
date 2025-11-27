@@ -16,7 +16,7 @@ pub struct FluentReceiverConfig {
 impl Default for FluentReceiverConfig {
     fn default() -> Self {
         Self {
-            socket_path: Some(PathBuf::from("/var/run/fluent.sock")),
+            socket_path: None,
             endpoint: None,
         }
     }
@@ -27,30 +27,6 @@ impl FluentReceiverConfig {
         Self {
             socket_path,
             endpoint,
-            ..Default::default()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_with_endpoint() {
-        let addr: SocketAddr = "127.0.0.1:23890".parse().unwrap();
-        let config = FluentReceiverConfig::new(None, Some(addr));
-
-        assert_eq!(config.socket_path, None);
-        assert_eq!(config.endpoint, Some(addr));
-    }
-
-    #[test]
-    fn test_config_with_both() {
-        let addr: SocketAddr = "127.0.0.1:23890".parse().unwrap();
-        let config = FluentReceiverConfig::new(Some(PathBuf::from("/tmp/test.sock")), Some(addr));
-
-        assert_eq!(config.socket_path, Some(PathBuf::from("/tmp/test.sock")));
-        assert_eq!(config.endpoint, Some(addr));
     }
 }

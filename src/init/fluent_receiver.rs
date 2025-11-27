@@ -22,7 +22,7 @@ pub struct FluentReceiverArgs {
 impl Default for FluentReceiverArgs {
     fn default() -> Self {
         Self {
-            fluent_receiver_socket: Some(PathBuf::from("/var/run/fluent.sock")),
+            fluent_receiver_socket: None,
             fluent_receiver_endpoint: None,
         }
     }
