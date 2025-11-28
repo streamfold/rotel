@@ -64,6 +64,8 @@ fn all_traces_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool
                     return false;
                 }
             }
+            #[cfg(feature = "fluent_receiver")]
+            ReceiverConfig::Fluent(_) => {}
         }
     }
     true
@@ -82,6 +84,9 @@ fn all_metrics_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> boo
                     return false;
                 }
             }
+
+            #[cfg(feature = "fluent_receiver")]
+            ReceiverConfig::Fluent(_) => {}
         }
     }
     true
@@ -100,6 +105,8 @@ fn all_logs_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool {
                     return false;
                 }
             }
+            #[cfg(feature = "fluent_receiver")]
+            ReceiverConfig::Fluent(_) => return false,
         }
     }
     true
