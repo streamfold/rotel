@@ -1,5 +1,6 @@
 use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
+use rmpv::Value;
 use serde::de;
 use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
@@ -12,6 +13,8 @@ pub(crate) enum Message {
 
     Forward(EventTag, Vec<EventEntry>),
     ForwardWithOption(EventTag, Vec<EventEntry>, EventOptions),
+
+    Unknown(rmpv::Value),
 }
 
 impl Message {
@@ -28,6 +31,7 @@ impl Message {
                 let items = entries.iter().map(|e| e.as_tuple()).collect();
                 (tag.as_str(), items)
             }
+            Message::Unknown(_) => ("", vec![]),
         }
     }
 }
@@ -134,4 +138,51 @@ pub(crate) struct EventOptions {
     pub(crate) size: u64,
     pub(crate) compressed: Option<String>,
     pub(crate) chunk: Option<String>,
+}
+
+pub(crate) fn log_msgpack_structure(value: &Value, indent: usize) {
+    let prefix = "  ".repeat(indent);
+    match value {
+        Value::Nil => println!("{}Nil", prefix),
+        Value::Boolean(b) => println!("{}Boolean: {}", prefix, b),
+        Value::Integer(i) => println!("{}Integer: {}", prefix, i),
+        Value::F32(f) => println!("{}F32: {}", prefix, f),
+        Value::F64(f) => println!("{}F64: {}", prefix, f),
+        Value::String(s) => match s.as_str() {
+            Some(utf8_str) => println!("{}String: {:?}", prefix, utf8_str),
+            None => println!("{}String (binary): {:?}", prefix, s),
+        },
+        Value::Binary(b) => {
+            if b.len() <= 64 {
+                println!("{}Binary({} bytes): {:?}", prefix, b.len(), b);
+            } else {
+                println!("{}Binary({} bytes): {:?}...", prefix, b.len(), &b[..64]);
+            }
+        }
+        Value::Array(arr) => {
+            println!("{}Array({} elements):", prefix, arr.len());
+            for (i, item) in arr.iter().enumerate() {
+                println!("{}[{}]:", prefix, i);
+                log_msgpack_structure(item, indent + 1);
+            }
+        }
+        Value::Map(map) => {
+            println!("{}Map({} entries):", prefix, map.len());
+            for (key, val) in map {
+                println!("{}Key:", prefix);
+                log_msgpack_structure(key, indent + 1);
+                println!("{}Value:", prefix);
+                log_msgpack_structure(val, indent + 1);
+            }
+        }
+        Value::Ext(tag, data) => {
+            println!(
+                "{}Ext(tag={}, {} bytes): {:?}",
+                prefix,
+                tag,
+                data.len(),
+                data
+            );
+        }
+    }
 }

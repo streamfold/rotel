@@ -10,17 +10,19 @@ const FLUENTBIT_LOG_BODY_KEY: &str = "log";
 
 const FLUENT_TAG_KEY: &str = "fluent.tag";
 
-/// Convert a Fluent Message to OTLP ResourceLogs
-pub(crate) fn message_to_resource_logs(message: &Message) -> ResourceLogs {
-    let (tag, entries) = message.entries();
-
-    // Create log records from entries
-    let log_records: Vec<LogRecord> = entries
-        .into_iter()
-        .map(|(timestamp, record)| convert_event_to_log_record(timestamp, tag, record))
+/// Convert Fluent Messages to OTLP ResourceLogs
+pub(crate) fn convert_to_otlp_logs(messages: Vec<Message>) -> ResourceLogs {
+    let log_records = messages
+        .iter()
+        .map(|msg| msg.entries())
+        .map(|(tag, entries)| {
+            entries
+                .into_iter()
+                .map(|(timestamp, record)| convert_event_to_log_record(timestamp, tag, record))
+        })
+        .flatten()
         .collect();
 
-    // Create a single ScopeLogs with the tag as the scope name
     let scope_logs = ScopeLogs {
         scope: Some(InstrumentationScope {
             name: String::new(),

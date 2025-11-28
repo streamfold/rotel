@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::receivers::fluent::config::FluentReceiverConfig;
-use crate::receivers::fluent::convert::message_to_resource_logs;
+use crate::receivers::fluent::convert::convert_to_otlp_logs;
 use crate::receivers::fluent::error::{FluentReceiverError, Result};
-use crate::receivers::fluent::message::Message;
+use crate::receivers::fluent::message::{Message, log_msgpack_structure};
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, BytesMut};
 use flume::r#async::SendFut;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use rmp_serde::Deserializer;
-use rmpv::Value;
 use std::fs;
 use std::io::Cursor;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::select;
@@ -24,6 +25,9 @@ use tower::BoxError;
 use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
+
+const MAX_BATCH_SIZE: usize = 100;
+const MAX_BATCH_TIME_MS: usize = 250;
 
 /// MessagePack decoder that extracts complete MessagePack messages from a stream
 struct MessagePackDecoder {
@@ -37,7 +41,7 @@ impl MessagePackDecoder {
 }
 
 impl Decoder for MessagePackDecoder {
-    type Item = BytesMut;
+    type Item = Message;
     type Error = std::io::Error;
 
     fn decode(
@@ -54,7 +58,7 @@ impl Decoder for MessagePackDecoder {
         let res: std::result::Result<Message, rmp_serde::decode::Error> =
             serde::Deserialize::deserialize(&mut d);
         match res {
-            Ok(_value) => {
+            Ok(value) => {
                 // Successfully decoded a value, get the position after reading
                 let position = d.position() as usize;
 
@@ -69,9 +73,9 @@ impl Decoder for MessagePackDecoder {
                     ));
                 }
 
-                // Extract the message bytes
-                let message_bytes = src.split_to(position);
-                Ok(Some(message_bytes))
+                src.advance(position);
+
+                Ok(Some(value))
             }
             Err(rmp_serde::decode::Error::InvalidMarkerRead(ref io_err))
                 if io_err.kind() == std::io::ErrorKind::UnexpectedEof =>
@@ -176,11 +180,25 @@ impl ConnectionHandler {
         // Use StreamExt to read frames
         use tokio_stream::StreamExt as TokioStreamExt;
 
+        let mut batch = vec![];
+
         // Track single pending encoding task
-        let mut pending_encode: Option<tokio::task::JoinHandle<Result<ResourceLogs>>> = None;
+        let mut pending_encode: Option<tokio::task::JoinHandle<Option<ResourceLogs>>> = None;
 
         // Track pending send operation
         let mut pending_send: Option<SendFut<'_, payload::Message<ResourceLogs>>> = None;
+
+        // Create batch timer
+        let batch_timeout = tokio::time::Duration::from_millis(MAX_BATCH_TIME_MS as u64);
+        let mut batch_timer = tokio::time::interval(batch_timeout);
+        batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        // Skip the first immediate tick
+        batch_timer.tick().await;
+        let mut last_batch_send = Instant::now();
+
+        // Skip the first immediate tick
+        batch_timer.tick().await;
 
         loop {
             select! {
@@ -193,9 +211,29 @@ impl ConnectionHandler {
                     }
                 },
 
+                _ = batch_timer.tick() => {
+                    if pending_encode.is_some() || batch.is_empty() {
+                        continue
+                    }
+
+                    let now = Instant::now();
+                    let last_dur = now.saturating_duration_since(last_batch_send);
+                    // avoid uncessary flushing
+                    if (last_dur.as_millis() as usize) < MAX_BATCH_TIME_MS / 2 {
+                        continue
+                    }
+
+                    let curr_batch = std::mem::replace(&mut batch, vec![]);
+                    pending_encode = Some(tokio::task::spawn_blocking(move || {
+                        Some(convert_to_otlp_logs(curr_batch))
+                    }));
+                    last_batch_send = now;
+
+                },
+
                 // Wait for encoding to finish
                 Some(encode_result) = conditional_wait(&mut pending_encode), if pending_send.is_none() => match encode_result {
-                    Ok(Ok(resource_logs)) => {
+                    Ok(Some(resource_logs)) => {
                         pending_encode = None;
 
                         // Initiate async send without awaiting
@@ -204,9 +242,8 @@ impl ConnectionHandler {
                             pending_send = Some(logs_output.send_async(payload_msg));
                         }
                     }
-                    Ok(Err(e)) => {
+                    Ok(None) => {
                         pending_encode = None;
-                        warn!("Failed to process message: {}", e);
                     }
                     Err(e) => {
                         error!("Processing task panicked: {}", e);
@@ -214,21 +251,49 @@ impl ConnectionHandler {
                     }
                 },
 
-                frame_result = TokioStreamExt::next(&mut framed), if pending_encode.is_none() => {
+                frame_result = TokioStreamExt::next(&mut framed), if batch.len() < MAX_BATCH_SIZE => {
                     match frame_result {
-                        Some(Ok(message_bytes)) => {
-                            debug!(
-                                "Received complete message of {} bytes from Fluent {}",
-                                message_bytes.len(),
-                                connection_type
-                            );
+                        Some(Ok(message)) => {
+                            match &message {
+                                Message::Unknown(value) => {
+                                    error!("Unexpected message");
+                                    log_msgpack_structure(&value, 0);
+                                    continue
+                                }
+                                Message::MessageWithOptions(_, _, _, event_options) => {
+                                    if let Some(compress) = &event_options.compressed {
+                                        error!(compress, "Unsupported compression option");
+                                        continue
+                                    }
+                                    if let Some(_) = &event_options.chunk {
+                                        error!("Fluent sender expects acks, not supported yet");
+                                    }
+                                }
+                                Message::ForwardWithOption(_, _, event_options) => {
+                                    if let Some(compress) = &event_options.compressed {
+                                        error!(compress, "Unsupported compression option");
+                                        continue
+                                    }
+                                    if let Some(_) = &event_options.chunk {
+                                        error!("Fluent sender expects acks, not supported yet");
+                                    }
+                                }
+                                _ => {}
+                            }
 
-                            // Spawn blocking task to process the message
-                            // Convert BytesMut to Bytes for cheap cloning (no copy)
-                            let data = message_bytes.freeze();
-                            pending_encode = Some(tokio::task::spawn_blocking(move || {
-                                Self::process_message(&data).map(|msg| message_to_resource_logs(&msg))
-                            }));
+                            batch.push(message);
+
+                            // If we can't push onto the encoders, we will have to wait for the
+                            // batch timer. We will only batch up to MAX_BATCH_SIZE due to the arm conditional
+                            if batch.len() >= MAX_BATCH_SIZE && pending_encode.is_none() {
+                                let curr_batch = std::mem::replace(&mut batch, vec![]);
+
+                                pending_encode = Some(tokio::task::spawn_blocking(move || {
+                                    Some(convert_to_otlp_logs(curr_batch))
+                                }));
+
+                                last_batch_send = Instant::now();
+                            }
                         }
                         Some(Err(e)) => {
                             error!(
@@ -284,7 +349,7 @@ impl ConnectionHandler {
                 }
 
                 Some(encode_result) = conditional_wait(&mut pending_encode), if pending_send.is_none() => match encode_result {
-                    Ok(Ok(resource_logs)) => {
+                    Ok(Some(resource_logs)) => {
                         pending_encode = None;
 
                         // Initiate async send without awaiting
@@ -293,9 +358,8 @@ impl ConnectionHandler {
                             pending_send = Some(logs_output.send_async(payload_msg));
                         }
                     }
-                    Ok(Err(e)) => {
+                    Ok(None) => {
                         pending_encode = None;
-                        warn!("Failed to process message: {}", e);
                     }
                     Err(e) => {
                         error!("Processing task panicked: {}", e);
@@ -322,135 +386,6 @@ impl ConnectionHandler {
 
     async fn handle_tcp_connection(self, stream: TcpStream) {
         self.handle_connection_generic(stream, "tcp").await
-    }
-
-    fn process_message(data: &Bytes) -> Result<Message> {
-        debug!("Processing message of {} bytes", data.len());
-
-        // Try to decode as Message struct first
-        match rmp_serde::from_slice::<Message>(data) {
-            Ok(message) => {
-                //println!("Decoded Fluent Message: {:?}", message);
-
-                // We do not support compression at the moment
-                match &message {
-                    Message::MessageWithOptions(_, _, _, event_options) => {
-                        if let Some(compress) = &event_options.compressed {
-                            return Err(FluentReceiverError::UnsupportedCompression(
-                                compress.clone(),
-                            ));
-                        }
-                    }
-                    Message::ForwardWithOption(_, _, event_options) => {
-                        if let Some(compress) = &event_options.compressed {
-                            return Err(FluentReceiverError::UnsupportedCompression(
-                                compress.clone(),
-                            ));
-                        }
-                    }
-                    _ => {}
-                }
-
-                return Ok(message);
-            }
-            Err(e) => {
-                error!("Failed to decode as Message struct: {}", e);
-            }
-        }
-
-        // Fall back to generic MessagePack decoding for debugging
-        let mut cursor = Cursor::new(data);
-        match rmpv::decode::read_value(&mut cursor) {
-            Ok(value) => {
-                //println!("Decoded MessagePack message: {:#?}", value);
-
-                // Log the structure in a more readable format
-                println!("Received Fluent MessagePack");
-                Self::log_msgpack_structure(&value, 0);
-
-                // Return error since we couldn't parse as Message
-                Err(FluentReceiverError::DeserializationError(
-                    "Could not parse as Message struct".to_string(),
-                ))
-            }
-            Err(e) => {
-                // If MessagePack decoding fails, try to interpret as other formats
-                warn!("Failed to decode as MessagePack: {}", e);
-
-                // Try to decode as UTF-8 text
-                match std::str::from_utf8(data) {
-                    Ok(utf8_str) => {
-                        println!("Received UTF-8 text: {}", utf8_str);
-                    }
-                    Err(_) => {
-                        // Hex dump for binary data
-                        println!("Received binary data, hex dump:");
-                        for (i, chunk) in data.chunks(32).enumerate() {
-                            let offset = i * 32;
-                            let hex_part: String = chunk
-                                .iter()
-                                .map(|b| format!("{:02x}", b))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-
-                            println!("{:08x}  {}", offset, hex_part);
-                        }
-                    }
-                }
-
-                Err(FluentReceiverError::DeserializationError(format!(
-                    "Failed to decode message: {}",
-                    e
-                )))
-            }
-        }
-    }
-
-    fn log_msgpack_structure(value: &Value, indent: usize) {
-        let prefix = "  ".repeat(indent);
-        match value {
-            Value::Nil => println!("{}Nil", prefix),
-            Value::Boolean(b) => println!("{}Boolean: {}", prefix, b),
-            Value::Integer(i) => println!("{}Integer: {}", prefix, i),
-            Value::F32(f) => println!("{}F32: {}", prefix, f),
-            Value::F64(f) => println!("{}F64: {}", prefix, f),
-            Value::String(s) => match s.as_str() {
-                Some(utf8_str) => println!("{}String: {:?}", prefix, utf8_str),
-                None => println!("{}String (binary): {:?}", prefix, s),
-            },
-            Value::Binary(b) => {
-                if b.len() <= 64 {
-                    println!("{}Binary({} bytes): {:?}", prefix, b.len(), b);
-                } else {
-                    println!("{}Binary({} bytes): {:?}...", prefix, b.len(), &b[..64]);
-                }
-            }
-            Value::Array(arr) => {
-                println!("{}Array({} elements):", prefix, arr.len());
-                for (i, item) in arr.iter().enumerate() {
-                    println!("{}[{}]:", prefix, i);
-                    Self::log_msgpack_structure(item, indent + 1);
-                }
-            }
-            Value::Map(map) => {
-                println!("{}Map({} entries):", prefix, map.len());
-                for (key, val) in map {
-                    println!("{}Key:", prefix);
-                    Self::log_msgpack_structure(key, indent + 1);
-                    println!("{}Value:", prefix);
-                    Self::log_msgpack_structure(val, indent + 1);
-                }
-            }
-            Value::Ext(tag, data) => {
-                println!(
-                    "{}Ext(tag={}, {} bytes): {:?}",
-                    prefix,
-                    tag,
-                    data.len(),
-                    data
-                );
-            }
-        }
     }
 }
 
