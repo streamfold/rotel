@@ -327,13 +327,23 @@ impl ConnectionHandler {
             .unwrap();
 
         // Wait for remaining processing task to complete with timeout
-        while pending_encode.is_some() || pending_send.is_some() {
+        while !batch.is_empty() || pending_encode.is_some() || pending_send.is_some() {
             let now = Instant::now();
 
             let time_left = drain_deadline.saturating_duration_since(now);
             if time_left.is_zero() {
                 error!("Timed out draining fluent receiver");
                 break;
+            }
+
+            // Must empty the batch, otherwise drop into select and wait on
+            // the pending encode
+            if !batch.is_empty() && pending_encode.is_none() {
+                let curr_batch = std::mem::replace(&mut batch, vec![]);
+
+                pending_encode = Some(tokio::task::spawn_blocking(move || {
+                    Some(convert_to_otlp_logs(curr_batch))
+                }));
             }
 
             select! {
