@@ -9,6 +9,7 @@ use crate::topology::payload;
 use bytes::{Bytes, BytesMut};
 use flume::r#async::SendFut;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use rmp_serde::Deserializer;
 use rmpv::Value;
 use std::fs;
 use std::io::Cursor;
@@ -48,11 +49,14 @@ impl Decoder for MessagePackDecoder {
         }
 
         // Try to read a complete MessagePack value to determine its size
-        let mut cursor = Cursor::new(&src[..]);
-        match rmpv::decode::read_value(&mut cursor) {
+        let cursor = Cursor::new(&src[..]);
+        let mut d = Deserializer::new(cursor);
+        let res: std::result::Result<Message, rmp_serde::decode::Error> =
+            serde::Deserialize::deserialize(&mut d);
+        match res {
             Ok(_value) => {
                 // Successfully decoded a value, get the position after reading
-                let position = cursor.position() as usize;
+                let position = d.position() as usize;
 
                 // Check if the message exceeds max size
                 if position > self.max_message_size {
@@ -69,10 +73,16 @@ impl Decoder for MessagePackDecoder {
                 let message_bytes = src.split_to(position);
                 Ok(Some(message_bytes))
             }
-            Err(rmpv::decode::Error::InvalidMarkerRead(ref io_err))
+            Err(rmp_serde::decode::Error::InvalidMarkerRead(ref io_err))
                 if io_err.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
                 // Need more data
+                Ok(None)
+            }
+            Err(rmp_serde::decode::Error::InvalidDataRead(ref io_err))
+                if io_err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                // Need more data (incomplete frame)
                 Ok(None)
             }
             Err(e) => {
@@ -249,7 +259,7 @@ impl ConnectionHandler {
 
         let drain_timeout = tokio::time::Duration::from_secs(2); // TODO: make configurable
         let drain_deadline = tokio::time::Instant::now()
-            .checked_sub(drain_timeout)
+            .checked_add(drain_timeout)
             .unwrap();
 
         // Wait for remaining processing task to complete with timeout
