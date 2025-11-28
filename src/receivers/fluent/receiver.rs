@@ -12,8 +12,7 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use rmp_serde::Deserializer;
 use std::fs;
 use std::io::Cursor;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::select;
@@ -546,11 +545,13 @@ mod tests {
         // Encode the message
         let mut buffer = Vec::new();
         rmpv::encode::write_value(&mut buffer, &message).unwrap();
-        let bytes = Bytes::from(buffer);
+        let mut bytes = BytesMut::from(&buffer[..]);
 
-        // Process the message
-        let result = ConnectionHandler::process_message(&bytes);
+        // Decode the message using MessagePackDecoder
+        let mut decoder = MessagePackDecoder::new(MAX_MESSAGE_SIZE);
+        let result = decoder.decode(&mut bytes);
         assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -573,14 +574,19 @@ mod tests {
             ]),
         ];
 
+        let mut decoder = MessagePackDecoder::new(MAX_MESSAGE_SIZE);
         for test_value in test_values {
             let mut buffer = Vec::new();
             rmpv::encode::write_value(&mut buffer, &test_value).unwrap();
-            let bytes = Bytes::from(buffer);
+            let mut bytes = BytesMut::from(&buffer[..]);
 
-            let result = ConnectionHandler::process_message(&bytes);
-            // These are not valid Message structs, so they should fail
-            assert!(result.is_err());
+            let result = decoder.decode(&mut bytes);
+            // These decode successfully but are captured as Unknown message variants
+            assert!(result.is_ok());
+            if let Some(message) = result.unwrap() {
+                // Verify they are Unknown messages (not valid Fluent protocol messages)
+                assert!(matches!(message, Message::Unknown(_)));
+            }
         }
     }
 
@@ -588,19 +594,25 @@ mod tests {
     async fn test_invalid_msgpack_data() {
         // Test with incomplete MessagePack data
         // This is an incomplete MessagePack array that should fail to decode
-        let invalid_msgpack = Bytes::from(vec![0x93]); // Array with 3 elements but no data following
-        let result = ConnectionHandler::process_message(&invalid_msgpack);
-        // This should fail because the MessagePack is incomplete
-        assert!(result.is_err());
+        let mut invalid_msgpack = BytesMut::from(&vec![0x93][..]); // Array with 3 elements but no data following
+        let mut decoder = MessagePackDecoder::new(MAX_MESSAGE_SIZE);
+        let result = decoder.decode(&mut invalid_msgpack);
+        // This should return Ok(None) because the MessagePack is incomplete (needs more data)
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn test_valid_msgpack_decodes_successfully() {
         // Test that a Nil value is valid MessagePack but not a valid Message struct
-        let valid_msgpack = Bytes::from(vec![0xc0]); // Nil in MessagePack
-        let result = ConnectionHandler::process_message(&valid_msgpack);
-        // This should fail because Nil is not a valid Message
-        assert!(result.is_err());
+        let mut valid_msgpack = BytesMut::from(&vec![0xc0][..]); // Nil in MessagePack
+        let mut decoder = MessagePackDecoder::new(MAX_MESSAGE_SIZE);
+        let result = decoder.decode(&mut valid_msgpack);
+        // This should decode successfully but be captured as an Unknown message
+        assert!(result.is_ok());
+        if let Some(message) = result.unwrap() {
+            assert!(matches!(message, Message::Unknown(_)));
+        }
     }
 
     #[tokio::test]
