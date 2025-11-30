@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
 
-const MAX_BATCH_SIZE: usize = 100;
+const MAX_BATCH_SIZE: usize = 1024;
 const MAX_BATCH_TIME_MS: usize = 250;
 
 /// MessagePack decoder that extracts complete MessagePack messages from a stream
@@ -110,6 +110,41 @@ struct ConnectionHandler {
     cancel_token: CancellationToken,
 }
 
+/// A batch of messages with tracking of total EventRecord entries
+struct Batch {
+    messages: Vec<Message>,
+    total_entries: usize,
+}
+
+impl Batch {
+    fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+            total_entries: 0,
+        }
+    }
+
+    /// Returns the total number of EventRecord entries across all messages
+    fn size(&self) -> usize {
+        self.total_entries
+    }
+
+    fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
+    fn push(&mut self, message: Message) {
+        let (_, entries) = message.entries();
+        self.total_entries += entries.len();
+        self.messages.push(message);
+    }
+
+    fn take(&mut self) -> Vec<Message> {
+        self.total_entries = 0;
+        std::mem::take(&mut self.messages)
+    }
+}
+
 impl FluentReceiver {
     pub async fn new(
         config: FluentReceiverConfig,
@@ -179,7 +214,7 @@ impl ConnectionHandler {
         // Use StreamExt to read frames
         use tokio_stream::StreamExt as TokioStreamExt;
 
-        let mut batch = vec![];
+        let mut batch = Batch::new();
 
         // Track single pending encoding task
         let mut pending_encode: Option<tokio::task::JoinHandle<Option<ResourceLogs>>> = None;
@@ -222,7 +257,7 @@ impl ConnectionHandler {
                         continue
                     }
 
-                    let curr_batch = std::mem::replace(&mut batch, vec![]);
+                    let curr_batch = batch.take();
                     pending_encode = Some(tokio::task::spawn_blocking(move || {
                         Some(convert_to_otlp_logs(curr_batch))
                     }));
@@ -250,7 +285,7 @@ impl ConnectionHandler {
                     }
                 },
 
-                frame_result = TokioStreamExt::next(&mut framed), if batch.len() < MAX_BATCH_SIZE => {
+                frame_result = TokioStreamExt::next(&mut framed), if batch.size() < MAX_BATCH_SIZE => {
                     match frame_result {
                         Some(Ok(message)) => {
                             match &message {
@@ -282,10 +317,9 @@ impl ConnectionHandler {
 
                             batch.push(message);
 
-                            // If we can't push onto the encoders, we will have to wait for the
-                            // batch timer. We will only batch up to MAX_BATCH_SIZE due to the arm conditional
-                            if batch.len() >= MAX_BATCH_SIZE && pending_encode.is_none() {
-                                let curr_batch = std::mem::replace(&mut batch, vec![]);
+                            // If we just hit or exceeded MAX_BATCH_SIZE, send the batch
+                            if batch.size() >= MAX_BATCH_SIZE && pending_encode.is_none() {
+                                let curr_batch = batch.take();
 
                                 pending_encode = Some(tokio::task::spawn_blocking(move || {
                                     Some(convert_to_otlp_logs(curr_batch))
@@ -339,7 +373,7 @@ impl ConnectionHandler {
             // Must empty the batch, otherwise drop into select and wait on
             // the pending encode
             if !batch.is_empty() && pending_encode.is_none() {
-                let curr_batch = std::mem::replace(&mut batch, vec![]);
+                let curr_batch = batch.take();
 
                 pending_encode = Some(tokio::task::spawn_blocking(move || {
                     Some(convert_to_otlp_logs(curr_batch))
@@ -529,7 +563,10 @@ impl FluentReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::receivers::fluent::message::{EventEntry, EventRecord, EventTimestamp};
+    use chrono::Utc;
     use rmpv::Value;
+    use std::collections::BTreeMap;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -665,5 +702,92 @@ mod tests {
         } else {
             panic!("Expected ConfigurationError");
         }
+    }
+
+    #[test]
+    fn test_batch_push_single_message() {
+        let mut batch = Batch::new();
+
+        // Create a Message::Message variant (single entry)
+        let tag = "test.tag".to_string();
+        let timestamp = EventTimestamp::Unix(Utc::now());
+        let record: EventRecord = BTreeMap::new();
+        let message = Message::Message(tag, timestamp, record);
+
+        batch.push(message);
+
+        assert_eq!(batch.size(), 1);
+        assert!(!batch.is_empty());
+    }
+
+    #[test]
+    fn test_batch_push_forward_message() {
+        let mut batch = Batch::new();
+
+        // Create EventEntry instances using tuple struct constructor
+        // EventEntry is defined as: struct EventEntry(EventTimestamp, EventRecord)
+        let entry1 = {
+            // Deserialize from msgpack to create proper EventEntry
+            let entry_array = rmpv::Value::Array(vec![
+                rmpv::Value::Integer(1234567890.into()),
+                rmpv::Value::Map(vec![]),
+            ]);
+            let mut buffer = Vec::new();
+            rmpv::encode::write_value(&mut buffer, &entry_array).unwrap();
+            rmp_serde::from_slice::<EventEntry>(&buffer).unwrap()
+        };
+
+        let entry2 = {
+            let entry_array = rmpv::Value::Array(vec![
+                rmpv::Value::Integer(1234567891.into()),
+                rmpv::Value::Map(vec![]),
+            ]);
+            let mut buffer = Vec::new();
+            rmpv::encode::write_value(&mut buffer, &entry_array).unwrap();
+            rmp_serde::from_slice::<EventEntry>(&buffer).unwrap()
+        };
+
+        let entry3 = {
+            let entry_array = rmpv::Value::Array(vec![
+                rmpv::Value::Integer(1234567892.into()),
+                rmpv::Value::Map(vec![]),
+            ]);
+            let mut buffer = Vec::new();
+            rmpv::encode::write_value(&mut buffer, &entry_array).unwrap();
+            rmp_serde::from_slice::<EventEntry>(&buffer).unwrap()
+        };
+
+        let entries = vec![entry1, entry2, entry3];
+        let message = Message::Forward("test.forward".to_string(), entries);
+
+        batch.push(message);
+
+        assert_eq!(batch.size(), 3);
+        assert!(!batch.is_empty());
+    }
+
+    #[test]
+    fn test_batch_take() {
+        let mut batch = Batch::new();
+
+        // Add some messages
+        for i in 0..5 {
+            let message = Message::Message(
+                format!("test{}", i),
+                EventTimestamp::Unix(Utc::now()),
+                BTreeMap::new(),
+            );
+            batch.push(message);
+        }
+        assert_eq!(batch.size(), 5);
+        assert!(!batch.is_empty());
+
+        // Take the messages
+        let messages = batch.take();
+        assert_eq!(messages.len(), 5);
+
+        // Batch should now be empty
+        assert_eq!(batch.size(), 0);
+        assert!(batch.is_empty());
     }
 }
