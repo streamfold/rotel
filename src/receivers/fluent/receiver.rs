@@ -91,12 +91,10 @@ impl Decoder for MessagePackDecoder {
                 // Need more data (incomplete frame)
                 Ok(None)
             }
-            Err(e) => {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("MessagePack decode error: {}", e),
-                ))
-            }
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("MessagePack decode error: {}", e),
+            )),
         }
     }
 }
@@ -254,28 +252,33 @@ impl ConnectionHandler {
                         continue
                     }
 
-                    let curr_batch = batch.take();
-                    pending_encode = Some(tokio::task::spawn_blocking(move || {
-                        Some(convert_to_otlp_logs(curr_batch))
-                    }));
-                    last_batch_send = now;
-
+                    Self::send_batch(&mut batch, &mut pending_encode, &mut last_batch_send, now);
                 },
 
                 // Wait for encoding to finish
                 Some(encode_result) = conditional_wait(&mut pending_encode), if pending_send.is_none() => match encode_result {
-                    Ok(Some(resource_logs)) => {
-                        pending_encode = None;
+                    Ok(result) => {
+                        match result {
+                            Some(resource_logs) => {
+                                pending_encode = None;
 
-                        // Initiate async send without awaiting
-                        if let Some(logs_output) = &self.logs_output {
-                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
-                            pending_send = Some(logs_output.send_async(payload_msg));
+                                // Initiate async send without awaiting
+                                if let Some(logs_output) = &self.logs_output {
+                                    let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                                    pending_send = Some(logs_output.send_async(payload_msg));
+                                }
+                            }
+                            None => {
+                                pending_encode = None;
+                            }
+                        };
+
+                        // If the current batch is large enough to send, then immediately send it
+                        // instead of waiting for the batch timer.
+                        if batch.size() >= MAX_BATCH_SIZE {
+                            Self::send_batch(&mut batch, &mut pending_encode, &mut last_batch_send, Instant::now());
                         }
-                    }
-                    Ok(None) => {
-                        pending_encode = None;
-                    }
+                    },
                     Err(e) => {
                         error!("Processing task panicked: {}", e);
                         panic!("Fluent receiver processing task panicked");
@@ -318,13 +321,7 @@ impl ConnectionHandler {
 
                             // If we just hit or exceeded MAX_BATCH_SIZE, send the batch.
                             if batch.size() >= MAX_BATCH_SIZE && pending_encode.is_none() {
-                                let curr_batch = batch.take();
-
-                                pending_encode = Some(tokio::task::spawn_blocking(move || {
-                                    Some(convert_to_otlp_logs(curr_batch))
-                                }));
-
-                                last_batch_send = Instant::now();
+                                Self::send_batch(&mut batch, &mut pending_encode, &mut last_batch_send, Instant::now());
                             }
                         }
                         Some(Err(e)) => {
@@ -420,6 +417,20 @@ impl ConnectionHandler {
             connection_type = connection_type,
             "Connection handler finished"
         );
+    }
+
+    fn send_batch(
+        batch: &mut Batch,
+        pending_encode: &mut Option<tokio::task::JoinHandle<Option<ResourceLogs>>>,
+        last_batch_send: &mut Instant,
+        now: Instant,
+    ) {
+        let curr_batch = batch.take();
+
+        *pending_encode = Some(tokio::task::spawn_blocking(move || {
+            Some(convert_to_otlp_logs(curr_batch))
+        }));
+        *last_batch_send = now;
     }
 
     async fn handle_unix_connection(self, stream: UnixStream) {
