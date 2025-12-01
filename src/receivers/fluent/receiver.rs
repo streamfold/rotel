@@ -25,6 +25,7 @@ use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB max message size
 
+// TODO: Make these configurable
 const MAX_BATCH_SIZE: usize = 1024;
 const MAX_BATCH_TIME_MS: usize = 250;
 
@@ -58,10 +59,12 @@ impl Decoder for MessagePackDecoder {
             serde::Deserialize::deserialize(&mut d);
         match res {
             Ok(value) => {
-                // Successfully decoded a value, get the position after reading
                 let position = d.position() as usize;
 
-                // Check if the message exceeds max size
+                // Track when we've exceeded the max message size. We should
+                // ideally do this when we parse the field lengths and avoid
+                // advancing this far in the first place. However, that requires
+                // manually deserializing the MsgPack structures.
                 if position > self.max_message_size {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -89,7 +92,6 @@ impl Decoder for MessagePackDecoder {
                 Ok(None)
             }
             Err(e) => {
-                // Other decoding errors
                 Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("MessagePack decode error: {}", e),
@@ -150,7 +152,6 @@ impl FluentReceiver {
         config: FluentReceiverConfig,
         logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     ) -> Result<Self> {
-        // Validate that at least one listener type is configured
         if config.socket_path.is_none() && config.endpoint.is_none() {
             return Err(FluentReceiverError::ConfigurationError(
                 "At least one of socket_path or endpoint must be configured".to_string(),
@@ -222,7 +223,6 @@ impl ConnectionHandler {
         // Track pending send operation
         let mut pending_send: Option<SendFut<'_, payload::Message<ResourceLogs>>> = None;
 
-        // Create batch timer
         let batch_timeout = tokio::time::Duration::from_millis(MAX_BATCH_TIME_MS as u64);
         let mut batch_timer = tokio::time::interval(batch_timeout);
         batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -230,9 +230,6 @@ impl ConnectionHandler {
         // Skip the first immediate tick
         batch_timer.tick().await;
         let mut last_batch_send = Instant::now();
-
-        // Skip the first immediate tick
-        batch_timer.tick().await;
 
         loop {
             select! {
@@ -315,9 +312,11 @@ impl ConnectionHandler {
                                 _ => {}
                             }
 
+                            // This may exceed the batch size, but that's alright. Forwarded messages
+                            // may contain multiple entries, but we don't split them
                             batch.push(message);
 
-                            // If we just hit or exceeded MAX_BATCH_SIZE, send the batch
+                            // If we just hit or exceeded MAX_BATCH_SIZE, send the batch.
                             if batch.size() >= MAX_BATCH_SIZE && pending_encode.is_none() {
                                 let curr_batch = batch.take();
 
