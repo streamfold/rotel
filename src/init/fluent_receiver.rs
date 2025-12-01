@@ -11,8 +11,8 @@ use std::path::PathBuf;
 #[serde(default)]
 pub struct FluentReceiverArgs {
     /// Path to the UNIX socket file for Fluent receiver
-    #[arg(long, env = "ROTEL_FLUENT_RECEIVER_SOCKET")]
-    pub fluent_receiver_socket: Option<PathBuf>,
+    #[arg(long, env = "ROTEL_FLUENT_RECEIVER_SOCKET_PATH")]
+    pub fluent_receiver_socket_path: Option<PathBuf>,
 
     /// TCP endpoint for Fluent receiver (e.g., 127.0.0.1:23890)
     #[arg(long, env = "ROTEL_FLUENT_RECEIVER_ENDPOINT", value_parser = parse::parse_endpoint)]
@@ -22,7 +22,7 @@ pub struct FluentReceiverArgs {
 impl Default for FluentReceiverArgs {
     fn default() -> Self {
         Self {
-            fluent_receiver_socket: None,
+            fluent_receiver_socket_path: None,
             fluent_receiver_endpoint: None,
         }
     }
@@ -31,7 +31,7 @@ impl Default for FluentReceiverArgs {
 impl FluentReceiverArgs {
     pub fn build_config(&self) -> FluentReceiverConfig {
         FluentReceiverConfig::new(
-            self.fluent_receiver_socket.clone(),
+            self.fluent_receiver_socket_path.clone(),
             self.fluent_receiver_endpoint,
         )
     }
