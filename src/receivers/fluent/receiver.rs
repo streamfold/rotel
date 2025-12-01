@@ -231,6 +231,8 @@ impl ConnectionHandler {
 
         loop {
             select! {
+                biased;
+
                 // Send to logs output
                 Some(send_result) = conditional_wait(&mut pending_send), if pending_send.is_some() => match send_result {
                     Ok(_) => pending_send = None,
@@ -273,7 +275,7 @@ impl ConnectionHandler {
                             }
                         };
 
-                        // If the current batch is large enough to send, then immediately send it
+                        // If the current batch is large enough to send, then immediately start encoding it
                         // instead of waiting for the batch timer.
                         if batch.size() >= MAX_BATCH_SIZE {
                             Self::send_batch(&mut batch, &mut pending_encode, &mut last_batch_send, Instant::now());
