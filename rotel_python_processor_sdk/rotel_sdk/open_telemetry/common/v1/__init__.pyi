@@ -152,7 +152,10 @@ class InstrumentationScope:
     An empty instrumentation scope name means the name is unknown.
     """
     version: str
-    attributes: List[KeyValue]
+    """
+    The version of the instrumentation software.
+    """
+    attributes: list[KeyValue]
     """
     Additional attributes that describe the scope. [Optional]. Attribute keys MUST be unique (it is not allowed to have more than one attribute with the same key).
     """
