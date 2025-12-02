@@ -4,10 +4,14 @@ use crate::receivers::fluent::config::FluentReceiverConfig;
 use crate::receivers::fluent::convert::convert_to_otlp_logs;
 use crate::receivers::fluent::error::{FluentReceiverError, Result};
 use crate::receivers::fluent::message::{Message, log_msgpack_structure};
+use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
+use crate::topology::batch::BatchSizer;
 use crate::topology::payload;
 use bytes::{Buf, BytesMut};
 use flume::r#async::SendFut;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use rmp_serde::Deserializer;
 use std::fs;
@@ -108,6 +112,9 @@ pub struct FluentReceiver {
 struct ConnectionHandler {
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     cancel_token: CancellationToken,
+    accepted_log_records_counter: Counter<u64>,
+    refused_log_records_counter: Counter<u64>,
+    tags: [KeyValue; 1],
 }
 
 /// A batch of messages with tracking of total EventRecord entries
@@ -192,6 +199,21 @@ impl FluentReceiver {
         ConnectionHandler {
             logs_output: self.logs_output.clone(),
             cancel_token,
+            accepted_log_records_counter: get_meter()
+                .u64_counter("rotel_receiver_accepted_log_records")
+                .with_description(
+                    "Number of log records successfully ingested and pushed into the pipeline.",
+                )
+                .with_unit("log_records")
+                .build(),
+            refused_log_records_counter: get_meter()
+                .u64_counter("rotel_receiver_refused_log_records")
+                .with_description(
+                    "Number of log records that could not be pushed into the pipeline.",
+                )
+                .with_unit("log_records")
+                .build(),
+            tags: [KeyValue::new("receiver", "fluent")],
         }
     }
 }
@@ -221,6 +243,9 @@ impl ConnectionHandler {
         // Track pending send operation
         let mut pending_send: Option<SendFut<'_, payload::Message<ResourceLogs>>> = None;
 
+        // Track count of records in the pending send
+        let mut pending_send_count: u64 = 0;
+
         let batch_timeout = tokio::time::Duration::from_millis(MAX_BATCH_TIME_MS as u64);
         let mut batch_timer = tokio::time::interval(batch_timeout);
         batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -234,11 +259,18 @@ impl ConnectionHandler {
                 biased;
 
                 // Send to logs output
-                Some(send_result) = conditional_wait(&mut pending_send), if pending_send.is_some() => match send_result {
-                    Ok(_) => pending_send = None,
-                    Err(e) => {
-                        error!("Failed to send logs to output channel: {}", e);
-                        break;
+                Some(send_result) = conditional_wait(&mut pending_send), if pending_send.is_some() => {
+                    match send_result {
+                        Ok(_) => {
+                            self.accepted_log_records_counter.add(pending_send_count, &self.tags);
+                            pending_send = None;
+                            pending_send_count = 0;
+                        }
+                        Err(e) => {
+                            self.refused_log_records_counter.add(pending_send_count, &self.tags);
+                            error!("Failed to send logs to output channel: {}", e);
+                            break;
+                        }
                     }
                 },
 
@@ -264,10 +296,14 @@ impl ConnectionHandler {
                             Some(resource_logs) => {
                                 pending_encode = None;
 
+                                // Count log records
+                                let count = resource_logs.size_of() as u64;
+
                                 // Initiate async send without awaiting
                                 if let Some(logs_output) = &self.logs_output {
                                     let payload_msg = payload::Message::new(None, vec![resource_logs]);
                                     pending_send = Some(logs_output.send_async(payload_msg));
+                                    pending_send_count = count;
                                 }
                             }
                             None => {
@@ -382,21 +418,32 @@ impl ConnectionHandler {
                 biased;
 
                 Some(send_result) = conditional_wait(&mut pending_send), if pending_send.is_some() => {
-                    pending_send = None;
-                    if let Err(e) = send_result {
-                        error!("Failed to send logs to output channel: {}", e);
-                        break;
+                    match send_result {
+                        Ok(_) => {
+                            self.accepted_log_records_counter.add(pending_send_count, &self.tags);
+                            pending_send = None;
+                            pending_send_count = 0;
+                        }
+                        Err(e) => {
+                            self.refused_log_records_counter.add(pending_send_count, &self.tags);
+                            error!("Failed to send logs to output channel: {}", e);
+                            break;
+                        }
                     }
-                }
+                },
 
                 Some(encode_result) = conditional_wait(&mut pending_encode), if pending_send.is_none() => match encode_result {
                     Ok(Some(resource_logs)) => {
                         pending_encode = None;
 
+                        // Count log records
+                        let count = resource_logs.size_of() as u64;
+
                         // Initiate async send without awaiting
                         if let Some(logs_output) = &self.logs_output {
                             let payload_msg = payload::Message::new(None, vec![resource_logs]);
                             pending_send = Some(logs_output.send_async(payload_msg));
+                            pending_send_count = count;
                         }
                     }
                     Ok(None) => {
