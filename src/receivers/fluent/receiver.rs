@@ -495,7 +495,7 @@ pub async fn conditional_wait<F>(fut_opt: &mut Option<F>) -> Option<F::Output>
 where
     F: std::future::Future + Unpin,
 {
-    match fut_opt.take() {
+    match fut_opt {
         None => None,
         Some(fut) => Some(fut.await),
     }
