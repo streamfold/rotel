@@ -16,7 +16,7 @@ class ResourceLogs:
     """
     A list of ScopeLogs that originate from a resource.
     """
-    schema_url: string
+    schema_url: str
     """
     The Schema URL, if known. This is the identifier of the Schema that the resource data is recorded in. 
     Notably, the last part of the URL path is the version number of the schema: http[s]://server[:port]/path/. \
@@ -40,7 +40,7 @@ class ScopeLogs:
     """
     A list of log records.
     """
-    schema_url: string
+    schema_url: str
     """
     The Schema URL, if known. This is the identifier of the Schema that the log data is recorded in. 
     Notably, the last part of the URL path is the version number of the schema: http[s]://server[:port]/path/. 
