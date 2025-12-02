@@ -186,6 +186,8 @@ impl ExporterConfig {
             ExporterConfig::Xray(_) => "awsxray",
             ExporterConfig::Awsemf(_) => "awsemf",
             ExporterConfig::Kafka(_) => "kafka",
+            #[cfg(feature = "file_exporter")]
+            ExporterConfig::File(_) => "file",
         }
     }
 }
