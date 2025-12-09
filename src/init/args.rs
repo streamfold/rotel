@@ -6,6 +6,7 @@ use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
+#[cfg(feature = "rdkafka")]
 use crate::init::kafka_receiver::KafkaReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;
@@ -256,6 +257,7 @@ impl FromStr for Receiver {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "otlp" => Ok(Receiver::Otlp),
+            #[cfg(feature = "rdkafka")]
             "kafka" => Ok(Receiver::Kafka),
             _ => Err("Unknown receiver"),
         }

@@ -19,6 +19,7 @@ use crate::init::otlp_exporter::{
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
+#[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::config::KafkaReceiverConfig;
 use crate::receivers::otlp::OTLPReceiverConfig;
 use figment::{Figment, providers::Env};
@@ -91,6 +92,7 @@ pub(crate) struct ExporterConfigs {
 
 impl ExporterConfigs {
     /// Set all exporters to use indefinite retry (for Kafka offset tracking)
+    #[allow(dead_code)] // Allowing for feature flagging Kafka support
     pub(crate) fn set_indefinite_retry(&mut self) {
         for exporter in self
             .traces
@@ -185,6 +187,7 @@ impl ExporterConfig {
             ExporterConfig::Clickhouse(_) => "clickhouse",
             ExporterConfig::Xray(_) => "awsxray",
             ExporterConfig::Awsemf(_) => "awsemf",
+            #[cfg(feature = "rdkafka")]
             ExporterConfig::Kafka(_) => "kafka",
         }
     }
