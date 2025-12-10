@@ -189,6 +189,8 @@ impl ExporterConfig {
             ExporterConfig::Awsemf(_) => "awsemf",
             #[cfg(feature = "rdkafka")]
             ExporterConfig::Kafka(_) => "kafka",
+            #[cfg(feature = "file_exporter")]
+            ExporterConfig::File(_) => "file",
         }
     }
 }
