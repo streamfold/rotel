@@ -1,9 +1,8 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::receivers::kafka::offset_tracker::TopicTrackers;
-use crate::receivers::kafka::receiver::{AssignedPartitions, KafkaConsumerContext};
+use crate::receivers::kafka::receiver::{AssignedPartitions, KafkaConsumerContext, TopicMapper};
 use crate::topology::payload;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
@@ -15,7 +14,7 @@ pub struct KafkaOffsetCommitter {
     tick_interval: tokio::time::Interval,
     ack_receiver: BoundedReceiver<payload::KafkaAcknowledgement>,
     topic_trackers: Arc<TopicTrackers>,
-    topic_names_to_id: HashMap<String, u8>,
+    topic_names_to_id: TopicMapper,
     assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
     consumer: Arc<StreamConsumer<KafkaConsumerContext>>,
 }
@@ -25,7 +24,7 @@ impl KafkaOffsetCommitter {
         tick_every: Duration,
         ack_receiver: BoundedReceiver<payload::KafkaAcknowledgement>,
         topic_trackers: Arc<TopicTrackers>,
-        topic_names_to_id: HashMap<String, u8>,
+        topic_names_to_id: TopicMapper,
         assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
         consumer: Arc<StreamConsumer<KafkaConsumerContext>>,
     ) -> Self {
@@ -172,7 +171,7 @@ impl KafkaOffsetCommitter {
 
 pub fn commit_offset<F>(
     assigned_partitions: Arc<std::sync::Mutex<AssignedPartitions>>,
-    topic_name_to_id: &HashMap<String, u8>,
+    topic_name_to_id: &TopicMapper,
     topic_trackers: &Arc<TopicTrackers>,
     commit_fn: F,
 ) where
@@ -190,7 +189,7 @@ pub fn commit_offset<F>(
         // Build list of topic/partition/offset to commit
         for (topic_name, partitions) in assigned.topics.iter() {
             let topic_id = match topic_name_to_id.get(topic_name) {
-                Some(id) => *id,
+                Some(id) => id,
                 None => {
                     debug!("Unknown topic name in assigned partitions: {}", topic_name);
                     continue;
