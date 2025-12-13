@@ -7,7 +7,9 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use crate::topology::payload::{KafkaMetadata, MessageMetadata};
 use bytes::Bytes;
-use futures::stream::StreamExt;
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use futures::stream::{FuturesOrdered, StreamExt};
 use opentelemetry_proto::tonic::logs::v1::{LogsData, ResourceLogs};
 use opentelemetry_proto::tonic::metrics::v1::{MetricsData, ResourceMetrics};
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, TracesData};
@@ -20,6 +22,7 @@ use std::error::Error;
 use std::sync::Arc;
 use tokio::select;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -219,6 +222,7 @@ pub struct KafkaReceiver {
     pub ack_sender: crate::bounded_channel::BoundedSender<payload::KafkaAcknowledgement>,
     auto_commit: bool,
     offset_committer: Option<KafkaOffsetCommitter>,
+    decoding_futures: FuturesOrdered<JoinHandle<Option<(DecodeType, OwnedSemaphorePermit)>>>,
 }
 
 impl KafkaReceiver {
@@ -304,6 +308,7 @@ impl KafkaReceiver {
             ack_sender,
             auto_commit: is_auto_commit,
             offset_committer,
+            decoding_futures: FuturesOrdered::new(),
         })
     }
 
@@ -332,17 +337,18 @@ impl KafkaReceiver {
     }
 
     pub(crate) async fn run(
-        self,
+        mut self,
         receivers_cancel: CancellationToken,
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
         debug!("Starting Kafka receiver");
 
         // The consumer will automatically start from the position defined by auto.offset.reset
         // which is set to "earliest" by default in the config
-        let subscription = self.consumer.subscription()?;
+        let consumer = self.consumer.clone();
+        let subscription = consumer.subscription()?;
         debug!("Initial subscriptions: {:?}", subscription);
 
-        let mut stream = self.consumer.stream();
+        let mut stream = consumer.stream();
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DECODERS));
 
         loop {
@@ -370,141 +376,189 @@ impl KafkaReceiver {
 
                     self.route_message(message, permit);
                 }
+                _ = self.next_decoding_future(), if !self.decoding_futures.is_empty() => {}
                 _ = receivers_cancel.cancelled() => {
                     debug!("Kafka receiver cancelled, shutting down");
                     break;
-                },
+                }
             }
         }
 
         Ok(())
     }
 
-    fn route_message<M: Message>(&self, message: M, permit: OwnedSemaphorePermit) {
+    async fn next_decoding_future(&mut self) {
+        let (decoded, permit) = match self.decoding_futures.select_next_some().await {
+            Ok(Some(decoded)) => decoded,
+            Ok(None) => return,
+            Err(e) => {
+                error!("Failed to decode Kafka message: {}", e);
+                return;
+            }
+        };
+
+        match (
+            decoded,
+            &self.traces_output,
+            &self.metrics_output,
+            &self.logs_output,
+        ) {
+            (DecodeType::Traces(traces), Some(traces_output), _, _) => {
+                if traces_output.send(traces).await.is_err() {
+                    warn!("Failed to send traces to pipeline: channel disconnected");
+                }
+            }
+            (DecodeType::Metrics(metrics), _, Some(metrics_output), _) => {
+                if metrics_output.send(metrics).await.is_err() {
+                    warn!("Failed to send metrics to pipeline: channel disconnected");
+                }
+            }
+            (DecodeType::Logs(logs), _, _, Some(logs_output)) => {
+                if logs_output.send(logs).await.is_err() {
+                    warn!("Failed to send logs to pipeline: channel disconnected");
+                }
+            }
+            _ => {}
+        }
+
+        drop(permit);
+    }
+
+    fn route_message<M: Message>(&mut self, message: M, permit: OwnedSemaphorePermit) {
         let topic = message.topic();
         let partition = message.partition();
         let offset = message.offset();
 
         debug!(topic, partition, offset, "Message received");
 
-        match topic {
-            t if t == self.traces_topic => {
-                let output = self.traces_output.clone();
-                self.process_message::<TracesData, _>(message, permit, output);
-            }
-            t if t == self.metrics_topic => {
-                let output = self.metrics_output.clone();
-                self.process_message::<MetricsData, _>(message, permit, output);
-            }
-            t if t == self.logs_topic => {
-                let output = self.logs_output.clone();
-                self.process_message::<LogsData, _>(message, permit, output);
-            }
-            _ => {
-                debug!("Received data from kafka for unknown topic: {}", topic);
-            }
-        }
-    }
-
-    fn process_message<K: MessageExtractor, M: Message>(
-        &self,
-        message: M,
-        permit: OwnedSemaphorePermit,
-        output: Option<OTLPOutput<payload::Message<K::ResourceType>>>,
-    ) {
         let Some(data) = message.payload() else {
             debug!("Empty payload from Kafka");
             return;
         };
 
-        let partition = message.partition();
-        let offset = message.offset();
+        let topic_id = match topic {
+            t if t == self.traces_topic => {
+                if self.traces_output.is_some() {
+                    self.process_message::<TracesData>(data, partition, offset, permit);
+                }
 
-        self.topic_trackers.track(K::TOPIC_ID, partition, offset);
+                TRACES_TOPIC_ID
+            }
+            t if t == self.metrics_topic => {
+                if self.metrics_output.is_some() {
+                    self.process_message::<MetricsData>(data, partition, offset, permit);
+                }
 
-        let Some(output) = output else {
-            return;
+                METRICS_TOPIC_ID
+            }
+            t if t == self.logs_topic => {
+                if self.logs_output.is_some() {
+                    self.process_message::<LogsData>(data, partition, offset, permit);
+                }
+
+                LOGS_TOPIC_ID
+            }
+            _ => {
+                debug!("Received data from kafka for unknown topic: {}", topic);
+
+                return;
+            }
         };
 
+        self.topic_trackers.track(topic_id, partition, offset);
+    }
+
+    fn process_message<T: OtlpResourceProvider + 'static>(
+        &mut self,
+        data: &[u8],
+        partition: i32,
+        offset: i64,
+        permit: OwnedSemaphorePermit,
+    ) {
         let md = (!self.auto_commit).then(|| {
             MessageMetadata::kafka(KafkaMetadata {
                 offset,
                 partition,
-                topic_id: K::TOPIC_ID,
+                topic_id: T::TOPIC_ID,
                 ack_chan: Some(self.ack_sender.clone()),
             })
         });
         let format = self.format;
         let data = data.to_vec();
 
-        tokio::spawn(async move {
-            let res = tokio::task::spawn_blocking(move || {
-                Self::decode_kafka_message(data, format).map(K::extract)
-            })
-            .await;
-
-            let resources = match res {
-                Ok(Ok(resources)) => resources,
-                Ok(Err(e)) => {
-                    error!("Failed to decode Kafka message: {}", e);
-                    return;
-                }
+        let task = tokio::task::spawn_blocking(move || {
+            match Self::decode_kafka_message::<T>(data, format) {
+                Ok(payload) => Some((payload.extract(md), permit)),
                 Err(e) => {
                     error!("Failed to decode Kafka message: {}", e);
-                    return;
+                    return None;
                 }
-            };
-
-            let message = payload::Message::new(md, resources);
-
-            if output.send_async(message).await.is_err() {
-                warn!(
-                    "Failed to send {} to pipeline: channel disconnected",
-                    K::SIG_TYPE
-                );
             }
+            // let res = Self::decode_kafka_message(data, format).map(K::extract);
 
-            drop(permit);
+            // async move {
+            //     let message = match res {
+            //         Ok(payload) => payload::Message::new(md, payload),
+            //         Err(e) => {
+            //             error!("Failed to decode Kafka message: {}", e);
+            //             return;
+            //         }
+            //     };
+
+            //     if output.send_async(message).await.is_err() {
+            //         warn!(
+            //             "Failed to send {} to pipeline: channel disconnected",
+            //             K::SIG_TYPE
+            //         );
+            //     }
+
+            //     drop(permit);
+            // }
+            // .boxed()
         });
+
+        self.decoding_futures.push_back(task);
     }
+}
+
+enum DecodeType {
+    Traces(payload::Message<ResourceSpans>),
+    Metrics(payload::Message<ResourceMetrics>),
+    Logs(payload::Message<ResourceLogs>),
 }
 
 // Handy trait for extracting OTLP resources from different signal types (Traces, Metrics, Logs).
-trait MessageExtractor: serde::de::DeserializeOwned + prost::Message + Default {
-    const SIG_TYPE: &'static str;
+trait OtlpResourceProvider: serde::de::DeserializeOwned + prost::Message + Default {
     const TOPIC_ID: u8;
     type ResourceType: Send + 'static;
 
-    fn extract(self) -> Vec<Self::ResourceType>;
+    fn extract(self, md: Option<MessageMetadata>) -> DecodeType;
 }
 
-impl MessageExtractor for TracesData {
-    const SIG_TYPE: &'static str = "traces";
+impl OtlpResourceProvider for TracesData {
     const TOPIC_ID: u8 = TRACES_TOPIC_ID;
     type ResourceType = ResourceSpans;
 
-    fn extract(self) -> Vec<Self::ResourceType> {
-        self.resource_spans
+    fn extract(self, md: Option<MessageMetadata>) -> DecodeType {
+        DecodeType::Traces(payload::Message::new(md, self.resource_spans))
     }
 }
 
-impl MessageExtractor for MetricsData {
-    const SIG_TYPE: &'static str = "metrics";
+impl OtlpResourceProvider for MetricsData {
     const TOPIC_ID: u8 = METRICS_TOPIC_ID;
     type ResourceType = ResourceMetrics;
 
-    fn extract(self) -> Vec<Self::ResourceType> {
-        self.resource_metrics
+    fn extract(self, md: Option<MessageMetadata>) -> DecodeType {
+        DecodeType::Metrics(payload::Message::new(md, self.resource_metrics))
     }
 }
 
-impl MessageExtractor for LogsData {
-    const SIG_TYPE: &'static str = "logs";
+impl OtlpResourceProvider for LogsData {
     const TOPIC_ID: u8 = LOGS_TOPIC_ID;
     type ResourceType = ResourceLogs;
 
-    fn extract(self) -> Vec<Self::ResourceType> {
-        self.resource_logs
+    fn extract(self, md: Option<MessageMetadata>) -> DecodeType {
+        DecodeType::Logs(payload::Message::new(md, self.resource_logs))
     }
 }
 
@@ -933,7 +987,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(100);
         let traces_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false)
+        let mut receiver = KafkaReceiver::new(config, Some(traces_output), None, None, false)
             .expect("Failed to create receiver");
 
         // Create test data
@@ -953,9 +1007,8 @@ mod tests {
             offset: 0,
         };
 
-        let output = receiver.traces_output.clone();
-
-        receiver.process_message::<TracesData, _>(message, permit, output);
+        receiver.route_message(message, permit);
+        receiver.next_decoding_future().await;
 
         // Verify we received the data on the output channel
         let received = rx.next().await.expect("Failed to receive traces");
@@ -977,7 +1030,7 @@ mod tests {
         let (tx, mut rx) = bounded::<crate::topology::payload::Message<ResourceMetrics>>(100);
         let metrics_output = OTLPOutput::new(tx);
 
-        let receiver = KafkaReceiver::new(config, None, Some(metrics_output), None, false)
+        let mut receiver = KafkaReceiver::new(config, None, Some(metrics_output), None, false)
             .expect("Failed to create receiver");
 
         // Create test data
@@ -996,8 +1049,8 @@ mod tests {
             offset: 0,
         };
 
-        let output = receiver.metrics_output.clone();
-        receiver.process_message::<MetricsData, _>(message, permit, output);
+        receiver.route_message(message, permit);
+        receiver.next_decoding_future().await;
 
         // Verify received data
         let received = rx.next().await.expect("Failed to receive metrics");
