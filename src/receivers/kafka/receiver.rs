@@ -312,6 +312,37 @@ impl KafkaReceiver {
         })
     }
 
+    fn spawn_decode<T: OtlpResourceProvider + 'static>(
+        &mut self,
+        data: &[u8],
+        partition: i32,
+        offset: i64,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let md = (!self.auto_commit).then(|| {
+            MessageMetadata::kafka(KafkaMetadata {
+                offset,
+                partition,
+                topic_id: T::TOPIC_ID,
+                ack_chan: Some(self.ack_sender.clone()),
+            })
+        });
+        let format = self.format;
+        let data = data.to_vec();
+
+        let task = tokio::task::spawn_blocking(move || {
+            match Self::decode_kafka_message::<T>(data, format) {
+                Ok(payload) => Some((payload.extract(md), permit)),
+                Err(e) => {
+                    error!("Failed to decode Kafka message: {}", e);
+                    return None;
+                }
+            }
+        });
+
+        self.decoding_futures.push_back(task);
+    }
+
     // Static method for decoding Kafka messages
     fn decode_kafka_message<T>(
         data: Vec<u8>,
@@ -363,7 +394,7 @@ impl KafkaReceiver {
                     };
 
                     let message = match stream.next().await {
-                        Some(Ok(m)) => m,
+                        Some(Ok(message)) => message,
                         Some(Err(e)) => {
                             info!("Error reading from Kafka: {:?}", e);
                             continue;
@@ -439,21 +470,21 @@ impl KafkaReceiver {
         let topic_id = match topic {
             t if t == self.traces_topic => {
                 if self.traces_output.is_some() {
-                    self.process_message::<TracesData>(data, partition, offset, permit);
+                    self.spawn_decode::<TracesData>(data, partition, offset, permit);
                 }
 
                 TRACES_TOPIC_ID
             }
             t if t == self.metrics_topic => {
                 if self.metrics_output.is_some() {
-                    self.process_message::<MetricsData>(data, partition, offset, permit);
+                    self.spawn_decode::<MetricsData>(data, partition, offset, permit);
                 }
 
                 METRICS_TOPIC_ID
             }
             t if t == self.logs_topic => {
                 if self.logs_output.is_some() {
-                    self.process_message::<LogsData>(data, partition, offset, permit);
+                    self.spawn_decode::<LogsData>(data, partition, offset, permit);
                 }
 
                 LOGS_TOPIC_ID
@@ -466,37 +497,6 @@ impl KafkaReceiver {
         };
 
         self.topic_trackers.track(topic_id, partition, offset);
-    }
-
-    fn process_message<T: OtlpResourceProvider + 'static>(
-        &mut self,
-        data: &[u8],
-        partition: i32,
-        offset: i64,
-        permit: OwnedSemaphorePermit,
-    ) {
-        let md = (!self.auto_commit).then(|| {
-            MessageMetadata::kafka(KafkaMetadata {
-                offset,
-                partition,
-                topic_id: T::TOPIC_ID,
-                ack_chan: Some(self.ack_sender.clone()),
-            })
-        });
-        let format = self.format;
-        let data = data.to_vec();
-
-        let task = tokio::task::spawn_blocking(move || {
-            match Self::decode_kafka_message::<T>(data, format) {
-                Ok(payload) => Some((payload.extract(md), permit)),
-                Err(e) => {
-                    error!("Failed to decode Kafka message: {}", e);
-                    return None;
-                }
-            }
-        });
-
-        self.decoding_futures.push_back(task);
     }
 }
 
