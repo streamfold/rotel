@@ -494,27 +494,6 @@ impl KafkaReceiver {
                     return None;
                 }
             }
-            // let res = Self::decode_kafka_message(data, format).map(K::extract);
-
-            // async move {
-            //     let message = match res {
-            //         Ok(payload) => payload::Message::new(md, payload),
-            //         Err(e) => {
-            //             error!("Failed to decode Kafka message: {}", e);
-            //             return;
-            //         }
-            //     };
-
-            //     if output.send_async(message).await.is_err() {
-            //         warn!(
-            //             "Failed to send {} to pipeline: channel disconnected",
-            //             K::SIG_TYPE
-            //         );
-            //     }
-
-            //     drop(permit);
-            // }
-            // .boxed()
         });
 
         self.decoding_futures.push_back(task);
