@@ -7,8 +7,6 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
 use crate::topology::payload::{KafkaMetadata, MessageMetadata};
 use bytes::Bytes;
-use futures::FutureExt;
-use futures::future::BoxFuture;
 use futures::stream::{FuturesOrdered, StreamExt};
 use opentelemetry_proto::tonic::logs::v1::{LogsData, ResourceLogs};
 use opentelemetry_proto::tonic::metrics::v1::{MetricsData, ResourceMetrics};
@@ -312,13 +310,15 @@ impl KafkaReceiver {
         })
     }
 
-    fn spawn_decode<T: OtlpResourceProvider + 'static>(
+    fn spawn_decode<T>(
         &mut self,
         data: &[u8],
         partition: i32,
         offset: i64,
         permit: OwnedSemaphorePermit,
-    ) {
+    ) where
+        T: OtlpResourceProvider,
+    {
         let md = (!self.auto_commit).then(|| {
             MessageMetadata::kafka(KafkaMetadata {
                 offset,
