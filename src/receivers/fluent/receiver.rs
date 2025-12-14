@@ -281,7 +281,7 @@ impl ConnectionHandler {
 
                     let now = Instant::now();
                     let last_dur = now.saturating_duration_since(last_batch_send);
-                    // avoid uncessary flushing
+                    // avoid unnecessary flushing
                     if (last_dur.as_millis() as usize) < MAX_BATCH_TIME_MS / 2 {
                         continue
                     }
