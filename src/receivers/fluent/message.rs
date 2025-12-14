@@ -18,20 +18,31 @@ pub(crate) enum Message {
 }
 
 impl Message {
-    /// Extract tag, entries for conversion to OTLP
-    pub(crate) fn entries(&self) -> (&str, Vec<(&EventTimestamp, &EventRecord)>) {
+    /// Record number of contained records
+    pub(crate) fn len(&self) -> usize {
         match self {
-            Message::Message(tag, ts, record) => (tag.as_str(), vec![(ts, record)]),
-            Message::MessageWithOptions(tag, ts, record, _) => (tag.as_str(), vec![(ts, record)]),
+            Message::Message(_, _, _) => 1,
+            Message::MessageWithOptions(_, _, _, _) => 1,
+            Message::Forward(_, items) => items.len(),
+            Message::ForwardWithOption(_, items, _) => items.len(),
+            Message::Unknown(_) => 0,
+        }
+    }
+
+    /// Extract tag, entries for conversion to OTLP
+    pub(crate) fn entries(self) -> (String, Vec<(EventTimestamp, EventRecord)>) {
+        match self {
+            Message::Message(tag, ts, record) => (tag, vec![(ts, record)]),
+            Message::MessageWithOptions(tag, ts, record, _) => (tag, vec![(ts, record)]),
             Message::Forward(tag, entries) => {
-                let items = entries.iter().map(|e| e.as_tuple()).collect();
-                (tag.as_str(), items)
+                let items = entries.into_iter().map(|e| e.into_tuple()).collect();
+                (tag, items)
             }
             Message::ForwardWithOption(tag, entries, _) => {
-                let items = entries.iter().map(|e| e.as_tuple()).collect();
-                (tag.as_str(), items)
+                let items = entries.into_iter().map(|e| e.into_tuple()).collect();
+                (tag, items)
             }
-            Message::Unknown(_) => ("", vec![]),
+            Message::Unknown(_) => (String::new(), vec![]),
         }
     }
 }
@@ -112,8 +123,8 @@ pub(crate) type EventRecord = BTreeMap<String, EventValue>;
 pub(crate) struct EventEntry(EventTimestamp, EventRecord);
 
 impl EventEntry {
-    pub(crate) fn as_tuple(&self) -> (&EventTimestamp, &EventRecord) {
-        (&self.0, &self.1)
+    pub(crate) fn into_tuple(self) -> (EventTimestamp, EventRecord) {
+        (self.0, self.1)
     }
 }
 

@@ -13,12 +13,12 @@ const FLUENT_TAG_KEY: &str = "fluent.tag";
 /// Convert Fluent Messages to OTLP ResourceLogs
 pub(crate) fn convert_to_otlp_logs(messages: Vec<Message>) -> ResourceLogs {
     let log_records = messages
-        .iter()
+        .into_iter()
         .map(|msg| msg.entries())
         .map(|(tag, entries)| {
-            entries
-                .into_iter()
-                .map(|(timestamp, record)| convert_event_to_log_record(timestamp, tag, record))
+            entries.into_iter().map(move |(timestamp, record)| {
+                convert_event_to_log_record(&timestamp, tag.as_str(), record)
+            })
         })
         .flatten()
         .collect();
@@ -50,7 +50,7 @@ pub(crate) fn convert_to_otlp_logs(messages: Vec<Message>) -> ResourceLogs {
 fn convert_event_to_log_record(
     timestamp: &EventTimestamp,
     tag: &str,
-    record: &EventRecord,
+    record: EventRecord,
 ) -> LogRecord {
     let dt = timestamp.as_datetime();
     let time_unix_nano = dt.timestamp_nanos_opt().unwrap_or(0) as u64;
@@ -63,13 +63,13 @@ fn convert_event_to_log_record(
 
     // Convert all other fields to attributes
     let attributes: Vec<KeyValue> = record
-        .iter()
+        .into_iter()
         .filter(|(key, _)| {
             let k = key.as_str();
             k != FLUENTBIT_LOG_BODY_KEY && k != FLUENTD_LOG_BODY_KEY
         })
         .map(|(key, value)| KeyValue {
-            key: key.clone(),
+            key,
             value: Some(convert_event_value_to_any_value(value.as_value())),
         })
         .chain(std::iter::once(KeyValue {
@@ -174,7 +174,7 @@ mod tests {
             rmpv::Value::String("abc123".into()).into(),
         );
 
-        let log_record = convert_event_to_log_record(&timestamp, "01234", &record);
+        let log_record = convert_event_to_log_record(&timestamp, "01234", record);
 
         assert_eq!(log_record.time_unix_nano, 1234567890000000000);
         assert!(log_record.body.is_some());

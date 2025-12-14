@@ -141,8 +141,7 @@ impl Batch {
     }
 
     fn push(&mut self, message: Message) {
-        let (_, entries) = message.entries();
-        self.total_entries += entries.len();
+        self.total_entries += message.len();
         self.messages.push(message);
     }
 
