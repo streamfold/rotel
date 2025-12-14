@@ -59,6 +59,7 @@ fn all_traces_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool
                     return false;
                 }
             }
+            #[cfg(feature = "rdkafka")]
             ReceiverConfig::Kafka(k) => {
                 if k.traces {
                     return false;
@@ -79,6 +80,7 @@ fn all_metrics_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> boo
                     return false;
                 }
             }
+            #[cfg(feature = "rdkafka")]
             ReceiverConfig::Kafka(k) => {
                 if k.metrics {
                     return false;
@@ -100,6 +102,7 @@ fn all_logs_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool {
                     return false;
                 }
             }
+            #[cfg(feature = "rdkafka")]
             ReceiverConfig::Kafka(k) => {
                 if k.logs {
                     return false;

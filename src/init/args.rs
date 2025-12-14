@@ -8,6 +8,7 @@ use crate::init::file_exporter::FileExporterArgs;
 use crate::init::fluent_receiver::FluentReceiverArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
+#[cfg(feature = "rdkafka")]
 use crate::init::kafka_receiver::KafkaReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;

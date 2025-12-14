@@ -21,7 +21,9 @@ use crate::init::wait;
 use crate::listener::Listener;
 #[cfg(feature = "fluent_receiver")]
 use crate::receivers::fluent::receiver::FluentReceiver;
+#[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
+#[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::receiver::KafkaReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp::otlp_http::OTLPHttpServer;
@@ -114,6 +116,7 @@ impl Agent {
         let mut receivers_task_set = JoinSet::new();
         let mut pipeline_task_set = JoinSet::new();
         let mut exporters_task_set = JoinSet::new();
+        #[cfg(feature = "rdkafka")]
         let mut kafka_offset_committer: Option<KafkaOffsetCommitter> = None;
 
         let receivers_cancel = CancellationToken::new();
@@ -138,20 +141,26 @@ impl Agent {
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
         let rec_config = get_receivers_config(&config)?;
+        #[allow(unused_mut)]
         let mut exp_config = get_exporters_config(&config, &self.environment)?;
 
         // Check if Kafka receiver with offset tracking is enabled
         // Offset tracking is enabled when auto commit is disabled
+        #[cfg(feature = "rdkafka")]
         let kafka_offset_tracking_enabled = rec_config.iter().any(|(_, cfg)| {
+            #[cfg(feature = "rdkafka")]
             matches!(cfg, ReceiverConfig::Kafka(k) if !k.enable_auto_commit && !k.disable_exporter_indefinite_retry)
         });
 
         // Check if finite retry is explicitly enabled (when Kafka offset tracking with disable infinite retry is set)
+        #[cfg(feature = "rdkafka")]
         let finite_retry_enabled = rec_config.iter().any(|(_, cfg)| {
+            #[cfg(feature = "rdkafka")]
             matches!(cfg, ReceiverConfig::Kafka(k) if !k.enable_auto_commit && k.disable_exporter_indefinite_retry)
         });
 
         // Validate configuration: disable_exporter_indefinite_retry requires auto_commit to be disabled
+        #[cfg(feature = "rdkafka")]
         for (name, cfg) in &rec_config {
             if let ReceiverConfig::Kafka(k) = cfg {
                 if k.enable_auto_commit && k.disable_exporter_indefinite_retry {
@@ -170,6 +179,7 @@ impl Agent {
         // HTTP acknowledger will be created per exporter that needs it
 
         // If Kafka offset tracking is enabled, modify retry configs to be indefinite
+        #[cfg(feature = "rdkafka")]
         if kafka_offset_tracking_enabled {
             info!(
                 "Kafka offset tracking enabled - setting exporters to retry indefinitely to ensure no data loss. To disable this behavior, use --kafka-receiver-disable-exporter-indefinite-retry"
@@ -884,6 +894,7 @@ impl Agent {
                         });
                     }
                 }
+                #[cfg(feature = "rdkafka")]
                 ReceiverConfig::Kafka(config) => {
                     let mut kafka = KafkaReceiver::new(
                         config.clone(),
@@ -934,6 +945,7 @@ impl Agent {
 
         // Start the Kafka offset committer if we have one
         let mut kafka_offset_committer_task_set = JoinSet::new();
+        #[cfg(feature = "rdkafka")]
         if let Some(mut committer) = kafka_offset_committer {
             let cancel_token = kafka_offset_committer_cancel.clone();
             kafka_offset_committer_task_set.spawn(async move {
