@@ -131,15 +131,15 @@ impl EventEntry {
 #[derive(Debug, Deserialize)]
 pub(crate) struct EventValue(rmpv::Value);
 
-impl EventValue {
-    pub(crate) fn as_value(&self) -> &rmpv::Value {
-        &self.0
-    }
-}
-
 impl From<rmpv::Value> for EventValue {
     fn from(value: rmpv::Value) -> Self {
         EventValue(value)
+    }
+}
+
+impl From<EventValue> for rmpv::Value {
+    fn from(ev: EventValue) -> Self {
+        ev.0
     }
 }
 

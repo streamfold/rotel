@@ -55,22 +55,20 @@ fn convert_event_to_log_record(
     let dt = timestamp.as_datetime();
     let time_unix_nano = dt.timestamp_nanos_opt().unwrap_or(0) as u64;
 
+    let mut record = record;
+
     // Extract the appropriate field as the body, if present
     let body = record
-        .get(FLUENTBIT_LOG_BODY_KEY)
-        .or_else(|| record.get(FLUENTD_LOG_BODY_KEY))
-        .map(|v| convert_event_value_to_any_value(v.as_value()));
+        .remove(FLUENTBIT_LOG_BODY_KEY)
+        .or_else(|| record.remove(FLUENTD_LOG_BODY_KEY))
+        .map(|v| convert_event_value_to_any_value(v.into()));
 
     // Convert all other fields to attributes
     let attributes: Vec<KeyValue> = record
         .into_iter()
-        .filter(|(key, _)| {
-            let k = key.as_str();
-            k != FLUENTBIT_LOG_BODY_KEY && k != FLUENTD_LOG_BODY_KEY
-        })
         .map(|(key, value)| KeyValue {
             key,
-            value: Some(convert_event_value_to_any_value(value.as_value())),
+            value: Some(convert_event_value_to_any_value(value.into())),
         })
         .chain(std::iter::once(KeyValue {
             key: FLUENT_TAG_KEY.to_string(),
@@ -96,27 +94,27 @@ fn convert_event_to_log_record(
 }
 
 /// Convert rmpv::Value to OTLP AnyValue
-fn convert_event_value_to_any_value(value: &rmpv::Value) -> AnyValue {
+fn convert_event_value_to_any_value(value: rmpv::Value) -> AnyValue {
     use rmpv::Value;
 
     let any_value_inner = match value {
         Value::Nil => None,
-        Value::Boolean(b) => Some(any_value::Value::BoolValue(*b)),
+        Value::Boolean(b) => Some(any_value::Value::BoolValue(b)),
         Value::Integer(i) => Some(any_value::Value::IntValue(i.as_i64().unwrap_or(0))),
-        Value::F32(f) => Some(any_value::Value::DoubleValue(*f as f64)),
-        Value::F64(f) => Some(any_value::Value::DoubleValue(*f)),
+        Value::F32(f) => Some(any_value::Value::DoubleValue(f as f64)),
+        Value::F64(f) => Some(any_value::Value::DoubleValue(f)),
         Value::String(s) => {
             if let Some(utf8_str) = s.as_str() {
-                Some(any_value::Value::StringValue(utf8_str.to_string()))
+                Some(any_value::Value::StringValue(String::from(utf8_str)))
             } else {
                 // Binary string, convert to bytes
                 Some(any_value::Value::BytesValue(s.as_bytes().to_vec()))
             }
         }
-        Value::Binary(b) => Some(any_value::Value::BytesValue(b.clone())),
+        Value::Binary(b) => Some(any_value::Value::BytesValue(b)),
         Value::Array(arr) => {
             let values: Vec<AnyValue> = arr
-                .iter()
+                .into_iter()
                 .map(|v| convert_event_value_to_any_value(v))
                 .collect();
             Some(any_value::Value::ArrayValue(
@@ -125,7 +123,7 @@ fn convert_event_value_to_any_value(value: &rmpv::Value) -> AnyValue {
         }
         Value::Map(map) => {
             let values: Vec<KeyValue> = map
-                .iter()
+                .into_iter()
                 .filter_map(|(k, v)| {
                     // Keys must be strings
                     if let Some(key_str) = k.as_str() {
@@ -145,7 +143,7 @@ fn convert_event_value_to_any_value(value: &rmpv::Value) -> AnyValue {
         Value::Ext(_tag, data) => {
             // Extension types are converted to bytes with a special attribute for the tag
             // For now, just convert to bytes
-            Some(any_value::Value::BytesValue(data.clone()))
+            Some(any_value::Value::BytesValue(data))
         }
     };
 
@@ -205,28 +203,28 @@ mod tests {
     #[test]
     fn test_convert_various_value_types() {
         // Test integer
-        let int_val = convert_event_value_to_any_value(&rmpv::Value::Integer(42.into()));
+        let int_val = convert_event_value_to_any_value(rmpv::Value::Integer(42.into()));
         assert!(matches!(
             int_val.value,
             Some(any_value::Value::IntValue(42))
         ));
 
         // Test boolean
-        let bool_val = convert_event_value_to_any_value(&rmpv::Value::Boolean(true));
+        let bool_val = convert_event_value_to_any_value(rmpv::Value::Boolean(true));
         assert!(matches!(
             bool_val.value,
             Some(any_value::Value::BoolValue(true))
         ));
 
         // Test float
-        let float_val = convert_event_value_to_any_value(&rmpv::Value::F64(3.14));
+        let float_val = convert_event_value_to_any_value(rmpv::Value::F64(3.14));
         assert!(matches!(
             float_val.value,
             Some(any_value::Value::DoubleValue(_))
         ));
 
         // Test array
-        let array_val = convert_event_value_to_any_value(&rmpv::Value::Array(vec![
+        let array_val = convert_event_value_to_any_value(rmpv::Value::Array(vec![
             rmpv::Value::Integer(1.into()),
             rmpv::Value::Integer(2.into()),
         ]));
