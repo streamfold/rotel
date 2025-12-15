@@ -4009,6 +4009,7 @@ dependencies = [
  "prost-build 0.13.5",
  "pyo3",
  "rand 0.8.5",
+ "rayon",
  "rdkafka",
  "read-restrict",
  "regex",
