@@ -358,10 +358,11 @@ impl KafkaReceiver {
         tokio::pin!(stream);
 
         loop {
-            // 1. Wait for the first message (or cancellation)
-            // We need to clear the batch from the previous iteration
+            // Clear the batch from the previous iteration. We don't really need this
+            // as we're draining the buffer, but it's still a safe guard
             batch.clear();
 
+            // 1. Wait for the first message (or cancellation)
             select! {
                 maybe_msg = stream.next() => {
                     let Some(msg) = maybe_msg else {
@@ -385,6 +386,7 @@ impl KafkaReceiver {
                 }
             }
 
+            // 3. Process the batch (or cancellation)
             select! {
                 _ = self.process_batch(&mut batch) => {},
                 _ = receivers_cancel.cancelled() => {
