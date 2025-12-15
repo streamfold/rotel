@@ -1,6 +1,6 @@
 use crate::bounded_channel::bounded;
 use crate::receivers::kafka::config::{DeserializationFormat, KafkaReceiverConfig};
-use crate::receivers::kafka::error::{KafkaReceiverError, Result};
+use crate::receivers::kafka::error::KafkaReceiverError;
 use crate::receivers::kafka::offset_ack_committer::{KafkaOffsetCommitter, commit_offset};
 use crate::receivers::kafka::offset_tracker::TopicTrackers;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -15,7 +15,7 @@ use rdkafka::Message;
 use rdkafka::client::ClientContext;
 use rdkafka::config::FromClientConfigAndContext;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
-use rdkafka::error::KafkaError;
+use rdkafka::error::KafkaResult;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
@@ -218,7 +218,7 @@ impl KafkaReceiver {
         metrics_output: Option<OTLPOutput<payload::Message<ResourceMetrics>>>,
         logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
         finite_retry_enabled: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self, KafkaReceiverError> {
         // Get the list of topics to subscribe to
         let topics = config.get_topics();
 
@@ -318,7 +318,7 @@ impl KafkaReceiver {
     fn decode_kafka_message<T>(
         data: &[u8],
         format: DeserializationFormat,
-    ) -> std::result::Result<T, Box<dyn Error + Send + Sync>>
+    ) -> Result<T, Box<dyn Error + Send + Sync>>
     where
         T: serde::de::DeserializeOwned + prost::Message + Default,
     {
@@ -342,7 +342,7 @@ impl KafkaReceiver {
     pub(crate) async fn run(
         self,
         receivers_cancel: CancellationToken,
-    ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         debug!("Starting Kafka receiver");
 
         // The consumer will automatically start from the position defined by auto.offset.reset
@@ -397,7 +397,7 @@ impl KafkaReceiver {
         Ok(())
     }
 
-    async fn process_batch<M>(&self, batch: &mut Vec<std::result::Result<M, KafkaError>>)
+    async fn process_batch<M>(&self, batch: &mut Vec<KafkaResult<M>>)
     where
         M: Message + Send,
     {
@@ -429,10 +429,7 @@ impl KafkaReceiver {
         }
     }
 
-    fn process_message<M>(
-        &self,
-        message: std::result::Result<M, KafkaError>,
-    ) -> Option<DecodeType<'_>>
+    fn process_message<M>(&self, message: KafkaResult<M>) -> Option<DecodeType<'_>>
     where
         M: Message,
     {
