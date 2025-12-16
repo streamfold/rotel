@@ -19,6 +19,8 @@ use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
+#[cfg(feature = "fluent_receiver")]
+use crate::receivers::fluent::receiver::FluentReceiver;
 #[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 #[cfg(feature = "rdkafka")]
@@ -907,6 +909,36 @@ impl Agent {
 
                     let receivers_cancel = receivers_cancel.clone();
                     receivers_task_set.spawn(async move { kafka.run(receivers_cancel).await });
+                }
+                #[cfg(feature = "fluent_receiver")]
+                ReceiverConfig::Fluent(config) => {
+                    let fluent = FluentReceiver::new(config.clone(), logs_output.clone()).await?;
+
+                    let mut fluent_task_set = JoinSet::new();
+                    // Fluent receiver may spawn multiple listener tasks
+                    fluent
+                        .start(&mut fluent_task_set, &receivers_cancel)
+                        .await?;
+
+                    let receivers_cancel = receivers_cancel.clone();
+                    receivers_task_set.spawn(async move {
+                        loop {
+                            select! {
+                                e = wait::wait_for_any_task(&mut fluent_task_set) => {
+                                    match e {
+                                        Ok(()) => {
+                                            info!("Unexpected early exit of fluent receiver task.");
+                                            },
+                                        Err(e) => break Err(e),
+                                    }
+                                },
+                                _ = receivers_cancel.cancelled() => {
+                                    // Wait up to 500 millis for fluent tasks to finish
+                                    break wait::wait_for_tasks_with_timeout(&mut fluent_task_set, Duration::from_millis(500)).await;
+                                }
+                            }
+                        }
+                    });
                 }
             }
         }

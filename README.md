@@ -685,6 +685,47 @@ rotel start \
   --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443"
 ```
 
+### Fluent Receiver configuration
+
+_The Fluent Receiver is currently only included when built with the opt-in feature `--features fluent_receiver`._
+
+The Fluent Receiver allows Rotel to receive telemetry data in Fluentd/Fluent Bit [forward protocol format](https://chronosphere.io/learn/forward-protocol-fluentd-fluent-bit/). This enables compatibility with existing Fluentd and Fluent Bit deployments, allowing them to send logs directly to Rotel for processing and export. Select the Fluent receiver with the option `--receiver fluent`.
+
+The receiver supports both UNIX domain sockets and TCP endpoints, converting incoming Fluent messages to OpenTelemetry logs format.
+
+| Option                              | Default | Description                                             |
+|-------------------------------------|---------|---------------------------------------------------------|
+| --fluent-receiver-socket-path       |         | Path to UNIX socket file for receiving Fluent messages  |
+| --fluent-receiver-endpoint          |         | TCP endpoint to bind (e.g., 127.0.0.1:24224)            |
+
+**Note**: At least one of `--fluent-receiver-socket-path` or `--fluent-receiver-endpoint` must be specified when using the Fluent
+receiver.
+
+**Example Usage**:
+
+```bash
+# Using UNIX socket
+rotel start \
+  --receiver fluent \
+  --fluent-receiver-socket-path /var/run/rotel-fluent.sock \
+  [...exporter args]
+
+# Using TCP endpoint
+rotel start \
+  --receiver fluent \
+  --fluent-receiver-endpoint 127.0.0.1:24224 \
+  [...exporter args]
+
+# Using both socket and TCP
+rotel start \
+  --receiver fluent \
+  --fluent-receiver-socket-path /var/run/rotel-fluent.sock \
+  --fluent-receiver-endpoint 0.0.0.0:24224 \
+  [...exporter args]
+```
+
+_Compression and message acknowledgement are not supported at the moment._
+
 ### Batch configuration
 
 You can configure the properties of the batch processor, controlling both the size limit of the batch and how long the
