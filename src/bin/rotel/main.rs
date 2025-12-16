@@ -238,11 +238,18 @@ fn setup_logging(log_format: &LogFormatArg) -> Result<LoggerGuard, BoxError> {
             .with(bunyan_formatting_layer);
         tracing::subscriber::set_global_default(subscriber).unwrap();
     } else {
+        use std::io;
+        use std::io::IsTerminal;
+
+        // Skip color codes when not in a terminal
+        let use_ansi = io::stdout().is_terminal();
+
         // Create a formatting layer that writes to the file
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(non_blocking_writer)
             .with_target(false)
             .with_level(true)
+            .with_ansi(use_ansi)
             .compact();
 
         let subscriber = Registry::default().with(filter).with(file_layer);
