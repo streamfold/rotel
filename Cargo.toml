@@ -26,6 +26,7 @@ http-body-util = "0.1.2"
 http = "1.2.0"
 hyper-util = { version = "0.1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
+tikv-jemallocator = "0.6.1"
 prost = "0.13.4"
 flate2 = { version = "1.0", features = ["zlib-ng"], default-features = false }
 futures = "0.3.31"

@@ -31,6 +31,10 @@ use rotel::init::args::{AgentRun, Receiver};
 use rotel::init::misc::bind_endpoints;
 use rotel::init::wait;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 // Used when daemonized
 static WORKDING_DIR: &str = "/"; // TODO
 
