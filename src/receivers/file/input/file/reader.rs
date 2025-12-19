@@ -199,14 +199,6 @@ impl FileReader {
         Ok(lines)
     }
 
-    /// Update the fingerprint as we read more of the file
-    fn update_fingerprint_progress(&mut self, current_offset: u64) {
-        // If fingerprint is not yet full and we've read past its end, it would be
-        // extended on the next fingerprint check. For simplicity, we don't update
-        // it during line reading - it will be updated on the next poll cycle.
-        let _ = current_offset;
-    }
-
     /// Refresh the fingerprint from the current file content
     pub fn refresh_fingerprint(&mut self) -> io::Result<()> {
         if let Some(ref mut file) = self.file {

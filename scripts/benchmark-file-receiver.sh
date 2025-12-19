@@ -12,6 +12,7 @@
 #   -c, --collector TYPE   Collector to test: rotel, otel, or both (default: rotel)
 #   -d, --duration SECS    Test duration in seconds (default: 60)
 #   -r, --rate RATE        Log lines per second (default: 1000)
+#   -m, --mode MODE        Watch mode: poll or native (default: poll)
 #   -o, --output DIR       Output directory for results (default: /tmp/benchmark)
 #   -h, --help             Show this help message
 
@@ -21,6 +22,7 @@ set -e
 COLLECTOR="rotel"
 DURATION=60
 RATE=1000
+WATCH_MODE="poll"
 OUTPUT_DIR="/tmp/benchmark"
 LOG_FILE="/tmp/benchmark-nginx.log"
 
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -r|--rate)
             RATE="$2"
+            shift 2
+            ;;
+        -m|--mode)
+            WATCH_MODE="$2"
             shift 2
             ;;
         -o|--output)
@@ -88,49 +94,85 @@ calculate_interval() {
     echo $((1000000 / rate))
 }
 
-# High-performance log generator using timestamps for latency measurement
+# High-performance log generator using Python for speed
 generate_logs_fast() {
     local output_file=$1
     local rate=$2
     local duration=$3
-    local interval_us=$(calculate_interval "$rate")
 
-    log_info "Generating logs at ${rate}/s for ${duration}s (interval: ${interval_us}μs)"
+    log_info "Generating logs at ${rate}/s for ${duration}s" >&2
 
-    local end_time=$(($(date +%s) + duration))
-    local count=0
-    local batch_size=10
+    # Use Python for much faster log generation with rotation
+    python3 << EOF
+import time
+import random
+import os
 
-    # Pre-generate some random data
-    local methods=("GET" "POST" "PUT" "DELETE")
-    local paths=("/api/users" "/api/orders" "/api/products" "/api/health")
-    local statuses=(200 201 204 400 404 500)
+output_file = "$output_file"
+rate = $rate
+duration = $duration
+rotate_interval = 5  # Rotate every 5 seconds
 
-    > "$output_file"  # Clear file
+methods = ["GET", "POST", "PUT", "DELETE"]
+paths = ["/api/users", "/api/orders", "/api/products", "/api/health"]
+statuses = [200, 201, 204, 400, 404, 500]
 
-    while [[ $(date +%s) -lt $end_time ]]; do
-        # Write a batch of logs
-        for ((i = 0; i < batch_size; i++)); do
-            local ts=$(date +%s)
-            local method=${methods[$((RANDOM % ${#methods[@]}))]}
-            local path=${paths[$((RANDOM % ${#paths[@]}))]}
-            local status=${statuses[$((RANDOM % ${#statuses[@]}))]}
-            local ip="$((RANDOM % 256)).$((RANDOM % 256)).$((RANDOM % 256)).$((RANDOM % 256))"
-            local timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
+# Calculate batch size and interval
+# Write in batches of 1000 lines, sleep between batches
+batch_size = min(1000, rate)
+batches_per_second = rate / batch_size
+sleep_interval = 1.0 / batches_per_second if batches_per_second > 0 else 0
 
-            # Include timestamp in user agent for tracking
-            echo "$ip - - [$timestamp] \"$method $path HTTP/1.1\" $status 1234 \"-\" \"benchmark/$ts\"" >> "$output_file"
-            ((count++))
-        done
+start_time = time.time()
+end_time = start_time + duration
+last_rotate = start_time
+rotation_count = 0
+count = 0
 
-        # Sleep for batch interval (simplified for macOS compatibility)
-        local sleep_ms=$((interval_us * batch_size / 1000))
-        if [[ $sleep_ms -gt 0 ]]; then
-            sleep "0.$(printf '%03d' $sleep_ms)"
-        fi
-    done
+# Clear any existing rotated files
+for i in range(100):
+    rotated = f"{output_file}.{i}"
+    if os.path.exists(rotated):
+        os.remove(rotated)
 
-    echo "$count"
+f = open(output_file, 'w')
+
+while time.time() < end_time:
+    batch_start = time.time()
+
+    # Check if we need to rotate
+    if batch_start - last_rotate >= rotate_interval:
+        f.close()
+        # Rotate: rename current to .N, create new file
+        rotated_name = f"{output_file}.{rotation_count}"
+        os.rename(output_file, rotated_name)
+        f = open(output_file, 'w')
+        rotation_count += 1
+        last_rotate = batch_start
+
+    # Generate a batch of log lines
+    lines = []
+    timestamp = time.strftime("%d/%b/%Y:%H:%M:%S %z")
+    for _ in range(batch_size):
+        ip = f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+        method = random.choice(methods)
+        path = random.choice(paths)
+        status = random.choice(statuses)
+        lines.append(f'{ip} - - [{timestamp}] "{method} {path} HTTP/1.1" {status} 1234 "-" "benchmark/{int(time.time())}"')
+
+    # Write batch at once
+    f.write('\n'.join(lines) + '\n')
+    f.flush()
+    count += batch_size
+
+    # Sleep to maintain rate
+    elapsed = time.time() - batch_start
+    if sleep_interval > elapsed:
+        time.sleep(sleep_interval - elapsed)
+
+f.close()
+print(count)
+EOF
 }
 
 # Monitor process resource usage
@@ -180,7 +222,7 @@ start_rotel() {
         --file-receiver-include "$log_file" \
         --file-receiver-parser nginx_access \
         --file-receiver-start-at beginning \
-        --file-receiver-watch-mode native \
+        --file-receiver-watch-mode "$WATCH_MODE" \
         --file-receiver-offsets-path /tmp/benchmark-rotel-offsets.json \
         --exporter blackhole \
         > "$OUTPUT_DIR/rotel.log" 2>&1 &
@@ -392,6 +434,7 @@ main() {
     log_info "Collector:  $COLLECTOR"
     log_info "Duration:   ${DURATION}s"
     log_info "Rate:       ${RATE} logs/s"
+    log_info "Watch Mode: $WATCH_MODE"
     log_info "Output:     $OUTPUT_DIR"
     echo ""
 

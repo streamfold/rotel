@@ -87,8 +87,8 @@ pub fn json_access_parser() -> JsonParser {
 
 /// Parser for nginx combined access log format.
 ///
-/// This parser extracts fields from the standard nginx combined log format
-/// and also parses the request line into separate method, path, and protocol fields.
+/// This parser extracts fields from the standard nginx combined log format.
+/// It matches the OTel Collector's filelog receiver behavior.
 pub struct NginxAccessParser {
     regex: RegexParser,
 }
@@ -99,51 +99,11 @@ impl NginxAccessParser {
         let regex = RegexParser::new(NGINX_COMBINED_PATTERN)?;
         Ok(Self { regex })
     }
-
-    /// Parse the request field into method, path, and protocol.
-    fn parse_request(request: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
-        let parts: Vec<&str> = request.splitn(3, ' ').collect();
-        match parts.len() {
-            3 => (Some(parts[0]), Some(parts[1]), Some(parts[2])),
-            2 => (Some(parts[0]), Some(parts[1]), None),
-            1 if !parts[0].is_empty() => (Some(parts[0]), None, None),
-            _ => (None, None, None),
-        }
-    }
 }
 
 impl Parser for NginxAccessParser {
     fn parse(&self, entry: Entry) -> Result<Entry> {
-        let mut parsed = self.regex.parse(entry)?;
-
-        // Parse the request field into components (request is now in attributes)
-        let request_parts = parsed
-            .attributes
-            .get("request")
-            .and_then(|v| v.as_str())
-            .map(|request| {
-                let (method, path, protocol) = Self::parse_request(request);
-                (
-                    method.map(|s| s.to_string()),
-                    path.map(|s| s.to_string()),
-                    protocol.map(|s| s.to_string()),
-                )
-            });
-
-        // Add parsed request components to attributes
-        if let Some((method, path, protocol)) = request_parts {
-            if let Some(m) = method {
-                parsed.add_attribute("method", Value::String(m));
-            }
-            if let Some(p) = path {
-                parsed.add_attribute("path", Value::String(p));
-            }
-            if let Some(proto) = protocol {
-                parsed.add_attribute("protocol", Value::String(proto));
-            }
-        }
-
-        Ok(parsed)
+        self.regex.parse(entry)
     }
 
     fn parse_str(&self, value: &str) -> Result<Value> {
@@ -220,9 +180,6 @@ mod tests {
         assert_eq!(result["remote_user"], "-");
         assert_eq!(result["time_local"], "17/Dec/2025:10:15:32 +0000");
         assert_eq!(result["request"], "GET /api/users HTTP/1.1");
-        assert_eq!(result["method"], "GET");
-        assert_eq!(result["path"], "/api/users");
-        assert_eq!(result["protocol"], "HTTP/1.1");
         assert_eq!(result["status"], "200");
         assert_eq!(result["body_bytes_sent"], "1234");
         assert_eq!(result["http_referer"], "-");
@@ -237,8 +194,7 @@ mod tests {
 
         assert_eq!(result["remote_addr"], "10.0.0.50");
         assert_eq!(result["remote_user"], "alice");
-        assert_eq!(result["method"], "POST");
-        assert_eq!(result["path"], "/api/login");
+        assert_eq!(result["request"], "POST /api/login HTTP/1.1");
         assert_eq!(result["status"], "302");
         assert_eq!(result["http_referer"], "https://example.com/login");
     }
@@ -249,7 +205,7 @@ mod tests {
 
         let result = parser.parse_str(ACCESS_LOG_SAMPLES[2]).unwrap();
 
-        assert_eq!(result["protocol"], "HTTP/2.0");
+        assert_eq!(result["request"], "GET /static/style.css HTTP/2.0");
         assert_eq!(result["status"], "304");
     }
 
@@ -259,12 +215,12 @@ mod tests {
 
         // DELETE
         let result = parser.parse_str(ACCESS_LOG_SAMPLES[3]).unwrap();
-        assert_eq!(result["method"], "DELETE");
+        assert_eq!(result["request"], "DELETE /api/users/123 HTTP/1.1");
         assert_eq!(result["status"], "204");
 
         // PUT
         let result = parser.parse_str(ACCESS_LOG_SAMPLES[4]).unwrap();
-        assert_eq!(result["method"], "PUT");
+        assert_eq!(result["request"], "PUT /api/config HTTP/1.1");
         assert_eq!(result["remote_user"], "admin");
     }
 
@@ -413,39 +369,6 @@ mod tests {
 
         // Check parsed fields in attributes
         assert_eq!(parsed.attributes["remote_addr"], "192.168.1.1");
-        assert_eq!(parsed.attributes["method"], "GET");
-    }
-
-    #[test]
-    fn test_parse_request_edge_cases() {
-        // Normal case
-        let (m, p, proto) = NginxAccessParser::parse_request("GET /path HTTP/1.1");
-        assert_eq!(m, Some("GET"));
-        assert_eq!(p, Some("/path"));
-        assert_eq!(proto, Some("HTTP/1.1"));
-
-        // No protocol
-        let (m, p, proto) = NginxAccessParser::parse_request("GET /path");
-        assert_eq!(m, Some("GET"));
-        assert_eq!(p, Some("/path"));
-        assert_eq!(proto, None);
-
-        // Just method
-        let (m, p, proto) = NginxAccessParser::parse_request("OPTIONS");
-        assert_eq!(m, Some("OPTIONS"));
-        assert_eq!(p, None);
-        assert_eq!(proto, None);
-
-        // Empty
-        let (m, p, proto) = NginxAccessParser::parse_request("");
-        assert_eq!(m, None);
-        assert_eq!(p, None);
-        assert_eq!(proto, None);
-
-        // Path with spaces (malformed but should handle gracefully)
-        let (m, p, proto) = NginxAccessParser::parse_request("GET /path with spaces HTTP/1.1");
-        assert_eq!(m, Some("GET"));
-        assert_eq!(p, Some("/path"));
-        assert_eq!(proto, Some("with spaces HTTP/1.1")); // Takes rest as protocol
+        assert_eq!(parsed.attributes["request"], "GET /api/users HTTP/1.1");
     }
 }
