@@ -180,8 +180,7 @@ start_rotel() {
         --file-receiver-include "$log_file" \
         --file-receiver-parser nginx_access \
         --file-receiver-start-at beginning \
-        --file-receiver-watch-mode poll \
-        --file-receiver-poll-interval-ms 50 \
+        --file-receiver-watch-mode native \
         --file-receiver-offsets-path /tmp/benchmark-rotel-offsets.json \
         --exporter blackhole \
         > "$OUTPUT_DIR/rotel.log" 2>&1 &

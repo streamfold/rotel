@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
@@ -123,6 +123,23 @@ impl FileReceiver {
     }
 }
 
+/// Checkpoint configuration for batching persistence writes
+struct CheckpointConfig {
+    /// Maximum records before forcing a checkpoint
+    max_records: u64,
+    /// Maximum time between checkpoints
+    max_interval: Duration,
+}
+
+impl Default for CheckpointConfig {
+    fn default() -> Self {
+        Self {
+            max_records: 1000,
+            max_interval: Duration::from_secs(1),
+        }
+    }
+}
+
 /// Internal handler for file watching
 struct FileHandler {
     config: FileReceiverConfig,
@@ -137,6 +154,10 @@ struct FileHandler {
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
     tags: [KeyValue; 1],
+    // Checkpoint batching state
+    checkpoint_config: CheckpointConfig,
+    records_since_checkpoint: u64,
+    last_checkpoint: Instant,
 }
 
 impl FileHandler {
@@ -193,6 +214,9 @@ impl FileHandler {
             accepted_counter,
             refused_counter,
             tags: [KeyValue::new("receiver", "file")],
+            checkpoint_config: CheckpointConfig::default(),
+            records_since_checkpoint: 0,
+            last_checkpoint: Instant::now(),
         })
     }
 
@@ -230,7 +254,7 @@ impl FileHandler {
         Ok(())
     }
 
-    /// Save current file states to the persister
+    /// Save current file states to the persister (unconditional, always writes to disk)
     fn save_state(&mut self) -> Result<()> {
         let state = PersistedState {
             files: self
@@ -247,6 +271,24 @@ impl FileHandler {
         self.persister.set_json(KNOWN_FILES_KEY, &state)?;
         self.persister.sync()?;
 
+        // Reset checkpoint tracking
+        self.records_since_checkpoint = 0;
+        self.last_checkpoint = Instant::now();
+
+        Ok(())
+    }
+
+    /// Check if we should checkpoint based on records processed and time elapsed
+    fn should_checkpoint(&self) -> bool {
+        self.records_since_checkpoint >= self.checkpoint_config.max_records
+            || self.last_checkpoint.elapsed() >= self.checkpoint_config.max_interval
+    }
+
+    /// Conditionally save state if checkpoint thresholds are met
+    fn maybe_checkpoint(&mut self) -> Result<()> {
+        if self.should_checkpoint() {
+            self.save_state()?;
+        }
         Ok(())
     }
 
@@ -474,6 +516,9 @@ impl FileHandler {
         if !all_entries.is_empty() {
             let count = all_entries.len() as u64;
 
+            // Track records for checkpoint batching
+            self.records_since_checkpoint += count;
+
             if let Some(ref logs_output) = self.logs_output {
                 let resource_logs = convert_entries_to_resource_logs(all_entries);
                 let payload_msg = payload::Message::new(None, vec![resource_logs]);
@@ -490,8 +535,8 @@ impl FileHandler {
             }
         }
 
-        // Save state
-        if let Err(e) = self.save_state() {
+        // Conditionally checkpoint based on records processed and time elapsed
+        if let Err(e) = self.maybe_checkpoint() {
             error!("Failed to save state: {}", e);
         }
 

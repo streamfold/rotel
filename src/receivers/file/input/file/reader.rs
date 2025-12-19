@@ -22,10 +22,8 @@ pub struct FileReader {
     fingerprint: Fingerprint,
     /// Current offset in bytes
     offset: u64,
-    /// The open file handle
+    /// The open file handle (kept open for reuse)
     file: Option<File>,
-    /// Buffered reader
-    reader: Option<BufReader<File>>,
     /// Maximum size of the fingerprint
     fingerprint_size: usize,
     /// Maximum size of a single log line
@@ -34,6 +32,8 @@ pub struct FileReader {
     generation: u64,
     /// Whether we've reached EOF
     eof: bool,
+    /// Reusable line buffer to avoid allocations
+    line_buffer: String,
 }
 
 impl FileReader {
@@ -53,11 +53,11 @@ impl FileReader {
             fingerprint,
             offset,
             file: Some(file),
-            reader: None,
             fingerprint_size,
             max_log_size,
             generation: 0,
             eof: false,
+            line_buffer: String::with_capacity(1024),
         })
     }
 
@@ -136,55 +136,66 @@ impl FileReader {
         self.eof = false;
         let mut lines = Vec::new();
 
-        // Get the file, or return empty if not available
-        let file = match self.file.take() {
+        // Take the file handle temporarily - we'll put it back after
+        let mut file = match self.file.take() {
             Some(f) => f,
             None => return Ok(lines),
         };
 
         // Seek to the current offset
-        let mut file = file;
         file.seek(SeekFrom::Start(self.offset))?;
 
         // Create a buffered reader
-        let reader = BufReader::new(file);
-        let mut current_offset = self.offset;
+        let mut reader = BufReader::new(&mut file);
 
-        for line_result in reader.lines() {
-            match line_result {
-                Ok(line) => {
-                    // Track bytes read (line + newline)
-                    let bytes_read = line.len() as u64 + 1;
-                    current_offset += bytes_read;
+        loop {
+            self.line_buffer.clear();
+            match reader.read_line(&mut self.line_buffer) {
+                Ok(0) => {
+                    // EOF reached
+                    break;
+                }
+                Ok(bytes_read) => {
+                    self.offset += bytes_read as u64;
+
+                    // Remove trailing newline
+                    let line = self
+                        .line_buffer
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r');
+
+                    if line.is_empty() {
+                        continue;
+                    }
 
                     // Check max log size
                     if line.len() > self.max_log_size {
                         // Truncate the line
                         let truncated = line.chars().take(self.max_log_size).collect::<String>();
                         lines.push(truncated);
-                    } else if !line.is_empty() {
-                        lines.push(line);
+                    } else {
+                        lines.push(line.to_string());
                     }
-
-                    // Update fingerprint as we read
-                    self.update_fingerprint_progress(current_offset);
                 }
                 Err(e) => {
                     if e.kind() == io::ErrorKind::InvalidData {
-                        // Skip invalid UTF-8 lines
+                        // Skip invalid UTF-8 lines - advance past this byte
+                        self.offset += 1;
                         continue;
                     }
+                    // Put file back before returning error
+                    drop(reader);
+                    self.file = Some(file);
                     return Err(e);
                 }
             }
         }
 
-        self.offset = current_offset;
+        // Put the file handle back (it stays open for reuse)
+        drop(reader);
+        self.file = Some(file);
+
         self.eof = true;
-
-        // Re-open the file for next read
-        self.file = Some(File::open(&self.path)?);
-
         Ok(lines)
     }
 
@@ -209,7 +220,6 @@ impl FileReader {
     /// Close the file handle
     pub fn close(&mut self) {
         self.file = None;
-        self.reader = None;
     }
 }
 

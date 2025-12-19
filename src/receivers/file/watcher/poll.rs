@@ -3,7 +3,7 @@
 //! Polling-based file watcher as a fallback for systems where native
 //! file system notifications are unavailable or unreliable (e.g., NFS).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -84,24 +84,26 @@ impl PollWatcher {
     /// Scan all watched directories for changes
     fn scan_all(&mut self) -> Result<(), WatcherError> {
         let mut events = Vec::new();
-        let mut current_files: HashMap<PathBuf, FileState> = HashMap::new();
+        let mut seen_files: HashSet<PathBuf> = HashSet::with_capacity(self.file_states.len());
 
-        // Scan each watched directory
-        for dir in &self.watched_dirs.clone() {
-            if let Err(e) = self.scan_directory(dir, &mut current_files, &mut events) {
+        // Scan each watched directory - iterate by index to avoid borrowing issues
+        for i in 0..self.watched_dirs.len() {
+            let dir = self.watched_dirs[i].clone();
+            if let Err(e) = self.scan_directory(&dir, &mut seen_files, &mut events) {
                 tracing::debug!("Error scanning directory {:?}: {}", dir, e);
             }
         }
 
-        // Check for removed files
-        for (path, _) in &self.file_states {
-            if !current_files.contains_key(path) {
+        // Check for removed files and remove them from state
+        self.file_states.retain(|path, _| {
+            if seen_files.contains(path) {
+                true
+            } else {
                 events.push(FileEvent::remove(path.clone()));
+                false
             }
-        }
+        });
 
-        // Update state
-        self.file_states = current_files;
         self.pending_events.extend(events);
         self.last_poll = Instant::now();
 
@@ -110,9 +112,9 @@ impl PollWatcher {
 
     /// Scan a single directory for file changes
     fn scan_directory(
-        &self,
+        &mut self,
         dir: &Path,
-        current_files: &mut HashMap<PathBuf, FileState>,
+        seen_files: &mut HashSet<PathBuf>,
         events: &mut Vec<FileEvent>,
     ) -> Result<(), WatcherError> {
         let entries = fs::read_dir(dir)?;
@@ -126,26 +128,31 @@ impl PollWatcher {
                 _ => continue,
             };
 
-            let state = match FileState::from_metadata(&metadata) {
+            let new_state = match FileState::from_metadata(&metadata) {
                 Some(s) => s,
                 None => continue,
             };
 
-            // Check if this is a new file or has changed
-            match self.file_states.get(&path) {
-                None => {
+            // Mark this file as seen
+            seen_files.insert(path.clone());
+
+            // Check if this is a new file or has changed, update state in place
+            match self.file_states.entry(path) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
                     // New file
-                    events.push(FileEvent::create(path.clone()));
+                    events.push(FileEvent::create(entry.key().clone()));
+                    entry.insert(new_state);
                 }
-                Some(old_state) => {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    let old_state = entry.get();
                     // Check for modifications
-                    if state.modified != old_state.modified || state.size != old_state.size {
-                        events.push(FileEvent::modify(path.clone()));
+                    if new_state.modified != old_state.modified || new_state.size != old_state.size
+                    {
+                        events.push(FileEvent::modify(entry.key().clone()));
+                        entry.insert(new_state);
                     }
                 }
             }
-
-            current_files.insert(path, state);
         }
 
         Ok(())
