@@ -11,6 +11,9 @@ mod kafka_receiver;
 #[cfg(feature = "fluent_receiver")]
 mod fluent_receiver;
 
+#[cfg(feature = "file_receiver")]
+mod file_receiver;
+
 mod awsemf_exporter;
 mod clickhouse_exporter;
 mod datadog_exporter;

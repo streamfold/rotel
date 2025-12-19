@@ -8,6 +8,9 @@ pub mod otlp_output;
 #[cfg(feature = "fluent_receiver")]
 pub mod fluent;
 
+#[cfg(feature = "file_receiver")]
+pub mod file;
+
 use opentelemetry::global;
 use opentelemetry::metrics::Meter;
 

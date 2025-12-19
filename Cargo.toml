@@ -57,6 +57,8 @@ opentelemetry-semantic-conventions = { version = "0.29.0", features = [
     "semconv_experimental",
 ] }
 gethostname = "0.5.0"
+glob = { version = "0.3.1", optional = true }
+notify = { version = "8.0", optional = true }
 libc = "0.2.170"
 pin-project = "1.1.10"
 futures-util = "0.3.31"
@@ -116,6 +118,7 @@ prost-build = "0.13.4"
 [features]
 default = ["rdkafka", "aws_iam"]
 fluent_receiver = ["dep:rmpv", "dep:rmp-serde"]
+file_receiver = ["dep:glob", "dep:notify"]
 pprof = ["dep:pprof"]
 pyo3 = ["dep:pyo3", "dep:rotel_python_processor_sdk"]
 rdkafka = ["dep:rdkafka"]

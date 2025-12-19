@@ -1,0 +1,42 @@
+# OTel Collector config for benchmarking file receiver
+# Matches the config structure from user's requirements
+
+receivers:
+  filelog:
+    include:
+      - /tmp/benchmark-nginx.log
+    start_at: beginning
+    poll_interval: 50ms
+    operators:
+      - type: regex_parser
+        regex: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time_local>[^\]]+)\] "(?P<request>[^"]+)" (?P<status>\d+) (?P<body_bytes_sent>\d+) "(?P<http_referer>[^"]*)" "(?P<http_user_agent>[^"]*)"'
+        parse_from: body
+        parse_to: attributes
+      - type: add
+        field: attributes.source
+        value: "nginx"
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+  batch:
+    timeout: 100ms
+    send_batch_size: 1000
+
+exporters:
+  debug:
+    verbosity: detailed
+  nop: {}
+
+extensions:
+  zpages:
+    endpoint: localhost:55679
+
+service:
+  extensions: [zpages]
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

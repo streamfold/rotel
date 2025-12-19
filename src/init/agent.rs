@@ -21,6 +21,8 @@ use crate::init::wait;
 use crate::listener::Listener;
 #[cfg(feature = "fluent_receiver")]
 use crate::receivers::fluent::receiver::FluentReceiver;
+#[cfg(feature = "file_receiver")]
+use crate::receivers::file::receiver::FileReceiver;
 #[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 #[cfg(feature = "rdkafka")]
@@ -935,6 +937,34 @@ impl Agent {
                                 _ = receivers_cancel.cancelled() => {
                                     // Wait up to 500 millis for fluent tasks to finish
                                     break wait::wait_for_tasks_with_timeout(&mut fluent_task_set, Duration::from_millis(500)).await;
+                                }
+                            }
+                        }
+                    });
+                }
+                #[cfg(feature = "file_receiver")]
+                ReceiverConfig::File(config) => {
+                    let file_receiver = FileReceiver::new(config.clone(), logs_output.clone()).await?;
+
+                    let mut file_task_set = JoinSet::new();
+                    file_receiver
+                        .start(&mut file_task_set, &receivers_cancel)
+                        .await?;
+
+                    let receivers_cancel = receivers_cancel.clone();
+                    receivers_task_set.spawn(async move {
+                        loop {
+                            select! {
+                                e = wait::wait_for_any_task(&mut file_task_set) => {
+                                    match e {
+                                        Ok(()) => {
+                                            info!("Unexpected early exit of file receiver task.");
+                                        },
+                                        Err(e) => break Err(e),
+                                    }
+                                },
+                                _ = receivers_cancel.cancelled() => {
+                                    break wait::wait_for_tasks_with_timeout(&mut file_task_set, Duration::from_millis(500)).await;
                                 }
                             }
                         }

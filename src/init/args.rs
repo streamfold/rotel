@@ -6,6 +6,8 @@ use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "fluent_receiver")]
 use crate::init::fluent_receiver::FluentReceiverArgs;
+#[cfg(feature = "file_receiver")]
+use crate::init::file_receiver::FileReceiverArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 #[cfg(feature = "rdkafka")]
@@ -65,6 +67,10 @@ pub struct AgentRun {
     #[command(flatten)]
     #[cfg(feature = "fluent_receiver")]
     pub fluent_receiver: FluentReceiverArgs,
+
+    #[command(flatten)]
+    #[cfg(feature = "file_receiver")]
+    pub file_receiver: FileReceiverArgs,
 
     /// Single receiver (type)
     #[arg(value_enum, long, env = "ROTEL_RECEIVER")]
@@ -161,6 +167,8 @@ impl Default for AgentRun {
             kafka_receiver: KafkaReceiverArgs::default(),
             #[cfg(feature = "fluent_receiver")]
             fluent_receiver: FluentReceiverArgs::default(),
+            #[cfg(feature = "file_receiver")]
+            file_receiver: FileReceiverArgs::default(),
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
@@ -260,6 +268,8 @@ pub enum Receiver {
     Kafka,
     #[cfg(feature = "fluent_receiver")]
     Fluent,
+    #[cfg(feature = "file_receiver")]
+    File,
 }
 
 impl FromStr for Receiver {
@@ -271,6 +281,8 @@ impl FromStr for Receiver {
             "kafka" => Ok(Receiver::Kafka),
             #[cfg(feature = "fluent_receiver")]
             "fluent" => Ok(Receiver::Fluent),
+            #[cfg(feature = "file_receiver")]
+            "file" => Ok(Receiver::File),
             _ => Err("Unknown receiver"),
         }
     }
