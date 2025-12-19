@@ -68,11 +68,7 @@ impl JsonFileDatabase {
 
     /// Create a scoped persister for the given operator
     pub fn persister(&self, scope: impl Into<String>) -> JsonFilePersister {
-        JsonFilePersister::new(
-            self.path.clone(),
-            self.state.clone(),
-            scope.into(),
-        )
+        JsonFilePersister::new(self.path.clone(), self.state.clone(), scope.into())
     }
 
     /// Flush all pending writes to disk
@@ -251,7 +247,8 @@ impl<'a> Base64Encoder<'a> {
     fn finish(mut self) {
         if self.bits > 0 {
             self.buffer <<= 6 - self.bits;
-            self.output.push(BASE64_CHARS[(self.buffer & 0x3F) as usize]);
+            self.output
+                .push(BASE64_CHARS[(self.buffer & 0x3F) as usize]);
             let padding = (3 - (self.bits / 2) % 3) % 3;
             for _ in 0..padding {
                 self.output.push(b'=');
@@ -313,8 +310,8 @@ fn base64_decode_impl(input: &[u8]) -> std::result::Result<Vec<u8>, ()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::PersisterExt;
+    use super::*;
 
     #[test]
     fn test_json_file_persister_basic() {

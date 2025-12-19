@@ -19,10 +19,10 @@ use crate::init::otlp_exporter::{
 };
 use crate::init::parse::parse_bool_value;
 use crate::init::xray_exporter::XRayExporterArgs;
-#[cfg(feature = "fluent_receiver")]
-use crate::receivers::fluent::config::FluentReceiverConfig;
 #[cfg(feature = "file_receiver")]
 use crate::receivers::file::config::FileReceiverConfig;
+#[cfg(feature = "fluent_receiver")]
+use crate::receivers::fluent::config::FluentReceiverConfig;
 #[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::config::KafkaReceiverConfig;
 use crate::receivers::otlp::OTLPReceiverConfig;

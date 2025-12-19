@@ -2,9 +2,9 @@
 
 use serde_json::Value;
 
+use super::traits::Parser;
 use crate::receivers::file::entry::Entry;
 use crate::receivers::file::error::{Error, Result};
-use super::traits::Parser;
 
 /// A parser that parses JSON strings into structured data.
 #[derive(Debug, Clone, Default)]
@@ -42,10 +42,8 @@ impl Parser for JsonParser {
             // If already an object, extract fields to attributes
             Value::Object(obj) => {
                 // Clone the map to avoid borrow issues
-                let fields: Vec<(String, Value)> = obj
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                let fields: Vec<(String, Value)> =
+                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 for (key, value) in fields {
                     entry.add_attribute(key, value);
                 }
@@ -186,7 +184,10 @@ mod tests {
         assert_eq!(parsed.body_string(), Some(r#"{"msg": "test"}"#));
 
         // Existing attributes should be preserved
-        assert_eq!(parsed.attributes.get("source"), Some(&Value::String("app".to_string())));
+        assert_eq!(
+            parsed.attributes.get("source"),
+            Some(&Value::String("app".to_string()))
+        );
 
         // Parsed field should be added to attributes
         assert_eq!(parsed.attributes["msg"], "test");

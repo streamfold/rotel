@@ -95,7 +95,12 @@ pub struct FileReceiverArgs {
     pub file_receiver_exclude: Vec<String>,
 
     /// Parser type: none, json, regex, nginx_access, nginx_error
-    #[arg(value_enum, long, env = "ROTEL_FILE_RECEIVER_PARSER", default_value = "none")]
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_FILE_RECEIVER_PARSER",
+        default_value = "none"
+    )]
     pub file_receiver_parser: ParserType,
 
     /// Regex pattern with named capture groups (when parser=regex)
@@ -103,35 +108,69 @@ pub struct FileReceiverArgs {
     pub file_receiver_regex_pattern: Option<String>,
 
     /// Where to start reading: beginning or end of file
-    #[arg(value_enum, long, env = "ROTEL_FILE_RECEIVER_START_AT", default_value = "end")]
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_FILE_RECEIVER_START_AT",
+        default_value = "end"
+    )]
     pub file_receiver_start_at: StartAtArg,
 
     /// Watch mode: auto (default), native (inotify/kqueue/FSEvents), poll (for NFS)
-    #[arg(value_enum, long, env = "ROTEL_FILE_RECEIVER_WATCH_MODE", default_value = "auto")]
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_FILE_RECEIVER_WATCH_MODE",
+        default_value = "auto"
+    )]
     pub file_receiver_watch_mode: WatchModeArg,
 
     /// Poll interval in milliseconds for checking file changes (used in poll mode or as fallback)
-    #[arg(long, env = "ROTEL_FILE_RECEIVER_POLL_INTERVAL_MS", default_value = "250")]
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_POLL_INTERVAL_MS",
+        default_value = "250"
+    )]
     pub file_receiver_poll_interval_ms: u64,
 
     /// Path to store file offsets for persistence across restarts
-    #[arg(long, env = "ROTEL_FILE_RECEIVER_OFFSETS_PATH", default_value = "/var/lib/rotel/file_offsets.json")]
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_OFFSETS_PATH",
+        default_value = "/var/lib/rotel/file_offsets.json"
+    )]
     pub file_receiver_offsets_path: PathBuf,
 
     /// Number of bytes to use for file fingerprinting (for tracking files across renames)
-    #[arg(long, env = "ROTEL_FILE_RECEIVER_FINGERPRINT_SIZE", default_value = "1000")]
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_FINGERPRINT_SIZE",
+        default_value = "1000"
+    )]
     pub file_receiver_fingerprint_size: usize,
 
     /// Maximum log line size in bytes (lines exceeding this will be truncated)
-    #[arg(long, env = "ROTEL_FILE_RECEIVER_MAX_LOG_SIZE", default_value = "65536")]
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_MAX_LOG_SIZE",
+        default_value = "65536"
+    )]
     pub file_receiver_max_log_size: usize,
 
     /// Include file name as a log attribute
-    #[arg(long, env = "ROTEL_FILE_RECEIVER_INCLUDE_FILE_NAME", default_value = "true")]
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_INCLUDE_FILE_NAME",
+        default_value = "true"
+    )]
     pub file_receiver_include_file_name: bool,
 
     /// Include full file path as a log attribute
-    #[arg(long, env = "ROTEL_FILE_RECEIVER_INCLUDE_FILE_PATH", default_value = "false")]
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_INCLUDE_FILE_PATH",
+        default_value = "false"
+    )]
     pub file_receiver_include_file_path: bool,
 }
 

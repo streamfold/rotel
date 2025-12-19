@@ -68,7 +68,8 @@ impl Entry {
 
     /// Add a string attribute to the entry
     pub fn add_attribute_string(&mut self, key: impl Into<String>, value: impl Into<String>) {
-        self.attributes.insert(key.into(), Value::String(value.into()));
+        self.attributes
+            .insert(key.into(), Value::String(value.into()));
     }
 
     /// Add a resource key to the entry
@@ -157,7 +158,10 @@ mod tests {
     fn test_entry_add_attribute_value() {
         let mut entry = Entry::new();
         entry.add_attribute("count", Value::Number(42.into()));
-        assert_eq!(entry.attributes.get("count"), Some(&Value::Number(42.into())));
+        assert_eq!(
+            entry.attributes.get("count"),
+            Some(&Value::Number(42.into()))
+        );
     }
 
     #[test]

@@ -77,8 +77,7 @@ impl PollWatcher {
     fn remove_directory(&mut self, path: &Path) -> Result<(), WatcherError> {
         self.watched_dirs.retain(|p| p != path);
         // Remove any file states under this directory
-        self.file_states
-            .retain(|p, _| !p.starts_with(path));
+        self.file_states.retain(|p, _| !p.starts_with(path));
         Ok(())
     }
 
@@ -238,8 +237,8 @@ impl FileWatcher for PollWatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::traits::FileEventKind;
+    use super::*;
     use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;

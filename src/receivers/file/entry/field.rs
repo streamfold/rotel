@@ -286,7 +286,10 @@ impl FieldAccess for Value {
                     }
                 }
                 current.get(&keys[i]).is_none()
-                    || !current.get(&keys[i]).map(|v| v.is_object()).unwrap_or(false)
+                    || !current
+                        .get(&keys[i])
+                        .map(|v| v.is_object())
+                        .unwrap_or(false)
             };
 
             if needs_creation {
@@ -400,11 +403,17 @@ mod tests {
 
         // Get
         let keys = vec!["foo".to_string(), "bar".to_string()];
-        assert_eq!(value.get_field(&keys), Some(&Value::String("baz".to_string())));
+        assert_eq!(
+            value.get_field(&keys),
+            Some(&Value::String("baz".to_string()))
+        );
 
         // Set
         value.set_field(&keys, Value::String("qux".to_string()));
-        assert_eq!(value.get_field(&keys), Some(&Value::String("qux".to_string())));
+        assert_eq!(
+            value.get_field(&keys),
+            Some(&Value::String("qux".to_string()))
+        );
 
         // Delete
         let deleted = value.delete_field(&keys);

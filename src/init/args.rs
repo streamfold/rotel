@@ -4,10 +4,10 @@ use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "file_exporter")]
 use crate::init::file_exporter::FileExporterArgs;
-#[cfg(feature = "fluent_receiver")]
-use crate::init::fluent_receiver::FluentReceiverArgs;
 #[cfg(feature = "file_receiver")]
 use crate::init::file_receiver::FileReceiverArgs;
+#[cfg(feature = "fluent_receiver")]
+use crate::init::fluent_receiver::FluentReceiverArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
 #[cfg(feature = "rdkafka")]

@@ -28,11 +28,11 @@
 //! 2025/12/17 10:15:32 [error] 1234#5678: *9 open() "/var/www/missing.html" failed (2: No such file or directory)
 //! ```
 //!
-use crate::receivers::file::entry::Entry;
-use crate::receivers::file::error::Result;
 use super::json::JsonParser;
 use super::regex::RegexParser;
 use super::traits::Parser;
+use crate::receivers::file::entry::Entry;
+use crate::receivers::file::error::Result;
 use serde_json::Value;
 
 /// Regex pattern for nginx combined access log format.
@@ -306,10 +306,12 @@ mod tests {
         assert_eq!(result["pid"], "1234");
         assert_eq!(result["tid"], "5678");
         assert_eq!(result["cid"], "9");
-        assert!(result["message"]
-            .as_str()
-            .unwrap()
-            .contains("No such file or directory"));
+        assert!(
+            result["message"]
+                .as_str()
+                .unwrap()
+                .contains("No such file or directory")
+        );
     }
 
     #[test]
@@ -400,8 +402,14 @@ mod tests {
         assert_eq!(parsed.body_string(), Some(ACCESS_LOG_SAMPLES[0]));
 
         // Check existing attributes preserved
-        assert_eq!(parsed.attributes.get("source"), Some(&Value::String("nginx".to_string())));
-        assert_eq!(parsed.attributes.get("file_name"), Some(&Value::String("access.log".to_string())));
+        assert_eq!(
+            parsed.attributes.get("source"),
+            Some(&Value::String("nginx".to_string()))
+        );
+        assert_eq!(
+            parsed.attributes.get("file_name"),
+            Some(&Value::String("access.log".to_string()))
+        );
 
         // Check parsed fields in attributes
         assert_eq!(parsed.attributes["remote_addr"], "192.168.1.1");

@@ -10,8 +10,8 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use opentelemetry::metrics::Counter;
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use tokio::select;
 use tokio::sync::mpsc;
@@ -25,10 +25,12 @@ use crate::receivers::file::convert::convert_entries_to_resource_logs;
 use crate::receivers::file::entry::Entry;
 use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{FileFinder, FileReader, Fingerprint, StartAt};
-use crate::receivers::file::parser::{nginx, JsonParser, Parser, RegexParser};
-use crate::receivers::file::persistence::{JsonFileDatabase, JsonFilePersister, Persister, PersisterExt};
+use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
+use crate::receivers::file::persistence::{
+    JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
+};
 use crate::receivers::file::watcher::{
-    create_watcher, FileEvent, FileEventKind, FileWatcher, WatcherConfig,
+    FileEvent, FileEventKind, FileWatcher, WatcherConfig, create_watcher,
 };
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -75,20 +77,19 @@ impl FileReceiver {
             ParserType::None => Ok(None),
             ParserType::Json => Ok(Some(Box::new(JsonParser::lenient()))),
             ParserType::Regex => {
-                let pattern = config.regex_pattern.as_ref()
+                let pattern = config
+                    .regex_pattern
+                    .as_ref()
                     .ok_or_else(|| Error::Config("Regex pattern required".to_string()))?;
-                let parser = RegexParser::new(pattern)
-                    .map_err(|e| Error::Regex(e.to_string()))?;
+                let parser = RegexParser::new(pattern).map_err(|e| Error::Regex(e.to_string()))?;
                 Ok(Some(Box::new(parser)))
             }
             ParserType::NginxAccess => {
-                let parser = nginx::access_parser()
-                    .map_err(|e| Error::Regex(e.to_string()))?;
+                let parser = nginx::access_parser().map_err(|e| Error::Regex(e.to_string()))?;
                 Ok(Some(Box::new(parser)))
             }
             ParserType::NginxError => {
-                let parser = nginx::error_parser()
-                    .map_err(|e| Error::Regex(e.to_string()))?;
+                let parser = nginx::error_parser().map_err(|e| Error::Regex(e.to_string()))?;
                 Ok(Some(Box::new(parser)))
             }
         }
@@ -341,7 +342,10 @@ impl FileHandler {
         let watcher_poll_interval = self.config.poll_interval;
         let mut watcher = std::mem::replace(
             &mut self.watcher,
-            Box::new(crate::receivers::file::watcher::PollWatcher::new(&[], Duration::from_secs(1)).unwrap()),
+            Box::new(
+                crate::receivers::file::watcher::PollWatcher::new(&[], Duration::from_secs(1))
+                    .unwrap(),
+            ),
         );
 
         let watcher_cancel = cancel.clone();
@@ -495,7 +499,10 @@ impl FileHandler {
     }
 
     /// Process a single file
-    async fn process_file(&mut self, path: &PathBuf) -> Result<Option<(Vec<u8>, FileReader, Vec<Entry>)>> {
+    async fn process_file(
+        &mut self,
+        path: &PathBuf,
+    ) -> Result<Option<(Vec<u8>, FileReader, Vec<Entry>)>> {
         // Open the file
         let mut file = match File::open(path) {
             Ok(f) => f,

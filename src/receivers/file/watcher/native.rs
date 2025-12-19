@@ -8,13 +8,11 @@
 //! - Windows: ReadDirectoryChangesW
 
 use std::path::Path;
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
-use notify::{
-    Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
-};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use super::traits::{FileEvent, FileEventKind, FileWatcher, WatcherError};
 
@@ -29,8 +27,7 @@ impl NativeWatcher {
     pub fn new(debounce: Duration) -> Result<Self, WatcherError> {
         let (tx, rx) = channel();
 
-        let config = Config::default()
-            .with_poll_interval(debounce);
+        let config = Config::default().with_poll_interval(debounce);
 
         let watcher = RecommendedWatcher::new(
             move |res| {
@@ -81,7 +78,9 @@ impl FileWatcher for NativeWatcher {
     fn try_recv(&mut self) -> Result<Vec<FileEvent>, WatcherError> {
         let mut events = Vec::new();
 
-        let receiver = self.receiver.lock()
+        let receiver = self
+            .receiver
+            .lock()
             .map_err(|e| WatcherError::Channel(format!("mutex poisoned: {}", e)))?;
 
         loop {
@@ -107,7 +106,9 @@ impl FileWatcher for NativeWatcher {
     fn recv_timeout(&mut self, timeout: Duration) -> Result<Vec<FileEvent>, WatcherError> {
         let mut events = Vec::new();
 
-        let receiver = self.receiver.lock()
+        let receiver = self
+            .receiver
+            .lock()
             .map_err(|e| WatcherError::Channel(format!("mutex poisoned: {}", e)))?;
 
         // First wait for at least one event with timeout
@@ -242,9 +243,9 @@ mod tests {
         assert!(!events.is_empty(), "Should detect file modification");
 
         // Check for modify or create event (some systems report create on open-for-write)
-        let has_change = events.iter().any(|e| {
-            e.kind == FileEventKind::Modify || e.kind == FileEventKind::Create
-        });
+        let has_change = events
+            .iter()
+            .any(|e| e.kind == FileEventKind::Modify || e.kind == FileEventKind::Create);
         assert!(has_change, "Should have a modify or create event");
     }
 

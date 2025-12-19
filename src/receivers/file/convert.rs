@@ -2,7 +2,7 @@
 
 //! Conversion from Entry to OTLP ResourceLogs.
 
-use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope, KeyValue};
+use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use serde_json::Value;
@@ -40,10 +40,7 @@ pub fn convert_entries_to_resource_logs(entries: Vec<Entry>) -> ResourceLogs {
 
 /// Convert a single Entry to an OTLP LogRecord
 fn convert_entry_to_log_record(entry: Entry) -> LogRecord {
-    let time_unix_nano = entry
-        .timestamp
-        .timestamp_nanos_opt()
-        .unwrap_or(0) as u64;
+    let time_unix_nano = entry.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64;
 
     // Convert severity
     let severity_number = severity_to_otel_number(entry.severity);
@@ -145,9 +142,10 @@ fn severity_to_text(severity: Severity) -> String {
         }
         Severity::Critical => "CRITICAL".to_string(),
         Severity::Alert => "ALERT".to_string(),
-        Severity::Emergency | Severity::Emergency2 | Severity::Emergency3 | Severity::Emergency4 => {
-            "EMERGENCY".to_string()
-        }
+        Severity::Emergency
+        | Severity::Emergency2
+        | Severity::Emergency3
+        | Severity::Emergency4 => "EMERGENCY".to_string(),
         Severity::Catastrophe => "FATAL".to_string(),
     }
 }
@@ -168,10 +166,7 @@ fn convert_value_to_any_value(value: Value) -> AnyValue {
         }
         Value::String(s) => Some(any_value::Value::StringValue(s)),
         Value::Array(arr) => {
-            let values: Vec<AnyValue> = arr
-                .into_iter()
-                .map(convert_value_to_any_value)
-                .collect();
+            let values: Vec<AnyValue> = arr.into_iter().map(convert_value_to_any_value).collect();
             Some(any_value::Value::ArrayValue(
                 opentelemetry_proto::tonic::common::v1::ArrayValue { values },
             ))

@@ -3,9 +3,9 @@
 use regex::Regex;
 use serde_json::{Map, Value};
 
+use super::traits::Parser;
 use crate::receivers::file::entry::Entry;
 use crate::receivers::file::error::{Error, Result};
-use super::traits::Parser;
 
 /// A parser that extracts fields from a string using a regular expression
 /// with named capture groups.
@@ -61,7 +61,7 @@ impl Parser for RegexParser {
                 return Err(Error::Config(format!(
                     "expected string body, got {:?}",
                     other
-                )))
+                )));
             }
         };
 
@@ -175,7 +175,10 @@ mod tests {
         assert_eq!(parsed.body_string(), Some("hello world"));
 
         // Existing attributes should be preserved
-        assert_eq!(parsed.attributes.get("env"), Some(&Value::String("test".to_string())));
+        assert_eq!(
+            parsed.attributes.get("env"),
+            Some(&Value::String("test".to_string()))
+        );
         assert_eq!(parsed.resource.get("host"), Some(&"localhost".to_string()));
 
         // Parsed field should be added to attributes

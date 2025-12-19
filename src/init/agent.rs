@@ -19,10 +19,10 @@ use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
-#[cfg(feature = "fluent_receiver")]
-use crate::receivers::fluent::receiver::FluentReceiver;
 #[cfg(feature = "file_receiver")]
 use crate::receivers::file::receiver::FileReceiver;
+#[cfg(feature = "fluent_receiver")]
+use crate::receivers::fluent::receiver::FluentReceiver;
 #[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 #[cfg(feature = "rdkafka")]
@@ -944,7 +944,8 @@ impl Agent {
                 }
                 #[cfg(feature = "file_receiver")]
                 ReceiverConfig::File(config) => {
-                    let file_receiver = FileReceiver::new(config.clone(), logs_output.clone()).await?;
+                    let file_receiver =
+                        FileReceiver::new(config.clone(), logs_output.clone()).await?;
 
                     let mut file_task_set = JoinSet::new();
                     file_receiver

@@ -2,4 +2,4 @@
 
 pub mod file;
 
-pub use file::{FileInputConfig, FileFinder, FileReader, FileReaderState, Fingerprint, StartAt};
+pub use file::{FileFinder, FileInputConfig, FileReader, FileReaderState, Fingerprint, StartAt};
