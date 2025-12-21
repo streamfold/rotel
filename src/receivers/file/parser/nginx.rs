@@ -30,10 +30,8 @@
 //!
 use super::json::JsonParser;
 use super::regex::RegexParser;
-use super::traits::Parser;
-use crate::receivers::file::entry::Entry;
+use super::traits::{ParsedLog, Parser};
 use crate::receivers::file::error::Result;
-use serde_json::Value;
 
 /// Regex pattern for nginx combined access log format.
 ///
@@ -102,19 +100,8 @@ impl NginxAccessParser {
 }
 
 impl Parser for NginxAccessParser {
-    fn parse(&self, entry: Entry) -> Result<Entry> {
-        self.regex.parse(entry)
-    }
-
-    fn parse_str(&self, value: &str) -> Result<Value> {
-        let entry = Entry::with_body(value);
-        let parsed = self.parse(entry)?;
-        // Return attributes as the parsed value (for backward compat with tests)
-        let mut map = serde_json::Map::new();
-        for (k, v) in &parsed.attributes {
-            map.insert(k.clone(), v.clone());
-        }
-        Ok(Value::Object(map))
+    fn parse(&self, line: &str) -> Result<ParsedLog> {
+        self.regex.parse(line)
     }
 }
 
@@ -132,25 +119,14 @@ impl NginxErrorParser {
 }
 
 impl Parser for NginxErrorParser {
-    fn parse(&self, entry: Entry) -> Result<Entry> {
-        self.regex.parse(entry)
-    }
-
-    fn parse_str(&self, value: &str) -> Result<Value> {
-        let entry = Entry::with_body(value);
-        let parsed = self.parse(entry)?;
-        // Return attributes as the parsed value (for backward compat with tests)
-        let mut map = serde_json::Map::new();
-        for (k, v) in &parsed.attributes {
-            map.insert(k.clone(), v.clone());
-        }
-        Ok(Value::Object(map))
+    fn parse(&self, line: &str) -> Result<ParsedLog> {
+        self.regex.parse(line)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use opentelemetry_proto::tonic::common::v1::any_value;
 
     // Real nginx access log samples
     const ACCESS_LOG_SAMPLES: &[&str] = &[
@@ -170,43 +146,92 @@ mod tests {
         r#"2025/12/17 10:15:36 [crit] 1234#5678: *12 SSL_do_handshake() failed (SSL: error:14094412:SSL routines:ssl3_read_bytes:sslv3 alert bad certificate)"#,
     ];
 
+    fn get_string_value(log: &ParsedLog, key: &str) -> Option<String> {
+        log.attributes
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| match &kv.value {
+                Some(av) => match &av.value {
+                    Some(any_value::Value::StringValue(s)) => Some(s),
+                    _ => None,
+                },
+                None => None,
+            })
+    }
+
     #[test]
     fn test_access_parser_basic() {
         let parser = access_parser().unwrap();
 
-        let result = parser.parse_str(ACCESS_LOG_SAMPLES[0]).unwrap();
+        let result = parser.parse(ACCESS_LOG_SAMPLES[0]).unwrap();
 
-        assert_eq!(result["remote_addr"], "192.168.1.1");
-        assert_eq!(result["remote_user"], "-");
-        assert_eq!(result["time_local"], "17/Dec/2025:10:15:32 +0000");
-        assert_eq!(result["request"], "GET /api/users HTTP/1.1");
-        assert_eq!(result["status"], "200");
-        assert_eq!(result["body_bytes_sent"], "1234");
-        assert_eq!(result["http_referer"], "-");
-        assert_eq!(result["http_user_agent"], "curl/7.68.0");
+        assert_eq!(
+            get_string_value(&result, "remote_addr"),
+            Some("192.168.1.1".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "remote_user"),
+            Some("-".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "time_local"),
+            Some("17/Dec/2025:10:15:32 +0000".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "request"),
+            Some("GET /api/users HTTP/1.1".to_string())
+        );
+        assert_eq!(get_string_value(&result, "status"), Some("200".to_string()));
+        assert_eq!(
+            get_string_value(&result, "body_bytes_sent"),
+            Some("1234".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "http_referer"),
+            Some("-".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "http_user_agent"),
+            Some("curl/7.68.0".to_string())
+        );
     }
 
     #[test]
     fn test_access_parser_with_user() {
         let parser = access_parser().unwrap();
 
-        let result = parser.parse_str(ACCESS_LOG_SAMPLES[1]).unwrap();
+        let result = parser.parse(ACCESS_LOG_SAMPLES[1]).unwrap();
 
-        assert_eq!(result["remote_addr"], "10.0.0.50");
-        assert_eq!(result["remote_user"], "alice");
-        assert_eq!(result["request"], "POST /api/login HTTP/1.1");
-        assert_eq!(result["status"], "302");
-        assert_eq!(result["http_referer"], "https://example.com/login");
+        assert_eq!(
+            get_string_value(&result, "remote_addr"),
+            Some("10.0.0.50".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "remote_user"),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "request"),
+            Some("POST /api/login HTTP/1.1".to_string())
+        );
+        assert_eq!(get_string_value(&result, "status"), Some("302".to_string()));
+        assert_eq!(
+            get_string_value(&result, "http_referer"),
+            Some("https://example.com/login".to_string())
+        );
     }
 
     #[test]
     fn test_access_parser_http2() {
         let parser = access_parser().unwrap();
 
-        let result = parser.parse_str(ACCESS_LOG_SAMPLES[2]).unwrap();
+        let result = parser.parse(ACCESS_LOG_SAMPLES[2]).unwrap();
 
-        assert_eq!(result["request"], "GET /static/style.css HTTP/2.0");
-        assert_eq!(result["status"], "304");
+        assert_eq!(
+            get_string_value(&result, "request"),
+            Some("GET /static/style.css HTTP/2.0".to_string())
+        );
+        assert_eq!(get_string_value(&result, "status"), Some("304".to_string()));
     }
 
     #[test]
@@ -214,14 +239,23 @@ mod tests {
         let parser = access_parser().unwrap();
 
         // DELETE
-        let result = parser.parse_str(ACCESS_LOG_SAMPLES[3]).unwrap();
-        assert_eq!(result["request"], "DELETE /api/users/123 HTTP/1.1");
-        assert_eq!(result["status"], "204");
+        let result = parser.parse(ACCESS_LOG_SAMPLES[3]).unwrap();
+        assert_eq!(
+            get_string_value(&result, "request"),
+            Some("DELETE /api/users/123 HTTP/1.1".to_string())
+        );
+        assert_eq!(get_string_value(&result, "status"), Some("204".to_string()));
 
         // PUT
-        let result = parser.parse_str(ACCESS_LOG_SAMPLES[4]).unwrap();
-        assert_eq!(result["request"], "PUT /api/config HTTP/1.1");
-        assert_eq!(result["remote_user"], "admin");
+        let result = parser.parse(ACCESS_LOG_SAMPLES[4]).unwrap();
+        assert_eq!(
+            get_string_value(&result, "request"),
+            Some("PUT /api/config HTTP/1.1".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "remote_user"),
+            Some("admin".to_string())
+        );
     }
 
     #[test]
@@ -229,7 +263,7 @@ mod tests {
         let parser = access_parser().unwrap();
 
         for (i, sample) in ACCESS_LOG_SAMPLES.iter().enumerate() {
-            let result = parser.parse_str(sample);
+            let result = parser.parse(sample);
             assert!(
                 result.is_ok(),
                 "Failed to parse access log sample {}: {:?}",
@@ -239,12 +273,12 @@ mod tests {
 
             let parsed = result.unwrap();
             assert!(
-                parsed.get("remote_addr").is_some(),
+                get_string_value(&parsed, "remote_addr").is_some(),
                 "Missing remote_addr in sample {}",
                 i
             );
             assert!(
-                parsed.get("status").is_some(),
+                get_string_value(&parsed, "status").is_some(),
                 "Missing status in sample {}",
                 i
             );
@@ -255,16 +289,21 @@ mod tests {
     fn test_error_parser_basic() {
         let parser = error_parser().unwrap();
 
-        let result = parser.parse_str(ERROR_LOG_SAMPLES[0]).unwrap();
+        let result = parser.parse(ERROR_LOG_SAMPLES[0]).unwrap();
 
-        assert_eq!(result["time"], "2025/12/17 10:15:32");
-        assert_eq!(result["level"], "error");
-        assert_eq!(result["pid"], "1234");
-        assert_eq!(result["tid"], "5678");
-        assert_eq!(result["cid"], "9");
+        assert_eq!(
+            get_string_value(&result, "time"),
+            Some("2025/12/17 10:15:32".to_string())
+        );
+        assert_eq!(
+            get_string_value(&result, "level"),
+            Some("error".to_string())
+        );
+        assert_eq!(get_string_value(&result, "pid"), Some("1234".to_string()));
+        assert_eq!(get_string_value(&result, "tid"), Some("5678".to_string()));
+        assert_eq!(get_string_value(&result, "cid"), Some("9".to_string()));
         assert!(
-            result["message"]
-                .as_str()
+            get_string_value(&result, "message")
                 .unwrap()
                 .contains("No such file or directory")
         );
@@ -274,22 +313,25 @@ mod tests {
     fn test_error_parser_warn() {
         let parser = error_parser().unwrap();
 
-        let result = parser.parse_str(ERROR_LOG_SAMPLES[1]).unwrap();
+        let result = parser.parse(ERROR_LOG_SAMPLES[1]).unwrap();
 
-        assert_eq!(result["level"], "warn");
-        assert_eq!(result["cid"], "10");
+        assert_eq!(get_string_value(&result, "level"), Some("warn".to_string()));
+        assert_eq!(get_string_value(&result, "cid"), Some("10".to_string()));
     }
 
     #[test]
     fn test_error_parser_no_cid() {
         let parser = error_parser().unwrap();
 
-        let result = parser.parse_str(ERROR_LOG_SAMPLES[2]).unwrap();
+        let result = parser.parse(ERROR_LOG_SAMPLES[2]).unwrap();
 
-        assert_eq!(result["level"], "notice");
-        assert_eq!(result["tid"], "0");
+        assert_eq!(
+            get_string_value(&result, "level"),
+            Some("notice".to_string())
+        );
+        assert_eq!(get_string_value(&result, "tid"), Some("0".to_string()));
         // cid should not be present (optional group)
-        assert!(result.get("cid").is_none() || result["cid"].is_null());
+        assert!(get_string_value(&result, "cid").is_none());
     }
 
     #[test]
@@ -299,8 +341,13 @@ mod tests {
         let levels = ["error", "warn", "notice", "error", "crit"];
 
         for (i, sample) in ERROR_LOG_SAMPLES.iter().enumerate() {
-            let result = parser.parse_str(sample).unwrap();
-            assert_eq!(result["level"], levels[i], "Wrong level for sample {}", i);
+            let result = parser.parse(sample).unwrap();
+            assert_eq!(
+                get_string_value(&result, "level"),
+                Some(levels[i].to_string()),
+                "Wrong level for sample {}",
+                i
+            );
         }
     }
 
@@ -309,7 +356,7 @@ mod tests {
         let parser = error_parser().unwrap();
 
         for (i, sample) in ERROR_LOG_SAMPLES.iter().enumerate() {
-            let result = parser.parse_str(sample);
+            let result = parser.parse(sample);
             assert!(
                 result.is_ok(),
                 "Failed to parse error log sample {}: {:?}",
@@ -319,12 +366,12 @@ mod tests {
 
             let parsed = result.unwrap();
             assert!(
-                parsed.get("level").is_some(),
+                get_string_value(&parsed, "level").is_some(),
                 "Missing level in sample {}",
                 i
             );
             assert!(
-                parsed.get("message").is_some(),
+                get_string_value(&parsed, "message").is_some(),
                 "Missing message in sample {}",
                 i
             );
@@ -337,38 +384,19 @@ mod tests {
 
         let json_log = r#"{"time_local":"17/Dec/2025:10:15:32 +0000","remote_addr":"192.168.1.1","request":"GET /api HTTP/1.1","status":200,"body_bytes_sent":1234}"#;
 
-        let result = parser.parse_str(json_log).unwrap();
+        let result = parser.parse(json_log).unwrap();
 
-        assert_eq!(result["remote_addr"], "192.168.1.1");
-        assert_eq!(result["status"], 200);
-        assert_eq!(result["body_bytes_sent"], 1234);
-    }
-
-    #[test]
-    fn test_access_parser_with_entry() {
-        let parser = access_parser().unwrap();
-
-        let mut entry = Entry::with_body(ACCESS_LOG_SAMPLES[0]);
-        entry.add_attribute_string("source", "nginx");
-        entry.add_attribute_string("file_name", "access.log");
-
-        let parsed = parser.parse(entry).unwrap();
-
-        // Body should be preserved
-        assert_eq!(parsed.body_string(), Some(ACCESS_LOG_SAMPLES[0]));
-
-        // Check existing attributes preserved
         assert_eq!(
-            parsed.attributes.get("source"),
-            Some(&Value::String("nginx".to_string()))
+            get_string_value(&result, "remote_addr"),
+            Some("192.168.1.1".to_string())
         );
-        assert_eq!(
-            parsed.attributes.get("file_name"),
-            Some(&Value::String("access.log".to_string()))
+        // status and body_bytes_sent are numbers, not strings
+        assert!(result.attributes.iter().any(|kv| kv.key == "status"));
+        assert!(
+            result
+                .attributes
+                .iter()
+                .any(|kv| kv.key == "body_bytes_sent")
         );
-
-        // Check parsed fields in attributes
-        assert_eq!(parsed.attributes["remote_addr"], "192.168.1.1");
-        assert_eq!(parsed.attributes["request"], "GET /api/users HTTP/1.1");
     }
 }

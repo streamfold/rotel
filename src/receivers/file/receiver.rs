@@ -17,9 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
-use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+use opentelemetry::KeyValue;
+use opentelemetry_proto::tonic::common::v1::KeyValue as OtlpKeyValue;
+use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope};
+use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
+use opentelemetry_proto::tonic::resource::v1::Resource;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -28,15 +31,13 @@ use tower::BoxError;
 use tracing::{debug, error, info, warn};
 
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
-use crate::receivers::file::convert::convert_entries_to_resource_logs;
-use crate::receivers::file::entry::Entry;
 use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{FileFinder, FileReader, Fingerprint, StartAt};
-use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
+use crate::receivers::file::parser::{nginx, JsonParser, Parser, RegexParser};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
 };
-use crate::receivers::file::watcher::{FileEventKind, FileWatcher, WatcherConfig, create_watcher};
+use crate::receivers::file::watcher::{create_watcher, FileEventKind, FileWatcher, WatcherConfig};
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
@@ -146,8 +147,8 @@ impl Default for CheckpointConfig {
 }
 
 /// Message sent from the I/O thread to the async task
-struct EntriesBatch {
-    entries: Vec<Entry>,
+struct LogRecordBatch {
+    log_records: Vec<LogRecord>,
     count: u64,
 }
 
@@ -310,7 +311,7 @@ impl FileIOWorker {
     }
 
     /// Poll for file changes and read new content
-    fn poll(&mut self) -> Result<Vec<Entry>> {
+    fn poll(&mut self) -> Result<Vec<LogRecord>> {
         // Find files matching our patterns
         let paths = self.finder.find_files()?;
 
@@ -332,14 +333,14 @@ impl FileIOWorker {
             reader.increment_generation();
         }
 
-        // Process each file and collect entries
-        let mut all_entries = Vec::new();
+        // Process each file and collect log records
+        let mut all_records = Vec::new();
         let mut new_readers = HashMap::new();
 
         for path in paths {
             match self.process_file(&path) {
-                Ok(Some((key, reader, entries))) => {
-                    all_entries.extend(entries);
+                Ok(Some((key, reader, records))) => {
+                    all_records.extend(records);
                     new_readers.insert(key, reader);
                 }
                 Ok(None) => {}
@@ -355,8 +356,8 @@ impl FileIOWorker {
         self.readers.extend(new_readers);
 
         // Track records for checkpoint batching
-        if !all_entries.is_empty() {
-            self.records_since_checkpoint += all_entries.len() as u64;
+        if !all_records.is_empty() {
+            self.records_since_checkpoint += all_records.len() as u64;
         }
 
         // Conditionally checkpoint based on records processed and time elapsed
@@ -364,14 +365,14 @@ impl FileIOWorker {
             error!("Failed to save state: {}", e);
         }
 
-        Ok(all_entries)
+        Ok(all_records)
     }
 
     /// Process a single file
     fn process_file(
         &mut self,
         path: &PathBuf,
-    ) -> Result<Option<(Vec<u8>, FileReader, Vec<Entry>)>> {
+    ) -> Result<Option<(Vec<u8>, FileReader, Vec<LogRecord>)>> {
         // Open the file
         let mut file = match File::open(path) {
             Ok(f) => f,
@@ -417,44 +418,85 @@ impl FileIOWorker {
         // Read new lines
         let lines = reader.read_lines()?;
 
-        // Convert lines to entries
-        let mut entries = Vec::new();
-        for line in lines {
-            let mut entry = Entry::with_body(line);
+        // Get current timestamp for all log records in this batch
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
 
-            // Add file attributes
+        // Convert lines directly to LogRecords
+        let mut log_records = Vec::with_capacity(lines.len());
+        for line in lines {
+            // Build attributes - start with file metadata
+            let mut attributes = Vec::new();
+
             if self.config.include_file_name {
                 if let Some(name) = reader.file_name() {
-                    entry.add_attribute_string("log.file.name", name);
+                    attributes.push(OtlpKeyValue {
+                        key: "log.file.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue(name.to_string())),
+                        }),
+                    });
                 }
             }
 
             if self.config.include_file_path {
-                entry.add_attribute_string("log.file.path", path.display().to_string());
+                attributes.push(OtlpKeyValue {
+                    key: "log.file.path".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(path.display().to_string())),
+                    }),
+                });
             }
 
-            // Parse if parser is configured
-            let entry = if let Some(ref parser) = self.parser {
-                match parser.parse(entry) {
-                    Ok(parsed) => parsed,
-                    Err(e) => {
-                        debug!("Parse error: {}", e);
-                        continue; // Skip unparseable entries
+            // Parse line if parser is configured
+            let (parsed_attributes, severity_number, severity_text) =
+                if let Some(ref parser) = self.parser {
+                    match parser.parse(&line) {
+                        Ok(parsed) => (
+                            parsed.attributes,
+                            parsed.severity_number.unwrap_or(0),
+                            parsed.severity_text.unwrap_or_default(),
+                        ),
+                        Err(e) => {
+                            debug!("Parse error: {}", e);
+                            continue; // Skip unparseable entries
+                        }
                     }
-                }
-            } else {
-                entry
+                } else {
+                    (Vec::new(), 0, String::new())
+                };
+
+            // Add parsed attributes
+            attributes.extend(parsed_attributes);
+
+            // Build LogRecord directly
+            let log_record = LogRecord {
+                time_unix_nano: now,
+                observed_time_unix_nano: now,
+                severity_number,
+                severity_text,
+                body: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(line)),
+                }),
+                attributes,
+                dropped_attributes_count: 0,
+                flags: 0,
+                trace_id: vec![],
+                span_id: vec![],
+                event_name: String::new(),
             };
 
-            entries.push(entry);
+            log_records.push(log_record);
         }
 
         let key = fp.bytes().to_vec();
-        Ok(Some((key, reader, entries)))
+        Ok(Some((key, reader, log_records)))
     }
 
     /// Run the I/O worker main loop
-    fn run(mut self, entries_tx: mpsc::Sender<EntriesBatch>, cancel: CancellationToken) {
+    fn run(mut self, records_tx: mpsc::Sender<LogRecordBatch>, cancel: CancellationToken) {
         // Load persisted state
         if let Err(e) = self.load_state() {
             warn!("Failed to load persisted state: {}", e);
@@ -467,12 +509,12 @@ impl FileIOWorker {
 
         // Do initial poll to read existing content
         match self.poll() {
-            Ok(entries) if !entries.is_empty() => {
-                let batch = EntriesBatch {
-                    count: entries.len() as u64,
-                    entries,
+            Ok(records) if !records.is_empty() => {
+                let batch = LogRecordBatch {
+                    count: records.len() as u64,
+                    log_records: records,
                 };
-                if entries_tx.blocking_send(batch).is_err() {
+                if records_tx.blocking_send(batch).is_err() {
                     return;
                 }
             }
@@ -484,7 +526,7 @@ impl FileIOWorker {
 
         let poll_interval = self.config.poll_interval;
 
-        // Main loop: wait for watcher events, poll files, send entries
+        // Main loop: wait for watcher events, poll files, send log records
         loop {
             if cancel.is_cancelled() {
                 break;
@@ -512,12 +554,12 @@ impl FileIOWorker {
 
                     // Poll for changes
                     match self.poll() {
-                        Ok(entries) if !entries.is_empty() => {
-                            let batch = EntriesBatch {
-                                count: entries.len() as u64,
-                                entries,
+                        Ok(records) if !records.is_empty() => {
+                            let batch = LogRecordBatch {
+                                count: records.len() as u64,
+                                log_records: records,
                             };
-                            if entries_tx.blocking_send(batch).is_err() {
+                            if records_tx.blocking_send(batch).is_err() {
                                 break;
                             }
                         }
@@ -583,7 +625,7 @@ impl FileHandler {
 
     /// Run the main event loop.
     /// Spawns a dedicated OS thread for all blocking file I/O and receives
-    /// parsed entries via channel for sending to exporters.
+    /// log records via channel for sending to exporters.
     async fn run(&mut self, cancel: CancellationToken) {
         // Build parser (needs to be Arc for Send across thread)
         let parser: Option<Arc<dyn Parser + Send + Sync>> =
@@ -644,27 +686,48 @@ impl FileHandler {
             last_checkpoint: Instant::now(),
         };
 
-        // Create channel for entries from I/O thread to async task
-        // Keep this small (10) to limit memory - each batch has up to 1000 entries
-        let (entries_tx, mut entries_rx) = mpsc::channel::<EntriesBatch>(10);
+        // Create channel for log records from I/O thread to async task
+        // Keep this small (10) to limit memory - each batch has up to 1000 records
+        let (records_tx, mut records_rx) = mpsc::channel::<LogRecordBatch>(10);
 
         // Spawn the I/O worker on a dedicated OS thread
         let io_cancel = cancel.clone();
         let io_handle = std::thread::spawn(move || {
-            io_worker.run(entries_tx, io_cancel);
+            io_worker.run(records_tx, io_cancel);
         });
 
-        // Main event loop - receive entries and send to exporters
+        // Main event loop - receive log records and send to exporters
         loop {
             select! {
                 _ = cancel.cancelled() => {
                     debug!("File receiver cancelled, stopping");
                     break;
                 }
-                Some(batch) = entries_rx.recv() => {
-                    if !batch.entries.is_empty() {
+                Some(batch) = records_rx.recv() => {
+                    if !batch.log_records.is_empty() {
                         if let Some(ref logs_output) = self.logs_output {
-                            let resource_logs = convert_entries_to_resource_logs(batch.entries);
+                            // Build ResourceLogs directly from LogRecords
+                            let scope_logs = ScopeLogs {
+                                scope: Some(InstrumentationScope {
+                                    name: "rotel.file".to_string(),
+                                    version: String::new(),
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                }),
+                                log_records: batch.log_records,
+                                schema_url: String::new(),
+                            };
+
+                            let resource_logs = ResourceLogs {
+                                resource: Some(Resource {
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                    entity_refs: vec![],
+                                }),
+                                scope_logs: vec![scope_logs],
+                                schema_url: String::new(),
+                            };
+
                             let payload_msg = payload::Message::new(None, vec![resource_logs]);
 
                             match logs_output.send(payload_msg).await {
@@ -683,7 +746,7 @@ impl FileHandler {
         }
 
         // Wait for I/O thread to finish
-        drop(entries_rx);
+        drop(records_rx);
         let _ = io_handle.join();
 
         info!("File receiver stopped");

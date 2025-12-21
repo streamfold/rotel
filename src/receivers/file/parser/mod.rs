@@ -1,6 +1,6 @@
 //! Log parsing utilities.
 //!
-//! This module provides parsers for transforming raw log strings into structured data.
+//! This module provides parsers for transforming raw log strings into OTLP attributes.
 //!
 //! # Available Parsers
 //!
@@ -15,4 +15,4 @@ mod traits;
 
 pub use json::JsonParser;
 pub use regex::RegexParser;
-pub use traits::{Parser, ParserExt};
+pub use traits::{ParsedLog, Parser, bool_value, double_value, int_value, string_value};

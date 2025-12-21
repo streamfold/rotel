@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, KeyValueList, any_value};
 use serde_json::Value;
 
-use super::traits::Parser;
-use crate::receivers::file::entry::Entry;
+use super::traits::{ParsedLog, Parser};
 use crate::receivers::file::error::{Error, Result};
 
 /// A parser that parses JSON strings into structured data.
 #[derive(Debug, Clone, Default)]
 pub struct JsonParser {
-    /// If true, parsing failures return the original entry unchanged.
+    /// If true, parsing failures return an empty ParsedLog.
     /// If false, parsing failures return an error.
     lenient: bool,
 }
@@ -20,7 +20,7 @@ impl JsonParser {
         Self::default()
     }
 
-    /// Create a lenient JsonParser that returns the original entry on parse failure
+    /// Create a lenient JsonParser that returns an empty ParsedLog on parse failure
     /// instead of returning an error.
     pub fn lenient() -> Self {
         Self { lenient: true }
@@ -34,83 +34,161 @@ impl JsonParser {
 }
 
 impl Parser for JsonParser {
-    fn parse(&self, mut entry: Entry) -> Result<Entry> {
-        // Handle different body types
-        let input = match &entry.body {
-            Value::String(s) => s.clone(),
-            Value::Null => return Ok(entry), // Nothing to parse
-            // If already an object, extract fields to attributes
-            Value::Object(obj) => {
-                // Clone the map to avoid borrow issues
-                let fields: Vec<(String, Value)> =
-                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                for (key, value) in fields {
-                    entry.add_attribute(key, value);
-                }
-                return Ok(entry);
-            }
-            Value::Array(_) => return Ok(entry), // Arrays stay as body
-            other => {
+    fn parse(&self, line: &str) -> Result<ParsedLog> {
+        let parsed: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(e) => {
                 if self.lenient {
-                    return Ok(entry);
+                    return Ok(ParsedLog::new());
                 }
-                return Err(Error::Config(format!(
-                    "expected string body, got {:?}",
-                    other
-                )));
+                return Err(Error::Config(format!("invalid JSON: {}", e)));
             }
         };
 
-        match self.parse_str(&input) {
-            Ok(parsed) => {
-                // Add parsed fields to attributes (body is preserved)
-                if let Value::Object(map) = parsed {
-                    for (key, value) in map {
-                        entry.add_attribute(key, value);
-                    }
+        // Convert JSON object to ParsedLog
+        match parsed {
+            Value::Object(map) => {
+                let mut result = ParsedLog::with_capacity(map.len());
+                for (key, value) in map {
+                    let any_value = json_to_any_value(value);
+                    result.add_any(key, any_value);
                 }
-                Ok(entry)
+                Ok(result)
             }
-            Err(e) => {
+            _ => {
                 if self.lenient {
-                    Ok(entry)
+                    Ok(ParsedLog::new())
                 } else {
-                    Err(e)
+                    Err(Error::Config(
+                        "JSON must be an object at the top level".to_string(),
+                    ))
                 }
             }
         }
     }
+}
 
-    fn parse_str(&self, value: &str) -> Result<Value> {
-        serde_json::from_str(value).map_err(|e| Error::Config(format!("invalid JSON: {}", e)))
-    }
+/// Convert a serde_json::Value to an OTLP AnyValue
+fn json_to_any_value(value: Value) -> AnyValue {
+    let inner = match value {
+        Value::Null => None,
+        Value::Bool(b) => Some(any_value::Value::BoolValue(b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(any_value::Value::IntValue(i))
+            } else if let Some(f) = n.as_f64() {
+                Some(any_value::Value::DoubleValue(f))
+            } else {
+                Some(any_value::Value::StringValue(n.to_string()))
+            }
+        }
+        Value::String(s) => Some(any_value::Value::StringValue(s)),
+        Value::Array(arr) => {
+            let values: Vec<AnyValue> = arr.into_iter().map(json_to_any_value).collect();
+            Some(any_value::Value::ArrayValue(ArrayValue { values }))
+        }
+        Value::Object(map) => {
+            let values: Vec<KeyValue> = map
+                .into_iter()
+                .map(|(k, v)| KeyValue {
+                    key: k,
+                    value: Some(json_to_any_value(v)),
+                })
+                .collect();
+            Some(any_value::Value::KvlistValue(KeyValueList { values }))
+        }
+    };
+
+    AnyValue { value: inner }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn get_string_value<'a>(log: &'a ParsedLog, key: &str) -> Option<&'a str> {
+        log.attributes
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| match &kv.value {
+                Some(av) => match &av.value {
+                    Some(any_value::Value::StringValue(s)) => Some(s.as_str()),
+                    _ => None,
+                },
+                None => None,
+            })
+    }
+
+    fn get_int_value(log: &ParsedLog, key: &str) -> Option<i64> {
+        log.attributes
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| match &kv.value {
+                Some(av) => match &av.value {
+                    Some(any_value::Value::IntValue(i)) => Some(*i),
+                    _ => None,
+                },
+                None => None,
+            })
+    }
+
+    fn get_double_value(log: &ParsedLog, key: &str) -> Option<f64> {
+        log.attributes
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| match &kv.value {
+                Some(av) => match &av.value {
+                    Some(any_value::Value::DoubleValue(f)) => Some(*f),
+                    _ => None,
+                },
+                None => None,
+            })
+    }
+
+    fn get_bool_value(log: &ParsedLog, key: &str) -> Option<bool> {
+        log.attributes
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| match &kv.value {
+                Some(av) => match &av.value {
+                    Some(any_value::Value::BoolValue(b)) => Some(*b),
+                    _ => None,
+                },
+                None => None,
+            })
+    }
+
     #[test]
     fn test_json_parser_object() {
         let parser = JsonParser::new();
 
-        let result = parser
-            .parse_str(r#"{"name": "test", "count": 42}"#)
-            .unwrap();
+        let result = parser.parse(r#"{"name": "test", "count": 42}"#).unwrap();
 
-        assert_eq!(result["name"], "test");
-        assert_eq!(result["count"], 42);
+        assert_eq!(get_string_value(&result, "name"), Some("test"));
+        assert_eq!(get_int_value(&result, "count"), Some(42));
     }
 
     #[test]
-    fn test_json_parser_array() {
+    fn test_json_parser_types() {
         let parser = JsonParser::new();
 
-        let result = parser.parse_str(r#"[1, 2, 3]"#).unwrap();
+        let result = parser
+            .parse(r#"{"str": "hello", "int": 42, "float": 3.14, "bool": true}"#)
+            .unwrap();
 
-        assert_eq!(result[0], 1);
-        assert_eq!(result[1], 2);
-        assert_eq!(result[2], 3);
+        assert_eq!(get_string_value(&result, "str"), Some("hello"));
+        assert_eq!(get_int_value(&result, "int"), Some(42));
+        assert_eq!(get_double_value(&result, "float"), Some(3.14));
+        assert_eq!(get_bool_value(&result, "bool"), Some(true));
+    }
+
+    #[test]
+    fn test_json_parser_array_not_object() {
+        let parser = JsonParser::new();
+
+        // Arrays at top level should error (non-lenient)
+        let result = parser.parse(r#"[1, 2, 3]"#);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -118,18 +196,27 @@ mod tests {
         let parser = JsonParser::new();
 
         let result = parser
-            .parse_str(r#"{"user": {"name": "alice", "age": 30}}"#)
+            .parse(r#"{"user": {"name": "alice", "age": 30}}"#)
             .unwrap();
 
-        assert_eq!(result["user"]["name"], "alice");
-        assert_eq!(result["user"]["age"], 30);
+        // Nested object should be a KvlistValue
+        let user_attr = result.attributes.iter().find(|kv| kv.key == "user").unwrap();
+        match &user_attr.value {
+            Some(av) => match &av.value {
+                Some(any_value::Value::KvlistValue(kvl)) => {
+                    assert_eq!(kvl.values.len(), 2);
+                }
+                _ => panic!("Expected KvlistValue"),
+            },
+            None => panic!("Expected value"),
+        }
     }
 
     #[test]
     fn test_json_parser_invalid_json() {
         let parser = JsonParser::new();
 
-        let result = parser.parse_str("not valid json");
+        let result = parser.parse("not valid json");
         assert!(result.is_err());
     }
 
@@ -137,59 +224,27 @@ mod tests {
     fn test_json_parser_lenient_invalid() {
         let parser = JsonParser::lenient();
 
-        let entry = Entry::with_body("not valid json");
-        let parsed = parser.parse(entry).unwrap();
+        let result = parser.parse("not valid json").unwrap();
 
-        // Should return original entry unchanged
-        assert_eq!(parsed.body_string(), Some("not valid json"));
+        // Should return empty ParsedLog
+        assert!(result.attributes.is_empty());
     }
 
     #[test]
-    fn test_json_parser_with_entry() {
+    fn test_json_parser_with_array_field() {
         let parser = JsonParser::new();
 
-        let entry = Entry::with_body(r#"{"message": "hello"}"#);
-        let parsed = parser.parse(entry).unwrap();
+        let result = parser.parse(r#"{"tags": ["a", "b", "c"]}"#).unwrap();
 
-        // Body should be preserved
-        assert_eq!(parsed.body_string(), Some(r#"{"message": "hello"}"#));
-
-        // Parsed fields should be in attributes
-        assert_eq!(parsed.attributes["message"], "hello");
-    }
-
-    #[test]
-    fn test_json_parser_already_object() {
-        let parser = JsonParser::new();
-
-        let mut entry = Entry::new();
-        entry.body = serde_json::json!({"already": "parsed"});
-
-        let parsed = parser.parse(entry).unwrap();
-
-        // Fields should be extracted to attributes
-        assert_eq!(parsed.attributes["already"], "parsed");
-    }
-
-    #[test]
-    fn test_json_parser_preserves_body_and_metadata() {
-        let parser = JsonParser::new();
-
-        let mut entry = Entry::with_body(r#"{"msg": "test"}"#);
-        entry.add_attribute_string("source", "app");
-
-        let parsed = parser.parse(entry).unwrap();
-
-        // Body should be preserved
-        assert_eq!(parsed.body_string(), Some(r#"{"msg": "test"}"#));
-
-        // Existing attributes should be preserved
-        assert_eq!(
-            parsed.attributes.get("source"),
-            Some(&Value::String("app".to_string()))
-        );
-
-        // Parsed field should be added to attributes
-        assert_eq!(parsed.attributes["msg"], "test");
+        let tags_attr = result.attributes.iter().find(|kv| kv.key == "tags").unwrap();
+        match &tags_attr.value {
+            Some(av) => match &av.value {
+                Some(any_value::Value::ArrayValue(arr)) => {
+                    assert_eq!(arr.values.len(), 3);
+                }
+                _ => panic!("Expected ArrayValue"),
+            },
+            None => panic!("Expected value"),
+        }
     }
 }

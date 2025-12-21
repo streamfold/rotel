@@ -11,8 +11,6 @@
 //! - JSON, regex, and nginx log parsers
 
 pub mod config;
-mod convert;
-pub mod entry;
 pub mod error;
 pub mod input;
 pub mod parser;
@@ -21,10 +19,9 @@ pub mod receiver;
 pub mod watcher;
 
 pub use config::FileReceiverConfig;
-pub use entry::{Entry, Field, Severity};
 pub use error::{Error, Result};
 pub use input::{FileFinder, FileInputConfig, FileReader, Fingerprint, StartAt};
-pub use parser::{JsonParser, Parser, ParserExt, RegexParser};
+pub use parser::{JsonParser, ParsedLog, Parser, RegexParser};
 pub use persistence::{JsonFileDatabase, JsonFilePersister, Persister, PersisterExt};
 pub use receiver::FileReceiver;
 pub use watcher::{FileWatcher, WatchMode, WatcherConfig};
