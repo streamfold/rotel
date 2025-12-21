@@ -85,15 +85,16 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::any_value;
 
     fn get_string_value<'a>(log: &'a ParsedLog, key: &str) -> Option<&'a str> {
-        log.attributes.iter().find(|kv| kv.key == key).and_then(|kv| {
-            match &kv.value {
+        log.attributes
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| match &kv.value {
                 Some(av) => match &av.value {
                     Some(any_value::Value::StringValue(s)) => Some(s.as_str()),
                     _ => None,
                 },
                 None => None,
-            }
-        })
+            })
     }
 
     #[test]

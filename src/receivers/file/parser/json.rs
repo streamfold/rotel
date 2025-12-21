@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, KeyValueList, any_value};
+use opentelemetry_proto::tonic::common::v1::{
+    AnyValue, ArrayValue, KeyValue, KeyValueList, any_value,
+};
 use serde_json::Value;
 
 use super::traits::{ParsedLog, Parser};
@@ -200,7 +202,11 @@ mod tests {
             .unwrap();
 
         // Nested object should be a KvlistValue
-        let user_attr = result.attributes.iter().find(|kv| kv.key == "user").unwrap();
+        let user_attr = result
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "user")
+            .unwrap();
         match &user_attr.value {
             Some(av) => match &av.value {
                 Some(any_value::Value::KvlistValue(kvl)) => {
@@ -236,7 +242,11 @@ mod tests {
 
         let result = parser.parse(r#"{"tags": ["a", "b", "c"]}"#).unwrap();
 
-        let tags_attr = result.attributes.iter().find(|kv| kv.key == "tags").unwrap();
+        let tags_attr = result
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "tags")
+            .unwrap();
         match &tags_attr.value {
             Some(av) => match &av.value {
                 Some(any_value::Value::ArrayValue(arr)) => {

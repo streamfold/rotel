@@ -17,10 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use opentelemetry::metrics::Counter;
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::common::v1::KeyValue as OtlpKeyValue;
-use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope};
+use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, any_value};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use tokio::select;
@@ -33,11 +33,11 @@ use tracing::{debug, error, info, warn};
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
 use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{FileFinder, FileReader, Fingerprint, StartAt};
-use crate::receivers::file::parser::{nginx, JsonParser, Parser, RegexParser};
+use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
 };
-use crate::receivers::file::watcher::{create_watcher, FileEventKind, FileWatcher, WatcherConfig};
+use crate::receivers::file::watcher::{FileEventKind, FileWatcher, WatcherConfig, create_watcher};
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
