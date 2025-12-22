@@ -6,12 +6,12 @@
 //! with automatic fallback to polling for unsupported file systems like NFS.
 //!
 //! Architecture:
-//! - A dedicated OS thread handles all blocking file I/O (reading, parsing, checkpointing)
-//! - Parsed entries are sent via channel to an async task
-//! - The async task only handles sending to exporters (non-blocking)
-//! - This prevents file I/O from blocking the tokio runtime
+//! - A coordinator thread watches for file changes and dispatches work
+//! - Worker tasks (via spawn_blocking) process files in parallel: read, parse, build LogRecords
+//! - Workers send LogRecordBatch directly to an async task for export
+//! - This prevents file I/O from blocking the tokio runtime and enables parallel processing
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -146,20 +146,211 @@ impl Default for CheckpointConfig {
     }
 }
 
-/// Message sent from the I/O thread to the async task
+/// Message sent from workers to the async task
 struct LogRecordBatch {
     log_records: Vec<LogRecord>,
     count: u64,
 }
 
-/// Worker that runs on a dedicated OS thread for all blocking file I/O.
-/// This prevents file operations from blocking the tokio runtime.
-struct FileIOWorker {
+/// Work item sent from coordinator to workers
+struct FileWorkItem {
+    /// Path to the file to process
+    path: PathBuf,
+    /// Starting offset in the file
+    offset: u64,
+    /// Fingerprint bytes for this file (used for offset updates)
+    fingerprint_bytes: Vec<u8>,
+    /// File name (cached to avoid re-extracting)
+    file_name: Option<String>,
+    /// Maximum log line size
+    max_log_size: usize,
+}
+
+/// Result sent from workers back to coordinator
+struct FileWorkResult {
+    /// Fingerprint bytes identifying the file
+    fingerprint_bytes: Vec<u8>,
+    /// New offset after reading
+    new_offset: u64,
+}
+
+/// Shared worker context (immutable, cloned to each worker)
+#[derive(Clone)]
+struct WorkerContext {
+    /// Parser for log lines
+    parser: Option<Arc<dyn Parser + Send + Sync>>,
+    /// Whether to include file name in attributes
+    include_file_name: bool,
+    /// Whether to include file path in attributes
+    include_file_path: bool,
+    /// Channel to send log records to async handler
+    records_tx: mpsc::Sender<LogRecordBatch>,
+    /// Channel to send offset updates back to coordinator
+    results_tx: mpsc::Sender<FileWorkResult>,
+}
+
+/// Maximum number of log records to accumulate before sending a batch
+const MAX_BATCH_SIZE: usize = 100;
+
+/// Process a single file work item (runs in spawn_blocking)
+fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
+    // Verify the file exists (we don't need to keep the handle, FileReader will open it)
+    if let Err(e) = File::open(&work.path) {
+        debug!("Failed to open file {:?}: {}", work.path, e);
+        return;
+    }
+
+    // Create a temporary reader just for this work item
+    let fp = Fingerprint::from_bytes(work.fingerprint_bytes.clone());
+    let mut reader = match FileReader::new(
+        &work.path,
+        fp,
+        work.offset,
+        work.fingerprint_bytes.len(), // fingerprint_size not needed for reading
+        work.max_log_size,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            debug!("Failed to create reader for {:?}: {}", work.path, e);
+            return;
+        }
+    };
+
+    // Get current timestamp for all log records in this batch
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+
+    // Read lines and build LogRecords, sending in small batches
+    let mut log_records = Vec::with_capacity(MAX_BATCH_SIZE);
+    let file_name = work.file_name.as_deref();
+    let path_str = if ctx.include_file_path {
+        Some(work.path.display().to_string())
+    } else {
+        None
+    };
+
+    let records_tx = &ctx.records_tx;
+
+    let parse_result = reader.read_lines_into(|line| {
+        // Build attributes
+        let mut attributes = Vec::new();
+
+        if ctx.include_file_name {
+            if let Some(name) = file_name {
+                attributes.push(OtlpKeyValue {
+                    key: "log.file.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(name.to_string())),
+                    }),
+                });
+            }
+        }
+
+        if let Some(ref path) = path_str {
+            attributes.push(OtlpKeyValue {
+                key: "log.file.path".to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(path.clone())),
+                }),
+            });
+        }
+
+        // Parse line if parser is configured
+        let (parsed_attributes, severity_number, severity_text) =
+            if let Some(ref parser) = ctx.parser {
+                match parser.parse(&line) {
+                    Ok(parsed) => (
+                        parsed.attributes,
+                        parsed.severity_number.unwrap_or(0),
+                        parsed.severity_text.unwrap_or_default(),
+                    ),
+                    Err(e) => {
+                        debug!("Parse error: {}", e);
+                        return; // Skip unparseable entries
+                    }
+                }
+            } else {
+                (Vec::new(), 0, String::new())
+            };
+
+        // Add parsed attributes
+        attributes.extend(parsed_attributes);
+
+        // Build LogRecord
+        let log_record = LogRecord {
+            time_unix_nano: now,
+            observed_time_unix_nano: now,
+            severity_number,
+            severity_text,
+            body: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(line)),
+            }),
+            attributes,
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![],
+            span_id: vec![],
+            event_name: String::new(),
+        };
+
+        log_records.push(log_record);
+
+        // Send batch when we reach max size
+        if log_records.len() >= MAX_BATCH_SIZE {
+            let batch = LogRecordBatch {
+                count: log_records.len() as u64,
+                log_records: std::mem::replace(
+                    &mut log_records,
+                    Vec::with_capacity(MAX_BATCH_SIZE),
+                ),
+            };
+            let _ = records_tx.blocking_send(batch);
+        }
+    });
+
+    if let Err(e) = parse_result {
+        error!("Error reading file {:?}: {}", work.path, e);
+    }
+
+    let new_offset = reader.offset();
+
+    // Send any remaining log records
+    if !log_records.is_empty() {
+        let batch = LogRecordBatch {
+            count: log_records.len() as u64,
+            log_records,
+        };
+        let _ = ctx.records_tx.blocking_send(batch);
+    }
+
+    // Send offset update back to coordinator
+    let result = FileWorkResult {
+        fingerprint_bytes: work.fingerprint_bytes,
+        new_offset,
+    };
+    let _ = ctx.results_tx.blocking_send(result);
+}
+
+/// Tracked state for a file (lightweight, no file handle)
+struct TrackedFile {
+    /// Current read offset
+    offset: u64,
+    /// Generation counter for detecting stale entries
+    generation: u64,
+}
+
+/// Coordinator that manages file watching and dispatches work to workers.
+/// All state updates happen here (single writer pattern).
+struct FileCoordinator {
     config: FileReceiverConfig,
     finder: FileFinder,
-    parser: Option<Arc<dyn Parser + Send + Sync>>,
     persister: JsonFilePersister,
-    readers: HashMap<Vec<u8>, FileReader>,
+    /// Map from fingerprint bytes to tracked file state
+    tracked_files: HashMap<Vec<u8>, TrackedFile>,
+    /// Set of fingerprint bytes for files currently being processed by workers
+    in_flight: HashSet<Vec<u8>>,
     watcher: Box<dyn FileWatcher + Send>,
     watched_dirs: Vec<PathBuf>,
     first_check: bool,
@@ -167,9 +358,15 @@ struct FileIOWorker {
     checkpoint_config: CheckpointConfig,
     records_since_checkpoint: u64,
     last_checkpoint: Instant,
+    // Worker context for spawning work
+    worker_ctx: WorkerContext,
+    // Channel to receive offset updates from workers
+    results_rx: mpsc::Receiver<FileWorkResult>,
+    // Runtime handle for spawn_blocking
+    runtime: tokio::runtime::Handle,
 }
 
-impl FileIOWorker {
+impl FileCoordinator {
     /// Load previously saved file states from the persister
     fn load_state(&mut self) -> Result<()> {
         self.persister.load()?;
@@ -177,27 +374,13 @@ impl FileIOWorker {
         if let Some(state) = self.persister.get_json::<PersistedState>(KNOWN_FILES_KEY) {
             debug!("Loaded {} known files from persister", state.files.len());
             for file_state in state.files {
-                // Store fingerprint bytes as key for later matching
-                self.readers.insert(file_state.fingerprint_bytes.clone(), {
-                    let fp = Fingerprint::from_bytes(file_state.fingerprint_bytes);
-                    FileReader::new(
-                        PathBuf::from("/dev/null"), // placeholder, will be replaced when file found
-                        fp,
-                        file_state.offset,
-                        self.config.fingerprint_size,
-                        self.config.max_log_size,
-                    )
-                    .unwrap_or_else(|_| {
-                        FileReader::new(
-                            PathBuf::from("/dev/null"),
-                            Fingerprint::from_bytes(vec![]),
-                            0,
-                            self.config.fingerprint_size,
-                            self.config.max_log_size,
-                        )
-                        .unwrap()
-                    })
-                });
+                self.tracked_files.insert(
+                    file_state.fingerprint_bytes,
+                    TrackedFile {
+                        offset: file_state.offset,
+                        generation: 0,
+                    },
+                );
             }
         }
 
@@ -208,12 +391,12 @@ impl FileIOWorker {
     fn save_state(&mut self) -> Result<()> {
         let state = PersistedState {
             files: self
-                .readers
-                .values()
-                .filter(|r| !r.fingerprint().is_empty())
-                .map(|r| PersistedFileState {
-                    fingerprint_bytes: r.fingerprint().bytes().to_vec(),
-                    offset: r.offset(),
+                .tracked_files
+                .iter()
+                .filter(|(k, _)| !k.is_empty())
+                .map(|(k, v)| PersistedFileState {
+                    fingerprint_bytes: k.clone(),
+                    offset: v.offset,
                 })
                 .collect(),
         };
@@ -242,12 +425,12 @@ impl FileIOWorker {
         Ok(())
     }
 
-    /// Find a reader that matches the given fingerprint
-    fn find_matching_reader(&self, fp: &Fingerprint) -> Option<u64> {
-        for (key, reader) in &self.readers {
+    /// Find a tracked file key that matches the given fingerprint
+    fn find_matching_tracked_key(&self, fp: &Fingerprint) -> Option<Vec<u8>> {
+        for key in self.tracked_files.keys() {
             let existing_fp = Fingerprint::from_bytes(key.clone());
             if fp.starts_with(&existing_fp) {
-                return Some(reader.offset());
+                return Some(key.clone());
             }
         }
         None
@@ -269,7 +452,6 @@ impl FileIOWorker {
 
         // Also add directories from glob patterns that might not have matching files yet
         for pattern in &self.config.include {
-            // Extract the directory part before any wildcards
             let pattern_path = Path::new(pattern);
             let mut dir = PathBuf::new();
             for component in pattern_path.components() {
@@ -310,8 +492,25 @@ impl FileIOWorker {
         Ok(())
     }
 
-    /// Poll for file changes and read new content
-    fn poll(&mut self) -> Result<Vec<LogRecord>> {
+    /// Process any pending results from workers (offset updates)
+    fn process_results(&mut self) {
+        // Non-blocking drain of all available results
+        while let Ok(result) = self.results_rx.try_recv() {
+            // Remove from in-flight set - this file can be dispatched again
+            self.in_flight.remove(&result.fingerprint_bytes);
+
+            if let Some(tracked) = self.tracked_files.get_mut(&result.fingerprint_bytes) {
+                tracked.offset = result.new_offset;
+                self.records_since_checkpoint += 1; // Approximate, actual count comes from batch
+            }
+        }
+    }
+
+    /// Poll for file changes and dispatch work to workers
+    fn poll(&mut self) -> Result<()> {
+        // Process any pending results first
+        self.process_results();
+
         // Find files matching our patterns
         let paths = self.finder.find_files()?;
 
@@ -328,57 +527,38 @@ impl FileIOWorker {
             debug!("Failed to update watches: {}", e);
         }
 
-        // Increment generation on all known readers
-        for reader in self.readers.values_mut() {
-            reader.increment_generation();
+        // Increment generation on all tracked files
+        for tracked in self.tracked_files.values_mut() {
+            tracked.generation += 1;
         }
 
-        // Process each file and collect log records
-        let mut all_records = Vec::new();
-        let mut new_readers = HashMap::new();
-
+        // Process each file and dispatch work
         for path in paths {
-            match self.process_file(&path) {
-                Ok(Some((key, reader, records))) => {
-                    all_records.extend(records);
-                    new_readers.insert(key, reader);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    error!("Error processing file {:?}: {}", path, e);
-                }
+            if let Err(e) = self.dispatch_file_work(&path) {
+                error!("Error dispatching work for file {:?}: {}", path, e);
             }
         }
 
-        // Replace old readers with new ones
-        // Keep readers that haven't been seen for at most 3 generations
-        self.readers.retain(|_, reader| reader.generation() <= 3);
-        self.readers.extend(new_readers);
-
-        // Track records for checkpoint batching
-        if !all_records.is_empty() {
-            self.records_since_checkpoint += all_records.len() as u64;
-        }
+        // Remove tracked files that haven't been seen for more than 3 generations
+        self.tracked_files
+            .retain(|_, tracked| tracked.generation <= 3);
 
         // Conditionally checkpoint based on records processed and time elapsed
         if let Err(e) = self.maybe_checkpoint() {
             error!("Failed to save state: {}", e);
         }
 
-        Ok(all_records)
+        Ok(())
     }
 
-    /// Process a single file
-    fn process_file(
-        &mut self,
-        path: &PathBuf,
-    ) -> Result<Option<(Vec<u8>, FileReader, Vec<LogRecord>)>> {
-        // Open the file
+    /// Dispatch work for a single file to a worker
+    fn dispatch_file_work(&mut self, path: &PathBuf) -> Result<()> {
+        // Open the file to get fingerprint
         let mut file = match File::open(path) {
             Ok(f) => f,
             Err(e) => {
                 debug!("Failed to open file {:?}: {}", path, e);
-                return Ok(None);
+                return Ok(());
             }
         };
 
@@ -387,116 +567,81 @@ impl FileIOWorker {
             Ok(fp) => fp,
             Err(e) => {
                 debug!("Failed to create fingerprint for {:?}: {}", path, e);
-                return Ok(None);
+                return Ok(());
             }
         };
 
         // Skip empty files
         if fp.is_empty() {
-            return Ok(None);
-        }
-
-        // Check if we've seen this file before
-        let offset = self.find_matching_reader(&fp).unwrap_or_else(|| {
-            // New file - determine starting offset
-            if self.config.start_at == StartAt::End {
-                file.metadata().map(|m| m.len()).unwrap_or(0)
-            } else {
-                0
-            }
-        });
-
-        // Create or update reader
-        let mut reader = FileReader::new(
-            path,
-            fp.clone(),
-            offset,
-            self.config.fingerprint_size,
-            self.config.max_log_size,
-        )?;
-
-        // Read new lines
-        let lines = reader.read_lines()?;
-
-        // Get current timestamp for all log records in this batch
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-
-        // Convert lines directly to LogRecords
-        let mut log_records = Vec::with_capacity(lines.len());
-        for line in lines {
-            // Build attributes - start with file metadata
-            let mut attributes = Vec::new();
-
-            if self.config.include_file_name {
-                if let Some(name) = reader.file_name() {
-                    attributes.push(OtlpKeyValue {
-                        key: "log.file.name".to_string(),
-                        value: Some(AnyValue {
-                            value: Some(any_value::Value::StringValue(name.to_string())),
-                        }),
-                    });
-                }
-            }
-
-            if self.config.include_file_path {
-                attributes.push(OtlpKeyValue {
-                    key: "log.file.path".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue(path.display().to_string())),
-                    }),
-                });
-            }
-
-            // Parse line if parser is configured
-            let (parsed_attributes, severity_number, severity_text) =
-                if let Some(ref parser) = self.parser {
-                    match parser.parse(&line) {
-                        Ok(parsed) => (
-                            parsed.attributes,
-                            parsed.severity_number.unwrap_or(0),
-                            parsed.severity_text.unwrap_or_default(),
-                        ),
-                        Err(e) => {
-                            debug!("Parse error: {}", e);
-                            continue; // Skip unparseable entries
-                        }
-                    }
-                } else {
-                    (Vec::new(), 0, String::new())
-                };
-
-            // Add parsed attributes
-            attributes.extend(parsed_attributes);
-
-            // Build LogRecord directly
-            let log_record = LogRecord {
-                time_unix_nano: now,
-                observed_time_unix_nano: now,
-                severity_number,
-                severity_text,
-                body: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue(line)),
-                }),
-                attributes,
-                dropped_attributes_count: 0,
-                flags: 0,
-                trace_id: vec![],
-                span_id: vec![],
-                event_name: String::new(),
-            };
-
-            log_records.push(log_record);
+            return Ok(());
         }
 
         let key = fp.bytes().to_vec();
-        Ok(Some((key, reader, log_records)))
+        let existing_key = self.find_matching_tracked_key(&fp);
+
+        let (offset, fingerprint_bytes) = if let Some(existing_key) = existing_key {
+            // Skip if this file is already being processed by a worker
+            // The worker reads to EOF, so it will get all available data
+            if self.in_flight.contains(&existing_key) {
+                return Ok(());
+            }
+
+            // Existing file - get current offset and reset generation
+            if let Some(tracked) = self.tracked_files.get_mut(&existing_key) {
+                tracked.generation = 0;
+                (tracked.offset, existing_key)
+            } else {
+                return Ok(());
+            }
+        } else {
+            // New file - determine starting offset
+            let offset = if self.config.start_at == StartAt::End {
+                file.metadata().map(|m| m.len()).unwrap_or(0)
+            } else {
+                0
+            };
+
+            // Track the new file
+            self.tracked_files.insert(
+                key.clone(),
+                TrackedFile {
+                    offset,
+                    generation: 0,
+                },
+            );
+
+            (offset, key)
+        };
+
+        // Mark as in-flight before dispatching
+        self.in_flight.insert(fingerprint_bytes.clone());
+
+        // Extract file name
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+
+        // Create work item
+        let work = FileWorkItem {
+            path: path.clone(),
+            offset,
+            fingerprint_bytes,
+            file_name,
+            max_log_size: self.config.max_log_size,
+        };
+
+        // Dispatch to worker via spawn_blocking
+        let ctx = self.worker_ctx.clone();
+        self.runtime.spawn_blocking(move || {
+            process_file_work(work, ctx);
+        });
+
+        Ok(())
     }
 
-    /// Run the I/O worker main loop
-    fn run(mut self, records_tx: mpsc::Sender<LogRecordBatch>, cancel: CancellationToken) {
+    /// Run the coordinator main loop
+    fn run(mut self, cancel: CancellationToken) {
         // Load persisted state
         if let Err(e) = self.load_state() {
             warn!("Failed to load persisted state: {}", e);
@@ -507,26 +652,14 @@ impl FileIOWorker {
             warn!("Failed to setup watches: {}", e);
         }
 
-        // Do initial poll to read existing content
-        match self.poll() {
-            Ok(records) if !records.is_empty() => {
-                let batch = LogRecordBatch {
-                    count: records.len() as u64,
-                    log_records: records,
-                };
-                if records_tx.blocking_send(batch).is_err() {
-                    return;
-                }
-            }
-            Ok(_) => {}
-            Err(e) => {
-                error!("Initial poll error: {}", e);
-            }
+        // Do initial poll
+        if let Err(e) = self.poll() {
+            error!("Initial poll error: {}", e);
         }
 
         let poll_interval = self.config.poll_interval;
 
-        // Main loop: wait for watcher events, poll files, send log records
+        // Main loop: wait for watcher events, dispatch work
         loop {
             if cancel.is_cancelled() {
                 break;
@@ -535,54 +668,36 @@ impl FileIOWorker {
             // Wait for watcher events (or timeout)
             match self.watcher.recv_timeout(poll_interval) {
                 Ok(events) => {
-                    // Process any specific file events for logging
+                    // Log file events
                     for event in &events {
-                        match event.kind {
-                            FileEventKind::Create | FileEventKind::Modify => {
-                                // Will be picked up by poll()
-                            }
-                            FileEventKind::Remove => {
-                                for path in &event.paths {
-                                    debug!("File removed: {:?}", path);
-                                }
-                            }
-                            FileEventKind::Rename | FileEventKind::Other => {
-                                // Trigger a full rescan handled by poll()
+                        if let FileEventKind::Remove = event.kind {
+                            for path in &event.paths {
+                                debug!("File removed: {:?}", path);
                             }
                         }
                     }
 
-                    // Poll for changes
-                    match self.poll() {
-                        Ok(records) if !records.is_empty() => {
-                            let batch = LogRecordBatch {
-                                count: records.len() as u64,
-                                log_records: records,
-                            };
-                            if records_tx.blocking_send(batch).is_err() {
-                                break;
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("Poll error: {}", e);
-                        }
+                    // Poll and dispatch work
+                    if let Err(e) = self.poll() {
+                        error!("Poll error: {}", e);
                     }
                 }
                 Err(e) => {
                     warn!("Watcher error: {}", e);
-                    // On error, sleep briefly before retrying
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
         }
+
+        // Process any remaining results
+        self.process_results();
 
         // Final state save
         if let Err(e) = self.save_state() {
             error!("Failed to save final state: {}", e);
         }
 
-        info!("File I/O worker stopped");
+        info!("File coordinator stopped");
     }
 }
 
@@ -624,10 +739,10 @@ impl FileHandler {
     }
 
     /// Run the main event loop.
-    /// Spawns a dedicated OS thread for all blocking file I/O and receives
-    /// log records via channel for sending to exporters.
+    /// Spawns a coordinator thread that dispatches work to spawn_blocking workers.
+    /// Workers send log records directly to this async task for export.
     async fn run(&mut self, cancel: CancellationToken) {
-        // Build parser (needs to be Arc for Send across thread)
+        // Build parser (needs to be Arc for Send across threads)
         let parser: Option<Arc<dyn Parser + Send + Sync>> =
             match FileReceiver::build_parser(&self.config) {
                 Ok(Some(p)) => Some(Arc::from(p)),
@@ -670,33 +785,50 @@ impl FileHandler {
             "File watcher initialized"
         );
 
-        // Create the I/O worker
+        // Create channels:
+        // - records_tx/rx: workers -> async handler (log records for export)
+        // - results_tx/rx: workers -> coordinator (offset updates)
+        let (records_tx, mut records_rx) = mpsc::channel::<LogRecordBatch>(100);
+        let (results_tx, results_rx) = mpsc::channel::<FileWorkResult>(100);
+
+        // Create worker context (shared by all workers)
+        let worker_ctx = WorkerContext {
+            parser,
+            include_file_name: self.config.include_file_name,
+            include_file_path: self.config.include_file_path,
+            records_tx,
+            results_tx,
+        };
+
+        // Get runtime handle for spawn_blocking
+        let runtime = tokio::runtime::Handle::current();
+
+        // Create the coordinator
         let finder = FileFinder::new(self.config.include.clone(), self.config.exclude.clone());
-        let io_worker = FileIOWorker {
+        let coordinator = FileCoordinator {
             config: self.config.clone(),
             finder,
-            parser,
             persister,
-            readers: HashMap::new(),
+            tracked_files: HashMap::new(),
+            in_flight: HashSet::new(),
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
             checkpoint_config: CheckpointConfig::default(),
             records_since_checkpoint: 0,
             last_checkpoint: Instant::now(),
+            worker_ctx,
+            results_rx,
+            runtime,
         };
 
-        // Create channel for log records from I/O thread to async task
-        // Keep this small (10) to limit memory - each batch has up to 1000 records
-        let (records_tx, mut records_rx) = mpsc::channel::<LogRecordBatch>(10);
-
-        // Spawn the I/O worker on a dedicated OS thread
-        let io_cancel = cancel.clone();
-        let io_handle = std::thread::spawn(move || {
-            io_worker.run(records_tx, io_cancel);
+        // Spawn the coordinator on a dedicated OS thread
+        let coord_cancel = cancel.clone();
+        let coord_handle = std::thread::spawn(move || {
+            coordinator.run(coord_cancel);
         });
 
-        // Main event loop - receive log records and send to exporters
+        // Main event loop - receive log records from workers and send to exporters
         loop {
             select! {
                 _ = cancel.cancelled() => {
@@ -745,9 +877,9 @@ impl FileHandler {
             }
         }
 
-        // Wait for I/O thread to finish
+        // Wait for coordinator thread to finish
         drop(records_rx);
-        let _ = io_handle.join();
+        let _ = coord_handle.join();
 
         info!("File receiver stopped");
     }

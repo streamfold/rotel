@@ -209,6 +209,7 @@ impl FileReceiverArgs {
             max_log_size: self.file_receiver_max_log_size,
             include_file_name: self.file_receiver_include_file_name,
             include_file_path: self.file_receiver_include_file_path,
+            num_workers: 0, // Use default (number of CPUs)
         }
     }
 }

@@ -51,6 +51,8 @@ pub struct FileReceiverConfig {
     pub include_file_name: bool,
     /// Include file path as log attribute
     pub include_file_path: bool,
+    /// Number of worker threads for file processing (0 = number of CPUs)
+    pub num_workers: usize,
 }
 
 impl Default for FileReceiverConfig {
@@ -68,6 +70,7 @@ impl Default for FileReceiverConfig {
             max_log_size: 65536,
             include_file_name: true,
             include_file_path: false,
+            num_workers: 0, // 0 means use number of CPUs
         }
     }
 }

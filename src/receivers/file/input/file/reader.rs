@@ -107,6 +107,29 @@ impl FileReader {
         self.generation += 1;
     }
 
+    /// Reset generation to 0 (called when file is seen during poll)
+    pub fn reset_generation(&mut self) {
+        self.generation = 0;
+    }
+
+    /// Update the file path and reopen the file handle.
+    /// Used when a file with matching fingerprint is found at a new path.
+    pub fn update_path(&mut self, new_path: impl AsRef<Path>) -> io::Result<()> {
+        let new_path = new_path.as_ref();
+        if self.path != new_path {
+            self.path = new_path.to_path_buf();
+        }
+        // Reopen file handle for the new path
+        self.file = Some(File::open(&self.path)?);
+        Ok(())
+    }
+
+    /// Reopen the file handle (e.g., after file rotation or to refresh)
+    pub fn reopen(&mut self) -> io::Result<()> {
+        self.file = Some(File::open(&self.path)?);
+        Ok(())
+    }
+
     /// Check if we're at EOF
     pub fn is_eof(&self) -> bool {
         self.eof
@@ -133,13 +156,25 @@ impl FileReader {
 
     /// Read all new lines from the file
     pub fn read_lines(&mut self) -> io::Result<Vec<String>> {
-        self.eof = false;
         let mut lines = Vec::new();
+        self.read_lines_into(|line| {
+            lines.push(line);
+        })?;
+        Ok(lines)
+    }
+
+    /// Read new lines from the file, calling the callback for each line.
+    /// This avoids allocating a Vec<String> when the caller can process lines directly.
+    pub fn read_lines_into<F>(&mut self, mut on_line: F) -> io::Result<()>
+    where
+        F: FnMut(String),
+    {
+        self.eof = false;
 
         // Take the file handle temporarily - we'll put it back after
         let mut file = match self.file.take() {
             Some(f) => f,
-            None => return Ok(lines),
+            None => return Ok(()),
         };
 
         // Seek to the current offset
@@ -168,13 +203,13 @@ impl FileReader {
                         continue;
                     }
 
-                    // Check max log size
+                    // Check max log size and call callback
                     if line.len() > self.max_log_size {
                         // Truncate the line
                         let truncated = line.chars().take(self.max_log_size).collect::<String>();
-                        lines.push(truncated);
+                        on_line(truncated);
                     } else {
-                        lines.push(line.to_string());
+                        on_line(line.to_string());
                     }
                 }
                 Err(e) => {
@@ -196,7 +231,7 @@ impl FileReader {
         self.file = Some(file);
 
         self.eof = true;
-        Ok(lines)
+        Ok(())
     }
 
     /// Refresh the fingerprint from the current file content

@@ -126,6 +126,7 @@ impl Parser for NginxErrorParser {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use opentelemetry_proto::tonic::common::v1::any_value;
 
     // Real nginx access log samples
@@ -146,13 +147,13 @@ mod tests {
         r#"2025/12/17 10:15:36 [crit] 1234#5678: *12 SSL_do_handshake() failed (SSL: error:14094412:SSL routines:ssl3_read_bytes:sslv3 alert bad certificate)"#,
     ];
 
-    fn get_string_value(log: &ParsedLog, key: &str) -> Option<String> {
+    fn get_string_value<'a>(log: &'a ParsedLog, key: &str) -> Option<&'a str> {
         log.attributes
             .iter()
             .find(|kv| kv.key == key)
             .and_then(|kv| match &kv.value {
                 Some(av) => match &av.value {
-                    Some(any_value::Value::StringValue(s)) => Some(s),
+                    Some(any_value::Value::StringValue(s)) => Some(s.as_str()),
                     _ => None,
                 },
                 None => None,
@@ -167,32 +168,23 @@ mod tests {
 
         assert_eq!(
             get_string_value(&result, "remote_addr"),
-            Some("192.168.1.1".to_string())
+            Some("192.168.1.1")
         );
-        assert_eq!(
-            get_string_value(&result, "remote_user"),
-            Some("-".to_string())
-        );
+        assert_eq!(get_string_value(&result, "remote_user"), Some("-"));
         assert_eq!(
             get_string_value(&result, "time_local"),
-            Some("17/Dec/2025:10:15:32 +0000".to_string())
+            Some("17/Dec/2025:10:15:32 +0000")
         );
         assert_eq!(
             get_string_value(&result, "request"),
-            Some("GET /api/users HTTP/1.1".to_string())
+            Some("GET /api/users HTTP/1.1")
         );
-        assert_eq!(get_string_value(&result, "status"), Some("200".to_string()));
-        assert_eq!(
-            get_string_value(&result, "body_bytes_sent"),
-            Some("1234".to_string())
-        );
-        assert_eq!(
-            get_string_value(&result, "http_referer"),
-            Some("-".to_string())
-        );
+        assert_eq!(get_string_value(&result, "status"), Some("200"));
+        assert_eq!(get_string_value(&result, "body_bytes_sent"), Some("1234"));
+        assert_eq!(get_string_value(&result, "http_referer"), Some("-"));
         assert_eq!(
             get_string_value(&result, "http_user_agent"),
-            Some("curl/7.68.0".to_string())
+            Some("curl/7.68.0")
         );
     }
 
@@ -202,22 +194,16 @@ mod tests {
 
         let result = parser.parse(ACCESS_LOG_SAMPLES[1]).unwrap();
 
-        assert_eq!(
-            get_string_value(&result, "remote_addr"),
-            Some("10.0.0.50".to_string())
-        );
-        assert_eq!(
-            get_string_value(&result, "remote_user"),
-            Some("alice".to_string())
-        );
+        assert_eq!(get_string_value(&result, "remote_addr"), Some("10.0.0.50"));
+        assert_eq!(get_string_value(&result, "remote_user"), Some("alice"));
         assert_eq!(
             get_string_value(&result, "request"),
-            Some("POST /api/login HTTP/1.1".to_string())
+            Some("POST /api/login HTTP/1.1")
         );
-        assert_eq!(get_string_value(&result, "status"), Some("302".to_string()));
+        assert_eq!(get_string_value(&result, "status"), Some("302"));
         assert_eq!(
             get_string_value(&result, "http_referer"),
-            Some("https://example.com/login".to_string())
+            Some("https://example.com/login")
         );
     }
 
@@ -229,9 +215,9 @@ mod tests {
 
         assert_eq!(
             get_string_value(&result, "request"),
-            Some("GET /static/style.css HTTP/2.0".to_string())
+            Some("GET /static/style.css HTTP/2.0")
         );
-        assert_eq!(get_string_value(&result, "status"), Some("304".to_string()));
+        assert_eq!(get_string_value(&result, "status"), Some("304"));
     }
 
     #[test]
@@ -242,20 +228,17 @@ mod tests {
         let result = parser.parse(ACCESS_LOG_SAMPLES[3]).unwrap();
         assert_eq!(
             get_string_value(&result, "request"),
-            Some("DELETE /api/users/123 HTTP/1.1".to_string())
+            Some("DELETE /api/users/123 HTTP/1.1")
         );
-        assert_eq!(get_string_value(&result, "status"), Some("204".to_string()));
+        assert_eq!(get_string_value(&result, "status"), Some("204"));
 
         // PUT
         let result = parser.parse(ACCESS_LOG_SAMPLES[4]).unwrap();
         assert_eq!(
             get_string_value(&result, "request"),
-            Some("PUT /api/config HTTP/1.1".to_string())
+            Some("PUT /api/config HTTP/1.1")
         );
-        assert_eq!(
-            get_string_value(&result, "remote_user"),
-            Some("admin".to_string())
-        );
+        assert_eq!(get_string_value(&result, "remote_user"), Some("admin"));
     }
 
     #[test]
@@ -293,15 +276,12 @@ mod tests {
 
         assert_eq!(
             get_string_value(&result, "time"),
-            Some("2025/12/17 10:15:32".to_string())
+            Some("2025/12/17 10:15:32")
         );
-        assert_eq!(
-            get_string_value(&result, "level"),
-            Some("error".to_string())
-        );
-        assert_eq!(get_string_value(&result, "pid"), Some("1234".to_string()));
-        assert_eq!(get_string_value(&result, "tid"), Some("5678".to_string()));
-        assert_eq!(get_string_value(&result, "cid"), Some("9".to_string()));
+        assert_eq!(get_string_value(&result, "level"), Some("error"));
+        assert_eq!(get_string_value(&result, "pid"), Some("1234"));
+        assert_eq!(get_string_value(&result, "tid"), Some("5678"));
+        assert_eq!(get_string_value(&result, "cid"), Some("9"));
         assert!(
             get_string_value(&result, "message")
                 .unwrap()
@@ -315,8 +295,8 @@ mod tests {
 
         let result = parser.parse(ERROR_LOG_SAMPLES[1]).unwrap();
 
-        assert_eq!(get_string_value(&result, "level"), Some("warn".to_string()));
-        assert_eq!(get_string_value(&result, "cid"), Some("10".to_string()));
+        assert_eq!(get_string_value(&result, "level"), Some("warn"));
+        assert_eq!(get_string_value(&result, "cid"), Some("10"));
     }
 
     #[test]
@@ -325,11 +305,8 @@ mod tests {
 
         let result = parser.parse(ERROR_LOG_SAMPLES[2]).unwrap();
 
-        assert_eq!(
-            get_string_value(&result, "level"),
-            Some("notice".to_string())
-        );
-        assert_eq!(get_string_value(&result, "tid"), Some("0".to_string()));
+        assert_eq!(get_string_value(&result, "level"), Some("notice"));
+        assert_eq!(get_string_value(&result, "tid"), Some("0"));
         // cid should not be present (optional group)
         assert!(get_string_value(&result, "cid").is_none());
     }
@@ -344,7 +321,7 @@ mod tests {
             let result = parser.parse(sample).unwrap();
             assert_eq!(
                 get_string_value(&result, "level"),
-                Some(levels[i].to_string()),
+                Some(levels[i]),
                 "Wrong level for sample {}",
                 i
             );
@@ -388,7 +365,7 @@ mod tests {
 
         assert_eq!(
             get_string_value(&result, "remote_addr"),
-            Some("192.168.1.1".to_string())
+            Some("192.168.1.1")
         );
         // status and body_bytes_sent are numbers, not strings
         assert!(result.attributes.iter().any(|kv| kv.key == "status"));
