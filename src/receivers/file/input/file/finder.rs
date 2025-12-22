@@ -123,4 +123,126 @@ mod tests {
         let files = finder.find_files().unwrap();
         assert!(files.is_empty());
     }
+
+    #[test]
+    fn test_finder_discovers_new_file_created_after_start() {
+        let dir = TempDir::new().unwrap();
+
+        // Create initial file
+        let initial_file = dir.path().join("existing.log");
+        fs::write(&initial_file, "initial content").unwrap();
+
+        // Create finder with pattern that matches .log files
+        let pattern = format!("{}/*.log", dir.path().display());
+        let finder = FileFinder::new(vec![pattern], vec![]);
+
+        // First find - should see only the existing file
+        let files = finder.find_files().unwrap();
+        assert_eq!(files.len(), 1, "Should find 1 existing file");
+        assert!(
+            files
+                .iter()
+                .any(|p| p.file_name().unwrap() == "existing.log"),
+            "Should find existing.log"
+        );
+
+        // Now create a NEW file that matches the pattern (simulating log rotation or new log file)
+        let new_file = dir.path().join("newfile.log");
+        fs::write(&new_file, "new file content\nline 2\nline 3").unwrap();
+
+        // Second find - should now discover the new file
+        let files = finder.find_files().unwrap();
+        assert_eq!(files.len(), 2, "Should find 2 files after new file created");
+        assert!(
+            files
+                .iter()
+                .any(|p| p.file_name().unwrap() == "existing.log"),
+            "Should still find existing.log"
+        );
+        assert!(
+            files
+                .iter()
+                .any(|p| p.file_name().unwrap() == "newfile.log"),
+            "Should discover newfile.log"
+        );
+
+        // Create another file with different extension - should NOT be discovered
+        let txt_file = dir.path().join("other.txt");
+        fs::write(&txt_file, "text file").unwrap();
+
+        let files = finder.find_files().unwrap();
+        assert_eq!(
+            files.len(),
+            2,
+            "Should still find only 2 .log files, not .txt"
+        );
+        assert!(
+            !files.iter().any(|p| p.file_name().unwrap() == "other.txt"),
+            "Should NOT find other.txt"
+        );
+    }
+
+    #[test]
+    fn test_finder_discovers_file_in_initially_empty_directory() {
+        let dir = TempDir::new().unwrap();
+
+        // Create finder with pattern - directory exists but has no matching files
+        let pattern = format!("{}/*.log", dir.path().display());
+        let finder = FileFinder::new(vec![pattern], vec![]);
+
+        // First find - no files exist yet
+        let files = finder.find_files().unwrap();
+        assert!(files.is_empty(), "Should find no files initially");
+
+        // Create a file that matches the pattern
+        let new_file = dir.path().join("first.log");
+        fs::write(&new_file, "first log entry").unwrap();
+
+        // Second find - should discover the new file
+        let files = finder.find_files().unwrap();
+        assert_eq!(files.len(), 1, "Should discover new file");
+        assert!(
+            files.iter().any(|p| p.file_name().unwrap() == "first.log"),
+            "Should find first.log"
+        );
+    }
+
+    #[test]
+    fn test_finder_respects_exclude_for_new_files() {
+        let dir = TempDir::new().unwrap();
+
+        // Create finder with include and exclude patterns
+        let include = format!("{}/*.log", dir.path().display());
+        let exclude = format!("{}/*_debug.log", dir.path().display());
+        let finder = FileFinder::new(vec![include], vec![exclude]);
+
+        // Initially empty
+        let files = finder.find_files().unwrap();
+        assert!(files.is_empty());
+
+        // Create a normal log file - should be discovered
+        let app_log = dir.path().join("app.log");
+        fs::write(&app_log, "app log").unwrap();
+
+        let files = finder.find_files().unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.iter().any(|p| p.file_name().unwrap() == "app.log"));
+
+        // Create a debug log file - should be excluded even though it matches *.log
+        let debug_log = dir.path().join("app_debug.log");
+        fs::write(&debug_log, "debug log").unwrap();
+
+        let files = finder.find_files().unwrap();
+        assert_eq!(
+            files.len(),
+            1,
+            "Should still only find 1 file (debug excluded)"
+        );
+        assert!(
+            !files
+                .iter()
+                .any(|p| p.file_name().unwrap() == "app_debug.log"),
+            "Should NOT find app_debug.log due to exclude pattern"
+        );
+    }
 }

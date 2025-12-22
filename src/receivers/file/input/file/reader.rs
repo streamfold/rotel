@@ -361,4 +361,114 @@ mod tests {
         assert_eq!(loaded.offset, 100);
         assert_eq!(loaded.fingerprint.bytes(), b"test content");
     }
+
+    #[test]
+    fn test_persistence_resumption_from_offset() {
+        // Create a file with 5 lines
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "line 1").unwrap(); // 7 bytes (including \n)
+        writeln!(file, "line 2").unwrap(); // 7 bytes
+        writeln!(file, "line 3").unwrap(); // 7 bytes
+        writeln!(file, "line 4").unwrap(); // 7 bytes
+        writeln!(file, "line 5").unwrap(); // 7 bytes
+        file.flush().unwrap();
+
+        // Calculate offset after first 3 lines (simulating persisted state)
+        // Each line is "line N\n" = 7 bytes
+        let persisted_offset: u64 = 21; // 3 lines * 7 bytes = 21 bytes
+
+        // Create fingerprint
+        let mut f = File::open(file.path()).unwrap();
+        let fp = Fingerprint::new(&mut f, 1000).unwrap();
+
+        // Simulate loading from persisted state by creating FileReaderState
+        let persisted_state = FileReaderState {
+            fingerprint: fp,
+            offset: persisted_offset,
+        };
+
+        // Create reader from persisted state (simulating restart)
+        let mut reader =
+            FileReader::from_state(persisted_state, file.path(), 1000, 1024 * 1024).unwrap();
+
+        // Verify reader starts at persisted offset
+        assert_eq!(reader.offset(), persisted_offset);
+
+        // Read lines - should only get lines 4 and 5 (not 1, 2, 3)
+        let lines = reader.read_lines().unwrap();
+
+        // Verify we only got the new lines (no duplicates of already processed lines)
+        assert_eq!(lines.len(), 2, "Should only read 2 lines after offset");
+        assert_eq!(lines[0], "line 4", "First line should be 'line 4'");
+        assert_eq!(lines[1], "line 5", "Second line should be 'line 5'");
+
+        // Verify offset is now at end of file
+        assert_eq!(reader.offset(), 35); // 5 lines * 7 bytes = 35 bytes
+        assert!(reader.is_eof());
+
+        // Reading again should return no lines (no duplicates)
+        let lines_again = reader.read_lines().unwrap();
+        assert!(
+            lines_again.is_empty(),
+            "Should not return any lines on second read"
+        );
+    }
+
+    #[test]
+    fn test_persistence_resumption_with_new_content() {
+        // Create a file with initial content
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "old 1").unwrap(); // 6 bytes
+        writeln!(file, "old 2").unwrap(); // 6 bytes
+        writeln!(file, "old 3").unwrap(); // 6 bytes
+        file.flush().unwrap();
+
+        // Calculate offset at end of file (simulating we processed all content before)
+        let persisted_offset: u64 = 18; // 3 lines * 6 bytes = 18 bytes
+
+        // Create fingerprint
+        let mut f = File::open(file.path()).unwrap();
+        let fp = Fingerprint::new(&mut f, 1000).unwrap();
+
+        // Simulate loading from persisted state
+        let persisted_state = FileReaderState {
+            fingerprint: fp,
+            offset: persisted_offset,
+        };
+
+        // Create reader from persisted state
+        let mut reader =
+            FileReader::from_state(persisted_state, file.path(), 1000, 1024 * 1024).unwrap();
+
+        // Initially should read nothing (we're at end of existing content)
+        let lines = reader.read_lines().unwrap();
+        assert!(
+            lines.is_empty(),
+            "Should not read old content after resumption"
+        );
+
+        // Now append new content to the file (simulating log rotation/append)
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(file.path())
+                .unwrap();
+            writeln!(f, "new 1").unwrap();
+            writeln!(f, "new 2").unwrap();
+            f.flush().unwrap();
+        }
+
+        // Reopen file handle to see new content
+        reader.reopen().unwrap();
+
+        // Read again - should only get the new lines
+        let new_lines = reader.read_lines().unwrap();
+        assert_eq!(new_lines.len(), 2, "Should read 2 new lines");
+        assert_eq!(new_lines[0], "new 1");
+        assert_eq!(new_lines[1], "new 2");
+
+        // Verify no duplicates on subsequent read
+        let lines_again = reader.read_lines().unwrap();
+        assert!(lines_again.is_empty(), "Should not return duplicates");
+    }
 }
