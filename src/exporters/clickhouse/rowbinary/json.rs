@@ -11,6 +11,7 @@ pub enum JsonType<'a> {
     Str(&'a str),
     StrOwned(String),
     Double(f64),
+    Array(Vec<JsonType<'a>>),
 }
 
 impl<'a> From<&'a ConvertedAttrValue> for JsonType<'a> {
@@ -40,7 +41,24 @@ impl<'a> From<&'a AnyValue> for JsonType<'a> {
             Some(Value::DoubleValue(d)) => JsonType::Double(*d),
             Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
             Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
-            Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
+            Some(Value::ArrayValue(a)) => {
+                // We support arrays with all simple values, no recursive nesting
+                let values = a
+                    .values
+                    .iter()
+                    .map(|v| match &v.value {
+                        Some(Value::IntValue(i)) => JsonType::Int(*i),
+                        Some(Value::DoubleValue(d)) => JsonType::Double(*d),
+                        Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
+                        Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+                        Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
+                        Some(Value::KvlistValue(kv)) => JsonType::StrOwned(json!(kv).to_string()),
+                        Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
+                        None => JsonType::Str(""),
+                    })
+                    .collect();
+                JsonType::Array(values)
+            }
             Some(Value::KvlistValue(_kv)) => {
                 // KvlistValue should be flattened before reaching this point
                 // This case should not occur in normal operation
@@ -59,7 +77,24 @@ impl From<AnyValue> for JsonType<'static> {
             Some(Value::DoubleValue(d)) => JsonType::Double(d),
             Some(Value::StringValue(s)) => JsonType::StrOwned(s),
             Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
-            Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
+            Some(Value::ArrayValue(a)) => {
+                // We support arrays with all simple values, no recursive nesting
+                let values = a
+                    .values
+                    .into_iter()
+                    .map(|v| match v.value {
+                        Some(Value::IntValue(i)) => JsonType::Int(i),
+                        Some(Value::DoubleValue(d)) => JsonType::Double(d),
+                        Some(Value::StringValue(s)) => JsonType::StrOwned(s),
+                        Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+                        Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
+                        Some(Value::KvlistValue(kv)) => JsonType::StrOwned(json!(kv).to_string()),
+                        Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
+                        None => JsonType::Str(""),
+                    })
+                    .collect();
+                JsonType::Array(values)
+            }
             Some(Value::KvlistValue(_kv)) => {
                 // KvlistValue should be flattened before reaching this point
                 // This case should not occur in normal operation
@@ -107,6 +142,18 @@ impl<'a> Serialize for JsonType<'a> {
                 };
                 jsondouble.serialize(serializer)
             }
+            JsonType::Array(a) => {
+                // We always use the Dyanmic type here because it is simpler to serialize. Clickhouse
+                // will use Nullable(T) in responses if all types are the same, but there doesn't seem
+                // to be a cost savings in wire size.
+                let jsonarray = JsonArrayDynamic {
+                    array_code: 0x1e,
+                    dynamic_code: 0x2b,
+                    max_types: 0x20,
+                    values: a,
+                };
+                jsonarray.serialize(serializer)
+            }
         }
     }
 }
@@ -127,6 +174,14 @@ struct JsonInt64 {
 struct JsonFloat64 {
     code: u8,
     value: f64,
+}
+
+#[derive(Serialize)]
+struct JsonArrayDynamic<'a> {
+    array_code: u8,
+    dynamic_code: u8,
+    max_types: u8,
+    values: &'a Vec<JsonType<'a>>,
 }
 
 #[cfg(test)]
@@ -285,6 +340,136 @@ mod tests {
             serialized_zero, expected_zero,
             "JsonType::Double(0.0) serialization bytes mismatch"
         );
+    }
+
+    #[test]
+    fn test_jsontype_array_serialization() {
+        // Same types
+        let json_array = JsonType::Array(vec![JsonType::Int(3), JsonType::Int(5)]);
+        let serialized_array = serialize_to_bytes(json_array);
+
+        let expected: Vec<u8> = vec![
+            0x1e, 0x2b, 0x20, 0x02, 0x0a, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
+            0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        assert_eq!(serialized_array, expected);
+
+        // Different types
+        let json_array = JsonType::Array(vec![JsonType::Int(3), JsonType::Str("hello")]);
+        let serialized_array = serialize_to_bytes(json_array);
+
+        let expected: Vec<u8> = vec![
+            0x1e, 0x2b, 0x20, 0x02, 0x0a, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x15,
+            0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f,
+        ];
+
+        assert_eq!(serialized_array, expected);
+    }
+    #[test]
+    fn test_anyvalue_arrayvalue_conversion() {
+        use opentelemetry_proto::tonic::common::v1::{ArrayValue, KeyValue, KeyValueList};
+
+        // Create an ArrayValue with mixed types including KvlistValue
+        let mut kv_list = KeyValueList::default();
+        kv_list.values.push(KeyValue {
+            key: "nested_key".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::StringValue("nested_value".to_string())),
+            }),
+        });
+
+        let array_value = ArrayValue {
+            values: vec![
+                AnyValue {
+                    value: Some(Value::IntValue(42)),
+                },
+                AnyValue {
+                    value: Some(Value::StringValue("test_string".to_string())),
+                },
+                AnyValue {
+                    value: Some(Value::DoubleValue(3.14)),
+                },
+                AnyValue {
+                    value: Some(Value::BoolValue(true)),
+                },
+                AnyValue {
+                    value: Some(Value::KvlistValue(kv_list)),
+                },
+                AnyValue {
+                    value: Some(Value::BytesValue(vec![0x48, 0x65, 0x6c, 0x6c, 0x6f])), // "Hello"
+                },
+                AnyValue {
+                    value: Some(Value::ArrayValue(ArrayValue {
+                        values: vec![AnyValue {
+                            value: Some(Value::IntValue(100)),
+                        }],
+                    })),
+                },
+            ],
+        };
+
+        let any_value = AnyValue {
+            value: Some(Value::ArrayValue(array_value)),
+        };
+
+        let json_type: JsonType = (&any_value).into();
+
+        match json_type {
+            JsonType::Array(values) => {
+                assert_eq!(values.len(), 7);
+
+                // Check Int value
+                match &values[0] {
+                    JsonType::Int(i) => assert_eq!(*i, 42),
+                    _ => panic!("Expected Int(42) at index 0"),
+                }
+
+                // Check String value
+                match &values[1] {
+                    JsonType::Str(s) => assert_eq!(*s, "test_string"),
+                    _ => panic!("Expected Str(\"test_string\") at index 1"),
+                }
+
+                // Check Double value
+                match &values[2] {
+                    JsonType::Double(d) => assert_eq!(*d, 3.14),
+                    _ => panic!("Expected Double(3.14) at index 2"),
+                }
+
+                // Check Bool value (converted to string)
+                match &values[3] {
+                    JsonType::StrOwned(s) => assert_eq!(s, "true"),
+                    _ => panic!("Expected StrOwned(\"true\") at index 3"),
+                }
+
+                // Check KvlistValue (converted to JSON string)
+                match &values[4] {
+                    JsonType::StrOwned(s) => {
+                        // The exact JSON string format may vary, but it should contain the key-value pair
+                        assert!(s.contains("nested_key"));
+                        assert!(s.contains("nested_value"));
+                    }
+                    _ => panic!("Expected StrOwned with JSON string at index 4"),
+                }
+
+                // Check BytesValue (hex encoded)
+                match &values[5] {
+                    JsonType::StrOwned(s) => assert_eq!(s, "48656c6c6f"), // "Hello" in hex
+                    _ => panic!("Expected StrOwned with hex string at index 5"),
+                }
+
+                // Check nested ArrayValue (converted to JSON string)
+                match &values[6] {
+                    JsonType::StrOwned(s) => {
+                        // Should be a JSON representation of the nested array
+                        assert!(s.contains("100"));
+                    }
+                    _ => panic!("Expected StrOwned with JSON array string at index 6"),
+                }
+            }
+            _ => panic!("Expected JsonType::Array"),
+        }
     }
 
     fn serialize_to_bytes(value: JsonType) -> Vec<u8> {
