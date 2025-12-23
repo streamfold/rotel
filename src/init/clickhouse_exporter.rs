@@ -72,13 +72,6 @@ pub struct ClickhouseExporterArgs {
     pub enable_json: bool,
 
     /// Clickhouse Exporter replace periods in JSON keys with underscores
-    #[arg(
-        long("clickhouse-exporter-json-underscore"),
-        env = "ROTEL_CLICKHOUSE_EXPORTER_JSON_UNDERSCORE",
-        default_value = "false"
-    )]
-    pub json_underscore: bool,
-
     /// Clickhouse Exporter request timeout
     #[arg(
         id("CLICKHOUSE_EXPORTER_REQUEST_TIMEOUT"),
@@ -101,7 +94,6 @@ impl Default for ClickhouseExporterArgs {
             password: None,
             async_insert: "true".to_string(),
             enable_json: false,
-            json_underscore: false,
             request_timeout: std::time::Duration::from_secs(5),
         }
     }

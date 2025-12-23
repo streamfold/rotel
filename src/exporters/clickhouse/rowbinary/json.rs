@@ -1,6 +1,9 @@
 use serde::{Serialize, Serializer};
 
 use crate::otlp::cvattr::ConvertedAttrValue;
+use opentelemetry_proto::tonic::common::v1::AnyValue;
+use opentelemetry_proto::tonic::common::v1::any_value::Value;
+use serde_json::json;
 
 #[derive(Debug)]
 pub enum JsonType<'a> {
@@ -26,6 +29,44 @@ impl From<ConvertedAttrValue> for JsonType<'static> {
             ConvertedAttrValue::Int(i) => JsonType::Int(i),
             ConvertedAttrValue::String(s) => JsonType::StrOwned(s),
             ConvertedAttrValue::Double(d) => JsonType::Double(d),
+        }
+    }
+}
+
+impl<'a> From<&'a AnyValue> for JsonType<'a> {
+    fn from(value: &'a AnyValue) -> Self {
+        match &value.value {
+            Some(Value::IntValue(i)) => JsonType::Int(*i),
+            Some(Value::DoubleValue(d)) => JsonType::Double(*d),
+            Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
+            Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+            Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
+            Some(Value::KvlistValue(_kv)) => {
+                // KvlistValue should be flattened before reaching this point
+                // This case should not occur in normal operation
+                JsonType::Str("")
+            }
+            Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
+            None => JsonType::Str(""),
+        }
+    }
+}
+
+impl From<AnyValue> for JsonType<'static> {
+    fn from(value: AnyValue) -> Self {
+        match value.value {
+            Some(Value::IntValue(i)) => JsonType::Int(i),
+            Some(Value::DoubleValue(d)) => JsonType::Double(d),
+            Some(Value::StringValue(s)) => JsonType::StrOwned(s),
+            Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+            Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
+            Some(Value::KvlistValue(_kv)) => {
+                // KvlistValue should be flattened before reaching this point
+                // This case should not occur in normal operation
+                JsonType::StrOwned(String::new())
+            }
+            Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(&b)),
+            None => JsonType::StrOwned(String::new()),
         }
     }
 }

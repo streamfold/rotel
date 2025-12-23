@@ -70,7 +70,6 @@ pub struct ClickhouseExporterConfigBuilder {
     auth_password: Option<String>,
     async_insert: bool,
     use_json: bool,
-    use_json_underscore: bool,
     request_timeout: Duration,
 }
 
@@ -121,11 +120,6 @@ impl ClickhouseExporterConfigBuilder {
         self
     }
 
-    pub fn with_json_underscore(mut self, json_underscore: bool) -> Self {
-        self.use_json_underscore = json_underscore;
-        self
-    }
-
     pub fn with_async_insert(mut self, async_insert: bool) -> Self {
         self.async_insert = async_insert;
         self
@@ -164,7 +158,6 @@ impl ClickhouseExporterConfigBuilder {
             auth_password: self.auth_password,
             async_insert: self.async_insert,
             use_json: self.use_json,
-            use_json_underscore: self.use_json_underscore,
         };
 
         let mapper = Arc::new(RequestMapper::new(&config, self.table_prefix)?);
@@ -222,11 +215,7 @@ impl ClickhouseExporterBuilder {
     {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
 
-        let transformer = Transformer::new(
-            self.config.compression.clone(),
-            self.config.use_json,
-            self.config.use_json_underscore,
-        );
+        let transformer = Transformer::new(self.config.compression.clone(), self.config.use_json);
 
         let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 
