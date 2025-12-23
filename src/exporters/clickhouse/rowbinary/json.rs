@@ -11,6 +11,7 @@ pub enum JsonType<'a> {
     Str(&'a str),
     StrOwned(String),
     Double(f64),
+    Bool(bool),
     Array(Vec<JsonType<'a>>),
 }
 
@@ -40,7 +41,7 @@ impl<'a> From<&'a AnyValue> for JsonType<'a> {
             Some(Value::IntValue(i)) => JsonType::Int(*i),
             Some(Value::DoubleValue(d)) => JsonType::Double(*d),
             Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
-            Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+            Some(Value::BoolValue(b)) => JsonType::Bool(*b),
             Some(Value::ArrayValue(a)) => {
                 // We support arrays with all simple values, no recursive nesting
                 let values = a
@@ -50,7 +51,7 @@ impl<'a> From<&'a AnyValue> for JsonType<'a> {
                         Some(Value::IntValue(i)) => JsonType::Int(*i),
                         Some(Value::DoubleValue(d)) => JsonType::Double(*d),
                         Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
-                        Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+                        Some(Value::BoolValue(b)) => JsonType::Bool(*b),
                         Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
                         Some(Value::KvlistValue(kv)) => JsonType::StrOwned(json!(kv).to_string()),
                         Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
@@ -76,7 +77,7 @@ impl From<AnyValue> for JsonType<'static> {
             Some(Value::IntValue(i)) => JsonType::Int(i),
             Some(Value::DoubleValue(d)) => JsonType::Double(d),
             Some(Value::StringValue(s)) => JsonType::StrOwned(s),
-            Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+            Some(Value::BoolValue(b)) => JsonType::Bool(b),
             Some(Value::ArrayValue(a)) => {
                 // We support arrays with all simple values, no recursive nesting
                 let values = a
@@ -86,7 +87,7 @@ impl From<AnyValue> for JsonType<'static> {
                         Some(Value::IntValue(i)) => JsonType::Int(i),
                         Some(Value::DoubleValue(d)) => JsonType::Double(d),
                         Some(Value::StringValue(s)) => JsonType::StrOwned(s),
-                        Some(Value::BoolValue(b)) => JsonType::StrOwned(b.to_string()),
+                        Some(Value::BoolValue(b)) => JsonType::Bool(b),
                         Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
                         Some(Value::KvlistValue(kv)) => JsonType::StrOwned(json!(kv).to_string()),
                         Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
@@ -142,6 +143,13 @@ impl<'a> Serialize for JsonType<'a> {
                 };
                 jsondouble.serialize(serializer)
             }
+            JsonType::Bool(b) => {
+                let jsonbool = JsonBool {
+                    code: 0x2d,
+                    value: *b,
+                };
+                jsonbool.serialize(serializer)
+            }
             JsonType::Array(a) => {
                 // We always use the Dyanmic type here because it is simpler to serialize. Clickhouse
                 // will use Nullable(T) in responses if all types are the same, but there doesn't seem
@@ -174,6 +182,12 @@ struct JsonInt64 {
 struct JsonFloat64 {
     code: u8,
     value: f64,
+}
+
+#[derive(Serialize)]
+struct JsonBool {
+    code: u8,
+    value: bool,
 }
 
 #[derive(Serialize)]
@@ -361,11 +375,44 @@ mod tests {
 
         let expected: Vec<u8> = vec![
             0x1e, 0x2b, 0x20, 0x02, 0x0a, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x15,
-            0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f,
+            0x05, b'h', b'e', b'l', b'l', b'o',
         ];
 
         assert_eq!(serialized_array, expected);
     }
+
+    /// Test that verifies the byte patterns for JsonType::Bool serialization.
+    #[test]
+    fn test_jsontype_bool_serialization() {
+        let json_bool_true = JsonType::Bool(true);
+        let serialized_true = serialize_to_bytes(json_bool_true);
+
+        // Expected bytes: type code 0x2d + true as u8 (0x01)
+        let expected_true: Vec<u8> = vec![
+            0x2d, // JsonBool type code
+            0x01, // true as u8
+        ];
+
+        assert_eq!(
+            serialized_true, expected_true,
+            "JsonType::Bool(true) serialization bytes mismatch"
+        );
+
+        let json_bool_false = JsonType::Bool(false);
+        let serialized_false = serialize_to_bytes(json_bool_false);
+
+        // Expected bytes: type code 0x2d + false as u8 (0x00)
+        let expected_false: Vec<u8> = vec![
+            0x2d, // JsonBool type code
+            0x00, // false as u8
+        ];
+
+        assert_eq!(
+            serialized_false, expected_false,
+            "JsonType::Bool(false) serialization bytes mismatch"
+        );
+    }
+
     #[test]
     fn test_anyvalue_arrayvalue_conversion() {
         use opentelemetry_proto::tonic::common::v1::{ArrayValue, KeyValue, KeyValueList};
@@ -437,10 +484,10 @@ mod tests {
                     _ => panic!("Expected Double(3.14) at index 2"),
                 }
 
-                // Check Bool value (converted to string)
+                // Check Bool value
                 match &values[3] {
-                    JsonType::StrOwned(s) => assert_eq!(s, "true"),
-                    _ => panic!("Expected StrOwned(\"true\") at index 3"),
+                    JsonType::Bool(b) => assert!(b),
+                    _ => panic!("Expected Bool(true) at index 3"),
                 }
 
                 // Check KvlistValue (converted to JSON string)
