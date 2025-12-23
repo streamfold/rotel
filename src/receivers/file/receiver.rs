@@ -11,12 +11,14 @@
 //! - Workers send LogRecordBatch directly to an async task for export
 //! - This prevents file I/O from blocking the tokio runtime and enables parallel processing
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
+use futures::stream::FuturesOrdered;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::common::v1::KeyValue as OtlpKeyValue;
@@ -25,7 +27,7 @@ use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use tokio::select;
 use tokio::sync::mpsc;
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tower::BoxError;
 use tracing::{debug, error, info, warn};
@@ -186,11 +188,14 @@ struct WorkerContext {
     /// Channel to send log records to async handler
     records_tx: mpsc::Sender<LogRecordBatch>,
     /// Channel to send offset updates back to coordinator
-    results_tx: mpsc::Sender<FileWorkResult>,
+    results_tx: std::sync::mpsc::Sender<FileWorkResult>,
 }
 
 /// Maximum number of log records to accumulate before sending a batch
 const MAX_BATCH_SIZE: usize = 100;
+
+/// Default maximum number of concurrent file processing workers
+const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
 
 /// Process a single file work item (runs in spawn_blocking)
 fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
@@ -330,7 +335,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         fingerprint_bytes: work.fingerprint_bytes,
         new_offset,
     };
-    let _ = ctx.results_tx.blocking_send(result);
+    let _ = ctx.results_tx.send(result);
 }
 
 /// Tracked state for a file (lightweight, no file handle)
@@ -349,8 +354,6 @@ struct FileCoordinator {
     persister: JsonFilePersister,
     /// Map from fingerprint bytes to tracked file state
     tracked_files: HashMap<Vec<u8>, TrackedFile>,
-    /// Set of fingerprint bytes for files currently being processed by workers
-    in_flight: HashSet<Vec<u8>>,
     watcher: Box<dyn FileWatcher + Send>,
     watched_dirs: Vec<PathBuf>,
     first_check: bool,
@@ -358,12 +361,10 @@ struct FileCoordinator {
     checkpoint_config: CheckpointConfig,
     records_since_checkpoint: u64,
     last_checkpoint: Instant,
-    // Worker context for spawning work
-    worker_ctx: WorkerContext,
+    // Channel to send work items to the async handler
+    work_tx: std::sync::mpsc::SyncSender<FileWorkItem>,
     // Channel to receive offset updates from workers
-    results_rx: mpsc::Receiver<FileWorkResult>,
-    // Runtime handle for spawn_blocking
-    runtime: tokio::runtime::Handle,
+    results_rx: std::sync::mpsc::Receiver<FileWorkResult>,
 }
 
 impl FileCoordinator {
@@ -496,9 +497,6 @@ impl FileCoordinator {
     fn process_results(&mut self) {
         // Non-blocking drain of all available results
         while let Ok(result) = self.results_rx.try_recv() {
-            // Remove from in-flight set - this file can be dispatched again
-            self.in_flight.remove(&result.fingerprint_bytes);
-
             if let Some(tracked) = self.tracked_files.get_mut(&result.fingerprint_bytes) {
                 tracked.offset = result.new_offset;
                 self.records_since_checkpoint += 1; // Approximate, actual count comes from batch
@@ -580,12 +578,6 @@ impl FileCoordinator {
         let existing_key = self.find_matching_tracked_key(&fp);
 
         let (offset, fingerprint_bytes) = if let Some(existing_key) = existing_key {
-            // Skip if this file is already being processed by a worker
-            // The worker reads to EOF, so it will get all available data
-            if self.in_flight.contains(&existing_key) {
-                return Ok(());
-            }
-
             // Existing file - get current offset and reset generation
             if let Some(tracked) = self.tracked_files.get_mut(&existing_key) {
                 tracked.generation = 0;
@@ -613,9 +605,6 @@ impl FileCoordinator {
             (offset, key)
         };
 
-        // Mark as in-flight before dispatching
-        self.in_flight.insert(fingerprint_bytes.clone());
-
         // Extract file name
         let file_name = path
             .file_name()
@@ -631,11 +620,10 @@ impl FileCoordinator {
             max_log_size: self.config.max_log_size,
         };
 
-        // Dispatch to worker via spawn_blocking
-        let ctx = self.worker_ctx.clone();
-        self.runtime.spawn_blocking(move || {
-            process_file_work(work, ctx);
-        });
+        // Send work to async handler via bounded channel (blocks if at capacity)
+        if let Err(e) = self.work_tx.send(work) {
+            warn!("Failed to send work item: {}", e);
+        }
 
         Ok(())
     }
@@ -739,8 +727,8 @@ impl FileHandler {
     }
 
     /// Run the main event loop.
-    /// Spawns a coordinator thread that dispatches work to spawn_blocking workers.
-    /// Workers send log records directly to this async task for export.
+    /// Spawns a coordinator thread that watches for file changes and sends work items.
+    /// This async task manages worker concurrency via FuturesOrdered and sends to exporters.
     async fn run(&mut self, cancel: CancellationToken) {
         // Build parser (needs to be Arc for Send across threads)
         let parser: Option<Arc<dyn Parser + Send + Sync>> =
@@ -785,11 +773,24 @@ impl FileHandler {
             "File watcher initialized"
         );
 
+        // Get max concurrent files from config (or use default)
+        let max_concurrent_files = if self.config.max_concurrent_files > 0 {
+            self.config.max_concurrent_files
+        } else {
+            DEFAULT_MAX_CONCURRENT_WORKERS
+        };
+
         // Create channels:
+        // - work_tx/rx: coordinator -> async handler (work items to process)
         // - records_tx/rx: workers -> async handler (log records for export)
         // - results_tx/rx: workers -> coordinator (offset updates)
+        //
+        // Use std::sync::mpsc for coordinator channels (blocking sends from OS thread)
+        // Use tokio::sync::mpsc for worker -> async handler (async receives)
+        let (work_tx, work_rx) =
+            std::sync::mpsc::sync_channel::<FileWorkItem>(max_concurrent_files);
         let (records_tx, mut records_rx) = mpsc::channel::<LogRecordBatch>(100);
-        let (results_tx, results_rx) = mpsc::channel::<FileWorkResult>(100);
+        let (results_tx, results_rx) = std::sync::mpsc::channel::<FileWorkResult>();
 
         // Create worker context (shared by all workers)
         let worker_ctx = WorkerContext {
@@ -800,9 +801,6 @@ impl FileHandler {
             results_tx,
         };
 
-        // Get runtime handle for spawn_blocking
-        let runtime = tokio::runtime::Handle::current();
-
         // Create the coordinator
         let finder = FileFinder::new(self.config.include.clone(), self.config.exclude.clone());
         let coordinator = FileCoordinator {
@@ -810,16 +808,14 @@ impl FileHandler {
             finder,
             persister,
             tracked_files: HashMap::new(),
-            in_flight: HashSet::new(),
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
             checkpoint_config: CheckpointConfig::default(),
             records_since_checkpoint: 0,
             last_checkpoint: Instant::now(),
-            worker_ctx,
+            work_tx,
             results_rx,
-            runtime,
         };
 
         // Spawn the coordinator on a dedicated OS thread
@@ -828,13 +824,56 @@ impl FileHandler {
             coordinator.run(coord_cancel);
         });
 
-        // Main event loop - receive log records from workers and send to exporters
+        // Wrap work_rx in a tokio task that bridges sync -> async
+        let (async_work_tx, mut async_work_rx) =
+            mpsc::channel::<FileWorkItem>(max_concurrent_files);
+        let work_bridge_cancel = cancel.clone();
+        let work_bridge_handle = std::thread::spawn(move || {
+            // Bridge from std::sync::mpsc to tokio::sync::mpsc
+            loop {
+                if work_bridge_cancel.is_cancelled() {
+                    break;
+                }
+                match work_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(work) => {
+                        if async_work_tx.blocking_send(work).is_err() {
+                            break;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+
+        // Track in-flight worker tasks with FuturesOrdered
+        let mut worker_futures: FuturesOrdered<JoinHandle<()>> = FuturesOrdered::new();
+
+        // Main event loop
         loop {
             select! {
                 _ = cancel.cancelled() => {
                     debug!("File receiver cancelled, stopping");
                     break;
                 }
+
+                // Receive work items and spawn workers (with concurrency limit)
+                Some(work) = async_work_rx.recv(), if worker_futures.len() < max_concurrent_files => {
+                    let ctx = worker_ctx.clone();
+                    let handle = tokio::task::spawn_blocking(move || {
+                        process_file_work(work, ctx);
+                    });
+                    worker_futures.push_back(handle);
+                }
+
+                // Process completed workers
+                Some(result) = worker_futures.next(), if !worker_futures.is_empty() => {
+                    if let Err(e) = result {
+                        error!("Worker task failed: {}", e);
+                    }
+                }
+
+                // Receive log records from workers and send to exporters
                 Some(batch) = records_rx.recv() => {
                     if !batch.log_records.is_empty() {
                         if let Some(ref logs_output) = self.logs_output {
@@ -877,8 +916,17 @@ impl FileHandler {
             }
         }
 
-        // Wait for coordinator thread to finish
+        // Wait for remaining workers to complete
+        while let Some(result) = worker_futures.next().await {
+            if let Err(e) = result {
+                error!("Worker task failed during shutdown: {}", e);
+            }
+        }
+
+        // Wait for bridge and coordinator threads to finish
         drop(records_rx);
+        drop(async_work_rx);
+        let _ = work_bridge_handle.join();
         let _ = coord_handle.join();
 
         info!("File receiver stopped");

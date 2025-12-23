@@ -172,6 +172,14 @@ pub struct FileReceiverArgs {
         default_value = "false"
     )]
     pub file_receiver_include_file_path: bool,
+
+    /// Maximum number of files to process concurrently
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_MAX_CONCURRENT_FILES",
+        default_value = "64"
+    )]
+    pub file_receiver_max_concurrent_files: usize,
 }
 
 impl Default for FileReceiverArgs {
@@ -189,6 +197,7 @@ impl Default for FileReceiverArgs {
             file_receiver_max_log_size: 65536,
             file_receiver_include_file_name: true,
             file_receiver_include_file_path: false,
+            file_receiver_max_concurrent_files: 64,
         }
     }
 }
@@ -209,7 +218,7 @@ impl FileReceiverArgs {
             max_log_size: self.file_receiver_max_log_size,
             include_file_name: self.file_receiver_include_file_name,
             include_file_path: self.file_receiver_include_file_path,
-            num_workers: 0, // Use default (number of CPUs)
+            max_concurrent_files: self.file_receiver_max_concurrent_files,
         }
     }
 }
