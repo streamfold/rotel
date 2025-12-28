@@ -79,9 +79,11 @@ impl Display for Region {
     }
 }
 
-impl From<String> for Region {
-    fn from(s: String) -> Self {
-        match s.as_str() {
+impl core::str::FromStr for Region {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "us-east-1" => Region::UsEast1,
             "us-east-2" => Region::UsEast2,
             "us-west-1" => Region::UsWest1,
@@ -114,7 +116,31 @@ impl From<String> for Region {
             "me-south-1" => Region::MeSouth1,
             "me-central-1" => Region::MeCentral1,
             "sa-east-1" => Region::SaEast1,
-            _ => panic!("Unknown region: {}", s),
-        }
+            _ => return Err(format!("Unknown region: {}", s)),
+        })
+    }
+}
+
+impl From<String> for Region {
+    fn from(s: String) -> Self {
+        s.parse().unwrap()
+    }
+}
+
+impl Default for Region {
+    fn default() -> Self {
+        use std::env;
+        // Try to read AWS_REGION
+        env::var("AWS_REGION")
+            // Else, try to read AWS_DEFAULT_REGION
+            .or_else(|_| env::var("AWS_DEFAULT_REGION"))
+            // Discard the error
+            .ok()
+            // Parse the value and discard the error
+            .map(|s| s.parse().ok())
+            // Flatten the result
+            .flatten()
+            // Unwrap it or fallback on us-east-1
+            .unwrap_or_else(|| Region::UsEast1)
     }
 }
