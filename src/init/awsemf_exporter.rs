@@ -9,10 +9,9 @@ pub struct AwsEmfExporterArgs {
     /// AWS EMF Exporter Region
     #[arg(
         id("AWSEMF_REGION"),
-        value_enum,
         long("awsemf-exporter-region"),
         env = "ROTEL_AWSEMF_EXPORTER_REGION",
-        default_value = "us-east-1"
+        default_value_t
     )]
     pub region: Region,
 
@@ -82,7 +81,7 @@ pub struct AwsEmfExporterArgs {
 impl Default for AwsEmfExporterArgs {
     fn default() -> Self {
         Self {
-            region: Region::UsEast1,
+            region: Region::default(),
             custom_endpoint: None,
             log_group_name: "/metrics/default".to_string(),
             log_stream_name: "otel-stream".to_string(),
