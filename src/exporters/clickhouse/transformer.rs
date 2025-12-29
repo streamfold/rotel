@@ -1,7 +1,7 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::rowbinary::json::JsonType;
 use crate::exporters::clickhouse::schema::MapOrJson;
-use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrValue};
+
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -22,71 +22,6 @@ impl Transformer {
 }
 
 impl Transformer {
-    pub(crate) fn transform_attrs<'a>(&self, attrs: &'a [ConvertedAttrKeyValue]) -> MapOrJson<'a> {
-        match self.use_json {
-            true => MapOrJson::Json(self.build_json_attrs(attrs)),
-            false => MapOrJson::Map(
-                attrs
-                    .iter()
-                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn build_json_attrs<'a>(
-        &self,
-        attrs: &'a [ConvertedAttrKeyValue],
-    ) -> HashMap<Cow<'a, str>, JsonType<'a>> {
-        if attrs.is_empty() {
-            return HashMap::new();
-        }
-
-        let hm: HashMap<Cow<'a, str>, JsonType<'a>> = attrs
-            .iter()
-            .map(|kv| {
-                let key = Cow::Borrowed(kv.0.as_str());
-                (key, (&kv.1).into())
-            })
-            .collect();
-
-        hm
-    }
-
-    pub(crate) fn transform_attrs_owned(
-        &self,
-        attrs: &[ConvertedAttrKeyValue],
-    ) -> MapOrJson<'static> {
-        match self.use_json {
-            true => MapOrJson::JsonOwned(self.build_json_attrs_owned(attrs)),
-            false => MapOrJson::Map(
-                attrs
-                    .iter()
-                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn build_json_attrs_owned(
-        &self,
-        attrs: &[ConvertedAttrKeyValue],
-    ) -> HashMap<String, JsonType<'static>> {
-        if attrs.is_empty() {
-            return HashMap::new();
-        }
-
-        let hm: HashMap<String, JsonType<'static>> = attrs
-            .iter()
-            .map(|kv| {
-                let key = kv.0.clone();
-                (key, kv.1.clone().into())
-            })
-            .collect();
-
-        hm
-    }
-
     pub(crate) fn transform_attrs_kv<'a>(&self, attrs: &'a [KeyValue]) -> MapOrJson<'a> {
         match self.use_json {
             true => MapOrJson::Json(self.build_json_attrs_kv(attrs)),
@@ -242,20 +177,6 @@ impl Transformer {
     }
 }
 
-pub(crate) fn find_str_attribute<'a>(
-    attr: &str,
-    attributes: &'a [ConvertedAttrKeyValue],
-) -> Cow<'a, str> {
-    attributes
-        .iter()
-        .find(|kv| kv.0 == attr)
-        .map(|kv| match &kv.1 {
-            ConvertedAttrValue::String(s) => Cow::Borrowed(s.as_str()),
-            _ => Cow::Borrowed(""),
-        })
-        .unwrap_or(Cow::Borrowed(""))
-}
-
 pub(crate) fn find_str_attribute_kv<'a>(attr: &str, attributes: &'a [KeyValue]) -> Cow<'a, str> {
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
@@ -290,25 +211,39 @@ pub(crate) fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::otlp::cvattr::ConvertedAttrValue;
 
     #[test]
     fn test_transform_attrs_lifetime_correctness() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
         let transformer = Transformer::new(Compression::None, true);
 
         // Create some test attributes
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "service.name".to_string(),
-                ConvertedAttrValue::String("test-service".to_string()),
-            ),
-            ConvertedAttrKeyValue("http.status_code".to_string(), ConvertedAttrValue::Int(200)),
-            ConvertedAttrKeyValue("duration".to_string(), ConvertedAttrValue::Double(1.23)),
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+            KeyValue {
+                key: "duration".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::DoubleValue(1.23)),
+                }),
+            },
         ];
 
         // This should work without cloning the values - the returned MapOrJson
         // should maintain references to the original data where possible
-        let result = transformer.transform_attrs(&attrs);
+        let result = transformer.transform_attrs_kv(&attrs);
 
         match result {
             MapOrJson::Json(map) => {
@@ -323,17 +258,27 @@ mod tests {
 
     #[test]
     fn test_transform_attrs_map_variant() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
         let transformer = Transformer::new(Compression::None, false);
 
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "key1".to_string(),
-                ConvertedAttrValue::String("value1".to_string()),
-            ),
-            ConvertedAttrKeyValue("key2".to_string(), ConvertedAttrValue::Int(42)),
+            KeyValue {
+                key: "key1".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("value1".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "key2".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(42)),
+                }),
+            },
         ];
 
-        let result = transformer.transform_attrs(&attrs);
+        let result = transformer.transform_attrs_kv(&attrs);
 
         match result {
             MapOrJson::Map(vec) => {
@@ -347,21 +292,36 @@ mod tests {
 
     #[test]
     fn test_transform_attrs_owned_lifetime_correctness() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
         let transformer = Transformer::new(Compression::None, true);
 
         // Create some test attributes
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "service.name".to_string(),
-                ConvertedAttrValue::String("test-service".to_string()),
-            ),
-            ConvertedAttrKeyValue("http.status_code".to_string(), ConvertedAttrValue::Int(200)),
-            ConvertedAttrKeyValue("duration".to_string(), ConvertedAttrValue::Double(1.23)),
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+            KeyValue {
+                key: "duration".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::DoubleValue(1.23)),
+                }),
+            },
         ];
 
         // This should work with owned data - the returned MapOrJson
         // should contain owned data that doesn't reference the input
-        let result = transformer.transform_attrs_owned(&attrs);
+        let result = transformer.transform_attrs_kv_owned(&attrs);
 
         match result {
             MapOrJson::JsonOwned(map) => {
