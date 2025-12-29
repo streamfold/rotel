@@ -69,10 +69,6 @@ impl Transformer {
         &self,
         attrs: &'a [KeyValue],
     ) -> HashMap<Cow<'a, str>, JsonType<'a>> {
-        if attrs.is_empty() {
-            return HashMap::new();
-        }
-
         let mut hm = HashMap::new();
         self.flatten_keyvalues_borrowed(attrs, String::new(), &mut hm);
         hm
@@ -120,10 +116,6 @@ impl Transformer {
     }
 
     fn build_json_attrs_kv_owned(&self, attrs: &[KeyValue]) -> HashMap<String, JsonType<'static>> {
-        if attrs.is_empty() {
-            return HashMap::new();
-        }
-
         let mut hm = HashMap::new();
         self.flatten_keyvalues_owned(attrs, String::new(), &mut hm);
         hm
