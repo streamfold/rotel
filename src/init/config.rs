@@ -314,7 +314,6 @@ impl TryIntoConfig for ExporterArgs {
                 .with_compression(ch.compression)
                 .with_async_insert(async_insert)
                 .with_json(ch.enable_json)
-                .with_json_underscore(ch.json_underscore)
                 .with_request_timeout(ch.request_timeout);
 
                 if let Some(user) = &ch.user {
@@ -399,8 +398,9 @@ impl TryIntoConfig for ExporterArgs {
 
 pub(crate) fn get_receivers_config(
     config: &AgentRun,
+    otlp_default_receiver: bool,
 ) -> Result<HashMap<Receiver, ReceiverConfig>, BoxError> {
-    if config.receivers.is_none() && config.receiver.is_none() {
+    if config.receivers.is_none() && config.receiver.is_none() && otlp_default_receiver {
         let mut map = HashMap::new();
         map.insert(Receiver::Otlp, get_receiver_config(config, Receiver::Otlp));
         return Ok(map);

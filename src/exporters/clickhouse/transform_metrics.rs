@@ -5,8 +5,7 @@ use crate::exporters::clickhouse::schema::{
     MetricsExemplars, MetricsExpHistogramRow, MetricsGaugeRow, MetricsHistogramRow, MetricsMeta,
     MetricsSumRow, MetricsSummaryRow,
 };
-use crate::exporters::clickhouse::transformer::{Transformer, find_str_attribute};
-use crate::otlp::cvattr;
+use crate::exporters::clickhouse::transformer::{Transformer, find_str_attribute_kv};
 use crate::topology::payload::{Message, MessageMetadata};
 use opentelemetry_proto::tonic::metrics::v1::exemplar::Value;
 use opentelemetry_proto::tonic::metrics::v1::metric::Data;
@@ -33,9 +32,8 @@ impl TransformPayload<ResourceMetrics> for Transformer {
             }
             for rm in message.payload {
                 let res_attrs = rm.resource.unwrap_or_default().attributes;
-                let res_attrs = cvattr::convert_into(res_attrs);
-                let service_name = find_str_attribute(SERVICE_NAME, &res_attrs);
-                let res_attrs_field = self.transform_attrs(&res_attrs);
+                let service_name = find_str_attribute_kv(SERVICE_NAME, &res_attrs);
+                let res_attrs_field = self.transform_attrs_kv(&res_attrs);
 
                 for sm in rm.scope_metrics {
                     let (scope_name, scope_version, scope_attrs, dropped_attr_count) =
@@ -43,13 +41,13 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                             Some(scope) => (
                                 scope.name,
                                 scope.version,
-                                cvattr::convert_into(scope.attributes),
+                                scope.attributes,
                                 scope.dropped_attributes_count,
                             ),
                             None => (String::new(), String::new(), Vec::new(), 0),
                         };
 
-                    let scope_attrs = self.transform_attrs(&scope_attrs);
+                    let scope_attrs = self.transform_attrs_kv(&scope_attrs);
 
                     for metric in sm.metrics {
                         if let Some(data) = metric.data {
@@ -70,8 +68,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                             match data {
                                 Data::Sum(s) => {
                                     for dp in s.data_points {
-                                        let attrs = cvattr::convert_into(dp.attributes);
-                                        let attrs = self.transform_attrs(&attrs);
+                                        let attrs = self.transform_attrs_kv(&dp.attributes);
 
                                         let row = MetricsSumRow {
                                             meta: &meta,
@@ -102,8 +99,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 }
                                 Data::Gauge(g) => {
                                     for dp in g.data_points {
-                                        let attrs = cvattr::convert_into(dp.attributes);
-                                        let attrs = self.transform_attrs(&attrs);
+                                        let attrs = self.transform_attrs_kv(&dp.attributes);
 
                                         let row = MetricsGaugeRow {
                                             meta: &meta,
@@ -132,8 +128,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 }
                                 Data::Histogram(h) => {
                                     for dp in h.data_points {
-                                        let attrs = cvattr::convert_into(dp.attributes);
-                                        let attrs = self.transform_attrs(&attrs);
+                                        let attrs = self.transform_attrs_kv(&dp.attributes);
 
                                         let row = MetricsHistogramRow {
                                             meta: &meta,
@@ -168,8 +163,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 }
                                 Data::ExponentialHistogram(e) => {
                                     for dp in e.data_points {
-                                        let attrs = cvattr::convert_into(dp.attributes);
-                                        let attrs = self.transform_attrs(&attrs);
+                                        let attrs = self.transform_attrs_kv(&dp.attributes);
 
                                         let mut row = MetricsExpHistogramRow {
                                             meta: &meta,
@@ -218,8 +212,7 @@ impl TransformPayload<ResourceMetrics> for Transformer {
                                 }
                                 Data::Summary(s) => {
                                     for dp in s.data_points {
-                                        let attrs = cvattr::convert_into(dp.attributes);
-                                        let attrs = self.transform_attrs(&attrs);
+                                        let attrs = self.transform_attrs_kv(&dp.attributes);
 
                                         let row = MetricsSummaryRow {
                                             meta: &meta,
@@ -289,10 +282,7 @@ impl Transformer {
         MetricsExemplars {
             exemplars_filtered_attributes: exemplars
                 .iter()
-                .map(|e| {
-                    let event_attrs = cvattr::convert(&e.filtered_attributes);
-                    self.transform_attrs_owned(&event_attrs)
-                })
+                .map(|e| self.transform_attrs_kv_owned(&e.filtered_attributes))
                 .collect(),
             exemplars_time_unix: exemplars.iter().map(|e| e.time_unix_nano).collect(),
             exemplars_value: exemplars

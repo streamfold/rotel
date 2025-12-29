@@ -65,6 +65,7 @@ pub struct Agent {
     logs_rx: Option<BoundedReceiver<ResourceLogs>>,
     pipeline_flush_sub: Option<FlushSubscriber>,
     exporters_flush_sub: Option<FlushSubscriber>,
+    otlp_default_receiver: bool,
 }
 
 impl Agent {
@@ -82,6 +83,7 @@ impl Agent {
             logs_rx: None,
             pipeline_flush_sub: None,
             exporters_flush_sub: None,
+            otlp_default_receiver: true,
         }
     }
 
@@ -97,6 +99,12 @@ impl Agent {
 
     pub fn with_exporters_flush(mut self, exporters_flush_sub: FlushSubscriber) -> Self {
         self.exporters_flush_sub = Some(exporters_flush_sub);
+        self
+    }
+
+    /// disable the default OTLP receiver
+    pub fn disable_otlp_default_receiver(mut self) -> Self {
+        self.otlp_default_receiver = false;
         self
     }
 
@@ -140,7 +148,7 @@ impl Agent {
             bounded::<Message<ResourceMetrics>>(max(4, num_cpus));
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
-        let rec_config = get_receivers_config(&config)?;
+        let rec_config = get_receivers_config(&config, self.otlp_default_receiver)?;
         #[allow(unused_mut)]
         let mut exp_config = get_exporters_config(&config, &self.environment)?;
 
@@ -187,7 +195,8 @@ impl Agent {
             exp_config.set_indefinite_retry();
         }
 
-        let activation = TelemetryActivation::from_config(&rec_config, &exp_config);
+        let activation =
+            TelemetryActivation::from_config(&rec_config, &exp_config, self.logs_rx.is_some());
 
         // If there are no listeners, suggest the blackhole exporter
         if activation.traces == TelemetryState::NoListeners

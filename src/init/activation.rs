@@ -21,6 +21,7 @@ impl TelemetryActivation {
     pub(crate) fn from_config(
         receiver_config: &HashMap<Receiver, ReceiverConfig>,
         exporter_config: &ExporterConfigs,
+        logs_rx_active: bool,
     ) -> Self {
         let mut activation = TelemetryActivation::default();
 
@@ -43,7 +44,7 @@ impl TelemetryActivation {
             activation.metrics = TelemetryState::Disabled;
         }
 
-        if all_logs_receivers_disabled(receiver_config) {
+        if all_logs_receivers_disabled(receiver_config) && !logs_rx_active {
             activation.logs = TelemetryState::Disabled;
         }
 
