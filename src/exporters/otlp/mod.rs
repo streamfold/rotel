@@ -503,7 +503,7 @@ mod tests {
             }])
             .await;
         assert!(&res.is_ok());
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
@@ -583,7 +583,7 @@ mod tests {
             .await;
         assert!(&res.is_ok());
 
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
@@ -662,7 +662,7 @@ mod tests {
             .await;
         assert!(&res.is_ok());
 
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
@@ -734,7 +734,7 @@ mod tests {
         assert!(&res.is_ok());
 
         // broadcast a flush to immediately drain
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         // We should get at least one retry here, so wait for two responses
         for i in 0..=1 {
