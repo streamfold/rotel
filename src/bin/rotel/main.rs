@@ -363,7 +363,7 @@ async fn force_flush(pipeline_tx: &mut FlushSender, exporters_tx: &mut FlushSend
     let start = Instant::now();
     match timeout(
         Duration::from_millis(FLUSH_PIPELINE_TIMEOUT_MILLIS),
-        pipeline_tx.broadcast(),
+        pipeline_tx.broadcast(None),
     )
     .await
     {
@@ -383,7 +383,7 @@ async fn force_flush(pipeline_tx: &mut FlushSender, exporters_tx: &mut FlushSend
     let start = Instant::now();
     match timeout(
         Duration::from_millis(FLUSH_EXPORTERS_TIMEOUT_MILLIS),
-        exporters_tx.broadcast(),
+        exporters_tx.broadcast(None),
     )
     .await
     {
