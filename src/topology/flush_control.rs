@@ -1,6 +1,6 @@
 use crate::bounded_channel::{BoundedReceiver, BoundedSender, bounded};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::time::timeout;
@@ -15,6 +15,13 @@ const FLUSH_ACK_TIMEOUT_MILLIS: u64 = 100;
 #[derive(Debug, Clone)]
 pub struct FlushRequest {
     id: u64,
+    flush_deadline: Option<Instant>,
+}
+
+impl FlushRequest {
+    pub fn get_flush_deadline(&self) -> Option<Instant> {
+        self.flush_deadline
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -89,12 +96,15 @@ pub struct FlushSender {
 impl FlushSender {
     // This should always be called with a timeout, since it is possible to
     // loop in here if a receiver does not ack the broadcast message.
-    pub async fn broadcast(&mut self) -> Result<(), BoxError> {
+    pub async fn broadcast(&mut self, flush_deadline: Option<Instant>) -> Result<(), BoxError> {
         let curr_listeners = self.inner.lock().unwrap().listeners;
 
         let req_id = self.next_req_id;
         self.next_req_id += 1;
-        let req = FlushRequest { id: req_id };
+        let req = FlushRequest {
+            id: req_id,
+            flush_deadline,
+        };
 
         if let Err(e) = self.req_tx.send(req) {
             return Err(format!("Unable to send broadcast message: {}", e).into());
@@ -201,9 +211,9 @@ mod tests {
             assert_ok!(receiver.ack(req).await);
         });
 
-        publisher.broadcast().await.unwrap();
+        publisher.broadcast(None).await.unwrap();
 
-        publisher.broadcast().await.unwrap();
+        publisher.broadcast(None).await.unwrap();
 
         assert_ok!(join!(jh).0);
     }
@@ -225,7 +235,7 @@ mod tests {
             handles.push(jh);
         }
 
-        publisher.broadcast().await.unwrap();
+        publisher.broadcast(None).await.unwrap();
 
         for h in handles {
             assert_ok!(join!(h).0);
@@ -238,7 +248,7 @@ mod tests {
 
         let _receiver = subscriber.subscribe();
 
-        let res = timeout(Duration::from_millis(50), publisher.broadcast()).await;
+        let res = timeout(Duration::from_millis(50), publisher.broadcast(None)).await;
         assert_err!(res);
     }
 
@@ -256,7 +266,7 @@ mod tests {
         });
 
         // Should timeout
-        let res = timeout(Duration::from_millis(50), publisher.broadcast()).await;
+        let res = timeout(Duration::from_millis(50), publisher.broadcast(None)).await;
         assert_err!(res);
 
         assert_ok!(join!(jh).0);
@@ -278,7 +288,7 @@ mod tests {
             assert_ok!(lis.ack(req.unwrap()).await);
         });
 
-        publisher.broadcast().await.unwrap();
+        publisher.broadcast(None).await.unwrap();
 
         assert_ok!(join!(jh).0);
     }
