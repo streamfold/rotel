@@ -292,4 +292,41 @@ mod tests {
 
         assert_ok!(join!(jh).0);
     }
+
+    #[tokio::test]
+    async fn test_flush_deadline_propagation() {
+        let (mut publisher, mut subscriber) = FlushBroadcast::new().into_parts();
+
+        let mut receiver = subscriber.subscribe();
+
+        let jh1 = tokio::spawn(async move {
+            // Test with None deadline
+            let req = receiver.next().await.unwrap();
+            assert_eq!(req.id, 1);
+            assert!(req.get_flush_deadline().is_none());
+            assert_ok!(receiver.ack(req).await);
+
+            // Test with Some deadline
+            let req = receiver.next().await.unwrap();
+            assert_eq!(req.id, 2);
+            let deadline = req.get_flush_deadline();
+            assert!(deadline.is_some());
+
+            // Verify deadline is in the future
+            assert!(deadline.unwrap() > Instant::now());
+
+            assert_ok!(receiver.ack(req).await);
+
+            receiver
+        });
+
+        // Broadcast with no deadline
+        publisher.broadcast(None).await.unwrap();
+
+        // Broadcast with a deadline
+        let deadline = Instant::now() + Duration::from_secs(5);
+        publisher.broadcast(Some(deadline)).await.unwrap();
+
+        assert_ok!(join!(jh1).0);
+    }
 }
