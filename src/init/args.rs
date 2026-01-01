@@ -127,6 +127,7 @@ pub struct AgentRun {
     #[command(flatten)]
     pub clickhouse_exporter: ClickhouseExporterArgs,
 
+
     #[command(flatten)]
     pub aws_xray_exporter: XRayExporterArgs,
 
@@ -239,6 +240,7 @@ pub enum Exporter {
     Blackhole,
     Datadog,
     Clickhouse,
+
 
     #[clap(name = "awsxray")]
     AwsXray,

@@ -5,7 +5,8 @@ target/
 rotel_python_processor_sdk/.env/
 rotel_python_processor_sdk/rotel_sdk/*.so
 rotel_python_processor_sdk/.idea
-rotel_python_processor_sdk/processors/__pycache__
+**/__pycache__/
+*.pyc
 CLAUDE.md
 flamegraph.svg
 perf.data
