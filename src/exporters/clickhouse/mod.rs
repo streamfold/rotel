@@ -1,12 +1,12 @@
 mod api_request;
 mod ch_error;
-mod compression;
+pub(crate) mod compression;
 mod exception;
-mod payload;
+pub mod payload;
 mod request_builder;
 mod request_mapper;
-mod rowbinary;
-mod schema;
+pub(crate) mod rowbinary;
+pub(crate) mod schema;
 mod transform_logs;
 mod transform_metrics;
 mod transform_traces;
