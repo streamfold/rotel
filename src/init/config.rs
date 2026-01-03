@@ -705,16 +705,26 @@ mod tests {
     use crate::init::args::AgentRun;
     use std::collections::HashMap;
     use std::env;
+    use std::sync::{Mutex, MutexGuard};
 
     // Helper struct to manage environment variables during tests
-    struct EnvManager {
+    struct EnvManager<'a> {
         original_vars: HashMap<String, Option<String>>,
+        _guard: MutexGuard<'a, ()>,
     }
 
-    impl EnvManager {
+    impl EnvManager<'_> {
         fn new() -> Self {
+            // This will be shared amongs threads of the test bin
+            // Ensuring that only one test at a time can use the EnvManager
+            // Other test thread that try to instantiate this will wait until
+            // the test using the EnvManager drops it.
+            // Note that the EnvManager Drop impl guarantees that when EnvManager
+            // is dropped, the environment is restored to its initial state.
+            static MUTEX: Mutex<()> = Mutex::new(());
             Self {
                 original_vars: HashMap::new(),
+                _guard: MUTEX.lock().unwrap(),
             }
         }
 
@@ -724,6 +734,11 @@ mod tests {
                 self.original_vars
                     .insert(key.to_string(), env::var(key).ok());
             }
+            // SAFETY:
+            // The static MUTEX shared by all the threads of the test bin
+            // ensures that only 1 thread can use [env::set_var] and [env::remove_var]
+            // Before another thread can use these functions, the EnvManager guarantees
+            // that the environment is reverted back to its initial values.
             unsafe { env::set_var(key, value) };
         }
 
@@ -733,14 +748,24 @@ mod tests {
                 self.original_vars
                     .insert(key.to_string(), env::var(key).ok());
             }
+            // SAFETY:
+            // The static MUTEX shared by all the threads of the test bin
+            // ensures that only 1 thread can use [env::set_var] and [env::remove_var]
+            // Before another thread can use these functions, the EnvManager guarantees
+            // that the environment is reverted back to its initial values.
             unsafe { env::remove_var(key) };
         }
     }
 
-    impl Drop for EnvManager {
+    impl Drop for EnvManager<'_> {
         fn drop(&mut self) {
             // Restore all environment variables
             for (key, original_value) in &self.original_vars {
+                // SAFETY:
+                // The static MUTEX shared by all the threads of the test bin
+                // ensures that only 1 thread can use [env::set_var] and [env::remove_var]
+                // Before another thread can use these functions, the EnvManager guarantees
+                // that the environment is reverted back to its initial values.
                 match original_value {
                     Some(value) => unsafe { env::set_var(key, value) },
                     None => unsafe { env::remove_var(key) },
