@@ -1,7 +1,7 @@
 """
-ContextProcessor demonstrates how to pull HTTP headers from message metadata
+ContextProcessor demonstrates how to pull HTTP/gRPC headers from message metadata
 (context) and add them as span attributes. This follows the OTel Collector
-pattern where headers are stored in context by the receiver and processors pull
+pattern where headers/metadata are stored in context by the receiver and processors pull
 from context to add attributes.
 
 This processor extracts headers like "my-custom-header" from context and adds
@@ -9,15 +9,22 @@ them as span attributes following OpenTelemetry semantic conventions
 (http.request.header.*).
 
 Usage:
-    Configure the receiver to include metadata:
+    For HTTP, configure the receiver to include metadata:
         ROTEL_OTLP_HTTP_INCLUDE_METADATA=true
         ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE=my-custom-header,another-header
+
+    For gRPC, configure the receiver to include metadata:
+        ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
+        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=my-custom-header,another-header
 
     Then use this processor to add those headers as span attributes.
 
 Message metadata is now exposed to Python processors. Processors can
 access headers via:
     resource_spans.message_metadata  # Returns dict[str, str] or None
+
+This processor works with both HTTP headers and gRPC metadata - they are
+both exposed as the same dictionary format to Python processors.
 
 This processor demonstrates how to extract headers from context and add
 them as span attributes following OpenTelemetry semantic conventions.
@@ -42,7 +49,8 @@ def _get_header_from_context(
         - ResourceSpans/ResourceMetrics/ResourceLogs have a
           `.message_metadata` property
         - This returns a dict[str, str] (or None if no metadata)
-        - Headers are stored with lowercase keys
+        - Headers/metadata keys are stored with lowercase keys
+        - Works for both HTTP headers and gRPC metadata
     """
     if resource_spans.message_metadata:
         return resource_spans.message_metadata.get(header_name.lower())
@@ -61,8 +69,11 @@ def process_spans(resource_spans: ResourceSpans):
     Example: If the receiver is configured with:
         ROTEL_OTLP_HTTP_INCLUDE_METADATA=true
         ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE=my-custom-header
+    OR
+        ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
+        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=my-custom-header
 
-    And a request includes header "my-custom-header: example-value", then
+    And a request includes header/metadata "my-custom-header: example-value", then
     this processor will add the attribute
     "http.request.header.my-custom-header" = "example-value" to all spans.
     """

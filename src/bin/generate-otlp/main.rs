@@ -218,11 +218,9 @@ async fn send_traces(
             .await
         }
         Protocol::Grpc => {
-            send_grpc(
+            send_grpc_traces(
                 trace_req,
-                &format!("http://{}", args.grpc_endpoint),
-                "/opentelemetry.proto.collector.trace.v1.TraceService/Export",
-                "traces",
+                &args.grpc_endpoint,
                 args.include_headers,
             )
             .await
@@ -245,11 +243,9 @@ async fn send_metrics(
             .await
         }
         Protocol::Grpc => {
-            send_grpc(
+            send_grpc_metrics(
                 metrics_req,
-                &format!("http://{}", args.grpc_endpoint),
-                "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
-                "metrics",
+                &args.grpc_endpoint,
                 args.include_headers,
             )
             .await
@@ -272,11 +268,9 @@ async fn send_logs(
             .await
         }
         Protocol::Grpc => {
-            send_grpc(
+            send_grpc_logs(
                 logs_req,
-                &format!("http://{}", args.grpc_endpoint),
-                "/opentelemetry.proto.collector.logs.v1.LogsService/Export",
-                "logs",
+                &args.grpc_endpoint,
                 args.include_headers,
             )
             .await
@@ -354,83 +348,130 @@ async fn send_http<T: prost::Message>(
     }
 }
 
-async fn send_grpc<T: prost::Message>(
-    msg: T,
-    base_url: &str,
-    service_path: &str,
-    telemetry_type: &str,
+async fn send_grpc_traces(
+    trace_req: opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest,
+    endpoint: &str,
     include_headers: bool,
 ) -> ExitCode {
-    use bytes::BufMut;
-    use bytes::BytesMut;
+    use opentelemetry_proto::tonic::collector::trace::v1::trace_service_client::TraceServiceClient;
+    use tonic::metadata::{MetadataKey, MetadataValue};
 
-    // Encode as gRPC (with 5-byte header)
-    const GRPC_HEADER_SIZE: usize = 5;
-    let mut uncompressed = BytesMut::with_capacity(1024);
-    if let Err(e) = msg.encode(&mut uncompressed) {
-        eprintln!("Failed to encode {} request: {}", telemetry_type, e);
-        return ExitCode::FAILURE;
-    }
-
-    let mut buf = BytesMut::with_capacity(GRPC_HEADER_SIZE + uncompressed.len());
-    buf.put_u8(0); // compression flag (0 = uncompressed)
-    buf.put_u32(uncompressed.len() as u32);
-    buf.put_slice(&uncompressed);
-
-    let client: Client<HttpConnector, Full<Bytes>> =
-        Client::builder(TokioExecutor::new()).build_http();
-
-    let url = format!("{}{}", base_url, service_path);
-    let uri = match http::Uri::from_str(&url) {
-        Ok(uri) => uri,
+    let url = format!("http://{}", endpoint);
+    let mut client = match TraceServiceClient::connect(url.clone()).await {
+        Ok(client) => client,
         Err(e) => {
-            eprintln!("Invalid URL {}: {}", url, e);
+            eprintln!("✗ Failed to connect to {}: {}", url, e);
             return ExitCode::FAILURE;
         }
     };
 
-    let mut req_builder = Request::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/grpc"));
+    let mut request = tonic::Request::new(trace_req);
 
     // Add dummy test headers (gRPC metadata) if requested
     if include_headers {
         let headers = FakeOTLP::example_headers();
         for (key, value) in headers {
-            if let Ok(header_value) = HeaderValue::from_str(&value) {
-                req_builder = req_builder.header(key, header_value);
+            if let Ok(metadata_key) = MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes()) {
+                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str()) {
+                    request.metadata_mut().insert(metadata_key, metadata_value);
+                }
             }
         }
     }
 
-    let req = match req_builder.body(Full::new(buf.freeze())) {
-        Ok(req) => req,
+    match client.export(request).await {
+        Ok(_) => {
+            println!("✓ Successfully sent traces to {}", url);
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("Failed to build gRPC request: {}", e);
+            eprintln!("✗ Failed to send traces to {}: {}", url, e);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn send_grpc_metrics(
+    metrics_req: opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest,
+    endpoint: &str,
+    include_headers: bool,
+) -> ExitCode {
+    use opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_client::MetricsServiceClient;
+    use tonic::metadata::{MetadataKey, MetadataValue};
+
+    let url = format!("http://{}", endpoint);
+    let mut client = match MetricsServiceClient::connect(url.clone()).await {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("✗ Failed to connect to {}: {}", url, e);
             return ExitCode::FAILURE;
         }
     };
 
-    match client.request(req).await {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() {
-                println!(
-                    "✓ Successfully sent {} to {} (status: {})",
-                    telemetry_type, url, status
-                );
-                ExitCode::SUCCESS
-            } else {
-                eprintln!(
-                    "✗ Failed to send {} to {} (status: {})",
-                    telemetry_type, url, status
-                );
-                ExitCode::FAILURE
+    let mut request = tonic::Request::new(metrics_req);
+
+    // Add dummy test headers (gRPC metadata) if requested
+    if include_headers {
+        let headers = FakeOTLP::example_headers();
+        for (key, value) in headers {
+            if let Ok(metadata_key) = MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes()) {
+                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str()) {
+                    request.metadata_mut().insert(metadata_key, metadata_value);
+                }
             }
         }
+    }
+
+    match client.export(request).await {
+        Ok(_) => {
+            println!("✓ Successfully sent metrics to {}", url);
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("✗ Failed to send {} to {}: {}", telemetry_type, url, e);
+            eprintln!("✗ Failed to send metrics to {}: {}", url, e);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn send_grpc_logs(
+    logs_req: opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest,
+    endpoint: &str,
+    include_headers: bool,
+) -> ExitCode {
+    use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
+    use tonic::metadata::{MetadataKey, MetadataValue};
+
+    let url = format!("http://{}", endpoint);
+    let mut client = match LogsServiceClient::connect(url.clone()).await {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("✗ Failed to connect to {}: {}", url, e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut request = tonic::Request::new(logs_req);
+
+    // Add dummy test headers (gRPC metadata) if requested
+    if include_headers {
+        let headers = FakeOTLP::example_headers();
+        for (key, value) in headers {
+            if let Ok(metadata_key) = MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes()) {
+                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str()) {
+                    request.metadata_mut().insert(metadata_key, metadata_value);
+                }
+            }
+        }
+    }
+
+    match client.export(request).await {
+        Ok(_) => {
+            println!("✓ Successfully sent logs to {}", url);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("✗ Failed to send logs to {}: {}", url, e);
             ExitCode::FAILURE
         }
     }

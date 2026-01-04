@@ -864,6 +864,8 @@ impl Agent {
                         .with_traces_output(traces_output.clone())
                         .with_metrics_output(metrics_output.clone())
                         .with_logs_output(logs_output.clone())
+                        .with_include_metadata(config.otlp_grpc_include_metadata)
+                        .with_metadata_keys_to_include(config.otlp_grpc_metadata_keys_to_include.clone())
                         .build();
 
                     let grpc_listener = self.port_map.remove(&config.otlp_grpc_endpoint).unwrap();

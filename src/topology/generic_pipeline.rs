@@ -373,6 +373,7 @@ where
                        let headers = message.metadata.as_ref().and_then(|m| {
                            match m.inner() {
                                MessageMetadataInner::Http(hm) => Some(hm.headers.clone()),
+                               MessageMetadataInner::Grpc(gm) => Some(gm.headers.clone()),
                                _ => None,
                            }
                        });

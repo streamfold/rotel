@@ -38,6 +38,7 @@ pub struct MessageMetadata {
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
     Http(HttpMetadata),
+    Grpc(GrpcMetadata),
 }
 
 impl MessageMetadata {
@@ -79,6 +80,22 @@ impl MessageMetadata {
     pub fn as_http(&self) -> Option<&HttpMetadata> {
         match &self.data {
             MessageMetadataInner::Http(hm) => Some(hm),
+            _ => None,
+        }
+    }
+
+    /// Create new MessageMetadata with Grpc variant, starting with ref_count = 1
+    pub fn grpc(metadata: GrpcMetadata) -> Self {
+        Self {
+            data: MessageMetadataInner::Grpc(metadata),
+            ref_count: Arc::new(AtomicU32::new(1)),
+        }
+    }
+
+    /// Helper method to get Grpc metadata if available
+    pub fn as_grpc(&self) -> Option<&GrpcMetadata> {
+        match &self.data {
+            MessageMetadataInner::Grpc(gm) => Some(gm),
             _ => None,
         }
     }
@@ -145,6 +162,20 @@ impl HttpMetadata {
     /// Get a header value by name (case-insensitive)
     pub fn get_header(&self, name: &str) -> Option<&String> {
         self.headers.get(&name.to_lowercase())
+    }
+}
+
+/// gRPC metadata containing request metadata and other gRPC context
+#[derive(Clone, Debug, PartialEq)]
+pub struct GrpcMetadata {
+    /// Map of metadata keys (lowercase) to metadata values
+    pub headers: HashMap<String, String>,
+}
+
+impl GrpcMetadata {
+    /// Create new GrpcMetadata with headers
+    pub fn new(headers: HashMap<String, String>) -> Self {
+        Self { headers }
     }
 }
 
@@ -217,6 +248,9 @@ impl Ack for MessageMetadata {
                 MessageMetadataInner::Http(_) => {
                     // HTTP metadata doesn't require acknowledgment
                 }
+                MessageMetadataInner::Grpc(_) => {
+                    // gRPC metadata doesn't require acknowledgment
+                }
             }
         }
         Ok(())
@@ -243,6 +277,9 @@ impl Ack for MessageMetadata {
                 }
                 MessageMetadataInner::Http(_) => {
                     // HTTP metadata doesn't require acknowledgment
+                }
+                MessageMetadataInner::Grpc(_) => {
+                    // gRPC metadata doesn't require acknowledgment
                 }
             }
         }

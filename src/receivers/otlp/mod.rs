@@ -16,4 +16,6 @@ pub struct OTLPReceiverConfig {
     pub otlp_receiver_logs_http_path: String,
     pub otlp_http_include_metadata: bool,
     pub otlp_http_headers_to_include: Vec<String>,
+    pub otlp_grpc_include_metadata: bool,
+    pub otlp_grpc_metadata_keys_to_include: Vec<String>,
 }
