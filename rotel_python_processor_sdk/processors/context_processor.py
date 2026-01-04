@@ -4,18 +4,18 @@ ContextProcessor demonstrates how to pull HTTP/gRPC headers from message metadat
 pattern where headers/metadata are stored in context by the receiver and processors pull
 from context to add attributes.
 
-This processor extracts headers like "my-custom-header" from context and adds
-them as span attributes following OpenTelemetry semantic conventions
+This processor extracts the "authorization" header from context and adds
+it as span attributes following OpenTelemetry semantic conventions
 (http.request.header.*).
 
 Usage:
     For HTTP, configure the receiver to include metadata:
         ROTEL_OTLP_HTTP_INCLUDE_METADATA=true
-        ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE=my-custom-header,another-header
+        ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE=authorization
 
     For gRPC, configure the receiver to include metadata:
         ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
-        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=my-custom-header,another-header
+        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=authorization
 
     Then use this processor to add those headers as span attributes.
 
@@ -59,26 +59,30 @@ def _get_header_from_context(
 
 def process_spans(resource_spans: ResourceSpans):
     """
-    Process ResourceSpans by extracting headers from context and adding as
-    span attributes.
+    Process ResourceSpans by extracting authorization header from context
+    and adding it as a span attribute.
 
-    This function extracts "my-custom-header" from context and adds it as a
-    span attribute following OTel semantic convention:
-    http.request.header.my-custom-header
+    This function extracts "authorization" from context (which contains
+    the JWT token from the auth service) and adds it as a span attribute following
+    OTel semantic convention: http.request.header.authorization
+
+    The authorization header is set by the introspection-auth service
+    after validating the API key and looking up the JWT in Redis.
 
     Example: If the receiver is configured with:
         ROTEL_OTLP_HTTP_INCLUDE_METADATA=true
-        ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE=my-custom-header
-    OR
-        ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
-        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=my-custom-header
+        ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE=authorization
 
-    And a request includes header/metadata "my-custom-header: example-value", then
+    Or for gRPC:
+        ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
+        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=authorization
+
+    And the request includes "authorization: Bearer <jwt>", then
     this processor will add the attribute
-    "http.request.header.my-custom-header" = "example-value" to all spans.
+    "http.request.header.authorization" = "Bearer <jwt>" to all spans.
     """
-    # Header to extract from context (configure this based on your needs)
-    header_name = "my-custom-header"
+    # Header to extract from context - this is set by the auth service
+    header_name = "authorization"
 
     # Get header value from context
     header_value = _get_header_from_context(resource_spans, header_name)
@@ -102,11 +106,11 @@ def process_spans(resource_spans: ResourceSpans):
 
 def process_metrics(resource_metrics):
     """
-    Process metrics - add context headers to resource attributes.
+    Process metrics - add authorization header to resource attributes.
     Metrics typically use resource attributes rather than per-metric
     attributes.
     """
-    header_name = "my-custom-header"
+    header_name = "authorization"
     header_value = _get_header_from_context(resource_metrics, header_name)
 
     if header_value and resource_metrics.resource:
@@ -119,9 +123,9 @@ def process_metrics(resource_metrics):
 
 def process_logs(resource_logs):
     """
-    Process logs - add context headers to log record attributes.
+    Process logs - add authorization header to log record attributes.
     """
-    header_name = "my-custom-header"
+    header_name = "authorization"
     header_value = _get_header_from_context(resource_logs, header_name)
 
     if header_value:
