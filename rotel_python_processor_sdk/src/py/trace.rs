@@ -70,6 +70,16 @@ impl ResourceSpans {
         self.schema_url = schema_url;
         Ok(())
     }
+    #[getter]
+    fn message_metadata(&self) -> PyResult<Option<HashMap<String, String>>> {
+        Ok(self.message_metadata.clone())
+    }
+
+    #[setter]
+    fn set_message_metadata(&mut self, metadata: Option<HashMap<String, String>>) -> PyResult<()> {
+        self.message_metadata = metadata;
+        Ok(())
+    }
 }
 
 #[pyclass]

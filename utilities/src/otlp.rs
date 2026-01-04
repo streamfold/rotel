@@ -14,10 +14,34 @@ use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Status};
+use std::collections::HashMap;
 
 pub struct FakeOTLP;
 
 impl FakeOTLP {
+    /// Returns example HTTP/gRPC headers for testing header context functionality.
+    /// These headers match the ones used in tests and examples.
+    ///
+    /// # Returns
+    /// A `HashMap` with example headers:
+    /// - `my-custom-header`: `test-value-123`
+    /// - `another-header`: `another-test-value`
+    ///
+    /// # Example
+    /// ```
+    /// use utilities::otlp::FakeOTLP;
+    /// use std::collections::HashMap;
+    ///
+    /// let headers = FakeOTLP::example_headers();
+    /// assert_eq!(headers.get("my-custom-header"), Some(&"test-value-123".to_string()));
+    /// ```
+    pub fn example_headers() -> HashMap<String, String> {
+        let mut headers = HashMap::new();
+        headers.insert("my-custom-header".to_string(), "test-value-123".to_string());
+        headers.insert("another-header".to_string(), "another-test-value".to_string());
+        headers
+    }
+    
     pub fn logs_service_request() -> ExportLogsServiceRequest {
         Self::logs_service_request_with_logs(1, 1)
     }

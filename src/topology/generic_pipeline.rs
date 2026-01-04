@@ -121,12 +121,20 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: Vec<KeyValue>
 
 #[cfg(not(feature = "pyo3"))]
 pub trait PythonProcessable {
-    fn process(self, processor: &str, headers: Option<std::collections::HashMap<String, String>>) -> Self;
+    fn process(
+        self,
+        processor: &str,
+        headers: Option<std::collections::HashMap<String, String>>,
+    ) -> Self;
 }
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
-    fn process(self, _processor: &str, _headers: Option<std::collections::HashMap<String, String>>) -> Self {
+    fn process(
+        self,
+        _processor: &str,
+        _headers: Option<std::collections::HashMap<String, String>>,
+    ) -> Self {
         // Noop
         self
     }
@@ -134,7 +142,11 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, _processor: &str, _headers: Option<std::collections::HashMap<String, String>>) -> Self {
+    fn process(
+        self,
+        _processor: &str,
+        _headers: Option<std::collections::HashMap<String, String>>,
+    ) -> Self {
         // Noop
         self
     }
@@ -142,7 +154,11 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, _processor: &str, _headers: Option<std::collections::HashMap<String, String>>) -> Self {
+    fn process(
+        self,
+        _processor: &str,
+        _headers: Option<std::collections::HashMap<String, String>>,
+    ) -> Self {
         // Noop
         self
     }
@@ -217,6 +233,7 @@ where
     fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
         let mut processor_modules = vec![];
         let current_dir = env::current_dir()?;
+
         for (processor_idx, file) in self.processors.iter().enumerate() {
             let file_path = Path::new(file);
 
@@ -226,10 +243,29 @@ where
             } else {
                 current_dir.join(file_path)
             };
-            let code = std::fs::read_to_string(&script_path)?;
+
+            let code = match std::fs::read_to_string(&script_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to read processor script {}: {}",
+                        script_path.display(),
+                        e
+                    )
+                    .into());
+                }
+            };
+
             let module = format!("rotel_processor_{}", processor_idx);
-            register_processor(code, file.clone(), module.clone())?;
-            processor_modules.push(module);
+
+            match register_processor(code, file.clone(), module.clone()) {
+                Ok(_) => {
+                    processor_modules.push(module);
+                }
+                Err(e) => {
+                    return Err(format!("Failed to register processor {}: {}", file, e).into());
+                }
+            }
         }
         Ok(processor_modules)
     }
@@ -255,7 +291,13 @@ where
         batch_timer.tick().await; // consume the immediate tick
 
         #[cfg(feature = "pyo3")]
-        let processor_modules = self.initialize_processors()?;
+        let processor_modules = match self.initialize_processors() {
+            Ok(modules) => modules,
+            Err(e) => {
+                error!(error = ?e, "Failed to initialize processors");
+                vec![]
+            }
+        };
         #[cfg(not(feature = "pyo3"))]
         let processor_modules: Vec<String> = vec![];
 
@@ -309,6 +351,7 @@ where
                     }
 
                     let message = item.unwrap();
+
                     let mut items = message.payload;
 
                     // invoke current middleware layer
@@ -333,6 +376,7 @@ where
                                _ => None,
                            }
                        });
+
                        while !items.is_empty() {
                            let item = items.pop();
                            if item.is_some() {

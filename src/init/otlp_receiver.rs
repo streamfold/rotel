@@ -81,11 +81,7 @@ pub struct OTLPReceiverArgs {
     /// Comma-separated list of HTTP headers to include in metadata when include_metadata is enabled.
     /// Headers are stored in context and can be accessed by processors using from_context.
     /// Example: "my-custom-header,another-header"
-    #[arg(
-        long,
-        env = "ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE",
-        default_value = ""
-    )]
+    #[arg(long, env = "ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE", default_value = "")]
     pub otlp_http_headers_to_include: String,
 }
 

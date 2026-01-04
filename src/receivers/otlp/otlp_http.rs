@@ -11,14 +11,14 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::service::TowerToHyperService;
-use opentelemetry_proto::tonic::collector::trace::v1::{
-    ExportTraceServiceRequest, ExportTraceServiceResponse,
+use opentelemetry_proto::tonic::collector::logs::v1::{
+    ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
 use opentelemetry_proto::tonic::collector::metrics::v1::{
     ExportMetricsServiceRequest, ExportMetricsServiceResponse,
 };
-use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsServiceRequest, ExportLogsServiceResponse,
+use opentelemetry_proto::tonic::collector::trace::v1::{
+    ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
 use prost::EncodeError;
 use read_restrict::ReadExt;
@@ -33,14 +33,15 @@ use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
 use crate::topology::payload::{HttpMetadata, Message, OTLPInto};
-use std::collections::HashMap;
-use serde::de::DeserializeOwned;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -407,7 +408,7 @@ where
                 let include_metadata = self.include_metadata;
                 let headers_to_include = self.headers_to_include.clone();
                 let tags = self.tags.clone();
-                
+
                 if path == self.traces_path {
                     if self.trace_output.is_none() {
                         return Box::pin(futures::future::ok(
@@ -417,7 +418,12 @@ where
                     let output = self.trace_output.clone().unwrap();
                     let accepted = self.accepted_spans_records_counter.clone();
                     let refused = self.refused_spans_records_counter.clone();
-                    return Box::pin(handle::<H, ExportTraceServiceRequest, ExportTraceServiceResponse, ResourceSpans>(
+                    return Box::pin(handle::<
+                        H,
+                        ExportTraceServiceRequest,
+                        ExportTraceServiceResponse,
+                        ResourceSpans,
+                    >(
                         req,
                         output,
                         accepted,
@@ -436,7 +442,12 @@ where
                     let output = self.metrics_output.clone().unwrap();
                     let accepted = self.accepted_metric_points_counter.clone();
                     let refused = self.refused_metric_points_counter.clone();
-                    return Box::pin(handle::<H, ExportMetricsServiceRequest, ExportMetricsServiceResponse, ResourceMetrics>(
+                    return Box::pin(handle::<
+                        H,
+                        ExportMetricsServiceRequest,
+                        ExportMetricsServiceResponse,
+                        ResourceMetrics,
+                    >(
                         req,
                         output,
                         accepted,
@@ -455,7 +466,12 @@ where
                     let output = self.logs_output.clone().unwrap();
                     let accepted = self.accepted_log_records_counter.clone();
                     let refused = self.refused_log_records_counter.clone();
-                    return Box::pin(handle::<H, ExportLogsServiceRequest, ExportLogsServiceResponse, ResourceLogs>(
+                    return Box::pin(handle::<
+                        H,
+                        ExportLogsServiceRequest,
+                        ExportLogsServiceResponse,
+                        ResourceLogs,
+                    >(
                         req,
                         output,
                         accepted,
@@ -536,7 +552,8 @@ fn extract_headers_to_metadata<H: Body>(
         if let Ok(header_name_parsed) = normalized.parse::<http::HeaderName>() {
             if let Some(header_value) = request_headers.get(&header_name_parsed) {
                 if let Ok(value_str) = header_value.to_str() {
-                    headers_map.insert(normalized, value_str.to_string());
+                    let header_value_str = value_str.to_string();
+                    headers_map.insert(normalized.clone(), header_value_str);
                 }
             }
         }
@@ -544,7 +561,6 @@ fn extract_headers_to_metadata<H: Body>(
 
     headers_map
 }
-
 
 async fn handle<
     H: Body,
@@ -567,6 +583,7 @@ where
     // Extract headers before consuming the request body
     let http_metadata = if include_metadata && !headers_to_include.is_empty() {
         let headers_map = extract_headers_to_metadata(&req, &headers_to_include);
+
         if !headers_map.is_empty() {
             Some(crate::topology::payload::MessageMetadata::http(
                 HttpMetadata::new(headers_map),
@@ -1118,24 +1135,27 @@ mod tests {
 
     #[tokio::test]
     async fn http_metadata_extracted_for_traces() {
-        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(
-            true,
-            vec!["my-custom-header".to_string(), "another-header".to_string()],
-        );
+        let example_headers = FakeOTLP::example_headers();
+        let header_names: Vec<String> = example_headers.keys().cloned().collect();
+
+        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(true, header_names.clone());
 
         let trace_req = FakeOTLP::trace_service_request();
         let mut buf = Vec::with_capacity(trace_req.encoded_len());
         assert_ok!(trace_req.encode(&mut buf));
         let buf = Bytes::from(buf);
 
-        let req: Request<Full<Bytes>> = Request::builder()
+        let mut req_builder = Request::builder()
             .uri("/v1/traces")
             .method(Method::POST)
-            .header(CONTENT_TYPE, "application/x-protobuf")
-            .header("my-custom-header", "test-value")
-            .header("another-header", "another-value")
-            .body(Full::new(buf))
-            .unwrap();
+            .header(CONTENT_TYPE, "application/x-protobuf");
+
+        // Add example headers from FakeOTLP
+        for (key, value) in &example_headers {
+            req_builder = req_builder.header(key, value.as_str());
+        }
+
+        let req: Request<Full<Bytes>> = req_builder.body(Full::new(buf)).unwrap();
 
         let resp = svc.call(req).await.unwrap();
         assert_eq!(StatusCode::OK, resp.status());
@@ -1147,16 +1167,26 @@ mod tests {
         assert!(msg.metadata.is_some());
         let metadata = msg.metadata.as_ref().unwrap();
         let http_metadata = metadata.as_http().unwrap();
-        assert_eq!(http_metadata.get_header("my-custom-header"), Some(&"test-value".to_string()));
-        assert_eq!(
-            http_metadata.get_header("another-header"),
-            Some(&"another-value".to_string())
-        );
+
+        // Verify all example headers are present
+        for (key, expected_value) in &example_headers {
+            assert_eq!(
+                http_metadata.get_header(key),
+                Some(expected_value),
+                "Header {} should be present with value {}",
+                key,
+                expected_value
+            );
+        }
     }
 
     #[tokio::test]
     async fn http_metadata_not_extracted_when_disabled() {
-        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(false, vec!["my-custom-header".to_string()]);
+        let example_headers = FakeOTLP::example_headers();
+        let header_names: Vec<String> = example_headers.keys().cloned().collect();
+        let first_header = header_names.first().unwrap();
+
+        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(false, vec![first_header.clone()]);
 
         let trace_req = FakeOTLP::trace_service_request();
         let mut buf = Vec::with_capacity(trace_req.encoded_len());
@@ -1167,7 +1197,7 @@ mod tests {
             .uri("/v1/traces")
             .method(Method::POST)
             .header(CONTENT_TYPE, "application/x-protobuf")
-            .header("my-custom-header", "test-value")
+            .header(first_header, example_headers.get(first_header).unwrap())
             .body(Full::new(buf))
             .unwrap();
 
@@ -1183,6 +1213,9 @@ mod tests {
 
     #[tokio::test]
     async fn http_metadata_not_extracted_when_no_headers_specified() {
+        let example_headers = FakeOTLP::example_headers();
+        let first_header = example_headers.keys().next().unwrap();
+
         let (svc, mut trace_rx, _, _) = new_svc_with_metadata(true, vec![]);
 
         let trace_req = FakeOTLP::trace_service_request();
@@ -1194,7 +1227,7 @@ mod tests {
             .uri("/v1/traces")
             .method(Method::POST)
             .header(CONTENT_TYPE, "application/x-protobuf")
-            .header("my-custom-header", "test-value")
+            .header(first_header, example_headers.get(first_header).unwrap())
             .body(Full::new(buf))
             .unwrap();
 
@@ -1210,10 +1243,8 @@ mod tests {
 
     #[tokio::test]
     async fn http_metadata_extracted_for_metrics() {
-        let (svc, _, mut metrics_rx, _) = new_svc_with_metadata(
-            true,
-            vec!["my-custom-header".to_string()],
-        );
+        let (svc, _, mut metrics_rx, _) =
+            new_svc_with_metadata(true, vec!["my-custom-header".to_string()]);
 
         let metrics_req = FakeOTLP::metrics_service_request();
         let mut buf = Vec::with_capacity(metrics_req.encoded_len());
@@ -1246,10 +1277,8 @@ mod tests {
 
     #[tokio::test]
     async fn http_metadata_extracted_for_logs() {
-        let (svc, _, _, mut logs_rx) = new_svc_with_metadata(
-            true,
-            vec!["my-custom-header".to_string()],
-        );
+        let (svc, _, _, mut logs_rx) =
+            new_svc_with_metadata(true, vec!["my-custom-header".to_string()]);
 
         let logs_req = FakeOTLP::logs_service_request();
         let mut buf = Vec::with_capacity(logs_req.encoded_len());
@@ -1282,10 +1311,8 @@ mod tests {
 
     #[tokio::test]
     async fn http_metadata_header_case_insensitive() {
-        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(
-            true,
-            vec!["My-Custom-Header".to_string()],
-        );
+        let (svc, mut trace_rx, _, _) =
+            new_svc_with_metadata(true, vec!["My-Custom-Header".to_string()]);
 
         let trace_req = FakeOTLP::trace_service_request();
         let mut buf = Vec::with_capacity(trace_req.encoded_len());

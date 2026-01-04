@@ -41,7 +41,7 @@ pub fn register_processor(code: String, script: String, module: String) -> Resul
 }
 
 pub trait PythonProcessable {
-    fn process(self, processor: &str, metadata: Option<&MessageMetadata>) -> Self;
+    fn process(self, processor: &str, headers: Option<HashMap<String, String>>) -> Self;
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
@@ -59,6 +59,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
             let result_py_object = py_mod.getattr("process_spans")?.call1((spans,));
             if result_py_object.is_err() {
                 let err = result_py_object.unwrap_err();
+                error!("Python processor error: {}", err.to_string());
                 return Err(err);
             }
             Ok(())
@@ -76,33 +77,31 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
         if resource.is_some() {
             resource_span.resource = py_transform::transform_resource(resource.unwrap());
         }
-        let scope_spans = Arc::into_inner(inner.scope_spans)
-            .unwrap()
-            .into_inner()
-            .unwrap();
+        // Try to extract scope_spans, fall back to cloning if Arc has multiple references
+        let scope_spans = match Arc::try_unwrap(inner.scope_spans) {
+            Ok(mutex) => match mutex.into_inner() {
+                Ok(vec) => vec,
+                Err(_) => {
+                    // Mutex is poisoned, return empty spans
+                    return resource_span;
+                }
+            },
+            Err(arc) => {
+                // Arc still has references (Python may be holding them), clone instead
+                let locked = arc.lock().unwrap();
+                locked.clone()
+            }
+        };
         resource_span.scope_spans = py_transform::transform_spans(scope_spans);
         resource_span
     }
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, processor: &str, metadata: Option<&MessageMetadata>) -> Self {
+    fn process(self, processor: &str, message_metadata : Option<HashMap<String, String>>) -> Self {
         let inner = otel_transform::transform_resource_metrics(self);
         // Build the PyObject
         let res = Python::with_gil(|py| -> PyResult<()> {
-            let message_metadata = metadata.and_then(|m| {
-                match m.inner() {
-                    MessageMetadataInner::Http(hm) => {
-                        // Convert HttpMetadata to Python HttpMetadata
-                        match Py::new(py, HttpMetadata { inner: hm.clone() }) {
-                            Ok(py_meta) => Some(py_meta),
-                            Err(_) => None,
-                        }
-                    }
-                    _ => None,
-                }
-            });
-
             let spans = ResourceMetrics {
                 resource: inner.resource.clone(),
                 scope_metrics: inner.scope_metrics.clone(),
