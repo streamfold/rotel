@@ -884,6 +884,8 @@ impl Agent {
                         .with_traces_path(config.otlp_receiver_traces_http_path.clone())
                         .with_metrics_path(config.otlp_receiver_metrics_http_path.clone())
                         .with_logs_path(config.otlp_receiver_logs_http_path.clone())
+                        .with_include_metadata(config.otlp_http_include_metadata)
+                        .with_headers_to_include(config.otlp_http_headers_to_include.clone())
                         .build();
 
                     let http_listener = self.port_map.remove(&config.otlp_http_endpoint).unwrap();

@@ -6,6 +6,7 @@ use crate::py::common::KeyValue;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::vec;
 
@@ -15,6 +16,7 @@ pub struct ResourceSpans {
     pub resource: Arc<Mutex<Option<RResource>>>,
     pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>,
     pub schema_url: String,
+    pub message_metadata: Option<HashMap<String, String>>,
 }
 
 #[pymethods]

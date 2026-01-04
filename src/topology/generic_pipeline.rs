@@ -4,7 +4,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use crate::topology::fanout::{Fanout, FanoutFuture};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, MessageMetadataInner};
 use opentelemetry::KeyValue as InstKeyValue;
 use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -121,12 +121,12 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: Vec<KeyValue>
 
 #[cfg(not(feature = "pyo3"))]
 pub trait PythonProcessable {
-    fn process(self, processor: &str) -> Self;
+    fn process(self, processor: &str, headers: Option<std::collections::HashMap<String, String>>) -> Self;
 }
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
-    fn process(self, _processor: &str) -> Self {
+    fn process(self, _processor: &str, _headers: Option<std::collections::HashMap<String, String>>) -> Self {
         // Noop
         self
     }
@@ -134,7 +134,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, _processor: &str) -> Self {
+    fn process(self, _processor: &str, _headers: Option<std::collections::HashMap<String, String>>) -> Self {
         // Noop
         self
     }
@@ -142,7 +142,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, _processor: &str) -> Self {
+    fn process(self, _processor: &str, _headers: Option<std::collections::HashMap<String, String>>) -> Self {
         // Noop
         self
     }
@@ -326,10 +326,17 @@ where
                     }
                     for p in &processor_modules {
                        let mut new_items = Vec::new();
+                       // Extract headers from metadata if available
+                       let headers = message.metadata.as_ref().and_then(|m| {
+                           match m.inner() {
+                               MessageMetadataInner::Http(hm) => Some(hm.headers.clone()),
+                               _ => None,
+                           }
+                       });
                        while !items.is_empty() {
                            let item = items.pop();
                            if item.is_some() {
-                                let result = item.unwrap().process(p);
+                                let result = item.unwrap().process(p, headers.clone());
                                 new_items.push(result);
                            }
                        }

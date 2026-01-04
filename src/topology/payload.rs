@@ -7,6 +7,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -36,6 +37,7 @@ pub struct MessageMetadata {
 #[derive(Clone, Debug, PartialEq)]
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
+    Http(HttpMetadata),
 }
 
 impl MessageMetadata {
@@ -61,6 +63,23 @@ impl MessageMetadata {
     pub fn as_kafka(&self) -> Option<&KafkaMetadata> {
         match &self.data {
             MessageMetadataInner::Kafka(km) => Some(km),
+            _ => None,
+        }
+    }
+
+    /// Create new MessageMetadata with Http variant, starting with ref_count = 1
+    pub fn http(metadata: HttpMetadata) -> Self {
+        Self {
+            data: MessageMetadataInner::Http(metadata),
+            ref_count: Arc::new(AtomicU32::new(1)),
+        }
+    }
+
+    /// Helper method to get Http metadata if available
+    pub fn as_http(&self) -> Option<&HttpMetadata> {
+        match &self.data {
+            MessageMetadataInner::Http(hm) => Some(hm),
+            _ => None,
         }
     }
 
@@ -108,6 +127,25 @@ pub struct KafkaMetadata {
     pub partition: i32,
     pub topic_id: u8,
     pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
+}
+
+/// HTTP metadata containing request headers and other HTTP context
+#[derive(Clone, Debug, PartialEq)]
+pub struct HttpMetadata {
+    /// Map of header names (lowercase) to header values
+    pub headers: HashMap<String, String>,
+}
+
+impl HttpMetadata {
+    /// Create new HttpMetadata with headers
+    pub fn new(headers: HashMap<String, String>) -> Self {
+        Self { headers }
+    }
+
+    /// Get a header value by name (case-insensitive)
+    pub fn get_header(&self, name: &str) -> Option<&String> {
+        self.headers.get(&name.to_lowercase())
+    }
 }
 
 impl KafkaMetadata {
@@ -176,6 +214,9 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
+                MessageMetadataInner::Http(_) => {
+                    // HTTP metadata doesn't require acknowledgment
+                }
             }
         }
         Ok(())
@@ -199,6 +240,9 @@ impl Ack for MessageMetadata {
                             }))
                             .await?;
                     }
+                }
+                MessageMetadataInner::Http(_) => {
+                    // HTTP metadata doesn't require acknowledgment
                 }
             }
         }

@@ -11,6 +11,7 @@ use crate::py::metrics::*;
 use crate::py::rotel_sdk;
 use crate::py::trace::*;
 use pyo3::prelude::*;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::{Arc, Once};
 use tower::BoxError;
@@ -40,19 +41,20 @@ pub fn register_processor(code: String, script: String, module: String) -> Resul
 }
 
 pub trait PythonProcessable {
-    fn process(self, processor: &str) -> Self;
+    fn process(self, processor: &str, metadata: Option<&MessageMetadata>) -> Self;
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
-    fn process(self, processor: &str) -> Self {
+    fn process(self, processor: &str, headers: Option<HashMap<String, String>>) -> Self {
         let inner = otel_transform::transform_resource_spans(self);
         // Build the PyObject
-        let spans = ResourceSpans {
-            resource: inner.resource.clone(),
-            scope_spans: inner.scope_spans.clone(),
-            schema_url: inner.schema_url.clone(),
-        };
         let res = Python::with_gil(|py| -> PyResult<()> {
+            let spans = ResourceSpans {
+                resource: inner.resource.clone(),
+                scope_spans: inner.scope_spans.clone(),
+                schema_url: inner.schema_url.clone(),
+                message_metadata: headers,
+            };
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process_spans")?.call1((spans,));
             if result_py_object.is_err() {
@@ -84,15 +86,29 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, processor: &str) -> Self {
+    fn process(self, processor: &str, metadata: Option<&MessageMetadata>) -> Self {
         let inner = otel_transform::transform_resource_metrics(self);
         // Build the PyObject
-        let spans = ResourceMetrics {
-            resource: inner.resource.clone(),
-            scope_metrics: inner.scope_metrics.clone(),
-            schema_url: inner.schema_url.clone(),
-        };
         let res = Python::with_gil(|py| -> PyResult<()> {
+            let message_metadata = metadata.and_then(|m| {
+                match m.inner() {
+                    MessageMetadataInner::Http(hm) => {
+                        // Convert HttpMetadata to Python HttpMetadata
+                        match Py::new(py, HttpMetadata { inner: hm.clone() }) {
+                            Ok(py_meta) => Some(py_meta),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            });
+
+            let spans = ResourceMetrics {
+                resource: inner.resource.clone(),
+                scope_metrics: inner.scope_metrics.clone(),
+                schema_url: inner.schema_url.clone(),
+                message_metadata,
+            };
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process_metrics")?.call1((spans,));
             if result_py_object.is_err() {
@@ -124,15 +140,16 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, processor: &str) -> Self {
+    fn process(self, processor: &str, headers: Option<HashMap<String, String>>) -> Self {
         let inner = otel_transform::transform_resource_logs(self);
         // Build the PyObject
-        let spans = ResourceLogs {
-            resource: inner.resource.clone(),
-            scope_logs: inner.scope_logs.clone(),
-            schema_url: inner.schema_url.clone(),
-        };
         let res = Python::with_gil(|py| -> PyResult<()> {
+            let spans = ResourceLogs {
+                resource: inner.resource.clone(),
+                scope_logs: inner.scope_logs.clone(),
+                schema_url: inner.schema_url.clone(),
+                message_metadata: headers,
+            };
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process_logs")?.call1((spans,));
             if result_py_object.is_err() {

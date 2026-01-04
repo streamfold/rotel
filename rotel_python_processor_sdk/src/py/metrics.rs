@@ -5,6 +5,7 @@ use crate::model::resource::RResource;
 use crate::py::common::KeyValue;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::vec;
 
@@ -22,6 +23,7 @@ pub struct ResourceMetrics {
     pub resource: Arc<Mutex<Option<RResource>>>,
     pub scope_metrics: Arc<Mutex<Vec<Arc<Mutex<RScopeMetrics>>>>>,
     pub schema_url: String,
+    pub message_metadata: Option<HashMap<String, String>>,
 }
 
 #[pymethods]
@@ -78,6 +80,16 @@ impl ResourceMetrics {
     #[setter]
     fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
         self.schema_url = schema_url;
+        Ok(())
+    }
+    #[getter]
+    fn message_metadata(&self) -> PyResult<Option<HashMap<String, String>>> {
+        Ok(self.message_metadata.clone())
+    }
+
+    #[setter]
+    fn set_message_metadata(&mut self, metadata: Option<HashMap<String, String>>) -> PyResult<()> {
+        self.message_metadata = metadata;
         Ok(())
     }
 }

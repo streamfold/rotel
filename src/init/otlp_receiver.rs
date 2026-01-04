@@ -66,6 +66,27 @@ pub struct OTLPReceiverArgs {
         default_value = "/v1/logs"
     )]
     pub otlp_receiver_logs_http_path: String,
+
+    /// Enable including HTTP request headers in message metadata (context).
+    /// When enabled, specified headers are stored in context and can be accessed by processors.
+    /// This follows the OTel Collector pattern where processors pull from context to add attributes.
+    /// Example: set to true to enable metadata extraction
+    #[arg(
+        long,
+        env = "ROTEL_OTLP_HTTP_INCLUDE_METADATA",
+        default_value = "false"
+    )]
+    pub otlp_http_include_metadata: bool,
+
+    /// Comma-separated list of HTTP headers to include in metadata when include_metadata is enabled.
+    /// Headers are stored in context and can be accessed by processors using from_context.
+    /// Example: "my-custom-header,another-header"
+    #[arg(
+        long,
+        env = "ROTEL_OTLP_HTTP_HEADERS_TO_INCLUDE",
+        default_value = ""
+    )]
+    pub otlp_http_headers_to_include: String,
 }
 
 impl Default for OTLPReceiverArgs {
@@ -80,6 +101,8 @@ impl Default for OTLPReceiverArgs {
             otlp_receiver_traces_http_path: "/v1/traces".to_string(),
             otlp_receiver_metrics_http_path: "/v1/metrics".to_string(),
             otlp_receiver_logs_http_path: "/v1/logs".to_string(),
+            otlp_http_include_metadata: false,
+            otlp_http_headers_to_include: String::new(),
         }
     }
 }
@@ -96,6 +119,13 @@ impl From<&OTLPReceiverArgs> for OTLPReceiverConfig {
             otlp_receiver_traces_http_path: value.otlp_receiver_traces_http_path.to_owned(),
             otlp_receiver_metrics_http_path: value.otlp_receiver_metrics_http_path.to_owned(),
             otlp_receiver_logs_http_path: value.otlp_receiver_logs_http_path.to_owned(),
+            otlp_http_include_metadata: value.otlp_http_include_metadata,
+            otlp_http_headers_to_include: value
+                .otlp_http_headers_to_include
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         }
     }
 }
