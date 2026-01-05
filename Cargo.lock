@@ -5139,7 +5139,6 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "opentelemetry-proto",
- "prost 0.13.5",
 ]
 
 [[package]]
