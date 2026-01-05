@@ -1,7 +1,8 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::rowbinary::json::JsonType;
 use crate::exporters::clickhouse::schema::MapOrJson;
-use crate::otlp::cvattr::{ConvertedAttrKeyValue, ConvertedAttrValue};
+
+use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -9,108 +10,178 @@ use std::collections::HashMap;
 pub struct Transformer {
     pub(crate) compression: Compression,
     use_json: bool,
-    use_json_underscore: bool,
 }
 
 impl Transformer {
-    pub fn new(compression: Compression, use_json: bool, use_json_underscore: bool) -> Self {
+    pub fn new(compression: Compression, use_json: bool) -> Self {
         Self {
             compression,
             use_json,
-            use_json_underscore,
         }
     }
 }
 
 impl Transformer {
-    pub(crate) fn transform_attrs<'a>(&self, attrs: &'a [ConvertedAttrKeyValue]) -> MapOrJson<'a> {
+    pub(crate) fn transform_attrs_kv<'a>(&self, attrs: &'a [KeyValue]) -> MapOrJson<'a> {
         match self.use_json {
-            true => MapOrJson::Json(self.build_json_attrs(attrs)),
-            false => MapOrJson::Map(
-                attrs
-                    .iter()
-                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
-                    .collect(),
-            ),
+            true => MapOrJson::Json(self.build_json_attrs_kv(attrs)),
+            false => MapOrJson::Map(self.build_map_attrs_kv(attrs)),
         }
     }
 
-    fn build_json_attrs<'a>(
+    fn build_map_attrs_kv(&self, attrs: &[KeyValue]) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        self.flatten_keyvalues_map(attrs, String::new(), &mut result);
+        result
+    }
+
+    fn flatten_keyvalues_map(
         &self,
-        attrs: &'a [ConvertedAttrKeyValue],
+        attrs: &[KeyValue],
+        prefix: String,
+        result: &mut Vec<(String, String)>,
+    ) {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        for kv in attrs {
+            let full_key = if prefix.is_empty() {
+                kv.key.clone()
+            } else {
+                format!("{}.{}", prefix, kv.key)
+            };
+
+            if let Some(any_value) = &kv.value {
+                match &any_value.value {
+                    Some(Value::KvlistValue(kvlist)) => {
+                        // Recursively flatten nested key-value lists
+                        self.flatten_keyvalues_map(&kvlist.values, full_key, result);
+                    }
+                    Some(val) => {
+                        result.push((full_key, Self::anyvalue_to_string(val)));
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    fn build_json_attrs_kv<'a>(
+        &self,
+        attrs: &'a [KeyValue],
     ) -> HashMap<Cow<'a, str>, JsonType<'a>> {
-        if attrs.is_empty() {
-            return HashMap::new();
-        }
-
-        let hm: HashMap<Cow<'a, str>, JsonType<'a>> = attrs
-            .iter()
-            // periods(.) in key names will be converted into a nested format, so swap
-            // them to underscores to avoid nesting
-            .map(|kv| {
-                let key = if self.use_json_underscore {
-                    Cow::Owned(kv.0.replace(".", "_"))
-                } else {
-                    Cow::Borrowed(kv.0.as_str())
-                };
-                (key, (&kv.1).into())
-            })
-            .collect();
-
+        let mut hm = HashMap::new();
+        self.flatten_keyvalues_borrowed(attrs, String::new(), &mut hm);
         hm
     }
 
-    pub(crate) fn transform_attrs_owned(
+    fn flatten_keyvalues_borrowed<'a>(
         &self,
-        attrs: &[ConvertedAttrKeyValue],
-    ) -> MapOrJson<'static> {
+        attrs: &'a [KeyValue],
+        prefix: String,
+        result: &mut HashMap<Cow<'a, str>, JsonType<'a>>,
+    ) {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        for kv in attrs {
+            if let Some(any_value) = &kv.value {
+                match &any_value.value {
+                    Some(Value::KvlistValue(kvlist)) => {
+                        let full_key = if prefix.is_empty() {
+                            kv.key.clone()
+                        } else {
+                            format!("{}.{}", prefix, kv.key)
+                        };
+                        self.flatten_keyvalues_borrowed(&kvlist.values, full_key, result);
+                    }
+                    Some(_) => {
+                        // Optimize for common case: avoid clone when prefix is empty
+                        let key = if prefix.is_empty() {
+                            Cow::Borrowed(kv.key.as_str())
+                        } else {
+                            Cow::Owned(format!("{}.{}", prefix, kv.key))
+                        };
+                        result.insert(key, any_value.into());
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    pub(crate) fn transform_attrs_kv_owned(&self, attrs: &[KeyValue]) -> MapOrJson<'static> {
         match self.use_json {
-            true => MapOrJson::JsonOwned(self.build_json_attrs_owned(attrs)),
-            false => MapOrJson::Map(
-                attrs
-                    .iter()
-                    .map(|kv| (kv.0.clone(), kv.1.to_string()))
-                    .collect(),
-            ),
+            true => MapOrJson::JsonOwned(self.build_json_attrs_kv_owned(attrs)),
+            false => MapOrJson::Map(self.build_map_attrs_kv(attrs)),
         }
     }
 
-    fn build_json_attrs_owned(
-        &self,
-        attrs: &[ConvertedAttrKeyValue],
-    ) -> HashMap<String, JsonType<'static>> {
-        if attrs.is_empty() {
-            return HashMap::new();
-        }
-
-        let hm: HashMap<String, JsonType<'static>> = attrs
-            .iter()
-            // periods(.) in key names will be converted into a nested format, so swap
-            // them to underscores to avoid nesting
-            .map(|kv| {
-                let key = if self.use_json_underscore {
-                    kv.0.replace(".", "_")
-                } else {
-                    kv.0.clone()
-                };
-                (key, kv.1.clone().into())
-            })
-            .collect();
-
+    fn build_json_attrs_kv_owned(&self, attrs: &[KeyValue]) -> HashMap<String, JsonType<'static>> {
+        let mut hm = HashMap::new();
+        self.flatten_keyvalues_owned(attrs, String::new(), &mut hm);
         hm
+    }
+
+    fn flatten_keyvalues_owned(
+        &self,
+        attrs: &[KeyValue],
+        prefix: String,
+        result: &mut HashMap<String, JsonType<'static>>,
+    ) {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        for kv in attrs {
+            let full_key = if prefix.is_empty() {
+                kv.key.clone()
+            } else {
+                format!("{}.{}", prefix, kv.key)
+            };
+
+            if let Some(any_value) = &kv.value {
+                match &any_value.value {
+                    Some(Value::KvlistValue(kvlist)) => {
+                        // Recursively flatten nested key-value lists
+                        self.flatten_keyvalues_owned(&kvlist.values, full_key, result);
+                    }
+                    Some(_) => {
+                        result.insert(full_key, any_value.clone().into());
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    fn anyvalue_to_string(
+        val: &opentelemetry_proto::tonic::common::v1::any_value::Value,
+    ) -> String {
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+        use serde_json::json;
+
+        match val {
+            Value::StringValue(s) => s.clone(),
+            Value::BoolValue(b) => b.to_string(),
+            Value::IntValue(i) => i.to_string(),
+            Value::DoubleValue(d) => json!(d).to_string(),
+            Value::ArrayValue(a) => json!(a).to_string(),
+            Value::KvlistValue(kv) => json!(kv).to_string(),
+            Value::BytesValue(b) => hex::encode(b),
+        }
     }
 }
 
-pub(crate) fn find_str_attribute<'a>(
-    attr: &str,
-    attributes: &'a [ConvertedAttrKeyValue],
-) -> Cow<'a, str> {
+pub(crate) fn find_str_attribute_kv<'a>(attr: &str, attributes: &'a [KeyValue]) -> Cow<'a, str> {
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
     attributes
         .iter()
-        .find(|kv| kv.0 == attr)
-        .map(|kv| match &kv.1 {
-            ConvertedAttrValue::String(s) => Cow::Borrowed(s.as_str()),
-            _ => Cow::Borrowed(""),
+        .find(|kv| kv.key == attr)
+        .and_then(|kv| {
+            kv.value.as_ref().and_then(|v| {
+                v.value.as_ref().map(|val| match val {
+                    Value::StringValue(s) => Cow::Borrowed(s.as_str()),
+                    _ => Cow::Borrowed(""),
+                })
+            })
         })
         .unwrap_or(Cow::Borrowed(""))
 }
@@ -132,25 +203,39 @@ pub(crate) fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::otlp::cvattr::ConvertedAttrValue;
 
     #[test]
     fn test_transform_attrs_lifetime_correctness() {
-        let transformer = Transformer::new(Compression::None, true, false);
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
 
         // Create some test attributes
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "service.name".to_string(),
-                ConvertedAttrValue::String("test-service".to_string()),
-            ),
-            ConvertedAttrKeyValue("http.status_code".to_string(), ConvertedAttrValue::Int(200)),
-            ConvertedAttrKeyValue("duration".to_string(), ConvertedAttrValue::Double(1.23)),
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+            KeyValue {
+                key: "duration".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::DoubleValue(1.23)),
+                }),
+            },
         ];
 
         // This should work without cloning the values - the returned MapOrJson
         // should maintain references to the original data where possible
-        let result = transformer.transform_attrs(&attrs);
+        let result = transformer.transform_attrs_kv(&attrs);
 
         match result {
             MapOrJson::Json(map) => {
@@ -164,46 +249,28 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_attrs_with_underscore_replacement() {
-        let transformer = Transformer::new(Compression::None, true, true);
-
-        let attrs = vec![
-            ConvertedAttrKeyValue(
-                "service.name".to_string(),
-                ConvertedAttrValue::String("test".to_string()),
-            ),
-            ConvertedAttrKeyValue(
-                "http.method".to_string(),
-                ConvertedAttrValue::String("GET".to_string()),
-            ),
-        ];
-
-        let result = transformer.transform_attrs(&attrs);
-
-        match result {
-            MapOrJson::Json(map) => {
-                assert!(map.contains_key("service_name"));
-                assert!(map.contains_key("http_method"));
-                assert!(!map.contains_key("service.name"));
-                assert!(!map.contains_key("http.method"));
-            }
-            _ => panic!("Expected JSON variant"),
-        }
-    }
-
-    #[test]
     fn test_transform_attrs_map_variant() {
-        let transformer = Transformer::new(Compression::None, false, false);
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, false);
 
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "key1".to_string(),
-                ConvertedAttrValue::String("value1".to_string()),
-            ),
-            ConvertedAttrKeyValue("key2".to_string(), ConvertedAttrValue::Int(42)),
+            KeyValue {
+                key: "key1".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("value1".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "key2".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(42)),
+                }),
+            },
         ];
 
-        let result = transformer.transform_attrs(&attrs);
+        let result = transformer.transform_attrs_kv(&attrs);
 
         match result {
             MapOrJson::Map(vec) => {
@@ -217,21 +284,36 @@ mod tests {
 
     #[test]
     fn test_transform_attrs_owned_lifetime_correctness() {
-        let transformer = Transformer::new(Compression::None, true, false);
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
 
         // Create some test attributes
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "service.name".to_string(),
-                ConvertedAttrValue::String("test-service".to_string()),
-            ),
-            ConvertedAttrKeyValue("http.status_code".to_string(), ConvertedAttrValue::Int(200)),
-            ConvertedAttrKeyValue("duration".to_string(), ConvertedAttrValue::Double(1.23)),
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+            KeyValue {
+                key: "duration".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::DoubleValue(1.23)),
+                }),
+            },
         ];
 
         // This should work with owned data - the returned MapOrJson
         // should contain owned data that doesn't reference the input
-        let result = transformer.transform_attrs_owned(&attrs);
+        let result = transformer.transform_attrs_kv_owned(&attrs);
 
         match result {
             MapOrJson::JsonOwned(map) => {
@@ -259,30 +341,387 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_attrs_owned_with_underscore_replacement() {
-        let transformer = Transformer::new(Compression::None, true, true);
+    fn test_transform_attrs_kv_json_variant() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
 
         let attrs = vec![
-            ConvertedAttrKeyValue(
-                "service.name".to_string(),
-                ConvertedAttrValue::String("test".to_string()),
-            ),
-            ConvertedAttrKeyValue(
-                "http.method".to_string(),
-                ConvertedAttrValue::String("GET".to_string()),
-            ),
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+            KeyValue {
+                key: "duration".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::DoubleValue(1.23)),
+                }),
+            },
         ];
 
-        let result = transformer.transform_attrs_owned(&attrs);
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Json(map) => {
+                assert_eq!(map.len(), 3);
+                assert!(map.contains_key("service.name"));
+                assert!(map.contains_key("http.status_code"));
+                assert!(map.contains_key("duration"));
+            }
+            _ => panic!("Expected JSON variant"),
+        }
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_map_variant() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, false);
+
+        let attrs = vec![
+            KeyValue {
+                key: "key1".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("value1".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "key2".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(42)),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Map(vec) => {
+                assert_eq!(vec.len(), 2);
+                assert!(vec.contains(&("key1".to_string(), "value1".to_string())));
+                assert!(vec.contains(&("key2".to_string(), "42".to_string())));
+            }
+            _ => panic!("Expected Map variant"),
+        }
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_owned() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
+
+        let attrs = vec![
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("test-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv_owned(&attrs);
 
         match result {
             MapOrJson::JsonOwned(map) => {
-                assert!(map.contains_key("service_name"));
-                assert!(map.contains_key("http_method"));
-                assert!(!map.contains_key("service.name"));
-                assert!(!map.contains_key("http.method"));
+                assert_eq!(map.len(), 2);
+                assert!(map.contains_key("service.name"));
+                assert!(map.contains_key("http.status_code"));
             }
             _ => panic!("Expected JsonOwned variant"),
+        }
+    }
+
+    #[test]
+    fn test_find_str_attribute_kv() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let attrs = vec![
+            KeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("my-service".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "http.status_code".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(200)),
+                }),
+            },
+        ];
+
+        let result = find_str_attribute_kv("service.name", &attrs);
+        assert_eq!(result, "my-service");
+
+        let result = find_str_attribute_kv("http.status_code", &attrs);
+        assert_eq!(result, "");
+
+        let result = find_str_attribute_kv("nonexistent", &attrs);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_flatten_kvlist() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
+
+        let attrs = vec![
+            KeyValue {
+                key: "simple".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("value".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "metadata".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::KvlistValue(KeyValueList {
+                        values: vec![
+                            KeyValue {
+                                key: "region".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("us-east-1".to_string())),
+                                }),
+                            },
+                            KeyValue {
+                                key: "zone".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("a".to_string())),
+                                }),
+                            },
+                        ],
+                    })),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Json(map) => {
+                assert_eq!(map.len(), 3);
+                assert!(map.contains_key("simple"));
+                assert!(map.contains_key("metadata.region"));
+                assert!(map.contains_key("metadata.zone"));
+                assert!(!map.contains_key("metadata"));
+            }
+            _ => panic!("Expected JSON variant"),
+        }
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_flatten_nested_kvlist() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
+
+        let attrs = vec![KeyValue {
+            key: "outer".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::KvlistValue(KeyValueList {
+                    values: vec![
+                        KeyValue {
+                            key: "middle".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(Value::KvlistValue(KeyValueList {
+                                    values: vec![KeyValue {
+                                        key: "inner".to_string(),
+                                        value: Some(AnyValue {
+                                            value: Some(Value::StringValue("deep".to_string())),
+                                        }),
+                                    }],
+                                })),
+                            }),
+                        },
+                        KeyValue {
+                            key: "sibling".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(Value::IntValue(42)),
+                            }),
+                        },
+                    ],
+                })),
+            }),
+        }];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Json(map) => {
+                assert_eq!(map.len(), 2);
+                assert!(map.contains_key("outer.middle.inner"));
+                assert!(map.contains_key("outer.sibling"));
+                assert!(!map.contains_key("outer"));
+                assert!(!map.contains_key("outer.middle"));
+            }
+            _ => panic!("Expected JSON variant"),
+        }
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_owned_flatten_kvlist() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true);
+
+        let attrs = vec![
+            KeyValue {
+                key: "simple".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("value".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "metadata".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::KvlistValue(KeyValueList {
+                        values: vec![
+                            KeyValue {
+                                key: "region".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("us-east-1".to_string())),
+                                }),
+                            },
+                            KeyValue {
+                                key: "zone".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::IntValue(1)),
+                                }),
+                            },
+                        ],
+                    })),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv_owned(&attrs);
+
+        match result {
+            MapOrJson::JsonOwned(map) => {
+                assert_eq!(map.len(), 3);
+                assert!(map.contains_key("simple"));
+                assert!(map.contains_key("metadata.region"));
+                assert!(map.contains_key("metadata.zone"));
+                assert!(!map.contains_key("metadata"));
+            }
+            _ => panic!("Expected JsonOwned variant"),
+        }
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_map_variant_flatten_kvlist() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, false);
+
+        let attrs = vec![
+            KeyValue {
+                key: "simple".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("value".to_string())),
+                }),
+            },
+            KeyValue {
+                key: "metadata".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::KvlistValue(KeyValueList {
+                        values: vec![
+                            KeyValue {
+                                key: "region".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("us-east-1".to_string())),
+                                }),
+                            },
+                            KeyValue {
+                                key: "zone".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::IntValue(1)),
+                                }),
+                            },
+                        ],
+                    })),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Map(vec) => {
+                assert_eq!(vec.len(), 3);
+                assert!(vec.contains(&("simple".to_string(), "value".to_string())));
+                assert!(vec.contains(&("metadata.region".to_string(), "us-east-1".to_string())));
+                assert!(vec.contains(&("metadata.zone".to_string(), "1".to_string())));
+            }
+            _ => panic!("Expected Map variant"),
+        }
+    }
+
+    #[test]
+    fn test_transform_attrs_kv_map_variant_nested_kvlist() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, false);
+
+        let attrs = vec![KeyValue {
+            key: "outer".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::KvlistValue(KeyValueList {
+                    values: vec![KeyValue {
+                        key: "middle".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(Value::KvlistValue(KeyValueList {
+                                values: vec![KeyValue {
+                                    key: "inner".to_string(),
+                                    value: Some(AnyValue {
+                                        value: Some(Value::StringValue("deep".to_string())),
+                                    }),
+                                }],
+                            })),
+                        }),
+                    }],
+                })),
+            }),
+        }];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Map(vec) => {
+                assert_eq!(vec.len(), 1);
+                assert!(vec.contains(&("outer.middle.inner".to_string(), "deep".to_string())));
+            }
+            _ => panic!("Expected Map variant"),
         }
     }
 }
