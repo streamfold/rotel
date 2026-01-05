@@ -41,7 +41,7 @@ pub struct OTLPGrpcServerBuilder {
     metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     include_metadata: bool,
-    metadata_keys_to_include: Vec<String>,
+    headers_to_include: Vec<String>,
 }
 
 impl OTLPGrpcServerBuilder {}
@@ -78,8 +78,8 @@ impl OTLPGrpcServerBuilder {
         self
     }
 
-    pub fn with_metadata_keys_to_include(mut self, keys: Vec<String>) -> Self {
-        self.metadata_keys_to_include = keys;
+    pub fn with_headers_to_include(mut self, headers: Vec<String>) -> Self {
+        self.headers_to_include = headers;
         self
     }
 
@@ -90,7 +90,7 @@ impl OTLPGrpcServerBuilder {
             logs_output: self.logs_output,
             max_recv_msg_size_mib: self.max_recv_msg_size_mib,
             include_metadata: self.include_metadata,
-            metadata_keys_to_include: self.metadata_keys_to_include,
+            headers_to_include: self.headers_to_include,
         }
     }
 }
@@ -101,7 +101,7 @@ pub struct OTLPGrpcServer {
     logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     max_recv_msg_size_mib: Option<usize>,
     include_metadata: bool,
-    metadata_keys_to_include: Vec<String>,
+    headers_to_include: Vec<String>,
 }
 
 impl OTLPGrpcServer {
@@ -119,7 +119,7 @@ impl OTLPGrpcServer {
             self.metrics_output.clone(),
             self.logs_output.clone(),
             self.include_metadata,
-            self.metadata_keys_to_include.clone(),
+            self.headers_to_include.clone(),
         );
         let stream = listener.into_stream()?;
 
@@ -194,7 +194,7 @@ struct CollectorService {
     refused_log_records_counter: Counter<u64>,
     tags: [KeyValue; 1],
     include_metadata: bool,
-    metadata_keys_to_include: Vec<String>,
+    headers_to_include: Vec<String>,
 }
 
 impl CollectorService {
@@ -203,7 +203,7 @@ impl CollectorService {
         metrics_tx: Option<OTLPOutput<Message<ResourceMetrics>>>,
         logs_tx: Option<OTLPOutput<Message<ResourceLogs>>>,
         include_metadata: bool,
-        metadata_keys_to_include: Vec<String>,
+        headers_to_include: Vec<String>,
     ) -> Self {
         Self {
             traces_tx,
@@ -249,17 +249,17 @@ impl CollectorService {
                 .build(),
             tags: [KeyValue::new("protocol", "grpc")],
             include_metadata,
-            metadata_keys_to_include,
+            headers_to_include,
         }
     }
 
     fn extract_metadata_from_request<T>(&self, request: &Request<T>) -> Option<MessageMetadata> {
-        if !self.include_metadata || self.metadata_keys_to_include.is_empty() {
+        if !self.include_metadata || self.headers_to_include.is_empty() {
             return None;
         }
         let mut metadata_map = HashMap::new();
         let request_metadata = request.metadata();
-        for key in &self.metadata_keys_to_include {
+        for key in &self.headers_to_include {
             let normalized = key.to_lowercase();
             if let Some(value) = request_metadata.get(&normalized) {
                 if let Ok(value_str) = value.to_str() {
@@ -698,7 +698,7 @@ mod tests {
         let srv = OTLPGrpcServer::builder()
             .with_traces_output(Some(trace_output))
             .with_include_metadata(true)
-            .with_metadata_keys_to_include(header_names.clone())
+            .with_headers_to_include(header_names.clone())
             .build();
         let addr = listener.bound_address().unwrap();
         let cancel_token = cancel.clone();
@@ -759,7 +759,7 @@ mod tests {
         let srv = OTLPGrpcServer::builder()
             .with_traces_output(Some(trace_output))
             .with_include_metadata(false)
-            .with_metadata_keys_to_include(vec![first_header.clone()])
+            .with_headers_to_include(vec![first_header.clone()])
             .build();
         let addr = listener.bound_address().unwrap();
         let cancel_token = cancel.clone();
@@ -805,7 +805,7 @@ mod tests {
         let srv = OTLPGrpcServer::builder()
             .with_traces_output(Some(trace_output))
             .with_include_metadata(true)
-            .with_metadata_keys_to_include(vec![])
+            .with_headers_to_include(vec![])
             .build();
         let addr = listener.bound_address().unwrap();
         let cancel_token = cancel.clone();
@@ -848,7 +848,7 @@ mod tests {
         let srv = OTLPGrpcServer::builder()
             .with_metrics_output(Some(metrics_output))
             .with_include_metadata(true)
-            .with_metadata_keys_to_include(vec!["my-custom-header".to_string()])
+            .with_headers_to_include(vec!["my-custom-header".to_string()])
             .build();
         let addr = listener.bound_address().unwrap();
         let cancel_token = cancel.clone();
@@ -897,7 +897,7 @@ mod tests {
         let srv = OTLPGrpcServer::builder()
             .with_logs_output(Some(logs_output))
             .with_include_metadata(true)
-            .with_metadata_keys_to_include(vec!["my-custom-header".to_string()])
+            .with_headers_to_include(vec!["my-custom-header".to_string()])
             .build();
         let addr = listener.bound_address().unwrap();
         let cancel_token = cancel.clone();
@@ -946,7 +946,7 @@ mod tests {
         let srv = OTLPGrpcServer::builder()
             .with_traces_output(Some(trace_output))
             .with_include_metadata(true)
-            .with_metadata_keys_to_include(vec!["My-Custom-Header".to_string()])
+            .with_headers_to_include(vec!["My-Custom-Header".to_string()])
             .build();
         let addr = listener.bound_address().unwrap();
         let cancel_token = cancel.clone();

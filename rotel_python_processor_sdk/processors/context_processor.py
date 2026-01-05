@@ -14,7 +14,7 @@ Usage:
 
     For gRPC, configure the receiver to include metadata:
         ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
-        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=my-custom-header
+        ROTEL_OTLP_GRPC_HEADERS_TO_INCLUDE=my-custom-header
 
     Then use this processor to add those headers as span attributes.
 
@@ -70,7 +70,7 @@ def process_spans(resource_spans: ResourceSpans):
 
     Or for gRPC:
         ROTEL_OTLP_GRPC_INCLUDE_METADATA=true
-        ROTEL_OTLP_GRPC_METADATA_KEYS_TO_INCLUDE=my-custom-header
+        ROTEL_OTLP_GRPC_HEADERS_TO_INCLUDE=my-custom-header
 
     And the request includes "my-custom-header: test-value-123", then
     this processor will add the attribute
