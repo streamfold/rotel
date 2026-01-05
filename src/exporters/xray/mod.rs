@@ -70,7 +70,7 @@ pub struct XRayExporterConfigBuilder {
 impl Default for XRayExporterConfigBuilder {
     fn default() -> Self {
         Self {
-            region: Region::UsEast1,
+            region: Default::default(),
             custom_endpoint: None,
             retry_config: Default::default(),
         }

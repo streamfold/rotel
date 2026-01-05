@@ -3,15 +3,14 @@ use serde::Deserialize;
 
 use crate::exporters::shared::aws::Region;
 
-#[derive(Debug, Clone, Args, Deserialize)]
+#[derive(Debug, Default, Clone, Args, Deserialize)]
 #[serde(default)]
 pub struct XRayExporterArgs {
     /// AWS X-Ray Exporter Region
     #[arg(
-        value_enum,
         long("awsxray-exporter-region"),
         env = "ROTEL_AWSXRAY_EXPORTER_REGION",
-        default_value = "us-east-1"
+        default_value_t
     )]
     pub region: Region,
 
@@ -21,13 +20,4 @@ pub struct XRayExporterArgs {
         env = "ROTEL_AWSXRAY_EXPORTER_CUSTOM_ENDPOINT"
     )]
     pub custom_endpoint: Option<String>,
-}
-
-impl Default for XRayExporterArgs {
-    fn default() -> Self {
-        Self {
-            region: Region::UsEast1,
-            custom_endpoint: None,
-        }
-    }
 }
