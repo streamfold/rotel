@@ -81,4 +81,4 @@ COPY rotel_python_processor_sdk/processors/context_processor.py /processors/cont
 
 EXPOSE 5418
 
-ENTRYPOINT ["/rotel", "start", "--otlp-http-endpoint", "0.0.0.0:5418", "--otlp-http-include-metadata", "--otlp-http-headers-to-include", "authorization", "--otlp-with-trace-processor", "/processors/context_processor.py", "--exporter", "otlp", "--otlp-exporter-endpoint", "signoz-otel-collector:4317"]
+ENTRYPOINT ["/rotel", "start", "--otlp-http-endpoint", "0.0.0.0:5418", "--otlp-http-include-metadata", "--otlp-http-headers-to-include", "my-custom-header", "--otlp-with-trace-processor", "/processors/context_processor.py", "--exporter", "otlp", "--otlp-exporter-endpoint", "signoz-otel-collector:4317"]
