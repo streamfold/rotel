@@ -74,6 +74,21 @@ follow these steps:
    telemetrygen traces --otlp-insecure --duration 5s
    ```
 
+   Alternatively, use the built-in `generate-otlp` tool:
+
+   ```bash
+   # Generate and send traces directly to Rotel
+   cargo run --bin generate-otlp -- traces --http-endpoint localhost:4318
+
+   # Or generate a trace file for testing
+   cargo run --bin generate-otlp -- traces --file trace.pb
+
+   # Then send it with curl
+   curl -X POST http://localhost:4318/v1/traces \
+     -H "Content-Type: application/x-protobuf" \
+     --data-binary @trace.pb
+   ```
+
     - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
