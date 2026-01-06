@@ -1179,7 +1179,7 @@ impl FileHandler {
         workers_done_tx: std::sync::mpsc::Sender<()>,
         worker_ctx: WorkerContext,
     ) {
-        use tokio::time::{timeout_at, Instant};
+        use tokio::time::{Instant, timeout_at};
 
         let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
         let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
