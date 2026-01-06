@@ -29,12 +29,25 @@ impl<T> BoundedSender<T> {
         }
     }
 
+    /// Blocking send - blocks until there is capacity in the channel.
+    /// Use this from non-async contexts (e.g., dedicated OS threads).
+    pub fn send_blocking(&self, item: T) -> Result<(), SendError> {
+        match self.tx.send(item) {
+            Ok(()) => Ok(()),
+            Err(_e) => Err(SendError::Disconnected), // receiver closed
+        }
+    }
+
     pub fn send_async(&self, item: T) -> SendFut<'_, T> {
         self.tx.send_async(item)
     }
 
     pub fn len(&self) -> usize {
         self.tx.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tx.is_empty()
     }
 }
 
@@ -60,6 +73,21 @@ impl<T> BoundedReceiver<T> {
         }
     }
 
+    /// Blocking receive - blocks until an item is available.
+    /// Use this from non-async contexts (e.g., dedicated OS threads).
+    pub fn recv_blocking(&self) -> Option<T> {
+        match self.rx.recv() {
+            Ok(item) => Some(item),
+            Err(_e) => None, // disconnected
+        }
+    }
+
+    /// Non-blocking receive - returns immediately.
+    /// Returns None if no item is available or channel is disconnected.
+    pub fn try_recv(&self) -> Option<T> {
+        self.rx.try_recv().ok()
+    }
+
     pub fn stream(&self) -> RecvStream<'_, T> {
         self.rx.stream()
     }
@@ -70,6 +98,10 @@ impl<T> BoundedReceiver<T> {
 
     pub fn len(&self) -> usize {
         self.rx.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rx.is_empty()
     }
 }
 

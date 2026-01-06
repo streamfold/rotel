@@ -180,10 +180,7 @@ mod tests {
 
         assert_eq!(get_string_value(&result, "str"), Some("hello"));
         assert_eq!(get_int_value(&result, "int"), Some(42));
-        assert_eq!(
-            get_double_value(&result, "float"),
-            Some(std::f64::consts::PI)
-        );
+        assert_eq!(get_double_value(&result, "float"), Some(3.14));
         assert_eq!(get_bool_value(&result, "bool"), Some(true));
     }
 
