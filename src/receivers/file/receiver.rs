@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -384,10 +385,14 @@ struct FileCoordinator {
     checkpoint_config: CheckpointConfig,
     records_since_checkpoint: u64,
     last_checkpoint: Instant,
-    // Channel to send work items to the async handler
-    work_tx: BoundedSender<FileWorkItem>,
+    // Channel to send work items to the async handler (Option for early drop during shutdown)
+    work_tx: Option<BoundedSender<FileWorkItem>>,
     // Channel to receive offset updates from workers
     results_rx: BoundedReceiver<FileWorkResult>,
+    // Channel to receive "workers done" signal from async handler during shutdown
+    workers_done_rx: std::sync::mpsc::Receiver<()>,
+    // Flag to indicate shutdown is in progress (for conditional logging)
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl FileCoordinator {
@@ -783,12 +788,23 @@ impl FileCoordinator {
         tracked.in_flight = true;
 
         // Send work to async handler via bounded channel (blocks if at capacity)
-        if let Err(e) = self.work_tx.send_blocking(work) {
-            warn!("Failed to send work item: {}", e);
-            // Reset in_flight if send failed
-            if let Some(t) = self.tracked_files.get_mut(&file_id) {
-                t.in_flight = false;
+        if let Some(ref work_tx) = self.work_tx {
+            if let Err(_e) = work_tx.send_blocking(work) {
+                // Channel disconnected - async handler is shutting down
+                // Only warn if we're not in shutdown mode (unexpected disconnect)
+                if self.shutting_down.load(Ordering::SeqCst) {
+                    debug!("Work channel closed during shutdown, cannot dispatch work");
+                } else {
+                    warn!("Work channel unexpectedly closed, cannot dispatch work");
+                }
+                // Reset in_flight if send failed
+                if let Some(t) = self.tracked_files.get_mut(&file_id) {
+                    t.in_flight = false;
+                }
             }
+        } else {
+            // Channel already closed (shutdown in progress)
+            tracked.in_flight = false;
         }
 
         Ok(())
@@ -816,6 +832,9 @@ impl FileCoordinator {
         // Main loop: wait for watcher events, dispatch work
         loop {
             if cancel.is_cancelled() {
+                // Set shutting_down flag immediately so any in-flight dispatch logs at debug level
+                self.shutting_down.store(true, Ordering::SeqCst);
+                debug!("Cancellation received, beginning orderly shutdown");
                 break;
             }
 
@@ -843,15 +862,76 @@ impl FileCoordinator {
             }
         }
 
-        // Process any remaining results
-        self.process_results();
+        // Close work_tx to signal no more work coming
+        // Take and drop the sender so the async handler sees the channel close
+        drop(self.work_tx.take());
+        debug!("Work channel closed, waiting for workers to finish");
+
+        // Wait for async handler to signal that workers are done
+        let wait_timeout = Duration::from_secs(5);
+        match self.workers_done_rx.recv_timeout(wait_timeout) {
+            Ok(()) => debug!("Workers finished, draining final results"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!("Timeout waiting for workers to finish");
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                debug!("Workers done channel disconnected");
+            }
+        }
+
+        // Now drain any remaining results
+        self.drain_results();
 
         // Final state save
         if let Err(e) = self.save_state() {
             error!("Failed to save final state: {}", e);
+        } else {
+            debug!(
+                "Final state saved with {} tracked files",
+                self.tracked_files.len()
+            );
         }
 
         info!("File coordinator stopped");
+    }
+
+    /// Drain results from in-flight workers during shutdown
+    fn drain_results(&mut self) {
+        let drain_timeout = Duration::from_secs(5); // Hardcoded for coordinator side
+        let drain_deadline = Instant::now() + drain_timeout;
+
+        loop {
+            let in_flight_count = self.tracked_files.values().filter(|t| t.in_flight).count();
+
+            if in_flight_count == 0 {
+                debug!("All in-flight work completed");
+                break;
+            }
+
+            if Instant::now() >= drain_deadline {
+                warn!(
+                    "Shutdown timeout: {} files still had in-flight work",
+                    in_flight_count
+                );
+                break;
+            }
+
+            // Try to receive with short timeout
+            match self.results_rx.recv_timeout(Duration::from_millis(100)) {
+                Some(result) => {
+                    if let Some(tracked) = self.tracked_files.get_mut(&result.file_id) {
+                        tracked.offset = result.new_offset;
+                        tracked.in_flight = false;
+                        self.records_since_checkpoint += 1;
+                    }
+                }
+                None => {
+                    // Channel disconnected, workers are done
+                    debug!("Results channel disconnected");
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -951,10 +1031,12 @@ impl FileHandler {
         // - work_tx/rx: coordinator -> async handler (work items to process)
         // - records_tx/rx: workers -> async handler (log records for export)
         // - results_tx/rx: workers -> coordinator (offset updates)
+        // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
         let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(100);
         let (results_tx, results_rx) =
             bounded_channel::bounded::<FileWorkResult>(max_concurrent_files);
+        let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
 
         // Create worker context (shared by all workers)
         let worker_ctx = WorkerContext {
@@ -967,6 +1049,8 @@ impl FileHandler {
 
         // Create the coordinator
         let finder = FileFinder::new(self.config.include.clone(), self.config.exclude.clone());
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let shutting_down_async = shutting_down.clone();
         let coordinator = FileCoordinator {
             config: self.config.clone(),
             finder,
@@ -978,8 +1062,10 @@ impl FileHandler {
             checkpoint_config: CheckpointConfig::default(),
             records_since_checkpoint: 0,
             last_checkpoint: Instant::now(),
-            work_tx,
+            work_tx: Some(work_tx),
             results_rx,
+            workers_done_rx,
+            shutting_down,
         };
 
         // Spawn the coordinator on a dedicated OS thread
@@ -995,6 +1081,8 @@ impl FileHandler {
         loop {
             select! {
                 _ = cancel.cancelled() => {
+                    // Set shutting_down before breaking so coordinator sees it
+                    shutting_down_async.store(true, Ordering::SeqCst);
                     debug!("File receiver cancelled, stopping");
                     break;
                 }
@@ -1058,18 +1146,135 @@ impl FileHandler {
             }
         }
 
-        // Wait for remaining workers to complete
-        while let Some(result) = worker_futures.next().await {
-            if let Err(e) = result {
-                error!("Worker task failed during shutdown: {}", e);
-            }
-        }
+        // Drain workers and records with timeouts
+        // Note: We must drop worker_ctx after workers drain so records_tx closes
+        self.drain_shutdown(
+            &mut worker_futures,
+            &mut records_rx,
+            workers_done_tx,
+            worker_ctx,
+        )
+        .await;
 
         // Wait for coordinator thread to finish
         drop(records_rx);
         drop(work_rx);
-        let _ = coord_handle.join();
+
+        // Join coordinator with timeout
+        let coord_join_result = tokio::task::spawn_blocking(move || coord_handle.join()).await;
+        match coord_join_result {
+            Ok(Ok(())) => debug!("Coordinator thread joined successfully"),
+            Ok(Err(_)) => error!("Coordinator thread panicked"),
+            Err(e) => error!("Failed to join coordinator: {}", e),
+        }
 
         info!("File receiver stopped");
+    }
+
+    /// Drain in-flight workers and remaining log records during shutdown
+    async fn drain_shutdown(
+        &mut self,
+        worker_futures: &mut FuturesOrdered<JoinHandle<()>>,
+        records_rx: &mut BoundedReceiver<LogRecordBatch>,
+        workers_done_tx: std::sync::mpsc::Sender<()>,
+        worker_ctx: WorkerContext,
+    ) {
+        use tokio::time::{timeout_at, Instant};
+
+        let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
+        let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
+
+        // Phase 1: Wait for workers to complete (they produce both results and records)
+        let worker_count = worker_futures.len();
+        if worker_count > 0 {
+            debug!("Draining {} in-flight workers", worker_count);
+        }
+
+        loop {
+            if worker_futures.is_empty() {
+                break;
+            }
+
+            match timeout_at(worker_deadline, worker_futures.next()).await {
+                Ok(Some(result)) => {
+                    if let Err(e) = result {
+                        error!("Worker task failed during drain: {}", e);
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    warn!(
+                        "Timeout waiting for workers, {} still running",
+                        worker_futures.len()
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Signal coordinator that workers are done so it can drain results and save state
+        debug!("Workers drained, signaling coordinator");
+        let _ = workers_done_tx.send(());
+
+        // Drop worker_ctx to close records_tx, allowing records_rx to return None when drained
+        drop(worker_ctx);
+
+        // Phase 2: Drain log records channel and send to pipeline
+        debug!("Draining remaining log records");
+        let mut drained_count = 0u64;
+
+        loop {
+            match timeout_at(records_deadline, records_rx.next()).await {
+                Ok(Some(batch)) => {
+                    if !batch.log_records.is_empty() {
+                        drained_count += batch.count;
+                        if let Some(ref logs_output) = self.logs_output {
+                            // Build ResourceLogs directly from LogRecords
+                            let scope_logs = ScopeLogs {
+                                scope: Some(InstrumentationScope {
+                                    name: "rotel.file".to_string(),
+                                    version: String::new(),
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                }),
+                                log_records: batch.log_records,
+                                schema_url: String::new(),
+                            };
+
+                            let resource_logs = ResourceLogs {
+                                resource: Some(Resource {
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                    entity_refs: vec![],
+                                }),
+                                scope_logs: vec![scope_logs],
+                                schema_url: String::new(),
+                            };
+
+                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+
+                            match logs_output.send(payload_msg).await {
+                                Ok(_) => {
+                                    self.accepted_counter.add(batch.count, &self.tags);
+                                }
+                                Err(e) => {
+                                    self.refused_counter.add(batch.count, &self.tags);
+                                    error!("Failed to send logs during drain: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None) => break, // Channel closed
+                Err(_) => {
+                    warn!("Timeout draining records channel");
+                    break;
+                }
+            }
+        }
+
+        if drained_count > 0 {
+            debug!("Drained {} log records during shutdown", drained_count);
+        }
     }
 }

@@ -88,6 +88,12 @@ impl<T> BoundedReceiver<T> {
         self.rx.try_recv().ok()
     }
 
+    /// Blocking receive with timeout - blocks until an item is available or timeout.
+    /// Returns None if timeout expires or channel is disconnected.
+    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Option<T> {
+        self.rx.recv_timeout(timeout).ok()
+    }
+
     pub fn stream(&self) -> RecvStream<'_, T> {
         self.rx.stream()
     }

@@ -54,6 +54,10 @@ pub struct FileReceiverConfig {
     /// Time to wait after reaching EOF on a rotated file before closing it.
     /// This allows draining any remaining content that the writer may still be flushing.
     pub rotate_wait: Duration,
+    /// Maximum time to wait for in-flight workers to complete during shutdown
+    pub shutdown_worker_drain_timeout: Duration,
+    /// Maximum time to wait for log records to be sent to pipeline during shutdown
+    pub shutdown_records_drain_timeout: Duration,
 }
 
 impl Default for FileReceiverConfig {
@@ -72,6 +76,8 @@ impl Default for FileReceiverConfig {
             include_file_path: false,
             max_concurrent_files: 64,
             rotate_wait: Duration::from_secs(1),
+            shutdown_worker_drain_timeout: Duration::from_secs(3),
+            shutdown_records_drain_timeout: Duration::from_secs(2),
         }
     }
 }

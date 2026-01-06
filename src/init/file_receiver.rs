@@ -181,6 +181,22 @@ pub struct FileReceiverArgs {
         default_value = "1000"
     )]
     pub file_receiver_rotate_wait_ms: u64,
+
+    /// Maximum time in milliseconds to wait for in-flight workers to complete during shutdown
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_SHUTDOWN_WORKER_DRAIN_TIMEOUT_MS",
+        default_value = "3000"
+    )]
+    pub file_receiver_shutdown_worker_drain_timeout_ms: u64,
+
+    /// Maximum time in milliseconds to wait for log records to be sent to pipeline during shutdown
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_SHUTDOWN_RECORDS_DRAIN_TIMEOUT_MS",
+        default_value = "2000"
+    )]
+    pub file_receiver_shutdown_records_drain_timeout_ms: u64,
 }
 
 impl Default for FileReceiverArgs {
@@ -199,6 +215,8 @@ impl Default for FileReceiverArgs {
             file_receiver_include_file_path: false,
             file_receiver_max_concurrent_files: 64,
             file_receiver_rotate_wait_ms: 1000,
+            file_receiver_shutdown_worker_drain_timeout_ms: 3000,
+            file_receiver_shutdown_records_drain_timeout_ms: 2000,
         }
     }
 }
@@ -220,6 +238,12 @@ impl FileReceiverArgs {
             include_file_path: self.file_receiver_include_file_path,
             max_concurrent_files: self.file_receiver_max_concurrent_files,
             rotate_wait: Duration::from_millis(self.file_receiver_rotate_wait_ms),
+            shutdown_worker_drain_timeout: Duration::from_millis(
+                self.file_receiver_shutdown_worker_drain_timeout_ms,
+            ),
+            shutdown_records_drain_timeout: Duration::from_millis(
+                self.file_receiver_shutdown_records_drain_timeout_ms,
+            ),
         }
     }
 }
