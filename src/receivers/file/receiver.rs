@@ -789,7 +789,8 @@ impl FileHandler {
         // - results_tx/rx: workers -> coordinator (offset updates)
         let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(100);
-        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(max_concurrent_files);
+        let (results_tx, results_rx) =
+            bounded_channel::bounded::<FileWorkResult>(max_concurrent_files);
 
         // Create worker context (shared by all workers)
         let worker_ctx = WorkerContext {
