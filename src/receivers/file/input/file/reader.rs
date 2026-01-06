@@ -1,35 +1,19 @@
-use serde::{Deserialize, Serialize};
+// SPDX-License-Identifier: Apache-2.0
+
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-
-use super::fingerprint::Fingerprint;
-
-/// State for a single file being read
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FileReaderState {
-    /// Fingerprint for identifying this file
-    pub fingerprint: Fingerprint,
-    /// Current read offset in bytes
-    pub offset: u64,
-}
 
 /// FileReader manages reading from a single file
 pub struct FileReader {
     /// Path to the file
     path: PathBuf,
-    /// Current fingerprint
-    fingerprint: Fingerprint,
     /// Current offset in bytes
     offset: u64,
     /// The open file handle (kept open for reuse)
     file: Option<File>,
-    /// Maximum size of the fingerprint
-    fingerprint_size: usize,
     /// Maximum size of a single log line
     max_log_size: usize,
-    /// Generation counter for tracking file age
-    generation: u64,
     /// Whether we've reached EOF
     eof: bool,
     /// Reusable line buffer to avoid allocations
@@ -38,43 +22,18 @@ pub struct FileReader {
 
 impl FileReader {
     /// Create a new FileReader for a file
-    pub fn new(
-        path: impl AsRef<Path>,
-        fingerprint: Fingerprint,
-        offset: u64,
-        fingerprint_size: usize,
-        max_log_size: usize,
-    ) -> io::Result<Self> {
+    pub fn new(path: impl AsRef<Path>, offset: u64, max_log_size: usize) -> io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let file = File::open(&path)?;
 
         Ok(Self {
             path,
-            fingerprint,
             offset,
             file: Some(file),
-            fingerprint_size,
             max_log_size,
-            generation: 0,
             eof: false,
             line_buffer: String::with_capacity(1024),
         })
-    }
-
-    /// Create a FileReader from a saved state
-    pub fn from_state(
-        state: FileReaderState,
-        path: impl AsRef<Path>,
-        fingerprint_size: usize,
-        max_log_size: usize,
-    ) -> io::Result<Self> {
-        Self::new(
-            path,
-            state.fingerprint,
-            state.offset,
-            fingerprint_size,
-            max_log_size,
-        )
     }
 
     /// Get the file path
@@ -87,41 +46,9 @@ impl FileReader {
         self.path.file_name().and_then(|n| n.to_str())
     }
 
-    /// Get the current fingerprint
-    pub fn fingerprint(&self) -> &Fingerprint {
-        &self.fingerprint
-    }
-
     /// Get the current offset
     pub fn offset(&self) -> u64 {
         self.offset
-    }
-
-    /// Get the generation (for tracking file age)
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Increment the generation
-    pub fn increment_generation(&mut self) {
-        self.generation += 1;
-    }
-
-    /// Reset generation to 0 (called when file is seen during poll)
-    pub fn reset_generation(&mut self) {
-        self.generation = 0;
-    }
-
-    /// Update the file path and reopen the file handle.
-    /// Used when a file with matching fingerprint is found at a new path.
-    pub fn update_path(&mut self, new_path: impl AsRef<Path>) -> io::Result<()> {
-        let new_path = new_path.as_ref();
-        if self.path != new_path {
-            self.path = new_path.to_path_buf();
-        }
-        // Reopen file handle for the new path
-        self.file = Some(File::open(&self.path)?);
-        Ok(())
     }
 
     /// Reopen the file handle (e.g., after file rotation or to refresh)
@@ -133,14 +60,6 @@ impl FileReader {
     /// Check if we're at EOF
     pub fn is_eof(&self) -> bool {
         self.eof
-    }
-
-    /// Get the saved state for persistence
-    pub fn state(&self) -> FileReaderState {
-        FileReaderState {
-            fingerprint: self.fingerprint.clone(),
-            offset: self.offset,
-        }
     }
 
     /// Initialize the offset based on start_at configuration
@@ -234,16 +153,6 @@ impl FileReader {
         Ok(())
     }
 
-    /// Refresh the fingerprint from the current file content
-    pub fn refresh_fingerprint(&mut self) -> io::Result<()> {
-        if let Some(ref mut file) = self.file {
-            if self.fingerprint.len() < self.fingerprint_size {
-                self.fingerprint.extend(file, self.fingerprint_size)?;
-            }
-        }
-        Ok(())
-    }
-
     /// Close the file handle
     pub fn close(&mut self) {
         self.file = None;
@@ -269,10 +178,7 @@ mod tests {
         writeln!(file, "line 2").unwrap();
         file.flush().unwrap();
 
-        let mut f = File::open(file.path()).unwrap();
-        let fp = Fingerprint::new(&mut f, 1000).unwrap();
-
-        let reader = FileReader::new(file.path(), fp, 0, 1000, 1024 * 1024).unwrap();
+        let reader = FileReader::new(file.path(), 0, 1024 * 1024).unwrap();
 
         assert_eq!(reader.offset(), 0);
         assert!(!reader.is_eof());
@@ -286,10 +192,7 @@ mod tests {
         writeln!(file, "line 3").unwrap();
         file.flush().unwrap();
 
-        let mut f = File::open(file.path()).unwrap();
-        let fp = Fingerprint::new(&mut f, 1000).unwrap();
-
-        let mut reader = FileReader::new(file.path(), fp, 0, 1000, 1024 * 1024).unwrap();
+        let mut reader = FileReader::new(file.path(), 0, 1024 * 1024).unwrap();
 
         let lines = reader.read_lines().unwrap();
         assert_eq!(lines, vec!["line 1", "line 2", "line 3"]);
@@ -302,10 +205,7 @@ mod tests {
         writeln!(file, "line 1").unwrap();
         file.flush().unwrap();
 
-        let mut f = File::open(file.path()).unwrap();
-        let fp = Fingerprint::new(&mut f, 1000).unwrap();
-
-        let mut reader = FileReader::new(file.path(), fp, 0, 1000, 1024 * 1024).unwrap();
+        let mut reader = FileReader::new(file.path(), 0, 1024 * 1024).unwrap();
 
         // First read
         let lines = reader.read_lines().unwrap();
@@ -320,7 +220,7 @@ mod tests {
         f.flush().unwrap();
 
         // Re-open the reader's file handle
-        reader.file = Some(File::open(file.path()).unwrap());
+        reader.reopen().unwrap();
 
         // Second read should only get new lines
         let lines = reader.read_lines().unwrap();
@@ -333,10 +233,7 @@ mod tests {
         writeln!(file, "existing content").unwrap();
         file.flush().unwrap();
 
-        let mut f = File::open(file.path()).unwrap();
-        let fp = Fingerprint::new(&mut f, 1000).unwrap();
-
-        let mut reader = FileReader::new(file.path(), fp, 0, 1000, 1024 * 1024).unwrap();
+        let mut reader = FileReader::new(file.path(), 0, 1024 * 1024).unwrap();
         reader.initialize_offset(false).unwrap(); // start_at: end
 
         // Offset should be at the end of the file
@@ -348,22 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reader_state_serialization() {
-        let fp = Fingerprint::from_bytes(b"test content".to_vec());
-        let state = FileReaderState {
-            fingerprint: fp,
-            offset: 100,
-        };
-
-        let json = serde_json::to_string(&state).unwrap();
-        let loaded: FileReaderState = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(loaded.offset, 100);
-        assert_eq!(loaded.fingerprint.bytes(), b"test content");
-    }
-
-    #[test]
-    fn test_persistence_resumption_from_offset() {
+    fn test_reader_resume_from_offset() {
         // Create a file with 5 lines
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "line 1").unwrap(); // 7 bytes (including \n)
@@ -373,23 +255,11 @@ mod tests {
         writeln!(file, "line 5").unwrap(); // 7 bytes
         file.flush().unwrap();
 
-        // Calculate offset after first 3 lines (simulating persisted state)
-        // Each line is "line N\n" = 7 bytes
+        // Start at offset after first 3 lines (simulating persisted state)
         let persisted_offset: u64 = 21; // 3 lines * 7 bytes = 21 bytes
 
-        // Create fingerprint
-        let mut f = File::open(file.path()).unwrap();
-        let fp = Fingerprint::new(&mut f, 1000).unwrap();
-
-        // Simulate loading from persisted state by creating FileReaderState
-        let persisted_state = FileReaderState {
-            fingerprint: fp,
-            offset: persisted_offset,
-        };
-
-        // Create reader from persisted state (simulating restart)
-        let mut reader =
-            FileReader::from_state(persisted_state, file.path(), 1000, 1024 * 1024).unwrap();
+        // Create reader starting at persisted offset
+        let mut reader = FileReader::new(file.path(), persisted_offset, 1024 * 1024).unwrap();
 
         // Verify reader starts at persisted offset
         assert_eq!(reader.offset(), persisted_offset);
@@ -397,7 +267,6 @@ mod tests {
         // Read lines - should only get lines 4 and 5 (not 1, 2, 3)
         let lines = reader.read_lines().unwrap();
 
-        // Verify we only got the new lines (no duplicates of already processed lines)
         assert_eq!(lines.len(), 2, "Should only read 2 lines after offset");
         assert_eq!(lines[0], "line 4", "First line should be 'line 4'");
         assert_eq!(lines[1], "line 5", "Second line should be 'line 5'");
@@ -415,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn test_persistence_resumption_with_new_content() {
+    fn test_reader_with_new_content() {
         // Create a file with initial content
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "old 1").unwrap(); // 6 bytes
@@ -423,22 +292,11 @@ mod tests {
         writeln!(file, "old 3").unwrap(); // 6 bytes
         file.flush().unwrap();
 
-        // Calculate offset at end of file (simulating we processed all content before)
+        // Start at end of file (simulating we processed all content before)
         let persisted_offset: u64 = 18; // 3 lines * 6 bytes = 18 bytes
 
-        // Create fingerprint
-        let mut f = File::open(file.path()).unwrap();
-        let fp = Fingerprint::new(&mut f, 1000).unwrap();
-
-        // Simulate loading from persisted state
-        let persisted_state = FileReaderState {
-            fingerprint: fp,
-            offset: persisted_offset,
-        };
-
-        // Create reader from persisted state
-        let mut reader =
-            FileReader::from_state(persisted_state, file.path(), 1000, 1024 * 1024).unwrap();
+        // Create reader at persisted offset
+        let mut reader = FileReader::new(file.path(), persisted_offset, 1024 * 1024).unwrap();
 
         // Initially should read nothing (we're at end of existing content)
         let lines = reader.read_lines().unwrap();
@@ -447,7 +305,7 @@ mod tests {
             "Should not read old content after resumption"
         );
 
-        // Now append new content to the file (simulating log rotation/append)
+        // Now append new content to the file
         {
             let mut f = std::fs::OpenOptions::new()
                 .append(true)

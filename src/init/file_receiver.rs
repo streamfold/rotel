@@ -141,14 +141,6 @@ pub struct FileReceiverArgs {
     )]
     pub file_receiver_offsets_path: PathBuf,
 
-    /// Number of bytes to use for file fingerprinting (for tracking files across renames)
-    #[arg(
-        long,
-        env = "ROTEL_FILE_RECEIVER_FINGERPRINT_SIZE",
-        default_value = "1000"
-    )]
-    pub file_receiver_fingerprint_size: usize,
-
     /// Maximum log line size in bytes (lines exceeding this will be truncated)
     #[arg(
         long,
@@ -180,6 +172,15 @@ pub struct FileReceiverArgs {
         default_value = "64"
     )]
     pub file_receiver_max_concurrent_files: usize,
+
+    /// Time in milliseconds to wait after reaching EOF on a rotated file before closing it.
+    /// This allows draining any remaining content that the writer may still be flushing.
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_ROTATE_WAIT_MS",
+        default_value = "1000"
+    )]
+    pub file_receiver_rotate_wait_ms: u64,
 }
 
 impl Default for FileReceiverArgs {
@@ -193,11 +194,11 @@ impl Default for FileReceiverArgs {
             file_receiver_watch_mode: WatchModeArg::Auto,
             file_receiver_poll_interval_ms: 250,
             file_receiver_offsets_path: PathBuf::from("/var/lib/rotel/file_offsets.json"),
-            file_receiver_fingerprint_size: 1000,
             file_receiver_max_log_size: 65536,
             file_receiver_include_file_name: true,
             file_receiver_include_file_path: false,
             file_receiver_max_concurrent_files: 64,
+            file_receiver_rotate_wait_ms: 1000,
         }
     }
 }
@@ -214,11 +215,11 @@ impl FileReceiverArgs {
             watch_mode: self.file_receiver_watch_mode.into(),
             poll_interval: Duration::from_millis(self.file_receiver_poll_interval_ms),
             offsets_path: self.file_receiver_offsets_path.clone(),
-            fingerprint_size: self.file_receiver_fingerprint_size,
             max_log_size: self.file_receiver_max_log_size,
             include_file_name: self.file_receiver_include_file_name,
             include_file_path: self.file_receiver_include_file_path,
             max_concurrent_files: self.file_receiver_max_concurrent_files,
+            rotate_wait: Duration::from_millis(self.file_receiver_rotate_wait_ms),
         }
     }
 }

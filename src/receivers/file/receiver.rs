@@ -35,7 +35,7 @@ use crate::bounded_channel::{self, BoundedReceiver, BoundedSender};
 
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
 use crate::receivers::file::error::{Error, Result};
-use crate::receivers::file::input::{FileFinder, FileReader, Fingerprint, StartAt};
+use crate::receivers::file::input::{FileFinder, FileId, FileReader, StartAt, get_path_from_file};
 use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
@@ -56,7 +56,11 @@ struct PersistedState {
 /// Persisted state for a single file
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PersistedFileState {
-    fingerprint_bytes: Vec<u8>,
+    /// Device ID (Unix) or volume serial (Windows)
+    dev: u64,
+    /// Inode number (Unix) or file index (Windows)
+    ino: u64,
+    /// Current read offset
     offset: u64,
 }
 
@@ -157,12 +161,12 @@ struct LogRecordBatch {
 
 /// Work item sent from coordinator to workers
 struct FileWorkItem {
+    /// FileId for this file (used to match results back to tracked files)
+    file_id: FileId,
     /// Path to the file to process
     path: PathBuf,
     /// Starting offset in the file
     offset: u64,
-    /// Fingerprint bytes for this file (used for offset updates)
-    fingerprint_bytes: Vec<u8>,
     /// File name (cached to avoid re-extracting)
     file_name: Option<String>,
     /// Maximum log line size
@@ -171,10 +175,12 @@ struct FileWorkItem {
 
 /// Result sent from workers back to coordinator
 struct FileWorkResult {
-    /// Fingerprint bytes identifying the file
-    fingerprint_bytes: Vec<u8>,
+    /// FileId identifying the file
+    file_id: FileId,
     /// New offset after reading
     new_offset: u64,
+    /// Whether EOF was reached
+    reached_eof: bool,
 }
 
 /// Shared worker context (immutable, cloned to each worker)
@@ -200,24 +206,17 @@ const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
 
 /// Process a single file work item (runs in spawn_blocking)
 fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
-    // Verify the file exists (we don't need to keep the handle, FileReader will open it)
-    if let Err(e) = File::open(&work.path) {
-        debug!("Failed to open file {:?}: {}", work.path, e);
-        return;
-    }
-
-    // Create a temporary reader just for this work item
-    let fp = Fingerprint::from_bytes(work.fingerprint_bytes.clone());
-    let mut reader = match FileReader::new(
-        &work.path,
-        fp,
-        work.offset,
-        work.fingerprint_bytes.len(), // fingerprint_size not needed for reading
-        work.max_log_size,
-    ) {
+    // Create a reader for this work item
+    let mut reader = match FileReader::new(&work.path, work.offset, work.max_log_size) {
         Ok(r) => r,
         Err(e) => {
             debug!("Failed to create reader for {:?}: {}", work.path, e);
+            let result = FileWorkResult {
+                file_id: work.file_id,
+                new_offset: work.offset,
+                reached_eof: false,
+            };
+            let _ = ctx.results_tx.send_blocking(result);
             return;
         }
     };
@@ -333,18 +332,41 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
 
     // Send offset update back to coordinator
     let result = FileWorkResult {
-        fingerprint_bytes: work.fingerprint_bytes,
+        file_id: work.file_id,
         new_offset,
+        reached_eof: reader.is_eof(),
     };
     let _ = ctx.results_tx.send_blocking(result);
 }
 
-/// Tracked state for a file (lightweight, no file handle)
+/// State of a tracked file with respect to rotation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileState {
+    /// File is at its original path (matches glob pattern)
+    Active,
+    /// File was rotated (renamed away from glob pattern), still draining
+    Rotated,
+    /// File reached EOF while rotated, waiting for rotate_wait to expire
+    RotatedEof { eof_time: Instant },
+}
+
+/// Tracked state for a file, keeping the file handle open for inode-based tracking
 struct TrackedFile {
+    /// The unique file identity (device + inode)
+    file_id: FileId,
+    /// Open file handle (kept open to maintain access after rotation)
+    #[allow(dead_code)]
+    file: File,
+    /// Current path of the file (updated when rotation is detected)
+    path: PathBuf,
     /// Current read offset
     offset: u64,
-    /// Generation counter for detecting stale entries
+    /// Current state of the file
+    state: FileState,
+    /// Generation counter for detecting stale entries (only used for Active files)
     generation: u64,
+    /// Whether work is currently in flight for this file (prevents duplicate dispatches)
+    in_flight: bool,
 }
 
 /// Coordinator that manages file watching and dispatches work to workers.
@@ -353,8 +375,8 @@ struct FileCoordinator {
     config: FileReceiverConfig,
     finder: FileFinder,
     persister: JsonFilePersister,
-    /// Map from fingerprint bytes to tracked file state
-    tracked_files: HashMap<Vec<u8>, TrackedFile>,
+    /// Map from FileId to tracked file state (inode-based tracking)
+    tracked_files: HashMap<FileId, TrackedFile>,
     watcher: Box<dyn FileWatcher + Send>,
     watched_dirs: Vec<PathBuf>,
     first_check: bool,
@@ -369,36 +391,71 @@ struct FileCoordinator {
 }
 
 impl FileCoordinator {
-    /// Load previously saved file states from the persister
+    /// Load previously saved file states from the persister.
+    /// We use FileId (device + inode) to match persisted state to current files.
     fn load_state(&mut self) -> Result<()> {
         self.persister.load()?;
 
         if let Some(state) = self.persister.get_json::<PersistedState>(KNOWN_FILES_KEY) {
             debug!("Loaded {} known files from persister", state.files.len());
-            for file_state in state.files {
-                self.tracked_files.insert(
-                    file_state.fingerprint_bytes,
-                    TrackedFile {
-                        offset: file_state.offset,
-                        generation: 0,
-                    },
-                );
+
+            // Find current files and try to match them to persisted state
+            let paths = self.finder.find_files().unwrap_or_default();
+
+            for path in paths {
+                // Open file and get FileId
+                let file = match File::open(&path) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+
+                let file_id = match FileId::from_file(&file) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+
+                // Try to find matching persisted state by FileId
+                let matched_offset = state.files.iter().find_map(|persisted| {
+                    let persisted_id = FileId::new(persisted.dev, persisted.ino);
+                    if file_id == persisted_id {
+                        Some(persisted.offset)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(offset) = matched_offset {
+                    debug!("Restored file {:?} at offset {}", path, offset);
+                    self.tracked_files.insert(
+                        file_id,
+                        TrackedFile {
+                            file_id,
+                            file,
+                            path: path.clone(),
+                            offset,
+                            state: FileState::Active,
+                            generation: 0,
+                            in_flight: false,
+                        },
+                    );
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Save current file states to the persister (unconditional, always writes to disk)
+    /// Save current file states to the persister (unconditional, always writes to disk).
+    /// We persist FileId (device + inode) to match files across restarts.
     fn save_state(&mut self) -> Result<()> {
         let state = PersistedState {
             files: self
                 .tracked_files
-                .iter()
-                .filter(|(k, _)| !k.is_empty())
-                .map(|(k, v)| PersistedFileState {
-                    fingerprint_bytes: k.clone(),
-                    offset: v.offset,
+                .values()
+                .map(|t| PersistedFileState {
+                    dev: t.file_id.dev(),
+                    ino: t.file_id.ino(),
+                    offset: t.offset,
                 })
                 .collect(),
         };
@@ -425,17 +482,6 @@ impl FileCoordinator {
             self.save_state()?;
         }
         Ok(())
-    }
-
-    /// Find a tracked file key that matches the given fingerprint
-    fn find_matching_tracked_key(&self, fp: &Fingerprint) -> Option<Vec<u8>> {
-        for key in self.tracked_files.keys() {
-            let existing_fp = Fingerprint::from_bytes(key.clone());
-            if fp.starts_with(&existing_fp) {
-                return Some(key.clone());
-            }
-        }
-        None
     }
 
     /// Ensure directories are being watched
@@ -494,13 +540,46 @@ impl FileCoordinator {
         Ok(())
     }
 
-    /// Process any pending results from workers (offset updates)
+    /// Process any pending results from workers (offset updates and EOF handling)
     fn process_results(&mut self) {
+        let rotate_wait = self.config.rotate_wait;
+
         // Non-blocking drain of all available results
         while let Some(result) = self.results_rx.try_recv() {
-            if let Some(tracked) = self.tracked_files.get_mut(&result.fingerprint_bytes) {
+            if let Some(tracked) = self.tracked_files.get_mut(&result.file_id) {
                 tracked.offset = result.new_offset;
-                self.records_since_checkpoint += 1; // Approximate, actual count comes from batch
+                tracked.in_flight = false; // Work completed, allow new dispatches
+                self.records_since_checkpoint += 1;
+
+                // Handle EOF for rotated files
+                if result.reached_eof {
+                    match tracked.state {
+                        FileState::Rotated => {
+                            // Transition to RotatedEof, start rotate_wait timer
+                            tracked.state = FileState::RotatedEof {
+                                eof_time: Instant::now(),
+                            };
+                            debug!(
+                                "Rotated file {:?} reached EOF, waiting {:?} before cleanup",
+                                tracked.path, rotate_wait
+                            );
+                        }
+                        FileState::RotatedEof { .. } => {
+                            // Already in RotatedEof, update the time (new data may have arrived)
+                            tracked.state = FileState::RotatedEof {
+                                eof_time: Instant::now(),
+                            };
+                        }
+                        FileState::Active => {
+                            // Active files reaching EOF is normal, no state change
+                        }
+                    }
+                } else {
+                    // If we got more data, reset RotatedEof back to Rotated
+                    if let FileState::RotatedEof { .. } = tracked.state {
+                        tracked.state = FileState::Rotated;
+                    }
+                }
             }
         }
     }
@@ -526,21 +605,79 @@ impl FileCoordinator {
             debug!("Failed to update watches: {}", e);
         }
 
-        // Increment generation on all tracked files
-        for tracked in self.tracked_files.values_mut() {
-            tracked.generation += 1;
-        }
-
-        // Process each file and dispatch work
-        for path in paths {
-            if let Err(e) = self.dispatch_file_work(&path) {
-                error!("Error dispatching work for file {:?}: {}", path, e);
+        // Build a set of FileIds currently at glob-matching paths
+        let mut active_file_ids: HashMap<FileId, PathBuf> = HashMap::new();
+        for path in &paths {
+            if let Ok(file_id) = FileId::from_path(path) {
+                active_file_ids.insert(file_id, path.clone());
             }
         }
 
-        // Remove tracked files that haven't been seen for more than 3 generations
-        self.tracked_files
-            .retain(|_, tracked| tracked.generation <= 3);
+        // Increment generation on all Active files (for stale detection)
+        for tracked in self.tracked_files.values_mut() {
+            if tracked.state == FileState::Active {
+                tracked.generation += 1;
+            }
+        }
+
+        // Process each glob-matching file
+        for path in &paths {
+            if let Err(e) = self.process_active_file(path) {
+                error!("Error processing file {:?}: {}", path, e);
+            }
+        }
+
+        // Mark files as rotated if they're no longer at a glob-matching path
+        for tracked in self.tracked_files.values_mut() {
+            if tracked.state == FileState::Active {
+                if !active_file_ids.contains_key(&tracked.file_id) {
+                    // File is no longer at a glob path - it was rotated
+                    tracked.state = FileState::Rotated;
+
+                    // Try to discover the new path
+                    if let Ok(new_path) = get_path_from_file(&tracked.file) {
+                        debug!("File rotated: {:?} -> {:?}", tracked.path, new_path);
+                        tracked.path = new_path;
+                    } else {
+                        debug!("File {:?} rotated (new path unknown)", tracked.path);
+                    }
+                }
+            }
+        }
+
+        // Dispatch work for rotated files (to drain remaining content)
+        let rotated_file_ids: Vec<FileId> = self
+            .tracked_files
+            .values()
+            .filter(|t| matches!(t.state, FileState::Rotated))
+            .map(|t| t.file_id)
+            .collect();
+
+        for file_id in rotated_file_ids {
+            if let Err(e) = self.dispatch_work_for_file(file_id) {
+                debug!("Error dispatching work for rotated file: {}", e);
+            }
+        }
+
+        // Remove files that have been in RotatedEof state past rotate_wait
+        let rotate_wait = self.config.rotate_wait;
+        self.tracked_files.retain(|_, tracked| {
+            match tracked.state {
+                FileState::RotatedEof { eof_time } => {
+                    if eof_time.elapsed() >= rotate_wait {
+                        debug!("Closing rotated file {:?} after rotate_wait", tracked.path);
+                        false
+                    } else {
+                        true
+                    }
+                }
+                FileState::Active => {
+                    // Remove stale active files (not seen for 3+ generations)
+                    tracked.generation <= 3
+                }
+                FileState::Rotated => true, // Keep draining
+            }
+        });
 
         // Conditionally checkpoint based on records processed and time elapsed
         if let Err(e) = self.maybe_checkpoint() {
@@ -550,10 +687,30 @@ impl FileCoordinator {
         Ok(())
     }
 
-    /// Dispatch work for a single file to a worker
-    fn dispatch_file_work(&mut self, path: &PathBuf) -> Result<()> {
-        // Open the file to get fingerprint
-        let mut file = match File::open(path) {
+    /// Process an active file (one that matches glob patterns)
+    fn process_active_file(&mut self, path: &PathBuf) -> Result<()> {
+        // Get FileId directly from path (no file handle needed yet)
+        let file_id = match FileId::from_path(path) {
+            Ok(id) => id,
+            Err(e) => {
+                debug!("Failed to get FileId for {:?}: {}", path, e);
+                return Ok(());
+            }
+        };
+
+        // Check if we're already tracking this file
+        if let Some(tracked) = self.tracked_files.get_mut(&file_id) {
+            // File is already tracked - reset generation and ensure it's active
+            tracked.generation = 0;
+            tracked.state = FileState::Active;
+            tracked.path = path.clone();
+
+            // Dispatch work
+            return self.dispatch_work_for_file(file_id);
+        }
+
+        // New file - now we need to open it to keep the handle
+        let file = match File::open(path) {
             Ok(f) => f,
             Err(e) => {
                 debug!("Failed to open file {:?}: {}", path, e);
@@ -561,69 +718,77 @@ impl FileCoordinator {
             }
         };
 
-        // Get fingerprint
-        let fp = match Fingerprint::new(&mut file, self.config.fingerprint_size) {
-            Ok(fp) => fp,
-            Err(e) => {
-                debug!("Failed to create fingerprint for {:?}: {}", path, e);
-                return Ok(());
-            }
-        };
-
         // Skip empty files
-        if fp.is_empty() {
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_len == 0 {
             return Ok(());
         }
 
-        let key = fp.bytes().to_vec();
-        let existing_key = self.find_matching_tracked_key(&fp);
-
-        let (offset, fingerprint_bytes) = if let Some(existing_key) = existing_key {
-            // Existing file - get current offset and reset generation
-            if let Some(tracked) = self.tracked_files.get_mut(&existing_key) {
-                tracked.generation = 0;
-                (tracked.offset, existing_key)
-            } else {
-                return Ok(());
-            }
+        // Determine starting offset
+        let offset = if self.config.start_at == StartAt::End {
+            file_len
         } else {
-            // New file - determine starting offset
-            let offset = if self.config.start_at == StartAt::End {
-                file.metadata().map(|m| m.len()).unwrap_or(0)
-            } else {
-                0
-            };
-
-            // Track the new file
-            self.tracked_files.insert(
-                key.clone(),
-                TrackedFile {
-                    offset,
-                    generation: 0,
-                },
-            );
-
-            (offset, key)
+            0
         };
 
+        debug!("Tracking new file {:?} (FileId: {})", path, file_id);
+
+        // Track the new file
+        self.tracked_files.insert(
+            file_id,
+            TrackedFile {
+                file_id,
+                file,
+                path: path.clone(),
+                offset,
+                state: FileState::Active,
+                generation: 0,
+                in_flight: false,
+            },
+        );
+
+        // Dispatch work
+        self.dispatch_work_for_file(file_id)
+    }
+
+    /// Dispatch work for a tracked file
+    fn dispatch_work_for_file(&mut self, file_id: FileId) -> Result<()> {
+        let tracked = match self.tracked_files.get_mut(&file_id) {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+
+        // Don't dispatch if work is already in flight
+        if tracked.in_flight {
+            return Ok(());
+        }
+
         // Extract file name
-        let file_name = path
+        let file_name = tracked
+            .path
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
 
         // Create work item
         let work = FileWorkItem {
-            path: path.clone(),
-            offset,
-            fingerprint_bytes,
+            file_id,
+            path: tracked.path.clone(),
+            offset: tracked.offset,
             file_name,
             max_log_size: self.config.max_log_size,
         };
 
+        // Mark as in flight before sending
+        tracked.in_flight = true;
+
         // Send work to async handler via bounded channel (blocks if at capacity)
         if let Err(e) = self.work_tx.send_blocking(work) {
             warn!("Failed to send work item: {}", e);
+            // Reset in_flight if send failed
+            if let Some(t) = self.tracked_files.get_mut(&file_id) {
+                t.in_flight = false;
+            }
         }
 
         Ok(())

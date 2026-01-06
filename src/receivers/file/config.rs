@@ -43,8 +43,6 @@ pub struct FileReceiverConfig {
     pub poll_interval: Duration,
     /// Path to store file offsets for persistence
     pub offsets_path: PathBuf,
-    /// Number of bytes to use for file fingerprinting
-    pub fingerprint_size: usize,
     /// Maximum log line size in bytes
     pub max_log_size: usize,
     /// Include file name as log attribute
@@ -53,6 +51,9 @@ pub struct FileReceiverConfig {
     pub include_file_path: bool,
     /// Maximum number of concurrent file processing workers
     pub max_concurrent_files: usize,
+    /// Time to wait after reaching EOF on a rotated file before closing it.
+    /// This allows draining any remaining content that the writer may still be flushing.
+    pub rotate_wait: Duration,
 }
 
 impl Default for FileReceiverConfig {
@@ -66,11 +67,11 @@ impl Default for FileReceiverConfig {
             watch_mode: WatchMode::Auto,
             poll_interval: Duration::from_millis(250),
             offsets_path: PathBuf::from("/var/lib/rotel/file_offsets.json"),
-            fingerprint_size: 1000,
             max_log_size: 65536,
             include_file_name: true,
             include_file_path: false,
             max_concurrent_files: 64,
+            rotate_wait: Duration::from_secs(1),
         }
     }
 }

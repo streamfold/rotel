@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod config;
+mod file_id;
 mod finder;
-mod fingerprint;
 mod reader;
 
 pub use config::{FileInputConfig, StartAt};
+pub use file_id::{FileId, get_path_from_file};
 pub use finder::FileFinder;
-pub use fingerprint::Fingerprint;
-pub use reader::{FileReader, FileReaderState};
+pub use reader::FileReader;

@@ -6,7 +6,7 @@
 //! are appended, optionally parses them, and converts them to OTLP log records.
 //!
 //! Features:
-//! - Fingerprint-based file tracking across renames and rotations
+//! - Inode-based file tracking across renames and rotations
 //! - Offset persistence for resume after restarts
 //! - JSON, regex, and nginx log parsers
 
@@ -20,7 +20,7 @@ pub mod watcher;
 
 pub use config::FileReceiverConfig;
 pub use error::{Error, Result};
-pub use input::{FileFinder, FileInputConfig, FileReader, Fingerprint, StartAt};
+pub use input::{FileFinder, FileInputConfig, FileReader, StartAt};
 pub use parser::{JsonParser, ParsedLog, Parser, RegexParser};
 pub use persistence::{JsonFileDatabase, JsonFilePersister, Persister, PersisterExt};
 pub use receiver::FileReceiver;

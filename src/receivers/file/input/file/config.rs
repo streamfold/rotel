@@ -34,10 +34,6 @@ pub struct FileInputConfig {
     #[serde(default)]
     pub start_at: StartAt,
 
-    /// Size of fingerprint to use for file identification (in bytes)
-    #[serde(default = "default_fingerprint_size")]
-    pub fingerprint_size: usize,
-
     /// Maximum size of a single log entry (in bytes)
     #[serde(default = "default_max_log_size")]
     pub max_log_size: usize,
@@ -63,10 +59,6 @@ fn default_poll_interval_ms() -> u64 {
     200
 }
 
-fn default_fingerprint_size() -> usize {
-    1000
-}
-
 fn default_max_log_size() -> usize {
     1024 * 1024 // 1MB
 }
@@ -87,7 +79,6 @@ impl Default for FileInputConfig {
             exclude: vec![],
             poll_interval_ms: default_poll_interval_ms(),
             start_at: StartAt::default(),
-            fingerprint_size: default_fingerprint_size(),
             max_log_size: default_max_log_size(),
             max_concurrent_files: default_max_concurrent_files(),
             include_file_name: true,
@@ -106,10 +97,6 @@ impl FileInputConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.include.is_empty() {
             return Err("include patterns cannot be empty".to_string());
-        }
-
-        if self.fingerprint_size < 16 {
-            return Err("fingerprint_size must be at least 16 bytes".to_string());
         }
 
         if self.max_log_size == 0 {
@@ -132,7 +119,6 @@ mod tests {
     fn test_config_defaults() {
         let config = FileInputConfig::default();
         assert_eq!(config.poll_interval_ms, 200);
-        assert_eq!(config.fingerprint_size, 1000);
         assert_eq!(config.max_log_size, 1024 * 1024);
         assert_eq!(config.start_at, StartAt::End);
     }
@@ -145,10 +131,6 @@ mod tests {
         assert!(config.validate().is_ok());
 
         config.include = vec![];
-        assert!(config.validate().is_err());
-
-        config.include = vec!["/var/log/*.log".to_string()];
-        config.fingerprint_size = 10;
         assert!(config.validate().is_err());
     }
 }
