@@ -946,8 +946,7 @@ impl FileHandler {
             DEFAULT_MAX_CONCURRENT_WORKERS
         };
 
-        // Create channels using flume-based bounded_channel which supports both
-        // blocking and async operations on the same channel - no bridge thread needed.
+        // Create channels using flume-based bounded_channel
         //
         // - work_tx/rx: coordinator -> async handler (work items to process)
         // - records_tx/rx: workers -> async handler (log records for export)
