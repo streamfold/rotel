@@ -1,4 +1,3 @@
-use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
@@ -15,6 +14,7 @@ use crate::init::otlp_receiver::OTLPReceiverArgs;
 use crate::init::parse;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
+use crate::{exporters::otlp::Authenticator, init::retry::GlobalExporterRetryArgs};
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
 #[cfg(feature = "prometheus")]
@@ -54,6 +54,9 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_PROMETHEUS_ENDPOINT", default_value = "localhost:9090", value_parser = parse::parse_endpoint)]
     #[cfg(feature = "prometheus")]
     pub prometheus_endpoint: SocketAddr,
+
+    #[command(flatten)]
+    pub exporter_retry: GlobalExporterRetryArgs,
 
     #[command(flatten)]
     pub otlp_receiver: OTLPReceiverArgs,
@@ -156,6 +159,7 @@ impl Default for AgentRun {
             debug_log_verbosity: DebugLogVerbosity::Basic,
             receiver: None,
             receivers: None,
+            exporter_retry: Default::default(),
             otlp_receiver: OTLPReceiverArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_receiver: KafkaReceiverArgs::default(),

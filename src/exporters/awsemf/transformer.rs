@@ -943,7 +943,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn create_test_transformer() -> MetricTransformer {
-        let config = AwsEmfExporterConfigBuilder::default()
+        let config = AwsEmfExporterConfigBuilder::new(Default::default())
             .with_namespace("TestNamespace")
             .with_log_group_name("test-log-group")
             .with_log_stream_name("test-log-stream")
@@ -2058,7 +2058,7 @@ mod tests {
             vec!["*.internal".to_string()],
         );
         let transformer = MetricTransformer::new(
-            AwsEmfExporterConfigBuilder::default()
+            AwsEmfExporterConfigBuilder::new(Default::default())
                 .with_namespace("TestNamespace")
                 .with_log_group_name("test-log-group")
                 .with_log_stream_name("test-log-stream")

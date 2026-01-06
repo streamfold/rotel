@@ -99,26 +99,20 @@ pub struct DatadogExporterBuilder {
     retry_config: RetryConfig,
 }
 
-impl Default for DatadogExporterConfigBuilder {
-    fn default() -> Self {
-        Self {
-            region: Region::US1,
-            custom_endpoint: None,
-            api_token: "".to_string(),
-            environment: "dev".to_string(),
-            hostname: "hostname".to_string(),
-            retry_config: Default::default(),
-        }
-    }
-}
-
 impl DatadogExporterConfigBuilder {
-    pub fn new(region: Region, custom_endpoint: Option<String>, api_key: String) -> Self {
+    pub fn new(
+        region: Region,
+        custom_endpoint: Option<String>,
+        api_key: String,
+        retry_config: RetryConfig,
+    ) -> Self {
         Self {
             region,
             custom_endpoint,
             api_token: api_key,
-            ..Default::default()
+            environment: "dev".to_string(),
+            hostname: "hostname".to_string(),
+            retry_config,
         }
     }
 
@@ -369,15 +363,20 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
-        DatadogExporterConfigBuilder::new(Region::US1, Some(addr), "1234".to_string())
-            .with_retry_config(RetryConfig {
-                initial_backoff: Duration::from_millis(10),
-                max_backoff: Duration::from_millis(50),
-                max_elapsed_time: Duration::from_millis(50),
-                indefinite_retry: false,
-            })
-            .build()
-            .build(brx, None)
-            .unwrap()
+        DatadogExporterConfigBuilder::new(
+            Region::US1,
+            Some(addr),
+            "1234".to_string(),
+            Default::default(),
+        )
+        .with_retry_config(RetryConfig {
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(50),
+            max_elapsed_time: Duration::from_millis(50),
+            indefinite_retry: false,
+        })
+        .build()
+        .build(brx, None)
+        .unwrap()
     }
 }

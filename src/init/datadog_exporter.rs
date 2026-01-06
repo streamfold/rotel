@@ -1,6 +1,14 @@
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
 
+// Define Datadog-specific retry arguments with proper prefixes
+crate::define_exporter_retry_args!(
+    DatadogRetryArgs,
+    "datadog-exporter",
+    "ROTEL_DATADOG_EXPORTER",
+    "Datadog Exporter"
+);
+
 #[derive(Debug, Clone, Args, Deserialize)]
 #[serde(default)]
 pub struct DatadogExporterArgs {
@@ -29,6 +37,10 @@ pub struct DatadogExporterArgs {
     )]
     #[serde(deserialize_with = "crate::init::parse::deser_into_string_opt")]
     pub api_key: Option<String>,
+
+    /// Datadog Exporter retry configuration
+    #[command(flatten)]
+    pub retry: DatadogRetryArgs,
 }
 
 impl Default for DatadogExporterArgs {
@@ -37,6 +49,7 @@ impl Default for DatadogExporterArgs {
             region: DatadogRegion::US1,
             custom_endpoint: None,
             api_key: None,
+            retry: DatadogRetryArgs::default(),
         }
     }
 }
