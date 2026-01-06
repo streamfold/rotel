@@ -67,29 +67,13 @@ pub struct XRayExporterConfigBuilder {
     retry_config: RetryConfig,
 }
 
-impl Default for XRayExporterConfigBuilder {
-    fn default() -> Self {
-        Self {
-            region: Default::default(),
-            custom_endpoint: None,
-            retry_config: Default::default(),
-        }
-    }
-}
-
 impl XRayExporterConfigBuilder {
-    pub fn new(region: Region, custom_endpoint: Option<String>) -> Self {
+    pub fn new(region: Region, custom_endpoint: Option<String>, retry_config: RetryConfig) -> Self {
         Self {
             region,
             custom_endpoint,
-            ..Default::default()
+            retry_config,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
-        self.retry_config = retry_config;
-        self
     }
 
     pub fn set_indefinite_retry(&mut self) {
@@ -537,13 +521,13 @@ mod tests {
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
         let creds = AwsCreds::new("".to_string(), "".to_string(), None);
-        XRayExporterConfigBuilder::new(Region::UsEast1, Some(addr))
-            .with_retry_config(RetryConfig {
-                initial_backoff: Duration::from_millis(10),
-                max_backoff: Duration::from_millis(50),
-                max_elapsed_time: Duration::from_millis(50),
-                indefinite_retry: false,
-            })
+        let retry = RetryConfig::new(
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+            false,
+        );
+        XRayExporterConfigBuilder::new(Region::UsEast1, Some(addr), retry)
             .build()
             .build(
                 brx,
