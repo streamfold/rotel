@@ -108,6 +108,7 @@ pub struct OTLPExporterBaseArgs {
         default_value = "5s",
         value_parser = humantime::parse_duration,
     )]
+    #[serde(with = "humantime_serde")]
     pub request_timeout: std::time::Duration,
 
     #[command(flatten)]
@@ -616,11 +617,13 @@ impl OTLPExporterBaseArgs {
     ) -> OTLPExporterConfig {
         let retry = RetryConfig::new(
             self.retry
-                .initial_backoff
+                .retry_initial_backoff
                 .unwrap_or(global_retry.initial_backoff),
-            self.retry.max_backoff.unwrap_or(global_retry.max_backoff),
             self.retry
-                .max_elapsed_time
+                .retry_max_backoff
+                .unwrap_or(global_retry.max_backoff),
+            self.retry
+                .retry_max_elapsed_time
                 .unwrap_or(global_retry.max_elapsed_time),
             false,
         );

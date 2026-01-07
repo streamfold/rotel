@@ -103,6 +103,7 @@ pub struct FileExporterArgs {
         default_value = "5s",
         value_parser = humantime::parse_duration
     )]
+    #[serde(with = "humantime_serde")]
     pub flush_interval: Duration,
 
     /// Compression type for Parquet files (only applies when format is parquet)

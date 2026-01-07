@@ -32,7 +32,8 @@ macro_rules! define_exporter_retry_args {
                                         env = concat!($env_prefix, "_RETRY_INITIAL_BACKOFF"),
                                         value_parser = humantime::parse_duration,
                                     )]
-            pub initial_backoff: Option<std::time::Duration>,
+            #[serde(with = "humantime_serde")]
+            pub retry_initial_backoff: Option<std::time::Duration>,
 
             #[doc = concat!($doc_prefix, " Retry max backoff")]
             #[arg(
@@ -41,7 +42,8 @@ macro_rules! define_exporter_retry_args {
                                         env = concat!($env_prefix, "_RETRY_MAX_BACKOFF"),
                                         value_parser = humantime::parse_duration,
                                     )]
-            pub max_backoff: Option<std::time::Duration>,
+            #[serde(with = "humantime_serde")]
+            pub retry_max_backoff: Option<std::time::Duration>,
 
             #[doc = concat!($doc_prefix, " Retry max elapsed time")]
             #[arg(
@@ -50,7 +52,8 @@ macro_rules! define_exporter_retry_args {
                                         env = concat!($env_prefix, "_RETRY_MAX_ELAPSED_TIME"),
                                         value_parser = humantime::parse_duration,
                                     )]
-            pub max_elapsed_time: Option<std::time::Duration>,
+            #[serde(with = "humantime_serde")]
+            pub retry_max_elapsed_time: Option<std::time::Duration>,
         }
     };
 }
