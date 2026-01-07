@@ -59,7 +59,7 @@ where
                         };
 
                         if let Err(nack_err) = metadata.nack(error_reason).await {
-                            warn!("Failed to nack message after HTTP error: {:?}", nack_err);
+                            warn!(metadata = ?metadata, "Failed to nack message after HTTP error: {:?}", nack_err);
                         }
                     } else {
                         // Normal case: acknowledge successful responses
