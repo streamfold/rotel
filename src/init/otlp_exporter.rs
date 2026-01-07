@@ -1,4 +1,3 @@
-use crate::exporters::http::retry::RetryConfig;
 use crate::exporters::otlp;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
@@ -616,25 +615,17 @@ impl OTLPExporterBaseArgs {
         endpoint: Endpoint,
         global_retry: &GlobalExporterRetryArgs,
     ) -> OTLPExporterConfig {
-        let retry = RetryConfig::new(
-            self.retry
-                .retry_initial_backoff
-                .unwrap_or(global_retry.initial_backoff),
-            self.retry
-                .retry_max_backoff
-                .unwrap_or(global_retry.max_backoff),
-            self.retry
-                .retry_max_elapsed_time
-                .unwrap_or(global_retry.max_elapsed_time),
-            false,
-        );
-
-        let mut builder = otlp::config_builder(type_name, endpoint, self.protocol.into(), retry)
-            .with_authenticator(self.authenticator.map(|a| a.into()))
-            .with_tls_skip_verify(self.tls_skip_verify)
-            .with_headers(self.custom_headers.as_slice())
-            .with_request_timeout(self.request_timeout.into())
-            .with_compression_encoding(self.compression.into());
+        let mut builder = otlp::config_builder(
+            type_name,
+            endpoint,
+            self.protocol.into(),
+            self.retry.build_retry_config(global_retry),
+        )
+        .with_authenticator(self.authenticator.map(|a| a.into()))
+        .with_tls_skip_verify(self.tls_skip_verify)
+        .with_headers(self.custom_headers.as_slice())
+        .with_request_timeout(self.request_timeout.into())
+        .with_compression_encoding(self.compression.into());
 
         if let Some(tls_cert_file) = self.cert_group.tls_cert_file {
             builder = builder.with_cert_file(tls_cert_file.as_str());

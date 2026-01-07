@@ -55,6 +55,17 @@ macro_rules! define_exporter_retry_args {
             #[serde(with = "humantime_serde")]
             pub retry_max_elapsed_time: Option<std::time::Duration>,
         }
+
+        impl $struct_name {
+            pub fn build_retry_config(&self, global: &crate::init::retry::GlobalExporterRetryArgs) -> crate::exporters::http::retry::RetryConfig {
+                crate::exporters::http::retry::RetryConfig::new(
+                    self.retry_initial_backoff.unwrap_or(global.initial_backoff),
+                    self.retry_max_backoff.unwrap_or(global.max_backoff),
+                    self.retry_max_elapsed_time.unwrap_or(global.max_elapsed_time),
+                    false,
+                )
+            }
+        }
     };
 }
 
