@@ -86,10 +86,12 @@ pub struct ClickhouseExporterArgs {
         default_value = "5s",
         value_parser = humantime::parse_duration
     )]
+    #[serde(with = "humantime_serde")]
     pub request_timeout: std::time::Duration,
 
     /// Clickhouse Exporter retry configuration
     #[command(flatten)]
+    #[serde(flatten)]
     pub retry: ClickhouseRetryArgs,
 }
 

@@ -150,6 +150,11 @@ impl ClickhouseExporterConfigBuilder {
         self.retry_config.indefinite_retry = true;
     }
 
+    #[cfg(test)]
+    pub fn retry_config(&self) -> &RetryConfig {
+        &self.retry_config
+    }
+
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
         let config = ConnectionConfig {
             endpoint: self.endpoint,
@@ -219,11 +224,6 @@ impl ClickhouseExporterBuilder {
         let transformer = Transformer::new(self.config.compression.clone(), self.config.use_json);
 
         let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
-
-        println!(
-            "building clickhouse exporter with retry config: {:?}",
-            self.retry_config
-        );
 
         let retry_layer = RetryPolicy::new(self.retry_config.clone(), None);
         let retry_broadcast = retry_layer.retry_broadcast();

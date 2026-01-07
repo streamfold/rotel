@@ -300,11 +300,13 @@ impl TryIntoConfig for ExporterArgs {
 
                 let retry = RetryConfig::new(
                     dd.retry
-                        .initial_backoff
+                        .retry_initial_backoff
                         .unwrap_or(global_retry.initial_backoff),
-                    dd.retry.max_backoff.unwrap_or(global_retry.max_backoff),
                     dd.retry
-                        .max_elapsed_time
+                        .retry_max_backoff
+                        .unwrap_or(global_retry.max_backoff),
+                    dd.retry
+                        .retry_max_elapsed_time
                         .unwrap_or(global_retry.max_elapsed_time),
                     false,
                 );
@@ -332,11 +334,13 @@ impl TryIntoConfig for ExporterArgs {
 
                 let retry = RetryConfig::new(
                     ch.retry
-                        .initial_backoff
+                        .retry_initial_backoff
                         .unwrap_or(global_retry.initial_backoff),
-                    ch.retry.max_backoff.unwrap_or(global_retry.max_backoff),
                     ch.retry
-                        .max_elapsed_time
+                        .retry_max_backoff
+                        .unwrap_or(global_retry.max_backoff),
+                    ch.retry
+                        .retry_max_elapsed_time
                         .unwrap_or(global_retry.max_elapsed_time),
                     false,
                 );
@@ -373,11 +377,13 @@ impl TryIntoConfig for ExporterArgs {
 
                 let retry = RetryConfig::new(
                     xray.retry
-                        .initial_backoff
+                        .retry_initial_backoff
                         .unwrap_or(global_retry.initial_backoff),
-                    xray.retry.max_backoff.unwrap_or(global_retry.max_backoff),
                     xray.retry
-                        .max_elapsed_time
+                        .retry_max_backoff
+                        .unwrap_or(global_retry.max_backoff),
+                    xray.retry
+                        .retry_max_elapsed_time
                         .unwrap_or(global_retry.max_elapsed_time),
                     false,
                 );
@@ -414,12 +420,15 @@ impl TryIntoConfig for ExporterArgs {
                 let retry = RetryConfig::new(
                     awsemf
                         .retry
-                        .initial_backoff
+                        .retry_initial_backoff
                         .unwrap_or(global_retry.initial_backoff),
-                    awsemf.retry.max_backoff.unwrap_or(global_retry.max_backoff),
                     awsemf
                         .retry
-                        .max_elapsed_time
+                        .retry_max_backoff
+                        .unwrap_or(global_retry.max_backoff),
+                    awsemf
+                        .retry
+                        .retry_max_elapsed_time
                         .unwrap_or(global_retry.max_elapsed_time),
                     false,
                 );
@@ -1211,5 +1220,118 @@ mod tests {
                 assert!(err.to_string().contains("failed to parse OTLP config"));
             }
         };
+    }
+
+    #[test]
+    fn test_global_retry_defaults_clickhouse() {
+        use std::time::Duration;
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var(
+            "ROTEL_EXPORTER_CLICKHOUSE_ENDPOINT",
+            "http://localhost:8123",
+        );
+
+        // Create config with custom global retry settings
+        let config = AgentRun {
+            exporters_traces: Some("clickhouse".to_string()),
+            exporter_retry: crate::init::retry::GlobalExporterRetryArgs {
+                initial_backoff: Duration::from_secs(7),
+                max_backoff: Duration::from_secs(45),
+                max_elapsed_time: Duration::from_secs(450),
+            },
+            ..Default::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "clickhouse".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert_eq!(1, exporters.traces.len());
+
+        // Verify that Clickhouse exporter uses global retry defaults
+        match &exporters.traces[0] {
+            ExporterConfig::Clickhouse(ch) => {
+                assert_eq!(Duration::from_secs(7), ch.retry_config().initial_backoff);
+                assert_eq!(Duration::from_secs(45), ch.retry_config().max_backoff);
+                assert_eq!(Duration::from_secs(450), ch.retry_config().max_elapsed_time);
+            }
+            _ => panic!("Expected Clickhouse exporter"),
+        }
+    }
+
+    #[test]
+    fn test_exporter_specific_retry_overrides_global_clickhouse() {
+        use std::time::Duration;
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_ENDPOINT", "http://localhost:8123");
+        // Set exporter-specific retry values
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_INITIAL_BACKOFF", "15s");
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_MAX_BACKOFF", "75s");
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_MAX_ELAPSED_TIME", "750s");
+
+        // Create config with different global retry settings
+        let config = AgentRun {
+            exporters_traces: Some("test".to_string()),
+            exporter_retry: crate::init::retry::GlobalExporterRetryArgs {
+                initial_backoff: Duration::from_secs(5),
+                max_backoff: Duration::from_secs(30),
+                max_elapsed_time: Duration::from_secs(300),
+            },
+            ..AgentRun::default()
+        };
+
+        let result =
+            get_multi_exporter_config(&config, "test:clickhouse".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert_eq!(1, exporters.traces.len());
+
+        // Verify that exporter-specific retry values override global defaults
+        match &exporters.traces[0] {
+            ExporterConfig::Clickhouse(ch) => {
+                assert_eq!(Duration::from_secs(15), ch.retry_config().initial_backoff);
+                assert_eq!(Duration::from_secs(75), ch.retry_config().max_backoff);
+                assert_eq!(Duration::from_secs(750), ch.retry_config().max_elapsed_time);
+            }
+            _ => panic!("Expected Clickhouse exporter"),
+        }
+    }
+
+    #[test]
+    fn test_partial_exporter_retry_override_clickhouse() {
+        use std::time::Duration;
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_ENDPOINT", "http://localhost:8123");
+        // Set only one exporter-specific retry value
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_INITIAL_BACKOFF", "25s");
+
+        // Create config with global retry settings
+        let config = AgentRun {
+            exporters_traces: Some("test".to_string()),
+            exporter_retry: crate::init::retry::GlobalExporterRetryArgs {
+                initial_backoff: Duration::from_secs(5),
+                max_backoff: Duration::from_secs(30),
+                max_elapsed_time: Duration::from_secs(300),
+            },
+            ..AgentRun::default()
+        };
+
+        let result =
+            get_multi_exporter_config(&config, "test:clickhouse".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert_eq!(1, exporters.traces.len());
+
+        // Verify that only initial_backoff is overridden, others use global defaults
+        match &exporters.traces[0] {
+            ExporterConfig::Clickhouse(ch) => {
+                assert_eq!(Duration::from_secs(25), ch.retry_config().initial_backoff);
+                assert_eq!(Duration::from_secs(30), ch.retry_config().max_backoff);
+                assert_eq!(Duration::from_secs(300), ch.retry_config().max_elapsed_time);
+            }
+            _ => panic!("Expected Clickhouse exporter"),
+        }
     }
 }
