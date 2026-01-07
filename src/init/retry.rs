@@ -60,7 +60,6 @@ macro_rules! define_exporter_retry_args {
 
 /// Global retry arguments that all exporters fall back to
 #[derive(Debug, Clone, Args, Deserialize)]
-#[serde(default)]
 pub struct GlobalExporterRetryArgs {
     /// Exporter Retry initial backoff - Default for all exporters unless overridden by exporter.
     #[arg(
