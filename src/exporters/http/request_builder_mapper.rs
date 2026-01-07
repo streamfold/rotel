@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::task::JoinHandle;
 use tower::BoxError;
-use tracing::error;
+use tracing::{error, info};
 
 // todo: Make this configurable?
 const MAX_CONCURRENT_ENCODERS: usize = 8;
@@ -84,6 +84,7 @@ where
 
             match this.input.as_mut().poll_next(cx) {
                 Poll::Ready(Some(item)) => {
+                    info!(metadata = ?item[0].metadata.as_ref().unwrap(), "request builder mapper received request");
                     let req_builder = this.req_builder.clone();
                     let jh = tokio::task::spawn_blocking(move || req_builder.build(item));
                     this.encoding_futures.push_back(jh);
