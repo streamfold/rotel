@@ -86,6 +86,7 @@ pub struct AwsEmfExporterArgs {
 
     /// Retry configuration
     #[command(flatten)]
+    #[serde(flatten)]
     pub retry: AwsEmfRetryArgs,
 }
 

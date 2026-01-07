@@ -40,6 +40,7 @@ pub struct DatadogExporterArgs {
 
     /// Datadog Exporter retry configuration
     #[command(flatten)]
+    #[serde(flatten)]
     pub retry: DatadogRetryArgs,
 }
 
