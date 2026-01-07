@@ -107,7 +107,7 @@ impl Default for ClickhouseExporterArgs {
             async_insert: "true".to_string(),
             enable_json: false,
             request_timeout: std::time::Duration::from_secs(5),
-            retry: ClickhouseRetryArgs::default(),
+            retry: Default::default(),
         }
     }
 }
