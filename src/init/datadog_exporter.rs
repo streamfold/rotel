@@ -50,7 +50,7 @@ impl Default for DatadogExporterArgs {
             region: DatadogRegion::US1,
             custom_endpoint: None,
             api_key: None,
-            retry: DatadogRetryArgs::default(),
+            retry: Default::default(),
         }
     }
 }
