@@ -54,19 +54,19 @@ To quickly get started with Rotel you can leverage the bundled [Python](https://
 follow these steps:
 
 1. **Running Rotel**
-    - We use the prebuilt docker image for this example, but you can also download a binary from the
-      [releases](https://github.com/streamfold/rotel/releases) page.
-    - Execute Rotel with the following arguments. To debug metrics or logs, add
-      an additional `--debug-log metrics|logs`.
+   - We use the prebuilt docker image for this example, but you can also download a binary from the
+     [releases](https://github.com/streamfold/rotel/releases) page.
+   - Execute Rotel with the following arguments. To debug metrics or logs, add
+     an additional `--debug-log metrics|logs`.
 
    ```bash
    docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
    ```
 
-    - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+   - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
 2. **Verify**
-    - Send OTLP traces to Rotel and verify that it is receiving data:
+   - Send OTLP traces to Rotel and verify that it is receiving data:
 
    ```bash
    go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
@@ -74,7 +74,7 @@ follow these steps:
    telemetrygen traces --otlp-insecure --duration 5s
    ```
 
-    - Check the output from Rotel and you should see several "Received traces" log lines.
+   - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
 
@@ -92,7 +92,7 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 Any option above that does not contain a default is considered false or unset by default.
 
 | Option                            | Default              | Options                                                            |
-|-----------------------------------|----------------------|--------------------------------------------------------------------|
+| --------------------------------- | -------------------- | ------------------------------------------------------------------ |
 | --daemon                          |                      |                                                                    |
 | --log-format                      | text                 | json                                                               |
 | --pid-file                        | /tmp/rotel-agent.pid |                                                                    |
@@ -120,24 +120,24 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
-| Option                                 | Default | Options    |
-|----------------------------------------|---------|------------|
-| --otlp-exporter-endpoint               |         |            |
-| --otlp-exporter-protocol               | grpc    | grpc, http |
-| --otlp-exporter-custom-headers         |         |            |
-| --otlp-exporter-compression            | gzip    | gzip, none |
-| --otlp-exporter-authenticator          |         | sigv4auth  |
-| --otlp-exporter-tls-cert-file          |         |            |
-| --otlp-exporter-tls-cert-pem           |         |            |
-| --otlp-exporter-tls-key-file           |         |            |
-| --otlp-exporter-tls-key-pem            |         |            |
-| --otlp-exporter-tls-ca-file            |         |            |
-| --otlp-exporter-tls-ca-pem             |         |            |
-| --otlp-exporter-tls-skip-verify        |         |            |
-| --otlp-exporter-request-timeout        | 5s      |            |
-| --otlp-exporter-retry-initial-backoff  | 5s      |            |
-| --otlp-exporter-retry-max-backoff      | 30s     |            |
-| --otlp-exporter-retry-max-elapsed-time | 300s    |            |
+| Option                                 | Default                        | Options    |
+| -------------------------------------- | ------------------------------ | ---------- |
+| --otlp-exporter-endpoint               |                                |            |
+| --otlp-exporter-protocol               | grpc                           | grpc, http |
+| --otlp-exporter-custom-headers         |                                |            |
+| --otlp-exporter-compression            | gzip                           | gzip, none |
+| --otlp-exporter-authenticator          |                                | sigv4auth  |
+| --otlp-exporter-tls-cert-file          |                                |            |
+| --otlp-exporter-tls-cert-pem           |                                |            |
+| --otlp-exporter-tls-key-file           |                                |            |
+| --otlp-exporter-tls-key-pem            |                                |            |
+| --otlp-exporter-tls-ca-file            |                                |            |
+| --otlp-exporter-tls-ca-pem             |                                |            |
+| --otlp-exporter-tls-skip-verify        |                                |            |
+| --otlp-exporter-request-timeout        | 5s                             |            |
+| --otlp-exporter-retry-initial-backoff  | (uses global exporter default) |            |
+| --otlp-exporter-retry-max-backoff      | (uses global exporter default) |            |
+| --otlp-exporter-retry-max-elapsed-time | (uses global exporter default) |            |
 
 Any of the options that start with `--otlp-exporter*` can be set per telemetry type: metrics, traces or logs. For
 example, to set a custom endpoint to export traces to, set: `--otlp-exporter-traces-endpoint`. For other telemetry
@@ -191,11 +191,14 @@ ROTEL_EXPORTERS_LOGS=logs
 The Datadog exporter can be selected by passing `--exporter datadog`. The Datadog exporter only supports traces at the
 moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
 
-| Option                             | Default | Options                |
-|------------------------------------|---------|------------------------|
-| --datadog-exporter-region          | us1     | us1, us3, us5, eu, ap1 |
-| --datadog-exporter-custom-endpoint |         |                        |
-| --datadog-exporter-api-key         |         |                        |
+| Option                                    | Default                        | Options                |
+| ----------------------------------------- | ------------------------------ | ---------------------- |
+| --datadog-exporter-region                 | us1                            | us1, us3, us5, eu, ap1 |
+| --datadog-exporter-custom-endpoint        |                                |                        |
+| --datadog-exporter-api-key                |                                |                        |
+| --datadog-exporter-retry-initial-backoff  | (uses global exporter default) |                        |
+| --datadog-exporter-retry-max-backoff      | (uses global exporter default) |                        |
+| --datadog-exporter-retry-max-elapsed-time | (uses global exporter default) |                        |
 
 Specifying a custom endpoint will override the region selection.
 
@@ -205,18 +208,21 @@ The ClickHouse exporter can be selected by passing `--exporter clickhouse`. The 
 logs,
 and traces.
 
-| Option                                | Default | Options     |
-|---------------------------------------|---------|-------------|
-| --clickhouse-exporter-endpoint        |         |             |
-| --clickhouse-exporter-database        | otel    |             |
-| --clickhouse-exporter-table-prefix    | otel    |             |
-| --clickhouse-exporter-compression     | lz4     | none, lz4   |
-| --clickhouse-exporter-async-insert    | true    | true, false |
-| --clickhouse-exporter-request-timeout | 5s      |             |
-| --clickhouse-exporter-enable-json     |         |             |
-| --clickhouse-exporter-json-underscore |         |             |
-| --clickhouse-exporter-user            |         |             |
-| --clickhouse-exporter-password        |         |             |
+| Option                                       | Default                        | Options     |
+| -------------------------------------------- | ------------------------------ | ----------- |
+| --clickhouse-exporter-endpoint               |                                |             |
+| --clickhouse-exporter-database               | otel                           |             |
+| --clickhouse-exporter-table-prefix           | otel                           |             |
+| --clickhouse-exporter-compression            | lz4                            | none, lz4   |
+| --clickhouse-exporter-async-insert           | true                           | true, false |
+| --clickhouse-exporter-request-timeout        | 5s                             |             |
+| --clickhouse-exporter-enable-json            |                                |             |
+| --clickhouse-exporter-json-underscore        |                                |             |
+| --clickhouse-exporter-user                   |                                |             |
+| --clickhouse-exporter-password               |                                |             |
+| --clickhouse-exporter-retry-initial-backoff  | (uses global exporter default) |             |
+| --clickhouse-exporter-retry-max-backoff      | (uses global exporter default) |             |
+| --clickhouse-exporter-retry-max-elapsed-time | (uses global exporter default) |             |
 
 The ClickHouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed
 onto the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to
@@ -252,10 +258,13 @@ The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ra
 See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS
 X-Ray exporter.
 
-| Option                             | Default   | Options          |
-|------------------------------------|-----------|------------------|
-| --awsxray-exporter-region | `AWS_REGION` env-var if set, then `AWS_DEFAULT_REGION`, then `us-east-1` | aws region codes |
-| --awsxray-exporter-custom-endpoint |           |                  |
+| Option                                    | Default                                              | Options          |
+| ----------------------------------------- | ---------------------------------------------------- | ---------------- |
+| --awsxray-exporter-region                 | `$AWS_REGION`, `$AWS_DEFAULT_REGION`, or `us-east-1` | aws region codes |
+| --awsxray-exporter-custom-endpoint        |                                                      |                  |
+| --awsxray-exporter-retry-initial-backoff  | (uses global exporter default)                       |                  |
+| --awsxray-exporter-retry-max-backoff      | (uses global exporter default)                       |                  |
+| --awsxray-exporter-retry-max-elapsed-time | (uses global exporter default)                       |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
 
@@ -270,17 +279,20 @@ send those as JSON log lines to Cloudwatch. Cloudwatch will convert the log line
 See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS EMF
 exporter.
 
-| Option                                                 | Default          | Options          |
-|--------------------------------------------------------|------------------|------------------|
-| --awsemf-exporter-region | `AWS_REGION` env-var if set, then `AWS_DEFAULT_REGION`, then `us-east-1` | aws region codes |
-| --awsemf-exporter-custom-endpoint                      |                  |                  |
-| --awsemf-exporter-log-group-name                       | /metrics/default |                  |
-| --awsemf-exporter-log-stream-name                      | otel-stream      |                  |
-| --awsemf-exporter-log-retention                        | 0                |                  |
-| --awsemf-exporter-namespace                            |                  |                  |
-| --awsemf-exporter-retain-initial-value-of-delta-metric | false            |                  |
-| --awsemf-exporter-include-dimensions                   |                  |                  |
-| --awsemf-exporter-exclude-dimensions                   |                  |                  |
+| Option                                                 | Default                                              | Options          |
+| ------------------------------------------------------ | ---------------------------------------------------- | ---------------- |
+| --awsemf-exporter-region                               | `$AWS_REGION`, `$AWS_DEFAULT_REGION`, or `us-east-1` | aws region codes |
+| --awsemf-exporter-custom-endpoint                      |                                                      |                  |
+| --awsemf-exporter-log-group-name                       | /metrics/default                                     |                  |
+| --awsemf-exporter-log-stream-name                      | otel-stream                                          |                  |
+| --awsemf-exporter-log-retention                        | 0                                                    |                  |
+| --awsemf-exporter-namespace                            |                                                      |                  |
+| --awsemf-exporter-retain-initial-value-of-delta-metric | false                                                |                  |
+| --awsemf-exporter-include-dimensions                   |                                                      |                  |
+| --awsemf-exporter-exclude-dimensions                   |                                                      |                  |
+| --awsemf-exporter-retry-initial-backoff                | (uses global exporter default)                       |                  |
+| --awsemf-exporter-retry-max-backoff                    | (uses global exporter default)                       |                  |
+| --awsemf-exporter-retry-max-elapsed-time               | (uses global exporter default)                       |                  |
 
 **DIMENSION FILTERING**:
 
@@ -329,7 +341,7 @@ The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka expo
 logs, and traces.
 
 | Option                                                    | Default           | Options                                                                     |
-|-----------------------------------------------------------|-------------------|-----------------------------------------------------------------------------|
+| --------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
 | --kafka-exporter-brokers                                  | localhost:9092    |                                                                             |
 | --kafka-exporter-traces-topic                             | otlp_traces       |                                                                             |
 | --kafka-exporter-metrics-topic                            | otlp_metrics      |                                                                             |
@@ -476,7 +488,7 @@ out as periodic files on the local filesystem. Currently **Parquet** and
 **JSON** formats are supported.
 
 | Option                              | Default    | Description                                                                                                  |
-|-------------------------------------|------------|--------------------------------------------------------------------------------------------------------------|
+| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | --file-exporter-format              | parquet    | `parquet` or `json`                                                                                          |
 | --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                              |
 | --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)   |
@@ -503,7 +515,7 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 - `--kafka-receiver-logs` to consume logs
 
 | Option                                             | Default        | Options                                                                |
-|----------------------------------------------------|----------------|------------------------------------------------------------------------|
+| -------------------------------------------------- | -------------- | ---------------------------------------------------------------------- |
 | --kafka-receiver-brokers                           | localhost:9092 | Kafka broker addresses (comma-separated)                               |
 | --kafka-receiver-traces-topic                      | otlp_traces    | Topic name for traces                                                  |
 | --kafka-receiver-metrics-topic                     | otlp_metrics   | Topic name for metrics                                                 |
@@ -566,7 +578,7 @@ receiver to continue processing new messages.
 To revert to the legacy auto-commit behavior where offsets are committed immediately regardless of export success:
 
 ```shell
---kafka-receiver-enable-auto-commit 
+--kafka-receiver-enable-auto-commit
 ```
 
 **Warning**: Auto-commit mode may result in data loss if exports fail, as Kafka will mark messages as consumed even if
@@ -589,9 +601,9 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 **Offset Management:**
 
 - `--kafka-receiver-auto-offset-reset`: Controls behavior when no initial offset exists or the current offset is invalid
-    - `earliest`: Start consuming from the beginning of the topic
-    - `latest`: Start consuming from the end of the topic (default)
-    - `error`: Throw an error if no offset is found
+  - `earliest`: Start consuming from the beginning of the topic
+  - `latest`: Start consuming from the end of the topic (default)
+  - `error`: Throw an error if no offset is found
 
 **Session and Heartbeat Configuration:**
 
@@ -609,8 +621,8 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 
 - `--kafka-receiver-check-crcs`: Enables CRC32 checking of consumed messages for data integrity
 - `--kafka-receiver-isolation-level`: Controls which messages are visible to the consumer
-    - `read-uncommitted`: Read all messages including those from uncommitted transactions
-    - `read-committed`: Only read messages from committed transactions (default)
+  - `read-uncommitted`: Read all messages including those from uncommitted transactions
+  - `read-committed`: Only read messages from committed transactions (default)
 
 #### Security Configuration
 
@@ -693,10 +705,10 @@ The Fluent Receiver allows Rotel to receive telemetry data in Fluentd/Fluent Bit
 
 The receiver supports both UNIX domain sockets and TCP endpoints, converting incoming Fluent messages to OpenTelemetry logs format.
 
-| Option                              | Default | Description                                             |
-|-------------------------------------|---------|---------------------------------------------------------|
-| --fluent-receiver-socket-path       |         | Path to UNIX socket file for receiving Fluent messages  |
-| --fluent-receiver-endpoint          |         | TCP endpoint to bind (e.g., 127.0.0.1:24224)            |
+| Option                        | Default | Description                                            |
+| ----------------------------- | ------- | ------------------------------------------------------ |
+| --fluent-receiver-socket-path |         | Path to UNIX socket file for receiving Fluent messages |
+| --fluent-receiver-endpoint    |         | TCP endpoint to bind (e.g., 127.0.0.1:24224)           |
 
 **Note**: At least one of `--fluent-receiver-socket-path` or `--fluent-receiver-endpoint` must be specified when using the Fluent
 receiver.
@@ -736,7 +748,7 @@ logs,
 or traces). For example, `--traces-batch-max-size` will override the batch max size for traces only.
 
 | Option           | Default | Options |
-|------------------|---------|---------|
+| ---------------- | ------- | ------- |
 | --batch-max-size | 8192    |         |
 | --batch-timeout  | 200ms   |         |
 
@@ -757,20 +769,24 @@ Alternatively you can use the `ROTEL_OTEL_RESOURCE_ATTRIBUTES` environment varia
 
 ### Retries and timeouts
 
-You can override the default request timeout of 5 seconds for the OTLP Exporter with the exporter setting:
+Requests will be retried if they match retryable error codes like 429 (Too Many Requests) or timeout. You can control
+the retry behavior globally for all exporters with the following options:
+
+- `--exporter-retry-initial-backoff`: Initial backoff duration (default: 5s)
+- `--exporter-retry-max-backoff`: Maximum backoff interval (default: 30s)
+- `--exporter-retry-max-elapsed-time`: Maximum wall time a request will be retried for until it is marked as
+  permanent failure (default: 300s)
+
+These global retry settings apply to all exporters unless overridden by exporter-specific retry options (see individual
+exporter configuration sections below).
+
+Each exporter can also override the default request timeout. For example, the OTLP Exporter default timeout of 5 seconds
+can be overridden with:
 
 - `--otlp-exporter-request-timeout`: Takes a string time duration, so `"250ms"` for 250 milliseconds, `"3s"` for 3
   seconds, etc.
 
-Requests will be retried if they match retryable error codes like 429 (Too Many Requests) or timeout. You can control
-the behavior with the following exporter options:
-
-- `--otlp-exporter-retry-initial-backoff`: Initial backoff duration
-- `--otlp-exporter-retry-max-backoff`: Maximum backoff interval
-- `--otlp-exporter-retry-max-elapsed-time`: Maximum wall time a request will be retried for until it is marked as
-  permanent failure
-
-All options should be represented as string time durations.
+All time options should be represented as string time durations.
 
 ### Internal telemetry
 
@@ -790,7 +806,7 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 The following configuration parameters enable multiple receivers:
 
 | Option      | Default | Options                           |
-|-------------|---------|-----------------------------------|
+| ----------- | ------- | --------------------------------- |
 | --receiver  | otlp    | otlp, kafka                       |
 | --receivers |         | comma-separated list (otlp,kafka) |
 
@@ -877,7 +893,7 @@ environment variables as well. It is not possible to set `--exporter` and
 `--exporters` at the same time.
 
 | Option                       | Default | Options                          |
-|------------------------------|---------|----------------------------------|
+| ---------------------------- | ------- | -------------------------------- |
 | --exporters                  |         | name:type pairs, comma-separated |
 | --exporters-traces           |         | exporter name                    |
 | --exporters-metrics          |         | exporter name                    |
@@ -1004,7 +1020,7 @@ rotel_python_processor_sdk directory.
 Current prebuilt processors include...
 
 | Name                 | Supported telemetry types |
-|----------------------|---------------------------|
+| -------------------- | ------------------------- |
 | Attributes Processor | logs, metrics, traces,    |
 | Redaction Processor  | logs, metrics, traces     |
 
