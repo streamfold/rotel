@@ -112,6 +112,7 @@ pub struct OTLPExporterBaseArgs {
     pub request_timeout: std::time::Duration,
 
     #[command(flatten)]
+    #[serde(flatten)]
     pub retry: OtlpRetryArgs,
 }
 

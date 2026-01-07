@@ -30,5 +30,6 @@ pub struct XRayExporterArgs {
 
     /// AWS X-Ray Exporter retry configuration
     #[command(flatten)]
+    #[serde(flatten)]
     pub retry: XRayRetryArgs,
 }
