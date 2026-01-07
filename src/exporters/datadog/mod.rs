@@ -126,12 +126,6 @@ impl DatadogExporterConfigBuilder {
         self
     }
 
-    #[allow(dead_code)]
-    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
-        self.retry_config = retry_config;
-        self
-    }
-
     pub fn set_indefinite_retry(&mut self) {
         self.retry_config.indefinite_retry = true;
     }
@@ -363,20 +357,16 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
-        DatadogExporterConfigBuilder::new(
-            Region::US1,
-            Some(addr),
-            "1234".to_string(),
-            Default::default(),
-        )
-        .with_retry_config(RetryConfig {
+        let retry = RetryConfig {
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(50),
             max_elapsed_time: Duration::from_millis(50),
             indefinite_retry: false,
-        })
-        .build()
-        .build(brx, None)
-        .unwrap()
+        };
+
+        DatadogExporterConfigBuilder::new(Region::US1, Some(addr), "1234".to_string(), retry)
+            .build()
+            .build(brx, None)
+            .unwrap()
     }
 }
