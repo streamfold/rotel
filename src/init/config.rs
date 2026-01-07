@@ -1,7 +1,6 @@
 use crate::exporters::awsemf::AwsEmfExporterConfigBuilder;
 use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
-use crate::exporters::http::retry::RetryConfig;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::KafkaExporterConfig;
 use crate::exporters::otlp::Endpoint;
@@ -298,24 +297,11 @@ impl TryIntoConfig for ExporterArgs {
 
                 let hostname = get_hostname();
 
-                let retry = RetryConfig::new(
-                    dd.retry
-                        .retry_initial_backoff
-                        .unwrap_or(global_retry.initial_backoff),
-                    dd.retry
-                        .retry_max_backoff
-                        .unwrap_or(global_retry.max_backoff),
-                    dd.retry
-                        .retry_max_elapsed_time
-                        .unwrap_or(global_retry.max_elapsed_time),
-                    false,
-                );
-
                 let mut builder = DatadogExporterConfigBuilder::new(
                     dd.region.into(),
                     dd.custom_endpoint.clone(),
                     api_key.clone(),
-                    retry,
+                    dd.retry.build_retry_config(global_retry),
                 )
                 .with_environment(environment.to_string());
 
@@ -332,24 +318,11 @@ impl TryIntoConfig for ExporterArgs {
 
                 let async_insert = parse_bool_value(&ch.async_insert)?;
 
-                let retry = RetryConfig::new(
-                    ch.retry
-                        .retry_initial_backoff
-                        .unwrap_or(global_retry.initial_backoff),
-                    ch.retry
-                        .retry_max_backoff
-                        .unwrap_or(global_retry.max_backoff),
-                    ch.retry
-                        .retry_max_elapsed_time
-                        .unwrap_or(global_retry.max_elapsed_time),
-                    false,
-                );
-
                 let mut cfg_builder = ClickhouseExporterConfigBuilder::new(
                     ch.endpoint.as_ref().unwrap().clone(),
                     ch.database.clone(),
                     ch.table_prefix.clone(),
-                    retry,
+                    ch.retry.build_retry_config(global_retry),
                 )
                 .with_compression(ch.compression)
                 .with_async_insert(async_insert)
@@ -375,23 +348,10 @@ impl TryIntoConfig for ExporterArgs {
                     .into());
                 }
 
-                let retry = RetryConfig::new(
-                    xray.retry
-                        .retry_initial_backoff
-                        .unwrap_or(global_retry.initial_backoff),
-                    xray.retry
-                        .retry_max_backoff
-                        .unwrap_or(global_retry.max_backoff),
-                    xray.retry
-                        .retry_max_elapsed_time
-                        .unwrap_or(global_retry.max_elapsed_time),
-                    false,
-                );
-
                 let builder = XRayExporterConfigBuilder::new(
                     xray.region,
                     xray.custom_endpoint.clone(),
-                    retry,
+                    xray.retry.build_retry_config(global_retry),
                 );
 
                 Ok(ExporterConfig::Xray(builder))
@@ -417,31 +377,16 @@ impl TryIntoConfig for ExporterArgs {
                     .into());
                 }
 
-                let retry = RetryConfig::new(
-                    awsemf
-                        .retry
-                        .retry_initial_backoff
-                        .unwrap_or(global_retry.initial_backoff),
-                    awsemf
-                        .retry
-                        .retry_max_backoff
-                        .unwrap_or(global_retry.max_backoff),
-                    awsemf
-                        .retry
-                        .retry_max_elapsed_time
-                        .unwrap_or(global_retry.max_elapsed_time),
-                    false,
-                );
-
-                let mut builder = AwsEmfExporterConfigBuilder::new(retry)
-                    .with_region(awsemf.region)
-                    .with_log_group_name(awsemf.log_group_name.clone())
-                    .with_log_stream_name(awsemf.log_stream_name.clone())
-                    .with_include_dimensions(awsemf.include_dimensions.clone())
-                    .with_exclude_dimensions(awsemf.exclude_dimensions.clone())
-                    .with_retain_initial_value_of_delta_metric(
-                        awsemf.retain_initial_value_of_delta_metric,
-                    );
+                let mut builder =
+                    AwsEmfExporterConfigBuilder::new(awsemf.retry.build_retry_config(global_retry))
+                        .with_region(awsemf.region)
+                        .with_log_group_name(awsemf.log_group_name.clone())
+                        .with_log_stream_name(awsemf.log_stream_name.clone())
+                        .with_include_dimensions(awsemf.include_dimensions.clone())
+                        .with_exclude_dimensions(awsemf.exclude_dimensions.clone())
+                        .with_retain_initial_value_of_delta_metric(
+                            awsemf.retain_initial_value_of_delta_metric,
+                        );
 
                 if let Some(log_retention) = &awsemf.log_retention {
                     builder = builder.with_log_retention(*log_retention);
