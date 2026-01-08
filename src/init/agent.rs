@@ -49,8 +49,7 @@ use tokio::select;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "prometheus")]
 use crate::telemetry::metrics_server::MetricsServer;
@@ -66,6 +65,7 @@ pub struct Agent {
     pipeline_flush_sub: Option<FlushSubscriber>,
     exporters_flush_sub: Option<FlushSubscriber>,
     otlp_default_receiver: bool,
+    init_complete_chan: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl Agent {
@@ -84,6 +84,7 @@ impl Agent {
             pipeline_flush_sub: None,
             exporters_flush_sub: None,
             otlp_default_receiver: true,
+            init_complete_chan: None,
         }
     }
 
@@ -99,6 +100,14 @@ impl Agent {
 
     pub fn with_exporters_flush(mut self, exporters_flush_sub: FlushSubscriber) -> Self {
         self.exporters_flush_sub = Some(exporters_flush_sub);
+        self
+    }
+
+    pub fn with_init_complete_chan(
+        mut self,
+        init_complete_chan: tokio::sync::oneshot::Sender<bool>,
+    ) -> Self {
+        self.init_complete_chan = Some(init_complete_chan);
         self
     }
 
@@ -1002,6 +1011,13 @@ impl Agent {
             } else {
                 None
             };
+
+        // Signal completed initialization
+        if let Some(init_complete_chan) = self.init_complete_chan.take() {
+            if let Err(e) = init_complete_chan.send(true) {
+                warn!(error = ?e, "failed to notify completed initialization")
+            }
+        }
 
         let mut result = Ok(());
         select! {
