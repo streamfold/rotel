@@ -115,7 +115,7 @@ impl FlushSender {
         if curr_listeners == 0 {
             warn!("FlushSender broadcast called with zero listeners, this is unexpected");
         }
-        
+
         let mut acked = 0u64;
         loop {
             if acked == curr_listeners as u64 {
