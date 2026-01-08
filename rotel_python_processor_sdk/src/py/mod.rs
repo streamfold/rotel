@@ -1,6 +1,7 @@
 pub mod common;
 pub mod logs;
 pub mod metrics;
+pub mod request_context;
 pub mod resource;
 pub mod trace;
 
@@ -12,6 +13,7 @@ use crate::py::metrics::{
     HistogramDataPoint, Metric, MetricData, NumberDataPoint, NumberDataPointValue, ResourceMetrics,
     ScopeMetrics, Sum, Summary, SummaryDataPoint, ValueAtQuantile,
 };
+use crate::py::request_context::{GrpcContext, HttpContext, RequestContext};
 use py::common::*;
 use py::logs::*;
 use py::resource::*;
@@ -42,8 +44,9 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let trace_module = PyModule::new(open_telemetry_module.py(), "trace")?;
     let resource_module = PyModule::new(open_telemetry_module.py(), "resource")?;
     let common_module = PyModule::new(open_telemetry_module.py(), "common")?;
-    let logs_module = PyModule::new(open_telemetry_module.py(), "logs")?; // Added logs module
-    let metrics_module = PyModule::new(open_telemetry_module.py(), "metrics")?; // Added logs module
+    let logs_module = PyModule::new(open_telemetry_module.py(), "logs")?;
+    let metrics_module = PyModule::new(open_telemetry_module.py(), "metrics")?;
+    let request_module = PyModule::new(open_telemetry_module.py(), "request")?;
     let trace_v1_module = PyModule::new(trace_module.py(), "v1")?;
     let common_v1_module = PyModule::new(common_module.py(), "v1")?;
     let resource_v1_module = PyModule::new(resource_module.py(), "v1")?;
@@ -56,6 +59,7 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     open_telemetry_module.add_submodule(&trace_module)?;
     open_telemetry_module.add_submodule(&resource_module)?;
     open_telemetry_module.add_submodule(&common_module)?;
+    open_telemetry_module.add_submodule(&request_module)?;
     m.add_submodule(&open_telemetry_module)?;
 
     m.py()
@@ -108,6 +112,11 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .getattr("modules")?
         .set_item("rotel_sdk.open_telemetry.metrics.v1", &metrics_v1_module)?;
 
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel_sdk.open_telemetry.request", &request_module)?;
+
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
     common_v1_module.add_class::<EntityRef>()?;
@@ -153,6 +162,10 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     metrics_v1_module.add_class::<SummaryDataPoint>()?;
     metrics_v1_module.add_class::<ValueAtQuantile>()?;
 
+    request_module.add_class::<RequestContext>()?;
+    request_module.add_class::<HttpContext>()?;
+    request_module.add_class::<GrpcContext>()?;
+
     Ok(())
 }
 
@@ -164,6 +177,7 @@ mod tests {
     use crate::model::common::{REntityRef, RValue::*};
     use crate::model::{otel_transform, py_transform};
     use crate::py::metrics::ResourceMetrics;
+    use crate::py::request_context::RequestContext;
     use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
@@ -853,6 +867,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_append_attribute.py", py, py_resource_spans)
@@ -872,6 +887,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
@@ -891,6 +907,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
@@ -948,6 +965,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
@@ -994,6 +1012,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("read_and_write_spans_test.py", py, py_resource_spans)
@@ -1085,6 +1104,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("set_scope_spans_span_test.py", py, py_resource_spans)
@@ -1169,6 +1189,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
@@ -1209,6 +1230,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_span_events_test.py", py, py_resource_spans)
@@ -1258,6 +1280,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_scope_spans_test.py", py, py_resource_spans)
@@ -1312,6 +1335,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_spans_test.py", py, py_resource_spans)
@@ -1408,6 +1432,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script
@@ -1501,6 +1526,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that adds a new log record
@@ -1627,6 +1653,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -1764,6 +1791,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -1940,6 +1968,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2070,6 +2099,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2129,6 +2159,7 @@ mod tests {
             resource: r_resource_metrics.resource.clone(),
             scope_metrics: r_resource_metrics.scope_metrics.clone(),
             schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: None,
         };
         // Execute the Python script that removes a log record
         Python::with_gil(|py| -> PyResult<()> {
@@ -2287,6 +2318,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2419,6 +2451,7 @@ mod tests {
             resource: r_resource_metrics.resource.clone(),
             scope_metrics: r_resource_metrics.scope_metrics.clone(),
             schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: None,
         };
         // Execute the Python script that removes a log record
         Python::with_gil(|py| -> PyResult<()> {
@@ -2554,6 +2587,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2641,6 +2675,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2695,6 +2730,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2775,6 +2811,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2824,6 +2861,336 @@ mod tests {
                 panic!("Unexpected log record value type");
             }
         }
+    }
+
+    #[test]
+    fn context_processor_logs_test() {
+        initialize();
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::StringValue(
+                "Login successful: password=1234567890".to_string(),
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+            request_context: Some(RequestContext::HttpContext(HttpContext {
+                headers: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_logs = py_transform::transform_logs(scope_logs_vec);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> = log
+            .attributes
+            .into_iter()
+            .map(|kv| (kv.key.clone(), kv.value.clone()))
+            .collect();
+        assert_eq!(kv_map.len(), 1);
+        assert_eq!(
+            kv_map.get("http.request.header.my-custom-header"),
+            Some(&Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("my-value".to_string())),
+            }))
+        );
+
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::StringValue(
+                "Login successful: password=1234567890".to_string(),
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+            request_context: Some(RequestContext::GrpcContext(GrpcContext {
+                metadata: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_logs = py_transform::transform_logs(scope_logs_vec);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> = log
+            .attributes
+            .into_iter()
+            .map(|kv| (kv.key.clone(), kv.value.clone()))
+            .collect();
+        assert_eq!(kv_map.len(), 1);
+        assert_eq!(
+            kv_map.get("http.request.header.my-custom-header"),
+            Some(&Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("my-value".to_string())),
+            }))
+        );
+    }
+
+    #[test]
+    fn context_processor_trace_test() {
+        initialize();
+        let trace_request = FakeOTLP::trace_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans =
+            otel_transform::transform_resource_spans(trace_request.resource_spans[0].clone());
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+            request_context: Some(RequestContext::HttpContext(HttpContext {
+                headers: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            span.attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        assert_eq!(kv_map.len(), 3);
+        assert_eq!(
+            kv_map.get("http.request.header.my-custom-header"),
+            Some(&Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("my-value".to_string())),
+            }))
+        );
+
+        let trace_request = FakeOTLP::trace_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans =
+            otel_transform::transform_resource_spans(trace_request.resource_spans[0].clone());
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-grpc-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+            request_context: Some(RequestContext::GrpcContext(GrpcContext {
+                metadata: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            span.attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+
+        assert_eq!(kv_map.len(), 3);
+        assert_eq!(
+            kv_map.get("http.request.header.my-custom-header"),
+            Some(&Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("my-grpc-value".to_string())),
+            }))
+        );
+    }
+
+    #[test]
+    fn context_processor_metrics_test() {
+        initialize();
+        let metrics_request = FakeOTLP::metrics_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_metrics = crate::model::otel_transform::transform_resource_metrics(
+            metrics_request.resource_metrics[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceMetrics object
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: Some(RequestContext::HttpContext(HttpContext {
+                headers: req_context,
+            })),
+        };
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        let resource = Arc::into_inner(r_resource_metrics.resource)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        let resource = py_transform::transform_resource(resource).unwrap();
+
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            resource
+                .attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+        assert_eq!(kv_map.len(), 7);
+        assert_eq!(
+            kv_map.get("http.request.header.my-custom-header"),
+            Some(&Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("my-value".to_string())),
+            }))
+        );
+
+        let metrics_request = FakeOTLP::metrics_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_metrics = crate::model::otel_transform::transform_resource_metrics(
+            metrics_request.resource_metrics[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-grpc-value".to_string());
+
+        // Create the Python-exposed ResourceMetrics object
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: Some(RequestContext::GrpcContext(GrpcContext {
+                metadata: req_context,
+            })),
+        };
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        let resource = Arc::into_inner(r_resource_metrics.resource)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .unwrap();
+        let resource = py_transform::transform_resource(resource).unwrap();
+
+        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
+            resource
+                .attributes
+                .into_iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+        assert_eq!(kv_map.len(), 7);
+        assert_eq!(
+            kv_map.get("http.request.header.my-custom-header"),
+            Some(&Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue("my-grpc-value".to_string())),
+            }))
+        );
     }
 
     #[test]
@@ -3123,6 +3490,7 @@ mod tests {
             resource: r_resource_metrics.resource.clone(),
             scope_metrics: r_resource_metrics.scope_metrics.clone(),
             schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that will verify initial values and then mutate them

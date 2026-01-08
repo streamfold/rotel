@@ -3,10 +3,10 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use crate::topology::fanout::{Fanout, FanoutFuture};
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use crate::topology::payload::{Message, MessageMetadataInner};
-use opentelemetry::KeyValue as InstKeyValue;
+use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use crate::topology::payload::Message;
 use opentelemetry::global::{self};
+use opentelemetry::KeyValue as InstKeyValue;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -14,7 +14,9 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{PythonProcessable, register_processor};
+use rotel_sdk::model::{register_processor, PythonProcessable};
+#[cfg(feature = "pyo3")]
+use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
 #[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
@@ -27,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::log::warn;
-use tracing::{Level, debug, error};
+use tracing::{debug, error, Level};
 
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
@@ -121,20 +123,12 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: Vec<KeyValue>
 
 #[cfg(not(feature = "pyo3"))]
 pub trait PythonProcessable {
-    fn process(
-        self,
-        processor: &str,
-        headers: Option<std::collections::HashMap<String, String>>,
-    ) -> Self;
+    fn process(self, processor: &str) -> Self;
 }
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
-    fn process(
-        self,
-        _processor: &str,
-        _headers: Option<std::collections::HashMap<String, String>>,
-    ) -> Self {
+    fn process(self, _processor: &str) -> Self {
         // Noop
         self
     }
@@ -142,11 +136,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(
-        self,
-        _processor: &str,
-        _headers: Option<std::collections::HashMap<String, String>>,
-    ) -> Self {
+    fn process(self, _processor: &str) -> Self {
         // Noop
         self
     }
@@ -154,11 +144,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
 
 #[cfg(not(feature = "pyo3"))]
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(
-        self,
-        _processor: &str,
-        _headers: Option<std::collections::HashMap<String, String>>,
-    ) -> Self {
+    fn process(self, _processor: &str) -> Self {
         // Noop
         self
     }
@@ -227,6 +213,71 @@ where
             error!(error = e, "Pipeline returned from run loop with error");
         }
         Ok(())
+    }
+
+    #[cfg(not(feature = "pyo3"))]
+    fn run_processors(
+        &self,
+        message: Message<T>,
+        _: usize,
+        _: &[String],
+        _: &impl Inspect<T>,
+    ) -> Message<T> {
+        message
+    }
+
+    #[cfg(feature = "pyo3")]
+    fn run_processors(
+        &self,
+        message: Message<T>,
+        len_processor_modules: usize,
+        processor_modules: &[String],
+        inspector: &impl Inspect<T>,
+    ) -> Message<T> {
+        let mut items = message.payload;
+        let request_context = message.request_context.clone();
+        let mut py_request_context: Option<PyRequestContext> = None;
+        match message.request_context {
+            None => {}
+            Some(ctx) => py_request_context = Some(ctx.into()),
+        }
+        // invoke current middleware layer
+        // todo: expand support for observability or transforms
+        if len_processor_modules > 0 {
+            inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
+        } else {
+            inspector.inspect(&items);
+        }
+        // If any resource attributes were provided on start, set or append them to the resources
+        if !self.resource_attributes.is_empty() {
+            for item in &mut items {
+                item.set_or_append_attributes(self.resource_attributes.clone())
+            }
+        }
+        for p in processor_modules {
+            let mut new_items = Vec::new();
+            // Extract headers from request_context if available
+
+            while !items.is_empty() {
+                let item = items.pop();
+                if let Some(item) = item {
+                    let result = item.process(p, py_request_context.clone());
+                    new_items.push(result);
+                }
+            }
+            items = new_items;
+        }
+
+        if len_processor_modules > 0 {
+            inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
+        }
+
+        // Wrap the processed items back into a Message
+        Message {
+            metadata: message.metadata,
+            request_context,
+            payload: items,
+        }
     }
 
     #[cfg(feature = "pyo3")]
@@ -350,55 +401,10 @@ where
                         return Ok(());
                     }
 
-                    let message = item.unwrap();
+                    let mut message = item.unwrap();
+                    message = self.run_processors(message, len_processor_modules, &processor_modules, &inspector);
 
-                    let mut items = message.payload;
-
-                    // invoke current middleware layer
-                    // todo: expand support for observability or transforms
-                    if len_processor_modules > 0 {
-                        inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
-                    } else {
-                        inspector.inspect(&items);
-                    }
-                    // If any resource attributes were provided on start, set or append them to the resources
-                    if !self.resource_attributes.is_empty() {
-                        for item in &mut items {
-                            item.set_or_append_attributes(self.resource_attributes.clone())
-                        }
-                    }
-                    for p in &processor_modules {
-                       let mut new_items = Vec::new();
-                       // Extract headers from metadata if available
-                       let headers = message.metadata.as_ref().and_then(|m| {
-                           match m.inner() {
-                               MessageMetadataInner::Http(hm) => Some(hm.headers.clone()),
-                               MessageMetadataInner::Grpc(gm) => Some(gm.headers.clone()),
-                               _ => None,
-                           }
-                       });
-
-                       while !items.is_empty() {
-                           let item = items.pop();
-                           if item.is_some() {
-                                let result = item.unwrap().process(p, headers.clone());
-                                new_items.push(result);
-                           }
-                       }
-                       items = new_items;
-                    }
-
-                    if len_processor_modules > 0 {
-                        inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
-                    }
-
-                    // Wrap the processed items back into a Message
-                    let processed_message = Message {
-                        metadata: message.metadata,
-                        payload: items,
-                    };
-
-                    match batch.offer(vec![processed_message]) {
+                    match batch.offer(vec![message]) {
                         Ok(Some(popped)) => {
                             let fut = self.fanout.send_async(popped);
                             send_fut = Some(fut);

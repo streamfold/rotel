@@ -32,7 +32,7 @@ use tracing::{debug, error};
 use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
-use crate::topology::payload::{HttpMetadata, Message, OTLPInto};
+use crate::topology::payload::{Message, OTLPInto, RequestContext};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -538,7 +538,7 @@ where
 
 /// Extract specified HTTP headers and store them in a HashMap for metadata.
 /// Headers are normalized to lowercase for consistent lookup.
-fn extract_headers_to_metadata<H: Body>(
+fn extract_headers_to_request_context<H: Body>(
     req: &Request<H>,
     headers_to_include: &[String],
 ) -> HashMap<String, String> {
@@ -581,13 +581,11 @@ where
     [T]: crate::topology::batch::BatchSizer,
 {
     // Extract headers before consuming the request body
-    let http_metadata = if include_metadata && !headers_to_include.is_empty() {
-        let headers_map = extract_headers_to_metadata(&req, &headers_to_include);
+    let http_request_ctx = if include_metadata && !headers_to_include.is_empty() {
+        let headers_map = extract_headers_to_request_context(&req, &headers_to_include);
 
         if !headers_map.is_empty() {
-            Some(crate::topology::payload::MessageMetadata::http(
-                HttpMetadata::new(headers_map),
-            ))
+            Some(RequestContext::Http(headers_map))
         } else {
             None
         }
@@ -646,7 +644,8 @@ where
 
     match output
         .send(Message {
-            metadata: http_metadata,
+            metadata: None,
+            request_context: http_request_ctx,
             payload: otlp_payload,
         })
         .await
@@ -731,6 +730,7 @@ mod tests {
         MAX_BODY_SIZE, OTLPHttpServer, OTLPService, ValidateOTLPContentType, build_service,
     };
     use crate::receivers::otlp_output::OTLPOutput;
+    use crate::topology::payload::RequestContext;
     use hyper_util::service::TowerToHyperService;
     use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -1164,19 +1164,24 @@ mod tests {
         assert_eq!(1, msg.len());
 
         // Verify metadata is present
-        assert!(msg.metadata.is_some());
-        let metadata = msg.metadata.as_ref().unwrap();
-        let http_metadata = metadata.as_http().unwrap();
-
-        // Verify all example headers are present
-        for (key, expected_value) in &example_headers {
-            assert_eq!(
-                http_metadata.get_header(key),
-                Some(expected_value),
-                "Header {} should be present with value {}",
-                key,
-                expected_value
-            );
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                // Verify all example headers are present
+                for (key, expected_value) in &example_headers {
+                    assert_eq!(
+                        h.get(key),
+                        Some(expected_value),
+                        "Header {} should be present with value {}",
+                        key,
+                        expected_value
+                    );
+                }
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
         }
     }
 
@@ -1207,8 +1212,8 @@ mod tests {
         let msg = trace_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
 
-        // Verify metadata is NOT present when disabled
-        assert!(msg.metadata.is_none());
+        // Verify request_context is NOT present when disabled
+        assert!(msg.request_context.is_none());
     }
 
     #[tokio::test]
@@ -1237,8 +1242,8 @@ mod tests {
         let msg = trace_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
 
-        // Verify metadata is NOT present when no headers specified
-        assert!(msg.metadata.is_none());
+        // Verify request_context is NOT present when no headers specified
+        assert!(msg.request_context.is_none());
     }
 
     #[tokio::test]
@@ -1265,14 +1270,20 @@ mod tests {
         let msg = metrics_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
 
-        // Verify metadata is present
-        assert!(msg.metadata.is_some());
-        let metadata = msg.metadata.as_ref().unwrap();
-        let http_metadata = metadata.as_http().unwrap();
-        assert_eq!(
-            http_metadata.get_header("my-custom-header"),
-            Some(&"metrics-value".to_string())
-        );
+        // Verify request_context is present
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                assert_eq!(
+                    h.get("my-custom-header"),
+                    Some(&"metrics-value".to_string())
+                );
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
     }
 
     #[tokio::test]
@@ -1299,14 +1310,17 @@ mod tests {
         let msg = logs_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
 
-        // Verify metadata is present
-        assert!(msg.metadata.is_some());
-        let metadata = msg.metadata.as_ref().unwrap();
-        let http_metadata = metadata.as_http().unwrap();
-        assert_eq!(
-            http_metadata.get_header("my-custom-header"),
-            Some(&"logs-value".to_string())
-        );
+        // Verify request_context is present
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                assert_eq!(h.get("my-custom-header"), Some(&"logs-value".to_string()));
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
     }
 
     #[tokio::test]
@@ -1334,14 +1348,17 @@ mod tests {
         let msg = trace_rx.next().await.unwrap();
         assert_eq!(1, msg.len());
 
-        // Verify metadata is present and header is normalized to lowercase
-        assert!(msg.metadata.is_some());
-        let metadata = msg.metadata.as_ref().unwrap();
-        let http_metadata = metadata.as_http().unwrap();
-        // Should be able to retrieve with lowercase
-        assert_eq!(
-            http_metadata.get_header("my-custom-header"),
-            Some(&"test-value".to_string())
-        );
+        // Verify request_context is present and header is normalized to lowercase
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                // Should be able to retrieve with lowercase
+                assert_eq!(h.get("my-custom-header"), Some(&"test-value".to_string()));
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
     }
 }

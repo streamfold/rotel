@@ -209,6 +209,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -240,6 +241,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -292,6 +294,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -344,6 +347,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request_with_spans(1, 51);
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -396,6 +400,7 @@ mod tests {
 
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -486,6 +491,7 @@ mod tests {
 
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await

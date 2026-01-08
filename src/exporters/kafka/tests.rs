@@ -483,6 +483,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_spans,
             }],
         );
@@ -513,6 +514,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_spans.clone(),
             }],
         );
@@ -551,6 +553,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_logs,
             }],
         );
@@ -588,6 +591,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_logs,
             }],
         );
@@ -620,6 +624,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_logs,
             }],
         );
@@ -672,6 +677,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_logs,
             }],
         );
@@ -708,6 +714,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_logs.clone(),
             }],
         );
@@ -746,6 +753,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_metrics,
             }],
         );
@@ -783,6 +791,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_metrics,
             }],
         );
@@ -815,6 +824,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_metrics,
             }],
         );
@@ -867,6 +877,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_metrics,
             }],
         );
@@ -903,6 +914,7 @@ mod tests {
             &config,
             vec![Message {
                 metadata: None,
+                request_context: None,
                 payload: resource_metrics.clone(),
             }],
         );
@@ -1022,6 +1034,7 @@ mod tests {
         // Create a message with metadata
         let message = Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: resource_metrics,
         };
 

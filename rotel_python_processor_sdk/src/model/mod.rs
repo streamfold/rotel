@@ -8,10 +8,10 @@ pub mod trace;
 
 use crate::py::logs::*;
 use crate::py::metrics::*;
+use crate::py::request_context::*;
 use crate::py::rotel_sdk;
 use crate::py::trace::*;
 use pyo3::prelude::*;
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::{Arc, Once};
 use tower::BoxError;
@@ -41,11 +41,11 @@ pub fn register_processor(code: String, script: String, module: String) -> Resul
 }
 
 pub trait PythonProcessable {
-    fn process(self, processor: &str, headers: Option<HashMap<String, String>>) -> Self;
+    fn process(self, processor: &str, headers: Option<RequestContext>) -> Self;
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
-    fn process(self, processor: &str, headers: Option<HashMap<String, String>>) -> Self {
+    fn process(self, processor: &str, request_context: Option<RequestContext>) -> Self {
         let inner = otel_transform::transform_resource_spans(self);
         // Build the PyObject
         let res = Python::with_gil(|py| -> PyResult<()> {
@@ -53,7 +53,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
                 resource: inner.resource.clone(),
                 scope_spans: inner.scope_spans.clone(),
                 schema_url: inner.schema_url.clone(),
-                message_metadata: headers,
+                request_context,
             };
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process_spans")?.call1((spans,));
@@ -98,7 +98,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, processor: &str, message_metadata : Option<HashMap<String, String>>) -> Self {
+    fn process(self, processor: &str, request_context: Option<RequestContext>) -> Self {
         let inner = otel_transform::transform_resource_metrics(self);
         // Build the PyObject
         let res = Python::with_gil(|py| -> PyResult<()> {
@@ -106,7 +106,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
                 resource: inner.resource.clone(),
                 scope_metrics: inner.scope_metrics.clone(),
                 schema_url: inner.schema_url.clone(),
-                message_metadata,
+                request_context,
             };
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process_metrics")?.call1((spans,));
@@ -139,7 +139,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
 }
 
 impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, processor: &str, headers: Option<HashMap<String, String>>) -> Self {
+    fn process(self, processor: &str, request_context: Option<RequestContext>) -> Self {
         let inner = otel_transform::transform_resource_logs(self);
         // Build the PyObject
         let res = Python::with_gil(|py| -> PyResult<()> {
@@ -147,7 +147,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
                 resource: inner.resource.clone(),
                 scope_logs: inner.scope_logs.clone(),
                 schema_url: inner.schema_url.clone(),
-                message_metadata: headers,
+                request_context,
             };
             let py_mod = PyModule::import(py, processor)?;
             let result_py_object = py_mod.getattr("process_logs")?.call1((spans,));

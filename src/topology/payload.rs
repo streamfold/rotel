@@ -8,18 +8,30 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
+#[cfg(feature = "pyo3")]
+use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message<T> {
     pub metadata: Option<MessageMetadata>,
+    pub request_context: Option<RequestContext>,
     pub payload: Vec<T>,
 }
 
 impl<T> Message<T> {
-    pub fn new(metadata: Option<MessageMetadata>, payload: Vec<T>) -> Self {
-        Self { metadata, payload }
+    pub fn new(
+        metadata: Option<MessageMetadata>,
+        payload: Vec<T>,
+        request_context: Option<RequestContext>,
+    ) -> Self {
+        Self {
+            metadata,
+            payload,
+            request_context,
+        }
     }
 
     // Used in testing
@@ -35,10 +47,33 @@ pub struct MessageMetadata {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum RequestContext {
+    Http(HashMap<String, String>),
+    Grpc(HashMap<String, String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
-    Http(HttpMetadata),
-    Grpc(GrpcMetadata),
+}
+
+#[allow(clippy::from_over_into)]
+#[cfg(feature = "pyo3")]
+impl Into<PyRequestContext> for RequestContext {
+    fn into(self) -> PyRequestContext {
+        match self {
+            RequestContext::Http(h) => {
+                PyRequestContext::HttpContext(rotel_sdk::py::request_context::HttpContext {
+                    headers: h,
+                })
+            }
+            RequestContext::Grpc(h) => {
+                PyRequestContext::GrpcContext(rotel_sdk::py::request_context::GrpcContext {
+                    metadata: h,
+                })
+            }
+        }
+    }
 }
 
 impl MessageMetadata {
@@ -64,39 +99,6 @@ impl MessageMetadata {
     pub fn as_kafka(&self) -> Option<&KafkaMetadata> {
         match &self.data {
             MessageMetadataInner::Kafka(km) => Some(km),
-            _ => None,
-        }
-    }
-
-    /// Create new MessageMetadata with Http variant, starting with ref_count = 1
-    pub fn http(metadata: HttpMetadata) -> Self {
-        Self {
-            data: MessageMetadataInner::Http(metadata),
-            ref_count: Arc::new(AtomicU32::new(1)),
-        }
-    }
-
-    /// Helper method to get Http metadata if available
-    pub fn as_http(&self) -> Option<&HttpMetadata> {
-        match &self.data {
-            MessageMetadataInner::Http(hm) => Some(hm),
-            _ => None,
-        }
-    }
-
-    /// Create new MessageMetadata with Grpc variant, starting with ref_count = 1
-    pub fn grpc(metadata: GrpcMetadata) -> Self {
-        Self {
-            data: MessageMetadataInner::Grpc(metadata),
-            ref_count: Arc::new(AtomicU32::new(1)),
-        }
-    }
-
-    /// Helper method to get Grpc metadata if available
-    pub fn as_grpc(&self) -> Option<&GrpcMetadata> {
-        match &self.data {
-            MessageMetadataInner::Grpc(gm) => Some(gm),
-            _ => None,
         }
     }
 
@@ -245,12 +247,6 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
-                MessageMetadataInner::Http(_) => {
-                    // HTTP metadata doesn't require acknowledgment
-                }
-                MessageMetadataInner::Grpc(_) => {
-                    // gRPC metadata doesn't require acknowledgment
-                }
             }
         }
         Ok(())
@@ -274,12 +270,6 @@ impl Ack for MessageMetadata {
                             }))
                             .await?;
                     }
-                }
-                MessageMetadataInner::Http(_) => {
-                    // HTTP metadata doesn't require acknowledgment
-                }
-                MessageMetadataInner::Grpc(_) => {
-                    // gRPC metadata doesn't require acknowledgment
                 }
             }
         }

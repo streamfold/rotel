@@ -4,9 +4,9 @@ use crate::model::logs::{RLogRecord, RScopeLogs};
 use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::py::common::{AnyValue, KeyValue};
+use crate::py::request_context::RequestContext;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[pyclass]
@@ -15,7 +15,7 @@ pub struct ResourceLogs {
     pub resource: Arc<Mutex<Option<RResource>>>,
     pub scope_logs: Arc<Mutex<Vec<Arc<Mutex<RScopeLogs>>>>>,
     pub schema_url: String,
-    pub message_metadata: Option<HashMap<String, String>>,
+    pub request_context: Option<RequestContext>,
 }
 
 #[pymethods]
@@ -70,14 +70,8 @@ impl ResourceLogs {
         Ok(())
     }
     #[getter]
-    fn message_metadata(&self) -> PyResult<Option<HashMap<String, String>>> {
-        Ok(self.message_metadata.clone())
-    }
-
-    #[setter]
-    fn set_message_metadata(&mut self, metadata: Option<HashMap<String, String>>) -> PyResult<()> {
-        self.message_metadata = metadata;
-        Ok(())
+    fn request_context(&self) -> PyResult<Option<RequestContext>> {
+        Ok(self.request_context.clone())
     }
 }
 

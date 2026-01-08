@@ -499,6 +499,7 @@ mod tests {
         let res = trace_btx
             .send(vec![topology::payload::Message {
                 metadata: None,
+                request_context: None,
                 payload: FakeOTLP::trace_service_request().resource_spans,
             }])
             .await;
@@ -578,6 +579,7 @@ mod tests {
         let res = metrics_btx
             .send(vec![topology::payload::Message {
                 metadata: None,
+                request_context: None,
                 payload: FakeOTLP::metrics_service_request().resource_metrics,
             }])
             .await;
@@ -658,6 +660,7 @@ mod tests {
             .send(vec![topology::payload::Message {
                 payload: FakeOTLP::logs_service_request().resource_logs,
                 metadata: None,
+                request_context: None,
             }])
             .await;
         assert!(&res.is_ok());
@@ -729,6 +732,7 @@ mod tests {
             .send(vec![topology::payload::Message {
                 payload: FakeOTLP::trace_service_request().resource_spans,
                 metadata: None,
+                request_context: None,
             }])
             .await;
         assert!(&res.is_ok());
@@ -1094,6 +1098,7 @@ mod tests {
             .send(vec![topology::payload::Message {
                 payload: FakeOTLP::trace_service_request().resource_spans,
                 metadata: None,
+                request_context: None,
             }])
             .await;
         if let Err(e) = res {
@@ -1173,6 +1178,7 @@ mod tests {
                 .send(vec![topology::payload::Message {
                     payload,
                     metadata: None,
+                    request_context: None,
                 }])
                 .await;
             if let Err(e) = res {
@@ -1206,6 +1212,7 @@ mod tests {
                 .send(vec![topology::payload::Message {
                     payload,
                     metadata: None,
+                    request_context: None,
                 }])
                 .await;
             if let Err(e) = res {
@@ -1235,6 +1242,7 @@ mod tests {
                 .send(vec![topology::payload::Message {
                     payload,
                     metadata: None,
+                    request_context: None,
                 }])
                 .await;
             if let Err(e) = res {
@@ -1313,6 +1321,7 @@ mod tests {
         trace_btx
             .send(vec![topology::payload::Message {
                 metadata: Some(metadata),
+                request_context: None,
                 payload: traces.resource_spans,
             }])
             .await

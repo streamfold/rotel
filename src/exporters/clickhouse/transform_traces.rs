@@ -237,6 +237,7 @@ mod tests {
         let (result, _metadata) = transformer.transform(vec![Message {
             payload: vec![resource_spans],
             metadata: None,
+            request_context: None,
         }]);
 
         // Verify the transformation succeeded
@@ -328,6 +329,7 @@ mod tests {
         let (result, _metadata) = transformer.transform(vec![Message {
             payload: vec![resource_spans],
             metadata: None,
+            request_context: None,
         }]);
 
         // Verify the transformation succeeded
@@ -418,6 +420,7 @@ mod tests {
         let (result, _metadata) = transformer.transform(vec![Message {
             payload: vec![resource_spans],
             metadata: None,
+            request_context: None,
         }]);
 
         assert!(
@@ -527,6 +530,7 @@ mod tests {
         let (result, _metadata) = transformer.transform(vec![Message {
             payload: vec![resource_spans],
             metadata: None,
+            request_context: None,
         }]);
 
         assert!(

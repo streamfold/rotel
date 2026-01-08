@@ -218,12 +218,7 @@ async fn send_traces(
             .await
         }
         Protocol::Grpc => {
-            send_grpc_traces(
-                trace_req,
-                &args.grpc_endpoint,
-                args.include_headers,
-            )
-            .await
+            send_grpc_traces(trace_req, &args.grpc_endpoint, args.include_headers).await
         }
     }
 }
@@ -243,12 +238,7 @@ async fn send_metrics(
             .await
         }
         Protocol::Grpc => {
-            send_grpc_metrics(
-                metrics_req,
-                &args.grpc_endpoint,
-                args.include_headers,
-            )
-            .await
+            send_grpc_metrics(metrics_req, &args.grpc_endpoint, args.include_headers).await
         }
     }
 }
@@ -267,14 +257,7 @@ async fn send_logs(
             )
             .await
         }
-        Protocol::Grpc => {
-            send_grpc_logs(
-                logs_req,
-                &args.grpc_endpoint,
-                args.include_headers,
-            )
-            .await
-        }
+        Protocol::Grpc => send_grpc_logs(logs_req, &args.grpc_endpoint, args.include_headers).await,
     }
 }
 
@@ -371,8 +354,12 @@ async fn send_grpc_traces(
     if include_headers {
         let headers = FakeOTLP::example_headers();
         for (key, value) in headers {
-            if let Ok(metadata_key) = MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes()) {
-                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str()) {
+            if let Ok(metadata_key) =
+                MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes())
+            {
+                if let Ok(metadata_value) =
+                    MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str())
+                {
                     request.metadata_mut().insert(metadata_key, metadata_value);
                 }
             }
@@ -414,8 +401,12 @@ async fn send_grpc_metrics(
     if include_headers {
         let headers = FakeOTLP::example_headers();
         for (key, value) in headers {
-            if let Ok(metadata_key) = MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes()) {
-                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str()) {
+            if let Ok(metadata_key) =
+                MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes())
+            {
+                if let Ok(metadata_value) =
+                    MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str())
+                {
                     request.metadata_mut().insert(metadata_key, metadata_value);
                 }
             }
@@ -457,8 +448,12 @@ async fn send_grpc_logs(
     if include_headers {
         let headers = FakeOTLP::example_headers();
         for (key, value) in headers {
-            if let Ok(metadata_key) = MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes()) {
-                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str()) {
+            if let Ok(metadata_key) =
+                MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes())
+            {
+                if let Ok(metadata_value) =
+                    MetadataValue::<tonic::metadata::Ascii>::try_from(value.as_str())
+                {
                     request.metadata_mut().insert(metadata_key, metadata_value);
                 }
             }
