@@ -419,6 +419,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bounded_channel::bounded;
+    use crate::topology::batch::BatchConfig;
+    use crate::topology::fanout::FanoutBuilder;
+    use crate::topology::flush_control::FlushBroadcast;
+    use crate::topology::payload::Message;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
     #[test]
@@ -525,5 +532,132 @@ mod tests {
                 panic!("unexpected type for attribute value")
             }
         }
+    }
+
+    // A simple inspector for testing
+    struct TestInspector;
+    impl Inspect<ResourceSpans> for TestInspector {
+        fn inspect(&self, _value: &[ResourceSpans]) {}
+        fn inspect_with_prefix(&self, _prefix: Option<String>, _value: &[ResourceSpans]) {}
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_with_flush_listener_and_batch_timeout() {
+        // Create a flush broadcast system
+        let flush_broadcast = FlushBroadcast::new();
+        let (mut flush_sender, mut flush_subscriber) = flush_broadcast.into_parts();
+        let flush_listener = Some(flush_subscriber.subscribe());
+
+        // Create a bounded channel for pipeline input
+        let (input_sender, input_receiver) = bounded::<Message<ResourceSpans>>(10);
+
+        // Create a bounded channel for fanout output
+        let (output_sender, mut output_receiver) = bounded::<Vec<Message<ResourceSpans>>>(10);
+
+        // Build the fanout
+        let fanout = FanoutBuilder::new("traces")
+            .add_tx("test_exporter", output_sender)
+            .build()
+            .expect("Failed to build fanout");
+
+        // Create batch config with very short timeout (50ms)
+        let batch_config = BatchConfig {
+            max_size: 100,
+            timeout: Duration::from_millis(50),
+            disabled: false,
+        };
+
+        // Create the pipeline
+        let mut pipeline = Pipeline::new(
+            "traces",
+            input_receiver,
+            fanout,
+            flush_listener,
+            batch_config,
+            vec![], // no processors
+            vec![], // no resource attributes
+        );
+
+        // Create a cancellation token for the pipeline
+        let pipeline_token = CancellationToken::new();
+        let pipeline_token_clone = pipeline_token.clone();
+
+        // Spawn the pipeline in a separate task
+        let pipeline_handle = tokio::spawn(async move {
+            let inspector = TestInspector;
+            pipeline.start(inspector, pipeline_token_clone).await
+        });
+
+        // Test 1: Send a message and wait for batch timeout to trigger flush
+        let trace_request1 = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let message1 = Message {
+            metadata: None,
+            payload: trace_request1.resource_spans.clone(),
+        };
+        input_sender
+            .send_async(message1)
+            .await
+            .expect("Failed to send message 1");
+
+        // Wait for batch timeout to trigger (should be ~50ms)
+        let received1 = tokio::time::timeout(Duration::from_millis(200), output_receiver.next())
+            .await
+            .expect("Timed out waiting for batch timeout flush")
+            .expect("Output channel closed");
+
+        assert_eq!(
+            received1.len(),
+            1,
+            "Expected exactly one message from timeout"
+        );
+        assert_eq!(
+            received1[0].payload.len(),
+            trace_request1.resource_spans.len(),
+            "Payload size mismatch for timeout flush"
+        );
+
+        // Test 2: Send a message and trigger immediate flush via flush_listener
+        let trace_request2 = FakeOTLP::trace_service_request_with_spans(1, 2);
+        let message2 = Message {
+            metadata: None,
+            payload: trace_request2.resource_spans.clone(),
+        };
+        input_sender
+            .send_async(message2)
+            .await
+            .expect("Failed to send message 2");
+
+        // Immediately trigger a flush via the flush_listener (don't wait for timeout)
+        tokio::time::timeout(Duration::from_secs(1), flush_sender.broadcast(None))
+            .await
+            .expect("Flush broadcast timed out")
+            .expect("Flush broadcast failed");
+
+        // Should receive immediately due to flush, not waiting for batch timeout
+        let received2 = tokio::time::timeout(Duration::from_millis(100), output_receiver.next())
+            .await
+            .expect("Timed out waiting for flush_listener flush")
+            .expect("Output channel closed");
+
+        assert_eq!(
+            received2.len(),
+            1,
+            "Expected exactly one message from flush_listener"
+        );
+        assert_eq!(
+            received2[0].payload.len(),
+            trace_request2.resource_spans.len(),
+            "Payload size mismatch for flush_listener flush"
+        );
+
+        // Clean up - cancel the pipeline
+        pipeline_token.cancel();
+
+        // Wait for pipeline to finish
+        tokio::time::timeout(Duration::from_secs(1), pipeline_handle)
+            .await
+            .expect("Pipeline task timed out")
+            .expect("Pipeline task panicked")
+            .expect("Pipeline returned error");
     }
 }

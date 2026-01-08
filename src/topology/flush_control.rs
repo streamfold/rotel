@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::time::timeout;
 use tower::BoxError;
-use tracing::warn;
+use tracing::{debug, warn};
 
 const FLUSH_CHAN_SIZE: usize = 20;
 
@@ -109,6 +109,8 @@ impl FlushSender {
         if let Err(e) = self.req_tx.send(req) {
             return Err(format!("Unable to send broadcast message: {}", e).into());
         }
+
+        debug!(curr_listeners, "sent flush broadcast message");
 
         let mut acked = 0u64;
         loop {
