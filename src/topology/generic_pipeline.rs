@@ -3,10 +3,10 @@
 use crate::bounded_channel::BoundedReceiver;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use crate::topology::fanout::{Fanout, FanoutFuture};
-use crate::topology::flush_control::{conditional_flush, FlushReceiver};
+use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::Message;
-use opentelemetry::global::{self};
 use opentelemetry::KeyValue as InstKeyValue;
+use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -14,7 +14,7 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{register_processor, PythonProcessable};
+use rotel_sdk::model::{PythonProcessable, register_processor};
 #[cfg(feature = "pyo3")]
 use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
 #[cfg(feature = "pyo3")]
@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
 use tracing::log::warn;
-use tracing::{debug, error, Level};
+use tracing::{Level, debug, error};
 
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature

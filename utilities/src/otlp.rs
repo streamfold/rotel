@@ -38,10 +38,13 @@ impl FakeOTLP {
     pub fn example_headers() -> HashMap<String, String> {
         let mut headers = HashMap::new();
         headers.insert("my-custom-header".to_string(), "test-value-123".to_string());
-        headers.insert("another-header".to_string(), "another-test-value".to_string());
+        headers.insert(
+            "another-header".to_string(),
+            "another-test-value".to_string(),
+        );
         headers
     }
-    
+
     pub fn logs_service_request() -> ExportLogsServiceRequest {
         Self::logs_service_request_with_logs(1, 1)
     }
