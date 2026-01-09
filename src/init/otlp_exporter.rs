@@ -3,8 +3,17 @@ use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
 use crate::init::parse;
+use crate::init::retry::GlobalExporterRetryArgs;
 use serde::Deserialize;
 use std::time::Duration;
+
+// Define OTLP-specific retry arguments with proper prefixes
+crate::define_exporter_retry_args!(
+    OtlpRetryArgs,
+    "otlp-exporter",
+    "ROTEL_OTLP_EXPORTER",
+    "OTLP Exporter"
+);
 
 #[derive(Debug, clap::Args, Clone, Deserialize)]
 #[serde(default)]
@@ -98,34 +107,12 @@ pub struct OTLPExporterBaseArgs {
         default_value = "5s",
         value_parser = humantime::parse_duration,
     )]
+    #[serde(with = "humantime_serde")]
     pub request_timeout: std::time::Duration,
 
-    /// OTLP Exporter Retry initial backoff - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long("otlp-exporter-retry-initial-backoff"),
-        env = "ROTEL_OTLP_EXPORTER_RETRY_INITIAL_BACKOFF",
-        default_value = "5s",
-        value_parser = humantime::parse_duration,
-    )]
-    pub retry_initial_backoff: std::time::Duration,
-
-    /// OTLP Exporter Retry max backoff - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long("otlp-exporter-retry-max-backoff"),
-        env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_BACKOFF",
-        default_value = "30s",
-        value_parser = humantime::parse_duration,
-    )]
-    pub retry_max_backoff: std::time::Duration,
-
-    /// OTLP Exporter Retry max elapsed time - Used as default for all OTLP data types unless more specific flag specified.
-    #[arg(
-        long("otlp-exporter-retry-max-elapsed-time"),
-        env = "ROTEL_OTLP_EXPORTER_RETRY_MAX_ELAPSED_TIME",
-        default_value = "300s",
-        value_parser = humantime::parse_duration,
-    )]
-    pub retry_max_elapsed_time: std::time::Duration,
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub retry: OtlpRetryArgs,
 }
 
 impl Default for OTLPExporterBaseArgs {
@@ -153,9 +140,7 @@ impl Default for OTLPExporterBaseArgs {
             },
             tls_skip_verify: false,
             request_timeout: Duration::from_secs(5),
-            retry_initial_backoff: Duration::from_secs(5),
-            retry_max_backoff: Duration::from_secs(30),
-            retry_max_elapsed_time: Duration::from_secs(300),
+            retry: Default::default(),
         }
     }
 }
@@ -259,51 +244,6 @@ pub struct OTLPExporterArgs {
     #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_REQUEST_TIMEOUT",
         value_parser = humantime::parse_duration)]
     pub otlp_exporter_logs_request_timeout: Option<std::time::Duration>,
-
-    /// OTLP Exporter traces Retry initial backoff - Overrides otlp_exporter_retry_initial_backoff for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_INITIAL_BACKOFF",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_traces_retry_initial_backoff: Option<std::time::Duration>,
-
-    /// OTLP Exporter metrics Retry initial backoff  - Overrides otlp_exporter_retry_initial_backoff for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_INITIAL_BACKOFF",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_metrics_retry_initial_backoff: Option<std::time::Duration>,
-
-    /// OTLP Exporter logs Retry initial backoff  - Overrides otlp_exporter_retry_initial_backoff for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_INITIAL_BACKOFF",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_logs_retry_initial_backoff: Option<std::time::Duration>,
-
-    /// OTLP Exporter traces Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_BACKOFF",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_traces_retry_max_backoff: Option<std::time::Duration>,
-
-    /// OTLP Exporter metrics Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_MAX_BACKOFF",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_metrics_retry_max_backoff: Option<std::time::Duration>,
-
-    /// OTLP Exporter logs Retry max backoff - Overrides otlp_exporter_retry_max_backoff for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_BACKOFF",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_logs_retry_max_backoff: Option<std::time::Duration>,
-
-    /// OTLP Exporter traces Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP traces if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_RETRY_MAX_ELAPSED_TIME",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_traces_retry_max_elapsed_time: Option<std::time::Duration>,
-
-    /// OTLP Exporter metrics Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP metrics if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_RETRY_MAX_ELAPSED_TIME",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_metrics_retry_max_elapsed_time: Option<std::time::Duration>,
-
-    /// OTLP Exporter logs Retry max elapsed time - Overrides otlp_exporter_retry_max_elapsed_time for OTLP logs if specified.
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_RETRY_MAX_ELAPSED_TIME",
-        value_parser = humantime::parse_duration,)]
-    pub otlp_exporter_logs_retry_max_elapsed_time: Option<std::time::Duration>,
 }
 
 impl Default for OTLPExporterArgs {
@@ -361,15 +301,6 @@ impl Default for OTLPExporterArgs {
             otlp_exporter_traces_request_timeout: None,
             otlp_exporter_metrics_request_timeout: None,
             otlp_exporter_logs_request_timeout: None,
-            otlp_exporter_traces_retry_initial_backoff: None,
-            otlp_exporter_metrics_retry_initial_backoff: None,
-            otlp_exporter_logs_retry_initial_backoff: None,
-            otlp_exporter_traces_retry_max_backoff: None,
-            otlp_exporter_metrics_retry_max_backoff: None,
-            otlp_exporter_logs_retry_max_backoff: None,
-            otlp_exporter_traces_retry_max_elapsed_time: None,
-            otlp_exporter_metrics_retry_max_elapsed_time: None,
-            otlp_exporter_logs_retry_max_elapsed_time: None,
         }
     }
 }
@@ -521,15 +452,6 @@ pub fn build_traces_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
     if let Some(request_time) = agent.otlp_exporter_traces_request_timeout {
         config.request_timeout = request_time
     }
-    if let Some(max_elapsed_time) = agent.otlp_exporter_traces_retry_max_elapsed_time {
-        config.retry_max_elapsed_time = max_elapsed_time
-    }
-    if let Some(initial_backoff) = agent.otlp_exporter_traces_retry_initial_backoff {
-        config.retry_initial_backoff = initial_backoff
-    }
-    if let Some(max_backoff) = agent.otlp_exporter_traces_retry_max_backoff {
-        config.retry_max_backoff = max_backoff
-    }
     if let Some(tls_cert_file) = agent
         .otlp_exporter_traces_cert_group
         .otlp_exporter_traces_tls_cert_file
@@ -587,15 +509,6 @@ pub fn build_metrics_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
     }
     if let Some(request_time) = agent.otlp_exporter_metrics_request_timeout {
         config.request_timeout = request_time
-    }
-    if let Some(max_elapsed_time) = agent.otlp_exporter_metrics_retry_max_elapsed_time {
-        config.retry_max_elapsed_time = max_elapsed_time
-    }
-    if let Some(initial_backoff) = agent.otlp_exporter_metrics_retry_initial_backoff {
-        config.retry_initial_backoff = initial_backoff
-    }
-    if let Some(max_backoff) = agent.otlp_exporter_metrics_retry_max_backoff {
-        config.retry_max_backoff = max_backoff
     }
     if let Some(tls_cert_file) = agent
         .otlp_exporter_metrics_cert_group
@@ -655,15 +568,6 @@ pub fn build_logs_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
     if let Some(request_time) = agent.otlp_exporter_logs_request_timeout {
         config.request_timeout = request_time
     }
-    if let Some(max_elapsed_time) = agent.otlp_exporter_logs_retry_max_elapsed_time {
-        config.retry_max_elapsed_time = max_elapsed_time
-    }
-    if let Some(initial_backoff) = agent.otlp_exporter_logs_retry_initial_backoff {
-        config.retry_initial_backoff = initial_backoff
-    }
-    if let Some(max_backoff) = agent.otlp_exporter_logs_retry_max_backoff {
-        config.retry_max_backoff = max_backoff
-    }
     if let Some(tls_cert_file) = agent
         .otlp_exporter_logs_cert_group
         .otlp_exporter_logs_tls_cert_file
@@ -705,16 +609,23 @@ pub fn build_logs_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
 }
 
 impl OTLPExporterBaseArgs {
-    pub fn into_exporter_config(self, type_name: &str, endpoint: Endpoint) -> OTLPExporterConfig {
-        let mut builder = otlp::config_builder(type_name, endpoint, self.protocol.into())
-            .with_authenticator(self.authenticator.map(|a| a.into()))
-            .with_tls_skip_verify(self.tls_skip_verify)
-            .with_headers(self.custom_headers.as_slice())
-            .with_request_timeout(self.request_timeout.into())
-            .with_max_elapsed_time(self.retry_max_elapsed_time.into())
-            .with_initial_backoff(self.retry_initial_backoff.into())
-            .with_max_backoff(self.retry_max_backoff.into())
-            .with_compression_encoding(self.compression.into());
+    pub fn into_exporter_config(
+        self,
+        type_name: &str,
+        endpoint: Endpoint,
+        global_retry: &GlobalExporterRetryArgs,
+    ) -> OTLPExporterConfig {
+        let mut builder = otlp::config_builder(
+            type_name,
+            endpoint,
+            self.protocol.into(),
+            self.retry.build_retry_config(global_retry),
+        )
+        .with_authenticator(self.authenticator.map(|a| a.into()))
+        .with_tls_skip_verify(self.tls_skip_verify)
+        .with_headers(self.custom_headers.as_slice())
+        .with_request_timeout(self.request_timeout.into())
+        .with_compression_encoding(self.compression.into());
 
         if let Some(tls_cert_file) = self.cert_group.tls_cert_file {
             builder = builder.with_cert_file(tls_cert_file.as_str());

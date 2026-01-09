@@ -59,7 +59,7 @@ pub enum Compression {
     Lz4,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ClickhouseExporterConfigBuilder {
     retry_config: RetryConfig,
     compression: Compression,
@@ -100,13 +100,19 @@ impl ClickhouseExporterConfigBuilder {
         endpoint: String,
         database: String,
         table_prefix: String,
+        retry_config: RetryConfig,
     ) -> ClickhouseExporterConfigBuilder {
         ClickhouseExporterConfigBuilder {
+            retry_config,
             endpoint,
             database,
             table_prefix,
+            auth_user: None,
+            auth_password: None,
             request_timeout: Duration::from_secs(5),
-            ..Default::default()
+            compression: Default::default(),
+            use_json: false,
+            async_insert: false,
         }
     }
 
@@ -140,13 +146,13 @@ impl ClickhouseExporterConfigBuilder {
         self
     }
 
-    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
-        self.retry_config = retry_config;
-        self
-    }
-
     pub fn set_indefinite_retry(&mut self) {
         self.retry_config.indefinite_retry = true;
+    }
+
+    #[cfg(test)]
+    pub fn retry_config(&self) -> &RetryConfig {
+        &self.retry_config
     }
 
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
@@ -611,10 +617,14 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
-        let builder =
-            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
-                .build()
-                .unwrap();
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .build()
+        .unwrap();
 
         builder.build_traces_exporter(brx, None).unwrap()
     }
@@ -623,10 +633,14 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     ) -> ExporterType<'a, ResourceLogs> {
-        let builder =
-            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
-                .build()
-                .unwrap();
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .build()
+        .unwrap();
 
         builder.build_logs_exporter(brx, None).unwrap()
     }
@@ -635,10 +649,14 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     ) -> ExporterType<'a, ResourceMetrics> {
-        let builder =
-            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
-                .build()
-                .unwrap();
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .build()
+        .unwrap();
 
         builder.build_metrics_exporter(brx, None).unwrap()
     }
