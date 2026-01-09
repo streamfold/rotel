@@ -28,6 +28,7 @@ both exposed as the same dictionary format to Python processors.
 This processor demonstrates how to extract headers from context and add
 them as span attributes following OpenTelemetry semantic conventions.
 """
+
 from typing import Optional
 
 from rotel_sdk.open_telemetry.common.v1 import AnyValue, KeyValue
@@ -38,7 +39,7 @@ from rotel_sdk.open_telemetry.trace.v1 import ResourceSpans
 
 
 def _get_header_from_context(
-        request_context: Optional[RequestContext], header_name: str
+    request_context: Optional[RequestContext], header_name: str
 ) -> Optional[str]:
     """
     Get a header value from message metadata (context).
@@ -59,7 +60,6 @@ def _get_header_from_context(
 
 
 class ContextProcessor:
-
     def process_spans(self, resource_spans: ResourceSpans):
         """
         Process ResourceSpans by extracting a custom header from context
@@ -84,7 +84,9 @@ class ContextProcessor:
         header_name = "my-custom-header"
 
         # Get header value from context
-        header_value = _get_header_from_context(resource_spans.request_context, header_name)
+        header_value = _get_header_from_context(
+            resource_spans.request_context, header_name
+        )
 
         if header_value:
             # Create attribute following OTel semantic convention
@@ -103,14 +105,15 @@ class ContextProcessor:
         #     resource_spans.resource.attributes.append(attr)
 
     def process_metrics(self, resource_metrics: ResourceMetrics):
-
         """
         Process metrics - add custom header to resource attributes.
         Metrics typically use resource attributes rather than per-metric
         attributes.
         """
         header_name = "my-custom-header"
-        header_value = _get_header_from_context(resource_metrics.request_context, header_name)
+        header_value = _get_header_from_context(
+            resource_metrics.request_context, header_name
+        )
 
         if header_value and resource_metrics.resource:
             attr = KeyValue(
@@ -120,12 +123,13 @@ class ContextProcessor:
             resource_metrics.resource.attributes.append(attr)
 
     def process_logs(self, resource_logs: ResourceLogs):
-
         """
         Process logs - add custom header to log record attributes.
         """
         header_name = "my-custom-header"
-        header_value = _get_header_from_context(resource_logs.request_context, header_name)
+        header_value = _get_header_from_context(
+            resource_logs.request_context, header_name
+        )
         if header_value:
             attr = KeyValue(
                 key=f"http.request.header.{header_name}",
