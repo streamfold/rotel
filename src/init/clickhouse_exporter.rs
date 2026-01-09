@@ -24,7 +24,7 @@ pub struct ClickhouseExporterArgs {
     /// Clickhouse Exporter table prefix (e.g., "otel" prefix will become "otel_traces" for traces)
     #[arg(
         long("clickhouse-exporter-table-prefix"),
-        env = "ROTEL_CLICKHOUSE_TABLE_PREFIX",
+        env = "ROTEL_CLICKHOUSE_EXPORTER_TABLE_PREFIX",
         default_value = "otel"
     )]
     pub table_prefix: String,
