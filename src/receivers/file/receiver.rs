@@ -14,16 +14,16 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use futures::stream::FuturesOrdered;
-use opentelemetry::KeyValue;
+use futures::StreamExt;
 use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::common::v1::KeyValue as OtlpKeyValue;
-use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, any_value};
+use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use tokio::select;
@@ -36,12 +36,12 @@ use crate::bounded_channel::{self, BoundedReceiver, BoundedSender};
 
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
 use crate::receivers::file::error::{Error, Result};
-use crate::receivers::file::input::{FileFinder, FileId, FileReader, StartAt, get_path_from_file};
-use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
+use crate::receivers::file::input::{get_path_from_file, FileFinder, FileId, FileReader, StartAt};
+use crate::receivers::file::parser::{nginx, JsonParser, Parser, RegexParser};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
 };
-use crate::receivers::file::watcher::{FileEventKind, FileWatcher, WatcherConfig, create_watcher};
+use crate::receivers::file::watcher::{create_watcher, FileEventKind, FileWatcher, WatcherConfig};
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
@@ -412,11 +412,13 @@ impl FileCoordinator {
                 let file = match File::open(&path) {
                     Ok(f) => f,
                     Err(_) => continue,
+                    // TODO should we panic here?
                 };
 
                 let file_id = match FileId::from_file(&file) {
                     Ok(id) => id,
                     Err(_) => continue,
+                    // TODO should we panic here
                 };
 
                 // Try to find matching persisted state by FileId
@@ -1179,7 +1181,7 @@ impl FileHandler {
         workers_done_tx: std::sync::mpsc::Sender<()>,
         worker_ctx: WorkerContext,
     ) {
-        use tokio::time::{Instant, timeout_at};
+        use tokio::time::{timeout_at, Instant};
 
         let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
         let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
