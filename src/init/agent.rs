@@ -61,7 +61,7 @@ pub struct Agent {
     port_map: HashMap<SocketAddr, Listener>,
     sending_queue_size: usize,
     environment: String,
-    logs_rx: Option<BoundedReceiver<ResourceLogs>>,
+    logs_rx: Option<BoundedReceiver<Message<ResourceLogs>>>,
     pipeline_flush_sub: Option<FlushSubscriber>,
     exporters_flush_sub: Option<FlushSubscriber>,
     otlp_default_receiver: bool,
@@ -88,7 +88,7 @@ impl Agent {
         }
     }
 
-    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<ResourceLogs>) -> Self {
+    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<Message<ResourceLogs>>) -> Self {
         self.logs_rx = Some(logs_rx);
         self
     }
@@ -984,12 +984,12 @@ impl Agent {
             receivers_task_set.spawn(async move {
                 loop {
                     select! {
-                        rl = logs_rx.next() => {
-                            match rl {
+                        msg = logs_rx.next() => {
+                            match msg {
                                 None => break,
-                                Some(rl) => {
+                                Some(msg) => {
                                     if let Some(out) = &logs_output {
-                                        if let Err(e) = out.send(Message{metadata: None, payload: vec![rl]}).await {
+                                        if let Err(e) = out.send(msg).await {
                                             // todo: is this possibly in a logging loop path?
                                             warn!("Unable to send logs to logs output: {}", e)
                                         }
