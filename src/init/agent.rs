@@ -926,7 +926,7 @@ impl Agent {
                     kafka_offset_committer = kafka.take_offset_committer();
 
                     let receivers_cancel = receivers_cancel.clone();
-                    receivers_task_set.spawn(async move { kafka.run(receivers_cancel).await });
+                    receivers_task_set.spawn(kafka.run(receivers_cancel));
                 }
                 #[cfg(feature = "fluent_receiver")]
                 ReceiverConfig::Fluent(config) => {
