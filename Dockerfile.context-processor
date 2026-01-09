@@ -1,5 +1,5 @@
 # Python stage - get Python 3.13 with dev headers from Ubuntu
-FROM ubuntu:22.04 as python-builder
+FROM ubuntu:22.04 AS python-builder
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     software-properties-common \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Build stage
-FROM rust:1.91 as builder
+FROM rust:1.91 AS builder
 
 # Copy Python 3.13 from python-builder stage
 COPY --from=python-builder /usr/bin/python3.13 /usr/bin/python3.13
