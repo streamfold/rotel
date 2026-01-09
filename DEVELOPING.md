@@ -26,8 +26,11 @@ Add the `--release` flag to build a release version.
 
 ## Running tests
 
+We prefer to use [nextest](https://nexte.st/) to run tests in Rotel, follow their install
+instructions and run as:
+
 ```shell
-cargo test
+cargo nextest run
 ```
 
 ## Profiling

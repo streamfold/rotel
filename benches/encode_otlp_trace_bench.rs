@@ -18,7 +18,8 @@ struct TestInput {
 }
 
 fn build_request_builder() -> RequestBuilder<ExportTraceServiceRequest> {
-    let config = otlp::trace_config_builder(
+    let config = otlp::config_builder(
+        "trace",
         Endpoint::Base("http://localhost:4317".to_string()),
         Protocol::Grpc,
     )
@@ -53,6 +54,7 @@ fn encode_trace(c: &mut Criterion) {
                             resource_spans: ti.reqs.resource_spans,
                         },
                         100,
+                        None,
                     )
                 },
                 BatchSize::SmallInput,

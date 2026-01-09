@@ -269,7 +269,7 @@ X-Ray exporter.
 
 | Option                             | Default   | Options          |
 |------------------------------------|-----------|------------------|
-| --awsxray-exporter-region          | us-east-1 | aws region codes |
+| --awsxray-exporter-region | `AWS_REGION` env-var if set, then `AWS_DEFAULT_REGION`, then `us-east-1` | aws region codes |
 | --awsxray-exporter-custom-endpoint |           |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
@@ -287,7 +287,7 @@ exporter.
 
 | Option                                                 | Default          | Options          |
 |--------------------------------------------------------|------------------|------------------|
-| --awsemf-exporter-region                               | us-east-1        | aws region codes |
+| --awsemf-exporter-region | `AWS_REGION` env-var if set, then `AWS_DEFAULT_REGION`, then `us-east-1` | aws region codes |
 | --awsemf-exporter-custom-endpoint                      |                  |                  |
 | --awsemf-exporter-log-group-name                       | /metrics/default |                  |
 | --awsemf-exporter-log-stream-name                      | otel-stream      |                  |

@@ -49,8 +49,7 @@ use tokio::select;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "prometheus")]
 use crate::telemetry::metrics_server::MetricsServer;
@@ -62,10 +61,11 @@ pub struct Agent {
     port_map: HashMap<SocketAddr, Listener>,
     sending_queue_size: usize,
     environment: String,
-    logs_rx: Option<BoundedReceiver<ResourceLogs>>,
+    logs_rx: Option<BoundedReceiver<Message<ResourceLogs>>>,
     pipeline_flush_sub: Option<FlushSubscriber>,
     exporters_flush_sub: Option<FlushSubscriber>,
     otlp_default_receiver: bool,
+    init_complete_chan: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl Agent {
@@ -84,10 +84,11 @@ impl Agent {
             pipeline_flush_sub: None,
             exporters_flush_sub: None,
             otlp_default_receiver: true,
+            init_complete_chan: None,
         }
     }
 
-    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<ResourceLogs>) -> Self {
+    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<Message<ResourceLogs>>) -> Self {
         self.logs_rx = Some(logs_rx);
         self
     }
@@ -99,6 +100,14 @@ impl Agent {
 
     pub fn with_exporters_flush(mut self, exporters_flush_sub: FlushSubscriber) -> Self {
         self.exporters_flush_sub = Some(exporters_flush_sub);
+        self
+    }
+
+    pub fn with_init_complete_chan(
+        mut self,
+        init_complete_chan: tokio::sync::oneshot::Sender<bool>,
+    ) -> Self {
+        self.init_complete_chan = Some(init_complete_chan);
         self
     }
 
@@ -979,10 +988,10 @@ impl Agent {
             receivers_task_set.spawn(async move {
                 loop {
                     select! {
-                        rl = logs_rx.next() => {
-                            match rl {
+                        msg = logs_rx.next() => {
+                            match msg {
                                 None => break,
-                                Some(rl) => {
+                                Some(msg) => {
                                     if let Some(out) = &logs_output {
                                         if let Err(e) = out.send(Message{metadata: None, request_context: None,payload: vec![rl]}).await {
                                             // todo: is this possibly in a logging loop path?
@@ -1006,6 +1015,13 @@ impl Agent {
             } else {
                 None
             };
+
+        // Signal completed initialization
+        if let Some(init_complete_chan) = self.init_complete_chan.take() {
+            if let Err(e) = init_complete_chan.send(true) {
+                warn!(error = ?e, "failed to notify completed initialization")
+            }
+        }
 
         let mut result = Ok(());
         select! {

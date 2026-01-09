@@ -55,6 +55,7 @@ pub enum RequestContext {
 #[derive(Clone, Debug, PartialEq)]
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
+    Forwarder(ForwarderMetadata),
 }
 
 #[allow(clippy::from_over_into)]
@@ -85,6 +86,13 @@ impl MessageMetadata {
         }
     }
 
+    pub fn forwarder(metadata: ForwarderMetadata) -> Self {
+        Self {
+            data: MessageMetadataInner::Forwarder(metadata),
+            ref_count: Arc::new(AtomicU32::new(1)),
+        }
+    }
+
     /// Get the inner metadata data
     pub fn inner(&self) -> &MessageMetadataInner {
         &self.data
@@ -97,8 +105,10 @@ impl MessageMetadata {
 
     /// Helper method to get Kafka metadata if available
     pub fn as_kafka(&self) -> Option<&KafkaMetadata> {
-        match &self.data {
-            MessageMetadataInner::Kafka(km) => Some(km),
+        if let MessageMetadataInner::Kafka(km) = &self.data {
+            Some(km)
+        } else {
+            None
         }
     }
 
@@ -220,6 +230,38 @@ impl PartialEq for KafkaMetadata {
     }
 }
 
+#[derive(Clone)]
+pub struct ForwarderMetadata {
+    request_id: String,
+    ack_chan: Option<BoundedSender<ForwarderAcknowledgement>>,
+}
+
+impl ForwarderMetadata {
+    pub fn new(
+        request_id: String,
+        ack_chan: Option<BoundedSender<ForwarderAcknowledgement>>,
+    ) -> Self {
+        Self {
+            request_id,
+            ack_chan,
+        }
+    }
+}
+
+impl std::fmt::Debug for ForwarderMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ForwarderMetadata")
+            .field("request_id", &self.request_id)
+            .finish()
+    }
+}
+
+impl PartialEq for ForwarderMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.request_id == other.request_id
+    }
+}
+
 // TODO: consider whether we want a generic reason or enum.
 pub trait Ack {
     #[allow(async_fn_in_trait)]
@@ -243,6 +285,16 @@ impl Ack for MessageMetadata {
                                 offset: km.offset,
                                 partition: km.partition,
                                 topic_id: km.topic_id,
+                            }))
+                            .await?;
+                    }
+                }
+                MessageMetadataInner::Forwarder(fm) => {
+                    if let Some(ack_chan) = &fm.ack_chan {
+                        ack_chan
+                            .send(ForwarderAcknowledgement::Ack(ForwarderPayloadDetails {
+                                // TODO: consume data to remove clone
+                                request_id: fm.request_id.clone(),
                             }))
                             .await?;
                     }
@@ -271,118 +323,22 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
+                MessageMetadataInner::Forwarder(fm) => {
+                    if let Some(ack_chan) = &fm.ack_chan {
+                        ack_chan
+                            .send(ForwarderAcknowledgement::Nack(ForwarderPayloadDetails {
+                                // TODO: consume data to remove clone
+                                request_id: fm.request_id.clone(),
+                            }))
+                            .await?;
+                    }
+                }
             }
         }
         Ok(())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_reference_counting_single_ack() {
-        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
-
-        let kafka_metadata = KafkaMetadata::new(123, 0, 1, Some(ack_tx));
-
-        let metadata = MessageMetadata::kafka(kafka_metadata);
-
-        // Should start with ref count 1
-        assert_eq!(metadata.ref_count(), 1);
-
-        // Call ack() once - should send acknowledgment since count goes to 0
-        metadata.ack().await.unwrap();
-
-        // Should receive the acknowledgment
-        let ack = ack_rx.next().await.unwrap();
-        match ack {
-            KafkaAcknowledgement::Ack(kafka_ack) => {
-                assert_eq!(kafka_ack.offset, 123);
-                assert_eq!(kafka_ack.partition, 0);
-                assert_eq!(kafka_ack.topic_id, 1);
-            }
-            _ => panic!("Expected Ack"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_reference_counting_clone_and_ack() {
-        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
-
-        let kafka_metadata = KafkaMetadata::new(456, 2, 3, Some(ack_tx));
-
-        let metadata1 = MessageMetadata::kafka(kafka_metadata);
-        assert_eq!(metadata1.ref_count(), 1);
-
-        // Clone should increment ref count
-        let metadata2 = metadata1.clone();
-        assert_eq!(metadata1.ref_count(), 2);
-        assert_eq!(metadata2.ref_count(), 2);
-
-        // First ack() should not send acknowledgment (count goes from 2 to 1)
-        metadata1.ack().await.unwrap();
-        assert_eq!(metadata2.ref_count(), 1);
-
-        // Should not have received acknowledgment yet
-        let result =
-            tokio::time::timeout(std::time::Duration::from_millis(100), ack_rx.next()).await;
-        assert!(result.is_err(), "Should not receive ack yet");
-
-        // Second ack() should send acknowledgment (count goes from 1 to 0)
-        metadata2.ack().await.unwrap();
-
-        // Should receive the acknowledgment now
-        let ack = ack_rx.next().await.unwrap();
-        match ack {
-            KafkaAcknowledgement::Ack(kafka_ack) => {
-                assert_eq!(kafka_ack.offset, 456);
-                assert_eq!(kafka_ack.partition, 2);
-                assert_eq!(kafka_ack.topic_id, 3);
-            }
-            _ => panic!("Expected Ack"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_shallow_clone_does_not_increment_ref_count() {
-        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
-
-        let kafka_metadata = KafkaMetadata::new(789, 1, 2, Some(ack_tx));
-
-        let metadata1 = MessageMetadata::kafka(kafka_metadata);
-        assert_eq!(metadata1.ref_count(), 1);
-
-        // Shallow clone should NOT increment ref count (used for retry scenarios)
-        let metadata2 = metadata1.shallow_clone();
-        assert_eq!(metadata1.ref_count(), 1);
-        assert_eq!(metadata2.ref_count(), 1);
-
-        // First ack() should send acknowledgment immediately (count goes from 1 to 0)
-        metadata1.ack().await.unwrap();
-
-        // Should receive acknowledgment
-        let ack = ack_rx.next().await.unwrap();
-        match ack {
-            KafkaAcknowledgement::Ack(kafka_ack) => {
-                assert_eq!(kafka_ack.offset, 789);
-                assert_eq!(kafka_ack.partition, 1);
-                assert_eq!(kafka_ack.topic_id, 2);
-            }
-            _ => panic!("Expected Ack"),
-        }
-
-        // Second ack() on shallow clone should not send another acknowledgment
-        // (since the first ack already sent it when count reached 0)
-        metadata2.ack().await.unwrap();
-
-        // Should not receive another acknowledgment
-        let result =
-            tokio::time::timeout(std::time::Duration::from_millis(100), ack_rx.next()).await;
-        assert!(result.is_err(), "Should not receive second ack");
-    }
-}
 pub enum KafkaAcknowledgement {
     Ack(KafkaAck),
     Nack(KafkaNack),
@@ -399,6 +355,15 @@ pub struct KafkaNack {
     pub partition: i32,
     pub topic_id: u8,
     pub reason: ExporterError,
+}
+
+pub enum ForwarderAcknowledgement {
+    Ack(ForwarderPayloadDetails),
+    Nack(ForwarderPayloadDetails),
+}
+
+pub struct ForwarderPayloadDetails {
+    pub request_id: String,
 }
 
 /// Error types that can occur during export operations
@@ -599,5 +564,112 @@ impl TryFrom<OTLPPayload> for ExportLogsServiceRequest {
                 Err("Cannot convert metrics payload to logs service request")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_reference_counting_single_ack() {
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        let kafka_metadata = KafkaMetadata::new(123, 0, 1, Some(ack_tx));
+
+        let metadata = MessageMetadata::kafka(kafka_metadata);
+
+        // Should start with ref count 1
+        assert_eq!(metadata.ref_count(), 1);
+
+        // Call ack() once - should send acknowledgment since count goes to 0
+        metadata.ack().await.unwrap();
+
+        // Should receive the acknowledgment
+        let ack = ack_rx.next().await.unwrap();
+        match ack {
+            KafkaAcknowledgement::Ack(kafka_ack) => {
+                assert_eq!(kafka_ack.offset, 123);
+                assert_eq!(kafka_ack.partition, 0);
+                assert_eq!(kafka_ack.topic_id, 1);
+            }
+            _ => panic!("Expected Ack"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reference_counting_clone_and_ack() {
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        let kafka_metadata = KafkaMetadata::new(456, 2, 3, Some(ack_tx));
+
+        let metadata1 = MessageMetadata::kafka(kafka_metadata);
+        assert_eq!(metadata1.ref_count(), 1);
+
+        // Clone should increment ref count
+        let metadata2 = metadata1.clone();
+        assert_eq!(metadata1.ref_count(), 2);
+        assert_eq!(metadata2.ref_count(), 2);
+
+        // First ack() should not send acknowledgment (count goes from 2 to 1)
+        metadata1.ack().await.unwrap();
+        assert_eq!(metadata2.ref_count(), 1);
+
+        // Should not have received acknowledgment yet
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), ack_rx.next()).await;
+        assert!(result.is_err(), "Should not receive ack yet");
+
+        // Second ack() should send acknowledgment (count goes from 1 to 0)
+        metadata2.ack().await.unwrap();
+
+        // Should receive the acknowledgment now
+        let ack = ack_rx.next().await.unwrap();
+        match ack {
+            KafkaAcknowledgement::Ack(kafka_ack) => {
+                assert_eq!(kafka_ack.offset, 456);
+                assert_eq!(kafka_ack.partition, 2);
+                assert_eq!(kafka_ack.topic_id, 3);
+            }
+            _ => panic!("Expected Ack"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shallow_clone_does_not_increment_ref_count() {
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(1);
+
+        let kafka_metadata = KafkaMetadata::new(789, 1, 2, Some(ack_tx));
+
+        let metadata1 = MessageMetadata::kafka(kafka_metadata);
+        assert_eq!(metadata1.ref_count(), 1);
+
+        // Shallow clone should NOT increment ref count (used for retry scenarios)
+        let metadata2 = metadata1.shallow_clone();
+        assert_eq!(metadata1.ref_count(), 1);
+        assert_eq!(metadata2.ref_count(), 1);
+
+        // First ack() should send acknowledgment immediately (count goes from 1 to 0)
+        metadata1.ack().await.unwrap();
+
+        // Should receive acknowledgment
+        let ack = ack_rx.next().await.unwrap();
+        match ack {
+            KafkaAcknowledgement::Ack(kafka_ack) => {
+                assert_eq!(kafka_ack.offset, 789);
+                assert_eq!(kafka_ack.partition, 1);
+                assert_eq!(kafka_ack.topic_id, 2);
+            }
+            _ => panic!("Expected Ack"),
+        }
+
+        // Second ack() on shallow clone should not send another acknowledgment
+        // (since the first ack already sent it when count reached 0)
+        metadata2.ack().await.unwrap();
+
+        // Should not receive another acknowledgment
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), ack_rx.next()).await;
+        assert!(result.is_err(), "Should not receive second ack");
     }
 }
