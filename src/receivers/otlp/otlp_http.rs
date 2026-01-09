@@ -11,6 +11,12 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::service::TowerToHyperService;
+use opentelemetry_proto::tonic::collector::logs::v1::{
+    ExportLogsServiceRequest, ExportLogsServiceResponse,
+};
+use opentelemetry_proto::tonic::collector::metrics::v1::{
+    ExportMetricsServiceRequest, ExportMetricsServiceResponse,
+};
 use opentelemetry_proto::tonic::collector::trace::v1::{
     ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
@@ -26,20 +32,16 @@ use tracing::{debug, error};
 use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::topology::batch::BatchSizer;
-use crate::topology::payload::{Message, OTLPInto};
+use crate::topology::payload::{Message, OTLPInto, RequestContext};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
-use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsServiceRequest, ExportLogsServiceResponse,
-};
-use opentelemetry_proto::tonic::collector::metrics::v1::{
-    ExportMetricsServiceRequest, ExportMetricsServiceResponse,
-};
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -69,6 +71,8 @@ pub struct OTLPHttpServerBuilder {
     metrics_path: String,
     logs_path: String,
     header_timeout: Option<Duration>,
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 }
 
 impl OTLPHttpServerBuilder {
@@ -112,6 +116,16 @@ impl OTLPHttpServerBuilder {
         }
     }
 
+    pub fn with_include_metadata(mut self, include: bool) -> Self {
+        self.include_metadata = include;
+        self
+    }
+
+    pub fn with_headers_to_include(mut self, headers: Vec<String>) -> Self {
+        self.headers_to_include = headers;
+        self
+    }
+
     pub fn build(self) -> OTLPHttpServer {
         OTLPHttpServer {
             trace_output: self.trace_output,
@@ -121,6 +135,8 @@ impl OTLPHttpServerBuilder {
             traces_path: self.traces_path,
             metrics_path: self.metrics_path,
             logs_path: self.logs_path,
+            include_metadata: self.include_metadata,
+            headers_to_include: self.headers_to_include,
         }
     }
 }
@@ -133,6 +149,8 @@ pub struct OTLPHttpServer {
     pub metrics_path: String,
     pub logs_path: String,
     header_timeout: Duration,
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 }
 
 impl OTLPHttpServer {
@@ -152,6 +170,8 @@ impl OTLPHttpServer {
             self.traces_path.clone(),
             self.metrics_path.clone(),
             self.logs_path.clone(),
+            self.include_metadata,
+            self.headers_to_include.clone(),
         );
 
         // To bridge Tower->Hyper we must wrap the tower service
@@ -251,6 +271,8 @@ fn build_service(
     traces_path: String,
     metrics_path: String,
     logs_path: String,
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 ) -> Trace<
     RequestBodyLimit<Compression<ValidateRequestHeader<OTLPService, ValidateOTLPContentType>>>,
     HttpMakeClassifier,
@@ -276,6 +298,8 @@ fn build_service(
             traces_path,
             metrics_path,
             logs_path,
+            include_metadata,
+            headers_to_include,
         ))
 }
 
@@ -287,6 +311,8 @@ struct OTLPService {
     traces_path: String,
     metrics_path: String,
     logs_path: String,
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
     accepted_spans_records_counter: Counter<u64>,
     accepted_metric_points_counter: Counter<u64>,
     accepted_log_records_counter: Counter<u64>,
@@ -304,6 +330,8 @@ impl OTLPService {
         traces_path: String,
         metrics_path: String,
         logs_path: String,
+        include_metadata: bool,
+        headers_to_include: Vec<String>,
     ) -> Self {
         // Compute this once
 
@@ -314,6 +342,8 @@ impl OTLPService {
             traces_path,
             metrics_path,
             logs_path,
+            include_metadata,
+            headers_to_include,
             accepted_spans_records_counter: get_meter()
                 .u64_counter("rotel_receiver_accepted_spans")
                 .with_description(
@@ -375,6 +405,10 @@ where
         match req.method() {
             &Method::POST => {
                 let path = req.uri().path();
+                let include_metadata = self.include_metadata;
+                let headers_to_include = self.headers_to_include.clone();
+                let tags = self.tags.clone();
+
                 if path == self.traces_path {
                     if self.trace_output.is_none() {
                         return Box::pin(futures::future::ok(
@@ -384,13 +418,20 @@ where
                     let output = self.trace_output.clone().unwrap();
                     let accepted = self.accepted_spans_records_counter.clone();
                     let refused = self.refused_spans_records_counter.clone();
-                    let tags = self.tags.clone();
                     return Box::pin(handle::<
                         H,
                         ExportTraceServiceRequest,
                         ExportTraceServiceResponse,
                         ResourceSpans,
-                    >(req, output, accepted, refused, tags));
+                    >(
+                        req,
+                        output,
+                        accepted,
+                        refused,
+                        tags,
+                        include_metadata,
+                        headers_to_include,
+                    ));
                 }
                 if path == self.metrics_path {
                     if self.metrics_output.is_none() {
@@ -401,13 +442,20 @@ where
                     let output = self.metrics_output.clone().unwrap();
                     let accepted = self.accepted_metric_points_counter.clone();
                     let refused = self.refused_metric_points_counter.clone();
-                    let tags = self.tags.clone();
                     return Box::pin(handle::<
                         H,
                         ExportMetricsServiceRequest,
                         ExportMetricsServiceResponse,
                         ResourceMetrics,
-                    >(req, output, accepted, refused, tags));
+                    >(
+                        req,
+                        output,
+                        accepted,
+                        refused,
+                        tags,
+                        include_metadata,
+                        headers_to_include,
+                    ));
                 }
                 if path == self.logs_path {
                     if self.logs_output.is_none() {
@@ -418,13 +466,20 @@ where
                     let output = self.logs_output.clone().unwrap();
                     let accepted = self.accepted_log_records_counter.clone();
                     let refused = self.refused_log_records_counter.clone();
-                    let tags = self.tags.clone();
                     return Box::pin(handle::<
                         H,
                         ExportLogsServiceRequest,
                         ExportLogsServiceResponse,
                         ResourceLogs,
-                    >(req, output, accepted, refused, tags));
+                    >(
+                        req,
+                        output,
+                        accepted,
+                        refused,
+                        tags,
+                        include_metadata,
+                        headers_to_include,
+                    ));
                 }
                 Box::pin(futures::future::ok(
                     response_4xx(StatusCode::NOT_FOUND).unwrap(),
@@ -481,23 +536,63 @@ where
     Ok(decoded_bytes)
 }
 
+/// Extract specified HTTP headers and store them in a HashMap for metadata.
+/// Headers are normalized to lowercase for consistent lookup.
+fn extract_headers_to_request_context<H: Body>(
+    req: &Request<H>,
+    headers_to_include: &[String],
+) -> HashMap<String, String> {
+    let mut headers_map = HashMap::new();
+    let request_headers = req.headers();
+
+    for header_name in headers_to_include {
+        // Normalize header name: lowercase for consistency
+        let normalized = header_name.to_lowercase();
+
+        if let Ok(header_name_parsed) = normalized.parse::<http::HeaderName>() {
+            if let Some(header_value) = request_headers.get(&header_name_parsed) {
+                if let Ok(value_str) = header_value.to_str() {
+                    let header_value_str = value_str.to_string();
+                    headers_map.insert(normalized.clone(), header_value_str);
+                }
+            }
+        }
+    }
+
+    headers_map
+}
+
 async fn handle<
     H: Body,
     ExpReq: prost::Message + DeserializeOwned + Default + OTLPInto<Vec<T>>,
     ExpResp: prost::Message + Serialize + Default,
-    T: prost::Message,
+    T: prost::Message + crate::topology::batch::BatchSizer,
 >(
     req: Request<H>,
     output: OTLPOutput<Message<T>>,
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
     tags: [KeyValue; 1],
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 ) -> Result<Response<Full<Bytes>>, hyper::Error>
 where
     <H as Body>::Error: Display + Debug + Send + Sync + ToString,
-    [T]: BatchSizer,
+    [T]: crate::topology::batch::BatchSizer,
 {
-    // We've already validated this header exists
+    // Extract headers before consuming the request body
+    let http_request_ctx = if include_metadata && !headers_to_include.is_empty() {
+        let headers_map = extract_headers_to_request_context(&req, &headers_to_include);
+
+        if !headers_map.is_empty() {
+            Some(RequestContext::Http(headers_map))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let ct = req.headers().get(CONTENT_TYPE).unwrap().clone();
 
     let decoded_bytes = decode_body(req).await;
@@ -506,7 +601,7 @@ where
     }
 
     let mut json_resp = false;
-    let req = match ct.to_str().unwrap() {
+    let otlp_req = match ct.to_str().unwrap() {
         PROTOBUF_CT => {
             let decoded = ExpReq::decode(decoded_bytes.unwrap());
             if let Err(e) = decoded {
@@ -544,12 +639,13 @@ where
         resp_headers.insert(CONTENT_TYPE, HeaderValue::from_str(PROTOBUF_CT).unwrap());
     }
 
-    let otlp_payload = ExpReq::otlp_into(req);
+    let otlp_payload = otlp_req.otlp_into();
     let count = BatchSizer::size_of(otlp_payload.as_slice());
 
     match output
         .send(Message {
             metadata: None,
+            request_context: http_request_ctx,
             payload: otlp_payload,
         })
         .await
@@ -634,6 +730,7 @@ mod tests {
         MAX_BODY_SIZE, OTLPHttpServer, OTLPService, ValidateOTLPContentType, build_service,
     };
     use crate::receivers::otlp_output::OTLPOutput;
+    use crate::topology::payload::RequestContext;
     use hyper_util::service::TowerToHyperService;
     use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
     use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
@@ -981,6 +1078,8 @@ mod tests {
             "/v1/traces".to_string(),
             "/v1/metrics".to_string(),
             "/v1/logs".to_string(),
+            false,
+            vec![],
         );
         let svc = TowerToHyperService::new(svc);
 
@@ -993,5 +1092,273 @@ mod tests {
             .pool_max_idle_per_host(2)
             .timer(TokioTimer::new())
             .build::<_, Full<Bytes>>(HttpConnector::new())
+    }
+
+    fn new_svc_with_metadata(
+        include_metadata: bool,
+        headers_to_include: Vec<String>,
+    ) -> (
+        TowerToHyperService<
+            Trace<
+                RequestBodyLimit<
+                    Compression<ValidateRequestHeader<OTLPService, ValidateOTLPContentType>>,
+                >,
+                HttpMakeClassifier,
+            >,
+        >,
+        BoundedReceiver<crate::topology::payload::Message<ResourceSpans>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceMetrics>>,
+        BoundedReceiver<crate::topology::payload::Message<ResourceLogs>>,
+    ) {
+        let (trace_tx, trace_rx) = bounded::<crate::topology::payload::Message<ResourceSpans>>(10);
+        let (metrics_tx, metrics_rx) =
+            bounded::<crate::topology::payload::Message<ResourceMetrics>>(10);
+        let (logs_tx, logs_rx) = bounded::<crate::topology::payload::Message<ResourceLogs>>(10);
+        let trace_output = OTLPOutput::new(trace_tx);
+        let metrics_output = OTLPOutput::new(metrics_tx);
+        let logs_output = OTLPOutput::new(logs_tx);
+
+        let svc = build_service(
+            Some(trace_output),
+            Some(metrics_output),
+            Some(logs_output),
+            "/v1/traces".to_string(),
+            "/v1/metrics".to_string(),
+            "/v1/logs".to_string(),
+            include_metadata,
+            headers_to_include,
+        );
+        let svc = TowerToHyperService::new(svc);
+
+        (svc, trace_rx, metrics_rx, logs_rx)
+    }
+
+    #[tokio::test]
+    async fn http_metadata_extracted_for_traces() {
+        let example_headers = FakeOTLP::example_headers();
+        let header_names: Vec<String> = example_headers.keys().cloned().collect();
+
+        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(true, header_names.clone());
+
+        let trace_req = FakeOTLP::trace_service_request();
+        let mut buf = Vec::with_capacity(trace_req.encoded_len());
+        assert_ok!(trace_req.encode(&mut buf));
+        let buf = Bytes::from(buf);
+
+        let mut req_builder = Request::builder()
+            .uri("/v1/traces")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/x-protobuf");
+
+        // Add example headers from FakeOTLP
+        for (key, value) in &example_headers {
+            req_builder = req_builder.header(key, value.as_str());
+        }
+
+        let req: Request<Full<Bytes>> = req_builder.body(Full::new(buf)).unwrap();
+
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is present
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                // Verify all example headers are present
+                for (key, expected_value) in &example_headers {
+                    assert_eq!(
+                        h.get(key),
+                        Some(expected_value),
+                        "Header {} should be present with value {}",
+                        key,
+                        expected_value
+                    );
+                }
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_metadata_not_extracted_when_disabled() {
+        let example_headers = FakeOTLP::example_headers();
+        let header_names: Vec<String> = example_headers.keys().cloned().collect();
+        let first_header = header_names.first().unwrap();
+
+        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(false, vec![first_header.clone()]);
+
+        let trace_req = FakeOTLP::trace_service_request();
+        let mut buf = Vec::with_capacity(trace_req.encoded_len());
+        assert_ok!(trace_req.encode(&mut buf));
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/traces")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/x-protobuf")
+            .header(first_header, example_headers.get(first_header).unwrap())
+            .body(Full::new(buf))
+            .unwrap();
+
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify request_context is NOT present when disabled
+        assert!(msg.request_context.is_none());
+    }
+
+    #[tokio::test]
+    async fn http_metadata_not_extracted_when_no_headers_specified() {
+        let example_headers = FakeOTLP::example_headers();
+        let first_header = example_headers.keys().next().unwrap();
+
+        let (svc, mut trace_rx, _, _) = new_svc_with_metadata(true, vec![]);
+
+        let trace_req = FakeOTLP::trace_service_request();
+        let mut buf = Vec::with_capacity(trace_req.encoded_len());
+        assert_ok!(trace_req.encode(&mut buf));
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/traces")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/x-protobuf")
+            .header(first_header, example_headers.get(first_header).unwrap())
+            .body(Full::new(buf))
+            .unwrap();
+
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify request_context is NOT present when no headers specified
+        assert!(msg.request_context.is_none());
+    }
+
+    #[tokio::test]
+    async fn http_metadata_extracted_for_metrics() {
+        let (svc, _, mut metrics_rx, _) =
+            new_svc_with_metadata(true, vec!["my-custom-header".to_string()]);
+
+        let metrics_req = FakeOTLP::metrics_service_request();
+        let mut buf = Vec::with_capacity(metrics_req.encoded_len());
+        assert_ok!(metrics_req.encode(&mut buf));
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/metrics")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/x-protobuf")
+            .header("my-custom-header", "metrics-value")
+            .body(Full::new(buf))
+            .unwrap();
+
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = metrics_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify request_context is present
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                assert_eq!(
+                    h.get("my-custom-header"),
+                    Some(&"metrics-value".to_string())
+                );
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_metadata_extracted_for_logs() {
+        let (svc, _, _, mut logs_rx) =
+            new_svc_with_metadata(true, vec!["my-custom-header".to_string()]);
+
+        let logs_req = FakeOTLP::logs_service_request();
+        let mut buf = Vec::with_capacity(logs_req.encoded_len());
+        assert_ok!(logs_req.encode(&mut buf));
+        let buf = Bytes::from(buf);
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/logs")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/x-protobuf")
+            .header("my-custom-header", "logs-value")
+            .body(Full::new(buf))
+            .unwrap();
+
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = logs_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify request_context is present
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                assert_eq!(h.get("my-custom-header"), Some(&"logs-value".to_string()));
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_metadata_header_case_insensitive() {
+        let (svc, mut trace_rx, _, _) =
+            new_svc_with_metadata(true, vec!["My-Custom-Header".to_string()]);
+
+        let trace_req = FakeOTLP::trace_service_request();
+        let mut buf = Vec::with_capacity(trace_req.encoded_len());
+        assert_ok!(trace_req.encode(&mut buf));
+        let buf = Bytes::from(buf);
+
+        // Send header with different case
+        let req: Request<Full<Bytes>> = Request::builder()
+            .uri("/v1/traces")
+            .method(Method::POST)
+            .header(CONTENT_TYPE, "application/x-protobuf")
+            .header("my-custom-header", "test-value")
+            .body(Full::new(buf))
+            .unwrap();
+
+        let resp = svc.call(req).await.unwrap();
+        assert_eq!(StatusCode::OK, resp.status());
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify request_context is present and header is normalized to lowercase
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+        match request_context {
+            RequestContext::Http(h) => {
+                // Should be able to retrieve with lowercase
+                assert_eq!(h.get("my-custom-header"), Some(&"test-value".to_string()));
+            }
+            RequestContext::Grpc(h) => {
+                panic!("expecting a Http header: got grpc headers {:?}", h);
+            }
+        }
     }
 }

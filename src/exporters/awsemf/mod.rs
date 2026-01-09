@@ -293,6 +293,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -325,6 +326,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -395,6 +397,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -457,6 +460,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -528,6 +532,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -584,6 +589,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -675,6 +681,7 @@ mod tests {
 
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: all_resource_metrics,
         }])
         .await

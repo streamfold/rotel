@@ -3,6 +3,7 @@ use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::model::trace::{REvent, RLink, RScopeSpans, RSpan, RStatus};
 use crate::py::common::KeyValue;
+use crate::py::request_context::RequestContext;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
@@ -15,6 +16,7 @@ pub struct ResourceSpans {
     pub resource: Arc<Mutex<Option<RResource>>>,
     pub scope_spans: Arc<Mutex<Vec<Arc<Mutex<RScopeSpans>>>>>,
     pub schema_url: String,
+    pub request_context: Option<RequestContext>,
 }
 
 #[pymethods]
@@ -67,6 +69,11 @@ impl ResourceSpans {
     fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
         self.schema_url = schema_url;
         Ok(())
+    }
+
+    #[getter]
+    fn request_context(&self) -> PyResult<Option<RequestContext>> {
+        Ok(self.request_context.clone())
     }
 }
 

@@ -4,7 +4,7 @@ use crate::listener::Listener;
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
-use crate::topology::payload::Message;
+use crate::topology::payload::{Message, RequestContext};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_server::{
@@ -26,6 +26,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::collections::HashMap;
 use std::default::Default;
 use std::error::Error;
 use tokio_util::sync::CancellationToken;
@@ -39,6 +40,8 @@ pub struct OTLPGrpcServerBuilder {
     traces_output: Option<OTLPOutput<Message<ResourceSpans>>>,
     metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 }
 
 impl OTLPGrpcServerBuilder {}
@@ -70,12 +73,24 @@ impl OTLPGrpcServerBuilder {
         self
     }
 
+    pub fn with_include_metadata(mut self, include: bool) -> Self {
+        self.include_metadata = include;
+        self
+    }
+
+    pub fn with_headers_to_include(mut self, headers: Vec<String>) -> Self {
+        self.headers_to_include = headers;
+        self
+    }
+
     pub fn build(self) -> OTLPGrpcServer {
         OTLPGrpcServer {
             traces_output: self.traces_output,
             metrics_output: self.metrics_output,
             logs_output: self.logs_output,
             max_recv_msg_size_mib: self.max_recv_msg_size_mib,
+            include_metadata: self.include_metadata,
+            headers_to_include: self.headers_to_include,
         }
     }
 }
@@ -85,6 +100,8 @@ pub struct OTLPGrpcServer {
     metrics_output: Option<OTLPOutput<Message<ResourceMetrics>>>,
     logs_output: Option<OTLPOutput<Message<ResourceLogs>>>,
     max_recv_msg_size_mib: Option<usize>,
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 }
 
 impl OTLPGrpcServer {
@@ -101,6 +118,8 @@ impl OTLPGrpcServer {
             self.traces_output.clone(),
             self.metrics_output.clone(),
             self.logs_output.clone(),
+            self.include_metadata,
+            self.headers_to_include.clone(),
         );
         let stream = listener.into_stream()?;
 
@@ -174,6 +193,8 @@ struct CollectorService {
     refused_metric_points_counter: Counter<u64>,
     refused_log_records_counter: Counter<u64>,
     tags: [KeyValue; 1],
+    include_metadata: bool,
+    headers_to_include: Vec<String>,
 }
 
 impl CollectorService {
@@ -181,6 +202,8 @@ impl CollectorService {
         traces_tx: Option<OTLPOutput<Message<ResourceSpans>>>,
         metrics_tx: Option<OTLPOutput<Message<ResourceMetrics>>>,
         logs_tx: Option<OTLPOutput<Message<ResourceLogs>>>,
+        include_metadata: bool,
+        headers_to_include: Vec<String>,
     ) -> Self {
         Self {
             traces_tx,
@@ -225,6 +248,29 @@ impl CollectorService {
                 .with_unit("log_records")
                 .build(),
             tags: [KeyValue::new("protocol", "grpc")],
+            include_metadata,
+            headers_to_include,
+        }
+    }
+
+    fn extract_context_from_request<T>(&self, request: &Request<T>) -> Option<RequestContext> {
+        if !self.include_metadata || self.headers_to_include.is_empty() {
+            return None;
+        }
+        let mut metadata_map = HashMap::new();
+        let request_metadata = request.metadata();
+        for key in &self.headers_to_include {
+            let normalized = key.to_lowercase();
+            if let Some(value) = request_metadata.get(&normalized) {
+                if let Ok(value_str) = value.to_str() {
+                    metadata_map.insert(normalized, value_str.to_string());
+                }
+            }
+        }
+        if !metadata_map.is_empty() {
+            Some(RequestContext::Grpc(metadata_map))
+        } else {
+            None
         }
     }
 }
@@ -235,6 +281,7 @@ impl TraceService for CollectorService {
         &self,
         request: Request<ExportTraceServiceRequest>,
     ) -> Result<Response<ExportTraceServiceResponse>, Status> {
+        let req_context = self.extract_context_from_request(&request);
         let trace_request = request.into_inner();
         match &self.traces_tx {
             None => Err(Status::unavailable("OTLP trace receiver is disabled")),
@@ -244,6 +291,7 @@ impl TraceService for CollectorService {
                     .send(Message {
                         metadata: None,
                         payload: trace_request.resource_spans,
+                        request_context: req_context,
                     })
                     .await
                 {
@@ -269,6 +317,7 @@ impl MetricsService for CollectorService {
         &self,
         request: Request<ExportMetricsServiceRequest>,
     ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
+        let req_context = self.extract_context_from_request(&request);
         let metrics_request = request.into_inner();
         match &self.metrics_tx {
             None => Err(Status::unavailable("OTLP metrics receiver is disabled")),
@@ -277,6 +326,7 @@ impl MetricsService for CollectorService {
                 match metrics_tx
                     .send(Message {
                         metadata: None,
+                        request_context: req_context,
                         payload: metrics_request.resource_metrics,
                     })
                     .await
@@ -303,6 +353,7 @@ impl LogsService for CollectorService {
         &self,
         request: Request<ExportLogsServiceRequest>,
     ) -> Result<Response<ExportLogsServiceResponse>, Status> {
+        let req_context = self.extract_context_from_request(&request);
         let logs_request = request.into_inner();
         match &self.logs_tx {
             None => Err(Status::unavailable("OTLP logs receiver is disabled")),
@@ -312,6 +363,7 @@ impl LogsService for CollectorService {
                     .send(Message {
                         metadata: None,
                         payload: logs_request.resource_logs,
+                        request_context: req_context,
                     })
                     .await
                 {
@@ -337,7 +389,7 @@ mod tests {
     use crate::listener::Listener;
     use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
     use crate::receivers::otlp_output::OTLPOutput;
-    use crate::topology::payload::Message;
+    use crate::topology::payload::{Message, RequestContext};
     use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
     use opentelemetry_proto::tonic::collector::logs::v1::{
         ExportLogsServiceRequest, ExportLogsServiceResponse,
@@ -356,6 +408,7 @@ mod tests {
     use std::net::SocketAddr;
     use tokio_test::{assert_err, assert_ok};
     use tokio_util::sync::CancellationToken;
+    use tonic::metadata::{MetadataKey, MetadataValue};
     use tonic::{Response, Status};
     use utilities::otlp::FakeOTLP;
 
@@ -567,5 +620,394 @@ mod tests {
         let mut client = LogsServiceClient::connect(addr).await.unwrap();
 
         client.export(msg).await
+    }
+
+    async fn send_trace_msg_with_metadata(
+        addr: SocketAddr,
+        msg: ExportTraceServiceRequest,
+        metadata: Vec<(&str, &str)>,
+    ) -> Result<Response<ExportTraceServiceResponse>, Status> {
+        let addr = format!("http://{}", addr);
+        let mut client = TraceServiceClient::connect(addr).await.unwrap();
+
+        let mut request = tonic::Request::new(msg);
+        for (key, value) in metadata {
+            // Use from_bytes for non-static strings
+            if let Ok(metadata_key) =
+                MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes())
+            {
+                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value)
+                {
+                    request.metadata_mut().insert(metadata_key, metadata_value);
+                }
+            }
+        }
+
+        client.export(request).await
+    }
+
+    async fn send_metrics_msg_with_metadata(
+        addr: SocketAddr,
+        msg: ExportMetricsServiceRequest,
+        metadata: Vec<(&str, &str)>,
+    ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
+        let addr = format!("http://{}", addr);
+        let mut client = MetricsServiceClient::connect(addr).await.unwrap();
+
+        let mut request = tonic::Request::new(msg);
+        for (key, value) in metadata {
+            // Use from_bytes for non-static strings
+            if let Ok(metadata_key) =
+                MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes())
+            {
+                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value)
+                {
+                    request.metadata_mut().insert(metadata_key, metadata_value);
+                }
+            }
+        }
+
+        client.export(request).await
+    }
+
+    async fn send_logs_msg_with_metadata(
+        addr: SocketAddr,
+        msg: ExportLogsServiceRequest,
+        metadata: Vec<(&str, &str)>,
+    ) -> Result<Response<ExportLogsServiceResponse>, Status> {
+        let addr = format!("http://{}", addr);
+        let mut client = LogsServiceClient::connect(addr).await.unwrap();
+
+        let mut request = tonic::Request::new(msg);
+        for (key, value) in metadata {
+            // Use from_bytes for non-static strings
+            if let Ok(metadata_key) =
+                MetadataKey::<tonic::metadata::Ascii>::from_bytes(key.as_bytes())
+            {
+                if let Ok(metadata_value) = MetadataValue::<tonic::metadata::Ascii>::try_from(value)
+                {
+                    request.metadata_mut().insert(metadata_key, metadata_value);
+                }
+            }
+        }
+
+        client.export(request).await
+    }
+
+    #[tokio::test]
+    async fn grpc_metadata_extracted_for_traces() {
+        let example_headers = FakeOTLP::example_headers();
+        let header_names: Vec<String> = example_headers.keys().cloned().collect();
+
+        let (trace_in_tx, mut trace_rx) = bounded::<Message<ResourceSpans>>(10);
+        let trace_output = OTLPOutput::new(trace_in_tx);
+        let cancel = CancellationToken::new();
+
+        let listener = Listener::listen_async("[::1]:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let srv = OTLPGrpcServer::builder()
+            .with_traces_output(Some(trace_output))
+            .with_include_metadata(true)
+            .with_headers_to_include(header_names.clone())
+            .build();
+        let addr = listener.bound_address().unwrap();
+        let cancel_token = cancel.clone();
+        let srv_fut = async move { srv.serve(listener, cancel_token).await };
+        tokio::pin!(srv_fut);
+
+        let req = FakeOTLP::trace_service_request_with_spans(1, 1);
+        // Convert example headers to Vec of (&str, &str) for the helper function
+        let metadata_vec: Vec<(&str, &str)> = example_headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let send_fut = send_trace_msg_with_metadata(addr, req, metadata_vec);
+
+        tokio::select! {
+            _ = &mut srv_fut => {},
+            msg = send_fut => {
+                assert_ok!(msg);
+                cancel.cancel();
+            }
+        }
+        srv_fut.await.unwrap();
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is present
+        assert!(msg.request_context.is_some());
+        let request_context = msg.request_context.as_ref().unwrap();
+
+        // Verify all example headers are present
+        for (key, expected_value) in &example_headers {
+            match request_context {
+                RequestContext::Http(h) => {
+                    panic!("expected grpc request headers, got http {:?}", h)
+                }
+                RequestContext::Grpc(h) => {
+                    assert_eq!(
+                        h.get(key),
+                        Some(expected_value),
+                        "Metadata key {} should be present with value {}",
+                        key,
+                        expected_value
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_metadata_not_extracted_when_disabled() {
+        let example_headers = FakeOTLP::example_headers();
+        let header_names: Vec<String> = example_headers.keys().cloned().collect();
+        let first_header = header_names.first().unwrap();
+
+        let (trace_in_tx, mut trace_rx) = bounded::<Message<ResourceSpans>>(10);
+        let trace_output = OTLPOutput::new(trace_in_tx);
+        let cancel = CancellationToken::new();
+
+        let listener = Listener::listen_async("[::1]:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let srv = OTLPGrpcServer::builder()
+            .with_traces_output(Some(trace_output))
+            .with_include_metadata(false)
+            .with_headers_to_include(vec![first_header.clone()])
+            .build();
+        let addr = listener.bound_address().unwrap();
+        let cancel_token = cancel.clone();
+        let srv_fut = async move { srv.serve(listener, cancel_token).await };
+        tokio::pin!(srv_fut);
+
+        let req = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let send_fut = send_trace_msg_with_metadata(
+            addr,
+            req,
+            vec![(
+                first_header.as_str(),
+                example_headers.get(first_header).unwrap().as_str(),
+            )],
+        );
+
+        tokio::select! {
+            _ = &mut srv_fut => {},
+            msg = send_fut => {
+                assert_ok!(msg);
+                cancel.cancel();
+            }
+        }
+        srv_fut.await.unwrap();
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is NOT present when disabled
+        assert!(msg.metadata.is_none());
+    }
+
+    #[tokio::test]
+    async fn grpc_metadata_not_extracted_when_no_keys_specified() {
+        let example_headers = FakeOTLP::example_headers();
+        let first_header = example_headers.keys().next().unwrap();
+
+        let (trace_in_tx, mut trace_rx) = bounded::<Message<ResourceSpans>>(10);
+        let trace_output = OTLPOutput::new(trace_in_tx);
+        let cancel = CancellationToken::new();
+
+        let listener = Listener::listen_async("[::1]:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let srv = OTLPGrpcServer::builder()
+            .with_traces_output(Some(trace_output))
+            .with_include_metadata(true)
+            .with_headers_to_include(vec![])
+            .build();
+        let addr = listener.bound_address().unwrap();
+        let cancel_token = cancel.clone();
+        let srv_fut = async move { srv.serve(listener, cancel_token).await };
+        tokio::pin!(srv_fut);
+
+        let req = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let send_fut = send_trace_msg_with_metadata(
+            addr,
+            req,
+            vec![(
+                first_header.as_str(),
+                example_headers.get(first_header).unwrap().as_str(),
+            )],
+        );
+
+        tokio::select! {
+            _ = &mut srv_fut => {},
+            msg = send_fut => {
+                assert_ok!(msg);
+                cancel.cancel();
+            }
+        }
+        srv_fut.await.unwrap();
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is NOT present when no keys specified
+        assert!(msg.metadata.is_none());
+    }
+
+    #[tokio::test]
+    async fn grpc_metadata_extracted_for_metrics() {
+        let (metrics_in_tx, mut metrics_rx) = bounded::<Message<ResourceMetrics>>(10);
+        let metrics_output = OTLPOutput::new(metrics_in_tx);
+        let cancel = CancellationToken::new();
+
+        let listener = Listener::listen_async("[::1]:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let srv = OTLPGrpcServer::builder()
+            .with_metrics_output(Some(metrics_output))
+            .with_include_metadata(true)
+            .with_headers_to_include(vec!["my-custom-header".to_string()])
+            .build();
+        let addr = listener.bound_address().unwrap();
+        let cancel_token = cancel.clone();
+        let srv_fut = async move { srv.serve(listener, cancel_token).await };
+        tokio::pin!(srv_fut);
+
+        let req = FakeOTLP::metrics_service_request_with_metrics(1, 1);
+        let send_fut =
+            send_metrics_msg_with_metadata(addr, req, vec![("my-custom-header", "metrics-value")]);
+
+        tokio::select! {
+            _ = &mut srv_fut => {},
+            msg = send_fut => {
+                assert_ok!(msg);
+                cancel.cancel();
+            }
+        }
+        srv_fut.await.unwrap();
+
+        let msg = metrics_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is present
+        assert!(msg.request_context.is_some());
+        let req_context = msg.request_context.as_ref().unwrap();
+        match req_context {
+            RequestContext::Http(h) => {
+                panic!("expected grpc request headers, got http {:?}", h)
+            }
+            RequestContext::Grpc(h) => {
+                assert_eq!(
+                    h.get("my-custom-header"),
+                    Some(&"metrics-value".to_string())
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_metadata_extracted_for_logs() {
+        let (logs_in_tx, mut logs_rx) = bounded::<Message<ResourceLogs>>(10);
+        let logs_output = OTLPOutput::new(logs_in_tx);
+        let cancel = CancellationToken::new();
+
+        let listener = Listener::listen_async("[::1]:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let srv = OTLPGrpcServer::builder()
+            .with_logs_output(Some(logs_output))
+            .with_include_metadata(true)
+            .with_headers_to_include(vec!["my-custom-header".to_string()])
+            .build();
+        let addr = listener.bound_address().unwrap();
+        let cancel_token = cancel.clone();
+        let srv_fut = async move { srv.serve(listener, cancel_token).await };
+        tokio::pin!(srv_fut);
+
+        let req = FakeOTLP::logs_service_request_with_logs(1, 1);
+        let send_fut =
+            send_logs_msg_with_metadata(addr, req, vec![("my-custom-header", "logs-value")]);
+
+        tokio::select! {
+            _ = &mut srv_fut => {},
+            msg = send_fut => {
+                assert_ok!(msg);
+                cancel.cancel();
+            }
+        }
+        srv_fut.await.unwrap();
+
+        let msg = logs_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is present
+        assert!(msg.request_context.is_some());
+        let req_context = msg.request_context.as_ref().unwrap();
+        match req_context {
+            RequestContext::Http(h) => {
+                panic!("expected grpc request headers, got http {:?}", h)
+            }
+            RequestContext::Grpc(h) => {
+                assert_eq!(h.get("my-custom-header"), Some(&"logs-value".to_string()));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_metadata_key_case_insensitive() {
+        let (trace_in_tx, mut trace_rx) = bounded::<Message<ResourceSpans>>(10);
+        let trace_output = OTLPOutput::new(trace_in_tx);
+        let cancel = CancellationToken::new();
+
+        let listener = Listener::listen_async("[::1]:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let srv = OTLPGrpcServer::builder()
+            .with_traces_output(Some(trace_output))
+            .with_include_metadata(true)
+            .with_headers_to_include(vec!["My-Custom-Header".to_string()])
+            .build();
+        let addr = listener.bound_address().unwrap();
+        let cancel_token = cancel.clone();
+        let srv_fut = async move { srv.serve(listener, cancel_token).await };
+        tokio::pin!(srv_fut);
+
+        let req = FakeOTLP::trace_service_request_with_spans(1, 1);
+        // Send metadata with lowercase key
+        let send_fut =
+            send_trace_msg_with_metadata(addr, req, vec![("my-custom-header", "test-value")]);
+
+        tokio::select! {
+            _ = &mut srv_fut => {},
+            msg = send_fut => {
+                assert_ok!(msg);
+                cancel.cancel();
+            }
+        }
+        srv_fut.await.unwrap();
+
+        let msg = trace_rx.next().await.unwrap();
+        assert_eq!(1, msg.len());
+
+        // Verify metadata is present and key is normalized to lowercase
+        assert!(msg.request_context.is_some());
+        let req_context = msg.request_context.as_ref().unwrap();
+        match req_context {
+            RequestContext::Http(h) => {
+                panic!("expected grpc request headers, got http {:?}", h)
+            }
+            RequestContext::Grpc(h) => {
+                // Should be stored as lowercase
+                assert_eq!(h.get("my-custom-header"), Some(&"test-value".to_string()));
+            }
+        }
     }
 }

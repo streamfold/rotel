@@ -34,6 +34,7 @@ mod types;
 /// Type alias for Datadog payloads using the generic MessagePayload
 use crate::exporters::http::metadata_extractor::MessagePayload;
 use http_body_util::Full;
+
 pub type DatadogPayload = MessagePayload<Full<Bytes>>;
 
 type SvcType<RespBody> = TowerRetry<
@@ -258,6 +259,7 @@ mod tests {
             metadata: Some(crate::topology::payload::MessageMetadata::kafka(
                 kafka_metadata.clone(),
             )),
+            request_context: None,
             payload: traces.resource_spans,
         };
 
@@ -319,6 +321,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -350,6 +353,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await

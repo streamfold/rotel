@@ -37,8 +37,9 @@ impl PushMetricExporter for InternalOTLPMetricsExporter {
             Some(mo) => {
                 let req = ExportMetricsServiceRequest::from(&*metrics);
                 let res = mo
-                    .send(crate::topology::payload::Message {
+                    .send(Message {
                         metadata: None,
+                        request_context: None,
                         payload: req.resource_metrics,
                     })
                     .await;

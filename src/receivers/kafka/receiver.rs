@@ -525,7 +525,7 @@ impl KafkaReceiver {
                                                     true => None,
                                                     false => Some(MessageMetadata::kafka(metadata)),
                                                 };
-                                                let message = payload::Message::new(md, resources);
+                                                let message = payload::Message::new(md, resources, None);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "traces").await {
                                                     break;
                                                 }
@@ -537,7 +537,7 @@ impl KafkaReceiver {
                                                     true => None,
                                                     false => Some(MessageMetadata::kafka(metadata)),
                                                 };
-                                                let message = payload::Message::new(md, resources);
+                                                let message = payload::Message::new(md, resources, None);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "metrics").await {
                                                     break;
                                                 }
@@ -549,7 +549,7 @@ impl KafkaReceiver {
                                                     true => None,
                                                     false => Some(MessageMetadata::kafka(metadata)),
                                                 };
-                                                let message = payload::Message::new(md, resources);
+                                                let message = payload::Message::new(md, resources, None);
                                                 if let Err(KafkaReceiverError::SendCancelled) = Self::send_with_cancellation(output, message, &receivers_cancel, "logs").await {
                                                     break;
                                                 }
@@ -1003,6 +1003,7 @@ mod tests {
                     let message = payload::Message {
                         metadata: None,
                         payload: resources,
+                        request_context: None,
                     };
                     output.send(message).await.expect("Failed to send");
                 }
@@ -1073,6 +1074,7 @@ mod tests {
                     let message = payload::Message {
                         metadata: None,
                         payload: resources,
+                        request_context: None,
                     };
                     output.send(message).await.expect("Failed to send");
                 }
@@ -1558,7 +1560,7 @@ mod tests {
         let output = OTLPOutput::new(tx);
 
         // Fill the channel to make it block by sending a message but not receiving it
-        let blocking_message = payload::Message::new(None, vec![ResourceSpans::default()]);
+        let blocking_message = payload::Message::new(None, vec![ResourceSpans::default()], None);
         output
             .send(blocking_message)
             .await
@@ -1567,7 +1569,7 @@ mod tests {
         // Now the channel is full (size 1) - any new send will block
 
         // Create a message to send
-        let message = payload::Message::new(None, vec![ResourceSpans::default()]);
+        let message = payload::Message::new(None, vec![ResourceSpans::default()], None);
 
         // Create cancellation token
         let cancel_token = CancellationToken::new();

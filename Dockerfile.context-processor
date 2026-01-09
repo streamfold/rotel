@@ -1,0 +1,84 @@
+# Python stage - get Python 3.13 with dev headers from Ubuntu
+FROM ubuntu:22.04 AS python-builder
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y \
+    python3.13 \
+    python3.13-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build stage
+FROM rust:1.91 AS builder
+
+# Copy Python 3.13 from python-builder stage
+COPY --from=python-builder /usr/bin/python3.13 /usr/bin/python3.13
+COPY --from=python-builder /usr/lib/python3.13 /usr/lib/python3.13
+COPY --from=python-builder /usr/include/python3.13 /usr/include/python3.13
+# Copy Python shared libraries (needed for linking)
+RUN mkdir -p /usr/lib/x86_64-linux-gnu
+COPY --from=python-builder /usr/lib/x86_64-linux-gnu/libpython3.13* /usr/lib/x86_64-linux-gnu/
+
+# Install build dependencies (matching DEVELOPING.md requirements)
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    cmake \
+    clang \
+    libclang-dev \
+    libzstd-dev \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables for PyO3 to find Python
+ENV PYTHON_SYS_EXECUTABLE=/usr/bin/python3.13
+
+WORKDIR /app
+
+# Copy manifest files
+COPY Cargo.toml Cargo.lock ./
+COPY rotel_python_processor_sdk/Cargo.toml ./rotel_python_processor_sdk/
+
+# Copy source code
+COPY . .
+
+# Build with pyo3 feature for Python processor support
+# Disable default features (rdkafka, aws_iam) to speed up compilation
+RUN cargo build --release --no-default-features --features pyo3 --target x86_64-unknown-linux-gnu
+
+# Runtime stage
+# Use Debian to match the builder's GLIBC version (rust:1.91 is Debian-based)
+FROM debian:trixie-slim
+
+# Set environment variables for non-interactive apt operations
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y ca-certificates && apt-get clean
+
+# Set environment variables to prevent Python from writing .pyc files and to unbuffer stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install Python 3.13 from Debian repos (trixie has Python 3.13)
+RUN apt-get update && \
+    apt-get install -y python3.13 python3.13-venv python3.13-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.13 as the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
+
+# Copy the built binary from builder stage
+COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/rotel /rotel
+RUN chmod 0755 /rotel
+
+# Copy the context processor
+RUN mkdir -p /processors
+COPY rotel_python_processor_sdk/processors/context_processor.py /processors/context_processor.py
+
+EXPOSE 5418
+
+ENTRYPOINT ["/rotel", "start", "--otlp-http-endpoint", "0.0.0.0:5418", "--otlp-http-include-metadata", "--otlp-http-headers-to-include", "my-custom-header", "--otlp-with-trace-processor", "/processors/context_processor.py", "--exporter", "otlp", "--otlp-exporter-endpoint", "signoz-otel-collector:4317"]

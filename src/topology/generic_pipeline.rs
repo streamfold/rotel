@@ -16,6 +16,8 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 #[cfg(feature = "pyo3")]
 use rotel_sdk::model::{PythonProcessable, register_processor};
 #[cfg(feature = "pyo3")]
+use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
+#[cfg(feature = "pyo3")]
 use std::env;
 use std::error::Error;
 #[cfg(feature = "pyo3")]
@@ -213,10 +215,77 @@ where
         Ok(())
     }
 
+    #[cfg(not(feature = "pyo3"))]
+    fn run_processors(
+        &self,
+        message: Message<T>,
+        _: usize,
+        _: &[String],
+        inspector: &impl Inspect<T>,
+    ) -> Message<T> {
+        inspector.inspect(&message.payload);
+        message
+    }
+
+    #[cfg(feature = "pyo3")]
+    fn run_processors(
+        &self,
+        message: Message<T>,
+        len_processor_modules: usize,
+        processor_modules: &[String],
+        inspector: &impl Inspect<T>,
+    ) -> Message<T> {
+        let mut items = message.payload;
+        let request_context = message.request_context.clone();
+        let mut py_request_context: Option<PyRequestContext> = None;
+        match message.request_context {
+            None => {}
+            Some(ctx) => py_request_context = Some(ctx.into()),
+        }
+        // invoke current middleware layer
+        // todo: expand support for observability or transforms
+        if len_processor_modules > 0 {
+            inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
+        } else {
+            inspector.inspect(&items);
+        }
+        // If any resource attributes were provided on start, set or append them to the resources
+        if !self.resource_attributes.is_empty() {
+            for item in &mut items {
+                item.set_or_append_attributes(self.resource_attributes.clone())
+            }
+        }
+        for p in processor_modules {
+            let mut new_items = Vec::new();
+            // Extract headers from request_context if available
+
+            while !items.is_empty() {
+                let item = items.pop();
+                if let Some(item) = item {
+                    let result = item.process(p, py_request_context.clone());
+                    new_items.push(result);
+                }
+            }
+            items = new_items;
+        }
+
+        if len_processor_modules > 0 {
+            inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
+        }
+
+        // Wrap the processed items back into a Message
+        Message {
+            metadata: message.metadata,
+            request_context,
+            payload: items,
+        }
+    }
+
     #[cfg(feature = "pyo3")]
     fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
         let mut processor_modules = vec![];
         let current_dir = env::current_dir()?;
+
         for (processor_idx, file) in self.processors.iter().enumerate() {
             let file_path = Path::new(file);
 
@@ -226,10 +295,29 @@ where
             } else {
                 current_dir.join(file_path)
             };
-            let code = std::fs::read_to_string(&script_path)?;
+
+            let code = match std::fs::read_to_string(&script_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to read processor script {}: {}",
+                        script_path.display(),
+                        e
+                    )
+                    .into());
+                }
+            };
+
             let module = format!("rotel_processor_{}", processor_idx);
-            register_processor(code, file.clone(), module.clone())?;
-            processor_modules.push(module);
+
+            match register_processor(code, file.clone(), module.clone()) {
+                Ok(_) => {
+                    processor_modules.push(module);
+                }
+                Err(e) => {
+                    return Err(format!("Failed to register processor {}: {}", file, e).into());
+                }
+            }
         }
         Ok(processor_modules)
     }
@@ -255,7 +343,13 @@ where
         batch_timer.tick().await; // consume the immediate tick
 
         #[cfg(feature = "pyo3")]
-        let processor_modules = self.initialize_processors()?;
+        let processor_modules = match self.initialize_processors() {
+            Ok(modules) => modules,
+            Err(e) => {
+                error!(error = ?e, "Failed to initialize processors");
+                vec![]
+            }
+        };
         #[cfg(not(feature = "pyo3"))]
         let processor_modules: Vec<String> = vec![];
 
@@ -308,45 +402,10 @@ where
                         return Ok(());
                     }
 
-                    let message = item.unwrap();
-                    let mut items = message.payload;
+                    let mut message = item.unwrap();
+                    message = self.run_processors(message, len_processor_modules, &processor_modules, &inspector);
 
-                    // invoke current middleware layer
-                    // todo: expand support for observability or transforms
-                    if len_processor_modules > 0 {
-                        inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
-                    } else {
-                        inspector.inspect(&items);
-                    }
-                    // If any resource attributes were provided on start, set or append them to the resources
-                    if !self.resource_attributes.is_empty() {
-                        for item in &mut items {
-                            item.set_or_append_attributes(self.resource_attributes.clone())
-                        }
-                    }
-                    for p in &processor_modules {
-                       let mut new_items = Vec::new();
-                       while !items.is_empty() {
-                           let item = items.pop();
-                           if item.is_some() {
-                                let result = item.unwrap().process(p);
-                                new_items.push(result);
-                           }
-                       }
-                       items = new_items;
-                    }
-
-                    if len_processor_modules > 0 {
-                        inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
-                    }
-
-                    // Wrap the processed items back into a Message
-                    let processed_message = Message {
-                        metadata: message.metadata,
-                        payload: items,
-                    };
-
-                    match batch.offer(vec![processed_message]) {
+                    match batch.offer(vec![message]) {
                         Ok(Some(popped)) => {
                             let fut = self.fanout.send_async(popped);
                             send_fut = Some(fut);

@@ -348,6 +348,7 @@ mod tests {
         let test_payload = vec![ResourceSpans::default()];
         let message = Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: test_payload.clone(),
         };
 

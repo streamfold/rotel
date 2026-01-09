@@ -66,6 +66,7 @@ mod tests {
             .into_iter()
             .map(|span| Message {
                 metadata: None,
+                request_context: None,
                 payload: vec![span],
             })
             .collect();
@@ -106,6 +107,7 @@ mod tests {
         // Send a message with metadata
         let message = Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: vec![FakeOTLP::trace_service_request().resource_spans[0].clone()],
         };
         tr_tx.send(vec![message]).await.unwrap();

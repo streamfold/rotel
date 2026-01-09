@@ -7,18 +7,31 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(feature = "pyo3")]
+use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message<T> {
     pub metadata: Option<MessageMetadata>,
+    pub request_context: Option<RequestContext>,
     pub payload: Vec<T>,
 }
 
 impl<T> Message<T> {
-    pub fn new(metadata: Option<MessageMetadata>, payload: Vec<T>) -> Self {
-        Self { metadata, payload }
+    pub fn new(
+        metadata: Option<MessageMetadata>,
+        payload: Vec<T>,
+        request_context: Option<RequestContext>,
+    ) -> Self {
+        Self {
+            metadata,
+            payload,
+            request_context,
+        }
     }
 
     // Used in testing
@@ -34,9 +47,34 @@ pub struct MessageMetadata {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum RequestContext {
+    Http(HashMap<String, String>),
+    Grpc(HashMap<String, String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
     Forwarder(ForwarderMetadata),
+}
+
+#[allow(clippy::from_over_into)]
+#[cfg(feature = "pyo3")]
+impl Into<PyRequestContext> for RequestContext {
+    fn into(self) -> PyRequestContext {
+        match self {
+            RequestContext::Http(h) => {
+                PyRequestContext::HttpContext(rotel_sdk::py::request_context::HttpContext {
+                    headers: h,
+                })
+            }
+            RequestContext::Grpc(h) => {
+                PyRequestContext::GrpcContext(rotel_sdk::py::request_context::GrpcContext {
+                    metadata: h,
+                })
+            }
+        }
+    }
 }
 
 impl MessageMetadata {
@@ -118,6 +156,39 @@ pub struct KafkaMetadata {
     pub partition: i32,
     pub topic_id: u8,
     pub ack_chan: Option<BoundedSender<KafkaAcknowledgement>>,
+}
+
+/// HTTP metadata containing request headers and other HTTP context
+#[derive(Clone, Debug, PartialEq)]
+pub struct HttpMetadata {
+    /// Map of header names (lowercase) to header values
+    pub headers: HashMap<String, String>,
+}
+
+impl HttpMetadata {
+    /// Create new HttpMetadata with headers
+    pub fn new(headers: HashMap<String, String>) -> Self {
+        Self { headers }
+    }
+
+    /// Get a header value by name (case-insensitive)
+    pub fn get_header(&self, name: &str) -> Option<&String> {
+        self.headers.get(&name.to_lowercase())
+    }
+}
+
+/// gRPC metadata containing request metadata and other gRPC context
+#[derive(Clone, Debug, PartialEq)]
+pub struct GrpcMetadata {
+    /// Map of metadata keys (lowercase) to metadata values
+    pub headers: HashMap<String, String>,
+}
+
+impl GrpcMetadata {
+    /// Create new GrpcMetadata with headers
+    pub fn new(headers: HashMap<String, String>) -> Self {
+        Self { headers }
+    }
 }
 
 impl KafkaMetadata {
