@@ -993,7 +993,7 @@ impl Agent {
                                 None => break,
                                 Some(msg) => {
                                     if let Some(out) = &logs_output {
-                                        if let Err(e) = out.send(Message{metadata: None, request_context: None,payload: vec![rl]}).await {
+                                        if let Err(e) = out.send(msg).await {
                                             // todo: is this possibly in a logging loop path?
                                             warn!("Unable to send logs to logs output: {}", e)
                                         }
