@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use tracing::debug;
+
 /// FileReader manages reading from a single file
 pub struct FileReader {
     /// Path to the file
@@ -147,7 +149,12 @@ impl FileReader {
                 }
                 Err(e) => {
                     if e.kind() == io::ErrorKind::InvalidData {
-                        // Skip invalid UTF-8 lines - advance past this byte
+                        // Skip invalid UTF-8 bytes - advance past this byte
+                        debug!(
+                            path = ?self.path,
+                            offset = self.offset,
+                            "Skipping invalid UTF-8 byte in file"
+                        );
                         self.offset += 1;
                         continue;
                     }

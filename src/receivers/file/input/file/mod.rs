@@ -7,5 +7,7 @@ mod reader;
 
 pub use config::{FileInputConfig, StartAt};
 pub use file_id::{FileId, get_path_from_file};
-pub use finder::FileFinder;
+#[cfg(test)]
+pub use finder::MockFileFinder;
+pub use finder::{FileFinder, GlobFileFinder};
 pub use reader::FileReader;

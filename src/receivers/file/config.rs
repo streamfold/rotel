@@ -58,6 +58,14 @@ pub struct FileReceiverConfig {
     pub shutdown_worker_drain_timeout: Duration,
     /// Maximum time to wait for log records to be sent to pipeline during shutdown
     pub shutdown_records_drain_timeout: Duration,
+    /// Maximum duration of consecutive checkpoint failures before exiting
+    pub max_checkpoint_failure_duration: Duration,
+    /// Maximum duration of consecutive poll/file discovery failures before exiting
+    pub max_poll_failure_duration: Duration,
+    /// Maximum duration of consecutive watcher errors before falling back to polling
+    pub max_watcher_error_duration: Duration,
+    /// Maximum number of log records to accumulate before sending a batch
+    pub max_batch_size: usize,
 }
 
 impl Default for FileReceiverConfig {
@@ -78,6 +86,10 @@ impl Default for FileReceiverConfig {
             rotate_wait: Duration::from_secs(1),
             shutdown_worker_drain_timeout: Duration::from_secs(3),
             shutdown_records_drain_timeout: Duration::from_secs(2),
+            max_checkpoint_failure_duration: Duration::from_secs(60),
+            max_poll_failure_duration: Duration::from_secs(60),
+            max_watcher_error_duration: Duration::from_secs(60),
+            max_batch_size: 100,
         }
     }
 }

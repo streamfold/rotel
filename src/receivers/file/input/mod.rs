@@ -2,4 +2,8 @@
 
 pub mod file;
 
-pub use file::{FileFinder, FileId, FileInputConfig, FileReader, StartAt, get_path_from_file};
+#[cfg(test)]
+pub use file::MockFileFinder;
+pub use file::{
+    FileFinder, FileId, FileInputConfig, FileReader, GlobFileFinder, StartAt, get_path_from_file,
+};

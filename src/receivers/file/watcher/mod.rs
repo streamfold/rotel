@@ -17,7 +17,9 @@ mod traits;
 
 pub use native::NativeWatcher;
 pub use poll::PollWatcher;
-pub use traits::{FileEvent, FileEventKind, FileWatcher, WatcherError};
+#[cfg(test)]
+pub use traits::MockWatcher;
+pub use traits::{AnyWatcher, FileEvent, FileEventKind, FileWatcher, WatcherError};
 
 use std::path::Path;
 use std::time::Duration;
@@ -81,22 +83,22 @@ impl Default for WatcherConfig {
 pub fn create_watcher(
     config: &WatcherConfig,
     directories: &[&Path],
-) -> Result<Box<dyn FileWatcher + Send + Sync>, WatcherError> {
+) -> Result<AnyWatcher, WatcherError> {
     match config.mode {
         WatchMode::Native => {
             let watcher = NativeWatcher::new(config.debounce_interval)?;
-            Ok(Box::new(watcher))
+            Ok(AnyWatcher::Native(watcher))
         }
         WatchMode::Poll => {
             let watcher = PollWatcher::new(directories, config.poll_interval)?;
-            Ok(Box::new(watcher))
+            Ok(AnyWatcher::Poll(watcher))
         }
         WatchMode::Auto => {
             // Try native first
             match NativeWatcher::new(config.debounce_interval) {
                 Ok(watcher) => {
                     tracing::info!("Using native file system watcher");
-                    Ok(Box::new(watcher))
+                    Ok(AnyWatcher::Native(watcher))
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -104,7 +106,7 @@ pub fn create_watcher(
                         e
                     );
                     let watcher = PollWatcher::new(directories, config.poll_interval)?;
-                    Ok(Box::new(watcher))
+                    Ok(AnyWatcher::Poll(watcher))
                 }
             }
         }

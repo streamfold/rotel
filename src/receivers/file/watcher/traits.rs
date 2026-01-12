@@ -128,3 +128,138 @@ pub trait FileWatcher {
     /// Get the name of the watcher backend for logging.
     fn backend_name(&self) -> &'static str;
 }
+
+use super::{NativeWatcher, PollWatcher};
+
+/// Enum-based watcher that avoids dynamic dispatch.
+/// This provides static dispatch while allowing runtime selection of watcher type.
+pub enum AnyWatcher {
+    Native(NativeWatcher),
+    Poll(PollWatcher),
+    #[cfg(test)]
+    Mock(MockWatcher),
+}
+
+/// Mock watcher for testing error handling thresholds
+#[cfg(test)]
+pub struct MockWatcher {
+    /// Number of successful recv_timeout calls before failing
+    pub fail_after: Option<usize>,
+    /// Current call count
+    pub call_count: std::cell::Cell<usize>,
+    /// Whether to return events or empty vec on success
+    pub return_events: bool,
+}
+
+#[cfg(test)]
+impl MockWatcher {
+    /// Create a new MockWatcher that always succeeds
+    pub fn new() -> Self {
+        Self {
+            fail_after: None,
+            call_count: std::cell::Cell::new(0),
+            return_events: false,
+        }
+    }
+
+    /// Create a MockWatcher that fails after N successful calls
+    pub fn fail_after(n: usize) -> Self {
+        Self {
+            fail_after: Some(n),
+            call_count: std::cell::Cell::new(0),
+            return_events: false,
+        }
+    }
+}
+
+#[cfg(test)]
+impl FileWatcher for MockWatcher {
+    fn watch(&mut self, _path: &std::path::Path) -> Result<(), WatcherError> {
+        Ok(())
+    }
+
+    fn unwatch(&mut self, _path: &std::path::Path) -> Result<(), WatcherError> {
+        Ok(())
+    }
+
+    fn try_recv(&mut self) -> Result<Vec<FileEvent>, WatcherError> {
+        Ok(vec![])
+    }
+
+    fn recv_timeout(&mut self, _timeout: Duration) -> Result<Vec<FileEvent>, WatcherError> {
+        let count = self.call_count.get();
+        self.call_count.set(count + 1);
+
+        if let Some(fail_after) = self.fail_after {
+            if count >= fail_after {
+                return Err(WatcherError::Channel("mock error".to_string()));
+            }
+        }
+
+        Ok(vec![])
+    }
+
+    fn is_native(&self) -> bool {
+        false
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "mock"
+    }
+}
+
+impl FileWatcher for AnyWatcher {
+    fn watch(&mut self, path: &std::path::Path) -> Result<(), WatcherError> {
+        match self {
+            AnyWatcher::Native(w) => w.watch(path),
+            AnyWatcher::Poll(w) => w.watch(path),
+            #[cfg(test)]
+            AnyWatcher::Mock(w) => w.watch(path),
+        }
+    }
+
+    fn unwatch(&mut self, path: &std::path::Path) -> Result<(), WatcherError> {
+        match self {
+            AnyWatcher::Native(w) => w.unwatch(path),
+            AnyWatcher::Poll(w) => w.unwatch(path),
+            #[cfg(test)]
+            AnyWatcher::Mock(w) => w.unwatch(path),
+        }
+    }
+
+    fn try_recv(&mut self) -> Result<Vec<FileEvent>, WatcherError> {
+        match self {
+            AnyWatcher::Native(w) => w.try_recv(),
+            AnyWatcher::Poll(w) => w.try_recv(),
+            #[cfg(test)]
+            AnyWatcher::Mock(w) => w.try_recv(),
+        }
+    }
+
+    fn recv_timeout(&mut self, timeout: Duration) -> Result<Vec<FileEvent>, WatcherError> {
+        match self {
+            AnyWatcher::Native(w) => w.recv_timeout(timeout),
+            AnyWatcher::Poll(w) => w.recv_timeout(timeout),
+            #[cfg(test)]
+            AnyWatcher::Mock(w) => w.recv_timeout(timeout),
+        }
+    }
+
+    fn is_native(&self) -> bool {
+        match self {
+            AnyWatcher::Native(w) => w.is_native(),
+            AnyWatcher::Poll(w) => w.is_native(),
+            #[cfg(test)]
+            AnyWatcher::Mock(w) => w.is_native(),
+        }
+    }
+
+    fn backend_name(&self) -> &'static str {
+        match self {
+            AnyWatcher::Native(w) => w.backend_name(),
+            AnyWatcher::Poll(w) => w.backend_name(),
+            #[cfg(test)]
+            AnyWatcher::Mock(w) => w.backend_name(),
+        }
+    }
+}

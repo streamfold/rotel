@@ -197,6 +197,38 @@ pub struct FileReceiverArgs {
         default_value = "2000"
     )]
     pub file_receiver_shutdown_records_drain_timeout_ms: u64,
+
+    /// Maximum duration in milliseconds of consecutive checkpoint failures before exiting
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_MAX_CHECKPOINT_FAILURE_DURATION_MS",
+        default_value = "60000"
+    )]
+    pub file_receiver_max_checkpoint_failure_duration_ms: u64,
+
+    /// Maximum duration in milliseconds of consecutive poll/file discovery failures before exiting
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_MAX_POLL_FAILURE_DURATION_MS",
+        default_value = "60000"
+    )]
+    pub file_receiver_max_poll_failure_duration_ms: u64,
+
+    /// Maximum duration in milliseconds of consecutive watcher errors before falling back to polling
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_MAX_WATCHER_ERROR_DURATION_MS",
+        default_value = "60000"
+    )]
+    pub file_receiver_max_watcher_error_duration_ms: u64,
+
+    /// Maximum number of log records to accumulate before sending a batch to the pipeline
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_MAX_BATCH_SIZE",
+        default_value = "100"
+    )]
+    pub file_receiver_max_batch_size: usize,
 }
 
 impl Default for FileReceiverArgs {
@@ -217,6 +249,10 @@ impl Default for FileReceiverArgs {
             file_receiver_rotate_wait_ms: 1000,
             file_receiver_shutdown_worker_drain_timeout_ms: 3000,
             file_receiver_shutdown_records_drain_timeout_ms: 2000,
+            file_receiver_max_checkpoint_failure_duration_ms: 60000,
+            file_receiver_max_poll_failure_duration_ms: 60000,
+            file_receiver_max_watcher_error_duration_ms: 60000,
+            file_receiver_max_batch_size: 100,
         }
     }
 }
@@ -244,6 +280,16 @@ impl FileReceiverArgs {
             shutdown_records_drain_timeout: Duration::from_millis(
                 self.file_receiver_shutdown_records_drain_timeout_ms,
             ),
+            max_checkpoint_failure_duration: Duration::from_millis(
+                self.file_receiver_max_checkpoint_failure_duration_ms,
+            ),
+            max_poll_failure_duration: Duration::from_millis(
+                self.file_receiver_max_poll_failure_duration_ms,
+            ),
+            max_watcher_error_duration: Duration::from_millis(
+                self.file_receiver_max_watcher_error_duration_ms,
+            ),
+            max_batch_size: self.file_receiver_max_batch_size,
         }
     }
 }

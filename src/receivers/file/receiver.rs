@@ -36,12 +36,16 @@ use crate::bounded_channel::{self, BoundedReceiver, BoundedSender};
 
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
 use crate::receivers::file::error::{Error, Result};
-use crate::receivers::file::input::{FileFinder, FileId, FileReader, StartAt, get_path_from_file};
+use crate::receivers::file::input::{
+    FileFinder, FileId, FileReader, GlobFileFinder, StartAt, get_path_from_file,
+};
 use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
 };
-use crate::receivers::file::watcher::{FileEventKind, FileWatcher, WatcherConfig, create_watcher};
+use crate::receivers::file::watcher::{
+    AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig, create_watcher,
+};
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
@@ -129,8 +133,7 @@ impl FileReceiver {
 
         task_set.spawn(async move {
             let mut handler = FileHandler::new(config, logs_output)?;
-            handler.run(cancel).await;
-            Ok(())
+            handler.run(cancel).await
         });
 
         Ok(())
@@ -199,10 +202,9 @@ struct WorkerContext {
     records_tx: BoundedSender<LogRecordBatch>,
     /// Channel to send offset updates back to coordinator
     results_tx: BoundedSender<FileWorkResult>,
+    /// Maximum number of log records to accumulate before sending a batch
+    max_batch_size: usize,
 }
-
-/// Maximum number of log records to accumulate before sending a batch
-const MAX_BATCH_SIZE: usize = 100;
 
 /// Default maximum number of concurrent file processing workers
 const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
@@ -227,7 +229,8 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
     let mut reader = FileReader::from_file(work.file, work.path, work.offset, work.max_log_size);
 
     // Read lines and build LogRecords, sending in small batches
-    let mut log_records = Vec::with_capacity(MAX_BATCH_SIZE);
+    let max_batch_size = ctx.max_batch_size;
+    let mut log_records = Vec::with_capacity(max_batch_size);
 
     let records_tx = &ctx.records_tx;
 
@@ -296,15 +299,18 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         log_records.push(log_record);
 
         // Send batch when we reach max size
-        if log_records.len() >= MAX_BATCH_SIZE {
+        if log_records.len() >= max_batch_size {
             let batch = LogRecordBatch {
                 count: log_records.len() as u64,
                 log_records: std::mem::replace(
                     &mut log_records,
-                    Vec::with_capacity(MAX_BATCH_SIZE),
+                    Vec::with_capacity(max_batch_size),
                 ),
             };
-            let _ = records_tx.send_blocking(batch);
+            if records_tx.send_blocking(batch).is_err() {
+                // Channel closed - we're shutting down, remaining lines will be discarded
+                debug!("Records channel closed during batch send, discarding remaining lines");
+            }
         }
     });
 
@@ -320,7 +326,10 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
             count: log_records.len() as u64,
             log_records,
         };
-        let _ = ctx.records_tx.send_blocking(batch);
+        if ctx.records_tx.send_blocking(batch).is_err() {
+            // Channel closed - we're shutting down, final batch discarded
+            debug!("Records channel closed, discarding final batch");
+        }
     }
 
     // Send offset update back to coordinator
@@ -329,7 +338,9 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         new_offset,
         reached_eof: reader.is_eof(),
     };
-    let _ = ctx.results_tx.send_blocking(result);
+    if ctx.results_tx.send_blocking(result).is_err() {
+        debug!("Results channel closed, offset update discarded");
+    }
 }
 
 /// State of a tracked file with respect to rotation
@@ -364,19 +375,26 @@ struct TrackedFile {
 
 /// Coordinator that manages file watching and dispatches work to workers.
 /// All state updates happen here (single writer pattern).
-struct FileCoordinator {
+///
+/// Generic over:
+/// - `F`: FileFinder implementation for discovering files
+struct FileCoordinator<F: FileFinder> {
     config: FileReceiverConfig,
-    finder: FileFinder,
+    finder: F,
     persister: JsonFilePersister,
     /// Map from FileId to tracked file state (inode-based tracking)
     tracked_files: HashMap<FileId, TrackedFile>,
-    watcher: Box<dyn FileWatcher + Send>,
+    watcher: AnyWatcher,
     watched_dirs: Vec<PathBuf>,
     first_check: bool,
     // Checkpoint batching state
     checkpoint_config: CheckpointConfig,
     records_since_checkpoint: u64,
     last_checkpoint: Instant,
+    // Error tracking for threshold-based exit
+    checkpoint_first_failure: Option<Instant>,
+    poll_first_failure: Option<Instant>,
+    watcher_first_error: Option<Instant>,
     // Channel to send work items to the async handler (Option for early drop during shutdown)
     work_tx: Option<BoundedSender<FileWorkItem>>,
     // Channel to receive offset updates from workers
@@ -387,7 +405,7 @@ struct FileCoordinator {
     shutting_down: Arc<AtomicBool>,
 }
 
-impl FileCoordinator {
+impl<F: FileFinder> FileCoordinator<F> {
     /// Load previously saved file states from the persister.
     /// We use FileId (device + inode) to match persisted state to current files.
     fn load_state(&mut self) -> Result<()> {
@@ -397,20 +415,27 @@ impl FileCoordinator {
             debug!("Loaded {} known files from persister", state.files.len());
 
             // Find current files and try to match them to persisted state
-            let paths = self.finder.find_files().unwrap_or_default();
+            let paths = self.finder.find_files().unwrap_or_else(|e| {
+                error!("Failed to find files during state load: {}", e);
+                vec![]
+            });
 
             for path in paths {
                 // Open file and get FileId
                 let file = match File::open(&path) {
                     Ok(f) => f,
-                    Err(_) => continue,
-                    // TODO should we panic here?
+                    Err(e) => {
+                        debug!("Failed to open file {:?} during state load: {}", path, e);
+                        continue;
+                    }
                 };
 
                 let file_id = match FileId::from_file(&file) {
                     Ok(id) => id,
-                    Err(_) => continue,
-                    // TODO should we panic here
+                    Err(e) => {
+                        warn!("Failed to get FileId for {:?}: {}", path, e);
+                        continue;
+                    }
                 };
 
                 // Try to find matching persisted state by FileId
@@ -475,12 +500,45 @@ impl FileCoordinator {
             || self.last_checkpoint.elapsed() >= self.checkpoint_config.max_interval
     }
 
-    /// Conditionally save state if checkpoint thresholds are met
+    /// Conditionally save state if checkpoint thresholds are met.
+    /// Tracks consecutive failures and returns Err only when failure duration threshold is breached.
     fn maybe_checkpoint(&mut self) -> Result<()> {
-        if self.should_checkpoint() {
-            self.save_state()?;
+        if !self.should_checkpoint() {
+            return Ok(());
         }
-        Ok(())
+
+        match self.save_state() {
+            Ok(()) => {
+                // Success - reset failure tracking
+                if self.checkpoint_first_failure.is_some() {
+                    debug!("Checkpoint succeeded after previous failures");
+                    self.checkpoint_first_failure = None;
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // Track when failures started
+                let first_failure = *self
+                    .checkpoint_first_failure
+                    .get_or_insert_with(Instant::now);
+
+                let failure_duration = first_failure.elapsed();
+
+                if failure_duration >= self.config.max_checkpoint_failure_duration {
+                    error!(
+                        "Checkpoint failures persisted for {:?}, exiting: {}",
+                        failure_duration, e
+                    );
+                    Err(e)
+                } else {
+                    warn!(
+                        "Checkpoint failed (failures started {:?} ago): {}",
+                        failure_duration, e
+                    );
+                    Ok(())
+                }
+            }
+        }
     }
 
     /// Ensure directories are being watched
@@ -517,7 +575,10 @@ impl FileCoordinator {
         for dir in &dirs_to_watch {
             if !self.watched_dirs.contains(dir) {
                 if let Err(e) = self.watcher.watch(dir) {
-                    warn!("Failed to watch directory {:?}: {}", dir, e);
+                    warn!(
+                        "Failed to watch directory {:?}: {} - will rely on polling",
+                        dir, e
+                    );
                 } else {
                     debug!("Watching directory: {:?}", dir);
                     self.watched_dirs.push(dir.clone());
@@ -528,7 +589,9 @@ impl FileCoordinator {
         // Unwatch removed directories
         self.watched_dirs.retain(|dir| {
             if !dirs_to_watch.contains(dir) {
-                let _ = self.watcher.unwatch(dir);
+                if let Err(e) = self.watcher.unwatch(dir) {
+                    warn!("Failed to unwatch directory {:?}: {}", dir, e);
+                }
                 debug!("Stopped watching directory: {:?}", dir);
                 false
             } else {
@@ -589,7 +652,35 @@ impl FileCoordinator {
         self.process_results();
 
         // Find files matching our patterns
-        let paths = self.finder.find_files()?;
+        let paths = match self.finder.find_files() {
+            Ok(paths) => {
+                // Success - reset poll failure tracking
+                if self.poll_first_failure.is_some() {
+                    debug!("File discovery succeeded after previous failures");
+                    self.poll_first_failure = None;
+                }
+                paths
+            }
+            Err(e) => {
+                // Track when failures started
+                let first_failure = *self.poll_first_failure.get_or_insert_with(Instant::now);
+                let failure_duration = first_failure.elapsed();
+
+                if failure_duration >= self.config.max_poll_failure_duration {
+                    error!(
+                        "File discovery failures persisted for {:?}, exiting: {}",
+                        failure_duration, e
+                    );
+                    return Err(e);
+                } else {
+                    warn!(
+                        "File discovery failed (failures started {:?} ago): {}",
+                        failure_duration, e
+                    );
+                    return Ok(());
+                }
+            }
+        };
 
         if self.first_check && paths.is_empty() {
             warn!(
@@ -607,8 +698,13 @@ impl FileCoordinator {
         // Build a set of FileIds currently at glob-matching paths
         let mut active_file_ids: HashMap<FileId, PathBuf> = HashMap::new();
         for path in &paths {
-            if let Ok(file_id) = FileId::from_path(path) {
-                active_file_ids.insert(file_id, path.clone());
+            match FileId::from_path(path) {
+                Ok(file_id) => {
+                    active_file_ids.insert(file_id, path.clone());
+                }
+                Err(e) => {
+                    debug!("Failed to get FileId for {:?}: {}", path, e);
+                }
             }
         }
 
@@ -653,9 +749,7 @@ impl FileCoordinator {
             .collect();
 
         for file_id in rotated_file_ids {
-            if let Err(e) = self.dispatch_work_for_file(file_id) {
-                debug!("Error dispatching work for rotated file: {}", e);
-            }
+            let _ = self.dispatch_work_for_file(file_id);
         }
 
         // Remove files that have been in RotatedEof state past rotate_wait
@@ -679,9 +773,8 @@ impl FileCoordinator {
         });
 
         // Conditionally checkpoint based on records processed and time elapsed
-        if let Err(e) = self.maybe_checkpoint() {
-            error!("Failed to save state: {}", e);
-        }
+        // maybe_checkpoint() only returns Err when failure duration threshold is breached
+        self.maybe_checkpoint()?;
 
         Ok(())
     }
@@ -718,7 +811,10 @@ impl FileCoordinator {
         };
 
         // Skip empty files
-        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or_else(|e| {
+            debug!("Failed to get metadata for {:?}: {}", path, e);
+            0
+        });
         if file_len == 0 {
             return Ok(());
         }
@@ -766,7 +862,7 @@ impl FileCoordinator {
         let cloned_file = match tracked.file.try_clone() {
             Ok(f) => f,
             Err(e) => {
-                debug!("Failed to clone file handle for {:?}: {}", tracked.path, e);
+                warn!("Failed to clone file handle for {:?}: {}", tracked.path, e);
                 return Ok(());
             }
         };
@@ -823,12 +919,14 @@ impl FileCoordinator {
 
         // Initial setup and file scan
         if let Err(e) = self.setup_watches() {
-            warn!("Failed to setup watches: {}", e);
+            warn!("Failed to setup watches: {} - will rely on polling", e);
         }
 
-        // Do initial poll
+        // Do initial poll - exit on fatal error (threshold breached)
         if let Err(e) = self.poll() {
-            error!("Initial poll error: {}", e);
+            error!("Initial poll failed with fatal error: {}", e);
+            self.shutting_down.store(true, Ordering::SeqCst);
+            // Fall through to shutdown logic
         }
 
         let poll_interval = self.config.poll_interval;
@@ -842,9 +940,20 @@ impl FileCoordinator {
                 break;
             }
 
+            // Check if we're shutting down due to fatal error
+            if self.shutting_down.load(Ordering::SeqCst) {
+                break;
+            }
+
             // Wait for watcher events (or timeout)
             match self.watcher.recv_timeout(poll_interval) {
                 Ok(events) => {
+                    // Reset watcher error tracking on success
+                    if self.watcher_first_error.is_some() {
+                        debug!("Watcher recovered after previous errors");
+                        self.watcher_first_error = None;
+                    }
+
                     // Log file events
                     for event in &events {
                         if let FileEventKind::Remove = event.kind {
@@ -854,13 +963,46 @@ impl FileCoordinator {
                         }
                     }
 
-                    // Poll and dispatch work
+                    // Poll and dispatch work - exit on fatal error (threshold breached)
                     if let Err(e) = self.poll() {
-                        error!("Poll error: {}", e);
+                        error!("Poll failed with fatal error: {}", e);
+                        self.shutting_down.store(true, Ordering::SeqCst);
+                        break;
                     }
                 }
                 Err(e) => {
-                    warn!("Watcher error: {}", e);
+                    // Track when watcher errors started
+                    let first_error = *self.watcher_first_error.get_or_insert_with(Instant::now);
+                    let error_duration = first_error.elapsed();
+
+                    if error_duration >= self.config.max_watcher_error_duration {
+                        // Fall back to polling mode
+                        warn!(
+                            "Watcher errors persisted for {:?}, falling back to polling mode: {}",
+                            error_duration, e
+                        );
+
+                        // Create a new poll watcher
+                        let dirs: Vec<&Path> =
+                            self.watched_dirs.iter().map(|p| p.as_path()).collect();
+                        match PollWatcher::new(&dirs, self.config.poll_interval) {
+                            Ok(poll_watcher) => {
+                                self.watcher = AnyWatcher::Poll(poll_watcher);
+                                self.watcher_first_error = None;
+                                info!("Switched to polling mode");
+                            }
+                            Err(poll_err) => {
+                                error!("Failed to create poll watcher: {}", poll_err);
+                                // Continue with current watcher, will retry next iteration
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "Watcher error (errors started {:?} ago): {}",
+                            error_duration, e
+                        );
+                    }
+
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -979,7 +1121,7 @@ impl FileHandler {
     /// Run the main event loop.
     /// Spawns a coordinator thread that watches for file changes and sends work items.
     /// This async task manages worker concurrency via FuturesOrdered and sends to exporters.
-    async fn run(&mut self, cancel: CancellationToken) {
+    async fn run(&mut self, cancel: CancellationToken) -> std::result::Result<(), BoxError> {
         // Build parser (needs to be Arc for Send across threads)
         let parser: Option<Arc<dyn Parser + Send + Sync>> =
             match FileReceiver::build_parser(&self.config) {
@@ -987,7 +1129,7 @@ impl FileHandler {
                 Ok(None) => None,
                 Err(e) => {
                     error!("Failed to build parser: {}", e);
-                    return;
+                    return Err(e.into());
                 }
             };
 
@@ -996,7 +1138,7 @@ impl FileHandler {
             Ok(db) => db,
             Err(e) => {
                 error!("Failed to open persistence database: {}", e);
-                return;
+                return Err(e.into());
             }
         };
         let persister = db.persister("file_receiver");
@@ -1013,7 +1155,7 @@ impl FileHandler {
             Ok(w) => w,
             Err(e) => {
                 error!("Failed to create watcher: {}", e);
-                return;
+                return Err(e.into());
             }
         };
 
@@ -1049,10 +1191,11 @@ impl FileHandler {
             include_file_path: self.config.include_file_path,
             records_tx,
             results_tx,
+            max_batch_size: self.config.max_batch_size,
         };
 
         // Create the coordinator
-        let finder = FileFinder::new(self.config.include.clone(), self.config.exclude.clone());
+        let finder = GlobFileFinder::new(self.config.include.clone(), self.config.exclude.clone());
         let shutting_down = Arc::new(AtomicBool::new(false));
         let shutting_down_async = shutting_down.clone();
         let coordinator = FileCoordinator {
@@ -1066,6 +1209,9 @@ impl FileHandler {
             checkpoint_config: CheckpointConfig::default(),
             records_since_checkpoint: 0,
             last_checkpoint: Instant::now(),
+            checkpoint_first_failure: None,
+            poll_first_failure: None,
+            watcher_first_error: None,
             work_tx: Some(work_tx),
             results_rx,
             workers_done_rx,
@@ -1168,11 +1314,18 @@ impl FileHandler {
         let coord_join_result = tokio::task::spawn_blocking(move || coord_handle.join()).await;
         match coord_join_result {
             Ok(Ok(())) => debug!("Coordinator thread joined successfully"),
-            Ok(Err(_)) => error!("Coordinator thread panicked"),
-            Err(e) => error!("Failed to join coordinator: {}", e),
+            Ok(Err(_)) => {
+                error!("Coordinator thread panicked");
+                return Err("Coordinator thread panicked".into());
+            }
+            Err(e) => {
+                error!("Failed to join coordinator: {}", e);
+                return Err(e.into());
+            }
         }
 
         info!("File receiver stopped");
+        Ok(())
     }
 
     /// Drain in-flight workers and remaining log records during shutdown
@@ -1279,6 +1432,238 @@ impl FileHandler {
 
         if drained_count > 0 {
             debug!("Drained {} log records during shutdown", drained_count);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::receivers::file::input::MockFileFinder;
+    use crate::receivers::file::watcher::MockWatcher;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    /// Create a test config with short thresholds for fast tests
+    fn test_config(temp_dir: &TempDir) -> FileReceiverConfig {
+        FileReceiverConfig {
+            include: vec![format!("{}/*.log", temp_dir.path().display())],
+            exclude: vec![],
+            max_poll_failure_duration: Duration::from_millis(100),
+            max_checkpoint_failure_duration: Duration::from_millis(100),
+            max_watcher_error_duration: Duration::from_millis(100),
+            poll_interval: Duration::from_millis(10),
+            offsets_path: temp_dir.path().join("offsets.json"),
+            ..Default::default()
+        }
+    }
+
+    /// Create a minimal coordinator for testing poll failures
+    fn create_test_coordinator<F: FileFinder>(
+        config: FileReceiverConfig,
+        finder: F,
+        watcher: AnyWatcher,
+        temp_dir: &TempDir,
+    ) -> FileCoordinator<F> {
+        let db = JsonFileDatabase::open(temp_dir.path().join("offsets.json")).unwrap();
+        let persister = db.persister("test");
+
+        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
+        let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
+        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        FileCoordinator {
+            config,
+            finder,
+            persister,
+            tracked_files: HashMap::new(),
+            watcher,
+            watched_dirs: Vec::new(),
+            first_check: true,
+            checkpoint_config: CheckpointConfig::default(),
+            records_since_checkpoint: 0,
+            last_checkpoint: Instant::now(),
+            checkpoint_first_failure: None,
+            poll_first_failure: None,
+            watcher_first_error: None,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
+            shutting_down: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[test]
+    fn test_poll_failure_threshold_exits_after_duration() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = test_config(&temp_dir);
+
+        // Create a finder that always fails
+        let finder = MockFileFinder::fail_after(0);
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
+
+        // First poll should succeed (returns Ok because threshold not yet reached)
+        let result = coordinator.poll();
+        assert!(
+            result.is_ok(),
+            "First poll should return Ok (threshold not reached)"
+        );
+
+        // Wait for threshold duration
+        std::thread::sleep(Duration::from_millis(150));
+
+        // Next poll should fail (threshold reached)
+        let result = coordinator.poll();
+        assert!(
+            result.is_err(),
+            "Poll should return Err after threshold duration"
+        );
+    }
+
+    #[test]
+    fn test_poll_failure_resets_on_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = test_config(&temp_dir);
+
+        // Create a finder that fails after 2 successful calls
+        let finder = MockFileFinder::fail_after(2);
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
+
+        // First two polls succeed
+        assert!(coordinator.poll().is_ok());
+        assert!(coordinator.poll().is_ok());
+
+        // Third poll fails but threshold not reached
+        assert!(coordinator.poll().is_ok());
+
+        // Reset the finder to succeed again (simulating recovery)
+        coordinator.finder = MockFileFinder::new();
+
+        // Poll should succeed and reset the failure tracking
+        assert!(coordinator.poll().is_ok());
+
+        // Now make it fail again
+        coordinator.finder = MockFileFinder::fail_after(0);
+
+        // This should not immediately fail (threshold was reset)
+        let result = coordinator.poll();
+        assert!(result.is_ok(), "Threshold should have been reset");
+    }
+
+    #[test]
+    fn test_watcher_fallback_after_error_duration() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = test_config(&temp_dir);
+        config.max_watcher_error_duration = Duration::from_millis(50);
+        config.poll_interval = Duration::from_millis(10);
+
+        let finder = MockFileFinder::new();
+        // Create a watcher that fails immediately
+        let watcher = AnyWatcher::Mock(MockWatcher::fail_after(0));
+
+        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
+
+        // Verify we start with a Mock watcher
+        assert_eq!(coordinator.watcher.backend_name(), "mock");
+
+        // Simulate the main loop's watcher error handling
+        let poll_interval = coordinator.config.poll_interval;
+        let max_watcher_error_duration = coordinator.config.max_watcher_error_duration;
+
+        // First error - should not fallback yet
+        let _err = coordinator.watcher.recv_timeout(poll_interval).unwrap_err();
+        let first_error = *coordinator
+            .watcher_first_error
+            .get_or_insert_with(Instant::now);
+        assert!(first_error.elapsed() < max_watcher_error_duration);
+
+        // Wait for threshold
+        std::thread::sleep(Duration::from_millis(60));
+
+        // Try again - should trigger fallback
+        let _ = coordinator.watcher.recv_timeout(poll_interval);
+        let error_duration = first_error.elapsed();
+
+        if error_duration >= max_watcher_error_duration {
+            // Create poll watcher (this is what the main loop does)
+            let dirs: Vec<&Path> = coordinator
+                .watched_dirs
+                .iter()
+                .map(|p| p.as_path())
+                .collect();
+            if let Ok(poll_watcher) = PollWatcher::new(&dirs, coordinator.config.poll_interval) {
+                coordinator.watcher = AnyWatcher::Poll(poll_watcher);
+                coordinator.watcher_first_error = None;
+            }
+        }
+
+        // Verify we switched to poll watcher
+        assert_eq!(
+            coordinator.watcher.backend_name(),
+            "poll",
+            "Should have fallen back to poll watcher"
+        );
+    }
+
+    #[test]
+    fn test_checkpoint_failure_threshold() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = test_config(&temp_dir);
+        config.max_checkpoint_failure_duration = Duration::from_millis(50);
+
+        let finder = MockFileFinder::new();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
+
+        // Force checkpoint to be needed
+        coordinator.records_since_checkpoint = 10000;
+
+        // Make the persister directory read-only to cause sync failures
+        let offsets_dir = temp_dir.path().join("readonly");
+        std::fs::create_dir_all(&offsets_dir).unwrap();
+        coordinator.persister = JsonFileDatabase::open(offsets_dir.join("offsets.json"))
+            .unwrap()
+            .persister("test");
+
+        // Make directory read-only (this will cause sync to fail)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o444)).unwrap();
+        }
+
+        // First checkpoint failure should not return error
+        let result = coordinator.maybe_checkpoint();
+        #[cfg(unix)]
+        assert!(
+            result.is_ok(),
+            "First checkpoint failure should return Ok (threshold not reached)"
+        );
+
+        // Wait for threshold
+        std::thread::sleep(Duration::from_millis(60));
+
+        // Force another checkpoint
+        coordinator.records_since_checkpoint = 10000;
+
+        // Next checkpoint should fail
+        let result = coordinator.maybe_checkpoint();
+        #[cfg(unix)]
+        assert!(
+            result.is_err(),
+            "Checkpoint should return Err after threshold duration"
+        );
+
+        // Cleanup - restore permissions
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
     }
 }

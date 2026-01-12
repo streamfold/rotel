@@ -4,21 +4,83 @@ use std::path::PathBuf;
 
 use crate::receivers::file::error::{Error, Result};
 
-/// FileFinder finds files matching include patterns while excluding others
+/// Trait for finding files to process
+pub trait FileFinder: Send {
+    /// Find all files that should be processed
+    fn find_files(&self) -> Result<Vec<PathBuf>>;
+}
+
+/// Mock file finder for testing error handling thresholds
+#[cfg(test)]
+pub struct MockFileFinder {
+    /// Number of successful calls before failing
+    pub fail_after: Option<usize>,
+    /// Current call count
+    pub call_count: std::cell::Cell<usize>,
+    /// Files to return on success
+    pub files: Vec<PathBuf>,
+}
+
+#[cfg(test)]
+impl MockFileFinder {
+    /// Create a MockFileFinder that always succeeds with empty results
+    pub fn new() -> Self {
+        Self {
+            fail_after: None,
+            call_count: std::cell::Cell::new(0),
+            files: vec![],
+        }
+    }
+
+    /// Create a MockFileFinder that fails after N successful calls
+    pub fn fail_after(n: usize) -> Self {
+        Self {
+            fail_after: Some(n),
+            call_count: std::cell::Cell::new(0),
+            files: vec![],
+        }
+    }
+
+    /// Set the files to return on success
+    pub fn with_files(mut self, files: Vec<PathBuf>) -> Self {
+        self.files = files;
+        self
+    }
+}
+
+#[cfg(test)]
+impl FileFinder for MockFileFinder {
+    fn find_files(&self) -> Result<Vec<PathBuf>> {
+        let count = self.call_count.get();
+        self.call_count.set(count + 1);
+
+        if let Some(fail_after) = self.fail_after {
+            if count >= fail_after {
+                return Err(Error::InvalidGlob("mock error".to_string()));
+            }
+        }
+
+        Ok(self.files.clone())
+    }
+}
+
+/// GlobFileFinder finds files matching include patterns while excluding others
 #[derive(Debug, Clone)]
-pub struct FileFinder {
+pub struct GlobFileFinder {
     include: Vec<String>,
     exclude: Vec<String>,
 }
 
-impl FileFinder {
-    /// Create a new FileFinder with the given include and exclude patterns
+impl GlobFileFinder {
+    /// Create a new GlobFileFinder with the given include and exclude patterns
     pub fn new(include: Vec<String>, exclude: Vec<String>) -> Self {
         Self { include, exclude }
     }
+}
 
+impl FileFinder for GlobFileFinder {
     /// Find all files matching the include patterns, excluding those matching exclude patterns
-    pub fn find_files(&self) -> Result<Vec<PathBuf>> {
+    fn find_files(&self) -> Result<Vec<PathBuf>> {
         let mut seen = HashSet::new();
         let mut paths = Vec::new();
 
@@ -85,7 +147,7 @@ mod tests {
         setup_test_files(&dir);
 
         let pattern = format!("{}/*.log", dir.path().display());
-        let finder = FileFinder::new(vec![pattern], vec![]);
+        let finder = GlobFileFinder::new(vec![pattern], vec![]);
 
         let files = finder.find_files().unwrap();
         assert_eq!(files.len(), 3); // test1.log, test2.log, ignored.log
@@ -98,7 +160,7 @@ mod tests {
 
         let include = format!("{}/*.log", dir.path().display());
         let exclude = format!("{}/ignored.log", dir.path().display());
-        let finder = FileFinder::new(vec![include], vec![exclude]);
+        let finder = GlobFileFinder::new(vec![include], vec![exclude]);
 
         let files = finder.find_files().unwrap();
         assert_eq!(files.len(), 2); // test1.log, test2.log
@@ -111,7 +173,7 @@ mod tests {
 
         // Include the same pattern twice
         let pattern = format!("{}/*.log", dir.path().display());
-        let finder = FileFinder::new(vec![pattern.clone(), pattern], vec![]);
+        let finder = GlobFileFinder::new(vec![pattern.clone(), pattern], vec![]);
 
         let files = finder.find_files().unwrap();
         assert_eq!(files.len(), 3); // Should not have duplicates
@@ -119,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_finder_empty_include() {
-        let finder = FileFinder::new(vec![], vec![]);
+        let finder = GlobFileFinder::new(vec![], vec![]);
         let files = finder.find_files().unwrap();
         assert!(files.is_empty());
     }
@@ -134,7 +196,7 @@ mod tests {
 
         // Create finder with pattern that matches .log files
         let pattern = format!("{}/*.log", dir.path().display());
-        let finder = FileFinder::new(vec![pattern], vec![]);
+        let finder = GlobFileFinder::new(vec![pattern], vec![]);
 
         // First find - should see only the existing file
         let files = finder.find_files().unwrap();
@@ -188,7 +250,7 @@ mod tests {
 
         // Create finder with pattern - directory exists but has no matching files
         let pattern = format!("{}/*.log", dir.path().display());
-        let finder = FileFinder::new(vec![pattern], vec![]);
+        let finder = GlobFileFinder::new(vec![pattern], vec![]);
 
         // First find - no files exist yet
         let files = finder.find_files().unwrap();
@@ -214,7 +276,7 @@ mod tests {
         // Create finder with include and exclude patterns
         let include = format!("{}/*.log", dir.path().display());
         let exclude = format!("{}/*_debug.log", dir.path().display());
-        let finder = FileFinder::new(vec![include], vec![exclude]);
+        let finder = GlobFileFinder::new(vec![include], vec![exclude]);
 
         // Initially empty
         let files = finder.find_files().unwrap();
