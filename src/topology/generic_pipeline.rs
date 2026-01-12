@@ -28,8 +28,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 #[cfg(feature = "pyo3")]
 use tower::BoxError;
-use tracing::log::warn;
-use tracing::{Level, debug, error};
+use tracing::{Level, debug, error, warn};
 
 //#[derive(Clone)]
 #[allow(dead_code)] // for the sake of the pyo3 feature
@@ -421,6 +420,11 @@ where
                     match resp {
                         (Some(req), listener) => {
                             debug!("received force flush in pipeline: {:?}", req);
+                            let recv_len = self.receiver.len();
+                            if recv_len > 0 {
+                                warn!(receiver_len = recv_len, "received flush on pipeline with pending messages");
+                            }
+
                             batch_timer.reset();
 
                             // Flush pending future if it exists
