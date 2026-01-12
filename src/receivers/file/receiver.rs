@@ -164,7 +164,9 @@ struct LogRecordBatch {
 struct FileWorkItem {
     /// FileId for this file (used to match results back to tracked files)
     file_id: FileId,
-    /// Path to the file to process
+    /// Cloned file handle (avoids reopening the file in workers)
+    file: File,
+    /// Path to the file (for logging and attributes)
     path: PathBuf,
     /// Starting offset in the file
     offset: u64,
@@ -207,35 +209,25 @@ const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
 
 /// Process a single file work item (runs in spawn_blocking)
 fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
-    // Create a reader for this work item
-    let mut reader = match FileReader::new(&work.path, work.offset, work.max_log_size) {
-        Ok(r) => r,
-        Err(e) => {
-            debug!("Failed to create reader for {:?}: {}", work.path, e);
-            let result = FileWorkResult {
-                file_id: work.file_id,
-                new_offset: work.offset,
-                reached_eof: false,
-            };
-            let _ = ctx.results_tx.send_blocking(result);
-            return;
-        }
-    };
-
     // Get current timestamp for all log records in this batch
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
 
-    // Read lines and build LogRecords, sending in small batches
-    let mut log_records = Vec::with_capacity(MAX_BATCH_SIZE);
-    let file_name = work.file_name.as_deref();
+    // Extract attributes before moving work.path into reader
+    let file_name = work.file_name;
     let path_str = if ctx.include_file_path {
         Some(work.path.display().to_string())
     } else {
         None
     };
+
+    // Create a reader using the cloned file handle (avoids reopening)
+    let mut reader = FileReader::from_file(work.file, work.path, work.offset, work.max_log_size);
+
+    // Read lines and build LogRecords, sending in small batches
+    let mut log_records = Vec::with_capacity(MAX_BATCH_SIZE);
 
     let records_tx = &ctx.records_tx;
 
@@ -244,7 +236,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         let mut attributes = Vec::new();
 
         if ctx.include_file_name {
-            if let Some(name) = file_name {
+            if let Some(ref name) = file_name {
                 attributes.push(OtlpKeyValue {
                     key: "log.file.name".to_string(),
                     value: Some(AnyValue {
@@ -317,7 +309,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
     });
 
     if let Err(e) = parse_result {
-        error!("Error reading file {:?}: {}", work.path, e);
+        error!("Error reading file {:?}: {}", reader.path(), e);
     }
 
     let new_offset = reader.offset();
@@ -770,6 +762,15 @@ impl FileCoordinator {
             return Ok(());
         }
 
+        // Clone the file handle for the worker (avoids reopening)
+        let cloned_file = match tracked.file.try_clone() {
+            Ok(f) => f,
+            Err(e) => {
+                debug!("Failed to clone file handle for {:?}: {}", tracked.path, e);
+                return Ok(());
+            }
+        };
+
         // Extract file name
         let file_name = tracked
             .path
@@ -780,6 +781,7 @@ impl FileCoordinator {
         // Create work item
         let work = FileWorkItem {
             file_id,
+            file: cloned_file,
             path: tracked.path.clone(),
             offset: tracked.offset,
             file_name,

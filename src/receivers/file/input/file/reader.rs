@@ -36,6 +36,20 @@ impl FileReader {
         })
     }
 
+    /// Create a FileReader from an existing file handle.
+    /// This avoids reopening the file and is more efficient when the caller
+    /// already has an open handle.
+    pub fn from_file(file: File, path: PathBuf, offset: u64, max_log_size: usize) -> Self {
+        Self {
+            path,
+            offset,
+            file: Some(file),
+            max_log_size,
+            eof: false,
+            line_buffer: String::with_capacity(1024),
+        }
+    }
+
     /// Get the file path
     pub fn path(&self) -> &Path {
         &self.path
