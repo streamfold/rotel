@@ -3,6 +3,13 @@ use serde::Deserialize;
 
 use crate::exporters::shared::aws::Region;
 
+crate::define_exporter_retry_args!(
+    XRayRetryArgs,
+    "awsxray-exporter",
+    "ROTEL_AWSXRAY_EXPORTER",
+    "AWS X-Ray Exporter"
+);
+
 #[derive(Debug, Default, Clone, Args, Deserialize)]
 #[serde(default)]
 pub struct XRayExporterArgs {
@@ -20,4 +27,9 @@ pub struct XRayExporterArgs {
         env = "ROTEL_AWSXRAY_EXPORTER_CUSTOM_ENDPOINT"
     )]
     pub custom_endpoint: Option<String>,
+
+    /// AWS X-Ray Exporter retry configuration
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub retry: XRayRetryArgs,
 }

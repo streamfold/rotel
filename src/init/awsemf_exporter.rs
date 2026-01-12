@@ -3,6 +3,13 @@ use serde::Deserialize;
 
 use crate::exporters::shared::aws::Region;
 
+crate::define_exporter_retry_args!(
+    AwsEmfRetryArgs,
+    "awsemf-exporter",
+    "ROTEL_AWSEMF_EXPORTER",
+    "AWS EMF Exporter"
+);
+
 #[derive(Debug, Clone, Args, Deserialize)]
 #[serde(default)]
 pub struct AwsEmfExporterArgs {
@@ -76,6 +83,11 @@ pub struct AwsEmfExporterArgs {
         value_delimiter = ','
     )]
     pub exclude_dimensions: Vec<String>,
+
+    /// Retry configuration
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub retry: AwsEmfRetryArgs,
 }
 
 impl Default for AwsEmfExporterArgs {
@@ -90,6 +102,7 @@ impl Default for AwsEmfExporterArgs {
             retain_initial_value_of_delta_metric: false,
             include_dimensions: Vec::new(),
             exclude_dimensions: Vec::new(),
+            retry: Default::default(),
         }
     }
 }

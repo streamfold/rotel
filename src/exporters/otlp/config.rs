@@ -27,25 +27,28 @@ pub struct OTLPExporterConfig {
     pub(crate) tls_cfg_builder: ConfigBuilder,
 }
 
-impl Default for OTLPExporterConfig {
-    fn default() -> Self {
+impl OTLPExporterConfig {
+    pub fn new(
+        type_name: String,
+        endpoint: Endpoint,
+        protocol: Protocol,
+        retry_config: RetryConfig,
+    ) -> Self {
         Self {
-            type_name: "".to_string(),
-            endpoint: Endpoint::Base("".to_string()),
-            protocol: Protocol::Grpc,
+            type_name,
+            endpoint,
+            protocol,
             authenticator: None,
             headers: vec![],
             tls_cfg_builder: Config::builder(),
             compression: Some(CompressionEncoding::Gzip),
-            retry_config: RetryConfig::default(),
+            retry_config,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             encode_drain_max_time: Duration::from_secs(2),
             export_drain_max_time: Duration::from_secs(3),
         }
     }
-}
 
-impl OTLPExporterConfig {
     pub fn with_authenticator(mut self, authenticator: Option<Authenticator>) -> Self {
         self.authenticator = authenticator;
         self
@@ -107,21 +110,6 @@ impl OTLPExporterConfig {
 
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
-        self
-    }
-
-    pub fn with_max_elapsed_time(mut self, max_elapsed_time: Duration) -> Self {
-        self.retry_config.max_elapsed_time = max_elapsed_time;
-        self
-    }
-
-    pub fn with_initial_backoff(mut self, backoff: Duration) -> Self {
-        self.retry_config.initial_backoff = backoff;
-        self
-    }
-
-    pub fn with_max_backoff(mut self, backoff: Duration) -> Self {
-        self.retry_config.max_backoff = backoff;
         self
     }
 
