@@ -59,7 +59,7 @@ pub enum Compression {
     Lz4,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ClickhouseExporterConfigBuilder {
     retry_config: RetryConfig,
     compression: Compression,
@@ -70,7 +70,6 @@ pub struct ClickhouseExporterConfigBuilder {
     auth_password: Option<String>,
     async_insert: bool,
     use_json: bool,
-    use_json_underscore: bool,
     request_timeout: Duration,
 }
 
@@ -101,13 +100,19 @@ impl ClickhouseExporterConfigBuilder {
         endpoint: String,
         database: String,
         table_prefix: String,
+        retry_config: RetryConfig,
     ) -> ClickhouseExporterConfigBuilder {
         ClickhouseExporterConfigBuilder {
+            retry_config,
             endpoint,
             database,
             table_prefix,
+            auth_user: None,
+            auth_password: None,
             request_timeout: Duration::from_secs(5),
-            ..Default::default()
+            compression: Default::default(),
+            use_json: false,
+            async_insert: false,
         }
     }
 
@@ -118,11 +123,6 @@ impl ClickhouseExporterConfigBuilder {
 
     pub fn with_json(mut self, json: bool) -> Self {
         self.use_json = json;
-        self
-    }
-
-    pub fn with_json_underscore(mut self, json_underscore: bool) -> Self {
-        self.use_json_underscore = json_underscore;
         self
     }
 
@@ -146,13 +146,13 @@ impl ClickhouseExporterConfigBuilder {
         self
     }
 
-    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
-        self.retry_config = retry_config;
-        self
-    }
-
     pub fn set_indefinite_retry(&mut self) {
         self.retry_config.indefinite_retry = true;
+    }
+
+    #[cfg(test)]
+    pub fn retry_config(&self) -> &RetryConfig {
+        &self.retry_config
     }
 
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
@@ -164,7 +164,6 @@ impl ClickhouseExporterConfigBuilder {
             auth_password: self.auth_password,
             async_insert: self.async_insert,
             use_json: self.use_json,
-            use_json_underscore: self.use_json_underscore,
         };
 
         let mapper = Arc::new(RequestMapper::new(&config, self.table_prefix)?);
@@ -222,11 +221,7 @@ impl ClickhouseExporterBuilder {
     {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
 
-        let transformer = Transformer::new(
-            self.config.compression.clone(),
-            self.config.use_json,
-            self.config.use_json_underscore,
-        );
+        let transformer = Transformer::new(self.config.compression.clone(), self.config.use_json);
 
         let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 
@@ -371,6 +366,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -404,6 +400,7 @@ mod tests {
         let logs = FakeOTLP::logs_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: logs.resource_logs,
         }])
         .await
@@ -438,6 +435,7 @@ mod tests {
         btx.send(vec![Message {
             payload: metrics.resource_metrics,
             metadata: None,
+            request_context: None,
         }])
         .await
         .unwrap();
@@ -488,6 +486,7 @@ mod tests {
         let traces = FakeOTLP::trace_service_request();
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: traces.resource_spans,
         }])
         .await
@@ -566,6 +565,7 @@ mod tests {
         // Send traces with metadata
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: all_resource_spans,
         }])
         .await
@@ -622,10 +622,14 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
     ) -> ExporterType<'a, ResourceSpans> {
-        let builder =
-            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
-                .build()
-                .unwrap();
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .build()
+        .unwrap();
 
         builder.build_traces_exporter(brx, None).unwrap()
     }
@@ -634,10 +638,14 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceLogs>>>,
     ) -> ExporterType<'a, ResourceLogs> {
-        let builder =
-            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
-                .build()
-                .unwrap();
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .build()
+        .unwrap();
 
         builder.build_logs_exporter(brx, None).unwrap()
     }
@@ -646,10 +654,14 @@ mod tests {
         addr: String,
         brx: BoundedReceiver<Vec<Message<ResourceMetrics>>>,
     ) -> ExporterType<'a, ResourceMetrics> {
-        let builder =
-            ClickhouseExporterConfigBuilder::new(addr, "otel".to_string(), "otel".to_string())
-                .build()
-                .unwrap();
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .build()
+        .unwrap();
 
         builder.build_metrics_exporter(brx, None).unwrap()
     }

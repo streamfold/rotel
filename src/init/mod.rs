@@ -29,3 +29,4 @@ mod config;
 mod otlp_receiver;
 #[cfg(feature = "pprof")]
 pub mod pprof;
+mod retry;

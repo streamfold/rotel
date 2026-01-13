@@ -18,6 +18,7 @@ use crate::init::otlp_exporter::{
     OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
 };
 use crate::init::parse::parse_bool_value;
+use crate::init::retry::GlobalExporterRetryArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
 #[cfg(feature = "file_receiver")]
 use crate::receivers::file::config::FileReceiverConfig;
@@ -165,6 +166,7 @@ trait TryIntoConfig {
     fn try_into_config(
         &self,
         pipeline_type: PipelineType,
+        global_retry: &GlobalExporterRetryArgs,
         environment: &str,
     ) -> Result<ExporterConfig, BoxError>;
 }
@@ -214,6 +216,7 @@ impl TryIntoConfig for ExporterArgs {
     fn try_into_config(
         &self,
         pipeline_type: PipelineType,
+        global_retry: &GlobalExporterRetryArgs,
         environment: &str,
     ) -> Result<ExporterConfig, BoxError> {
         match self {
@@ -234,13 +237,17 @@ impl TryIntoConfig for ExporterArgs {
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
                         if pipeline_type == PipelineType::Metrics {
-                            Ok(ExporterConfig::Otlp(
-                                otlp.into_exporter_config("metrics", endpoint),
-                            ))
+                            Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                                "metrics",
+                                endpoint,
+                                global_retry,
+                            )))
                         } else {
-                            Ok(ExporterConfig::Otlp(
-                                otlp.into_exporter_config("internal_metrics", endpoint),
-                            ))
+                            Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                                "internal_metrics",
+                                endpoint,
+                                global_retry,
+                            )))
                         }
                     }
                     PipelineType::Logs => {
@@ -253,9 +260,11 @@ impl TryIntoConfig for ExporterArgs {
                             .map(|e| Endpoint::Full(e.clone()))
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
-                        Ok(ExporterConfig::Otlp(
-                            otlp.into_exporter_config("logs", endpoint),
-                        ))
+                        Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                            "logs",
+                            endpoint,
+                            global_retry,
+                        )))
                     }
                     PipelineType::Traces => {
                         if endpoint.is_none() && otlp.traces_endpoint.is_none() {
@@ -267,9 +276,11 @@ impl TryIntoConfig for ExporterArgs {
                             .map(|e| Endpoint::Full(e.clone()))
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
-                        Ok(ExporterConfig::Otlp(
-                            otlp.into_exporter_config("traces", endpoint),
-                        ))
+                        Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                            "traces",
+                            endpoint,
+                            global_retry,
+                        )))
                     }
                 }
             }
@@ -294,6 +305,7 @@ impl TryIntoConfig for ExporterArgs {
                     dd.region.into(),
                     dd.custom_endpoint.clone(),
                     api_key.clone(),
+                    dd.retry.build_retry_config(global_retry),
                 )
                 .with_environment(environment.to_string());
 
@@ -314,11 +326,11 @@ impl TryIntoConfig for ExporterArgs {
                     ch.endpoint.as_ref().unwrap().clone(),
                     ch.database.clone(),
                     ch.table_prefix.clone(),
+                    ch.retry.build_retry_config(global_retry),
                 )
                 .with_compression(ch.compression)
                 .with_async_insert(async_insert)
                 .with_json(ch.enable_json)
-                .with_json_underscore(ch.json_underscore)
                 .with_request_timeout(ch.request_timeout);
 
                 if let Some(user) = &ch.user {
@@ -340,8 +352,11 @@ impl TryIntoConfig for ExporterArgs {
                     .into());
                 }
 
-                let builder =
-                    XRayExporterConfigBuilder::new(xray.region, xray.custom_endpoint.clone());
+                let builder = XRayExporterConfigBuilder::new(
+                    xray.region,
+                    xray.custom_endpoint.clone(),
+                    xray.retry.build_retry_config(global_retry),
+                );
 
                 Ok(ExporterConfig::Xray(builder))
             }
@@ -366,15 +381,16 @@ impl TryIntoConfig for ExporterArgs {
                     .into());
                 }
 
-                let mut builder = AwsEmfExporterConfigBuilder::new()
-                    .with_region(awsemf.region)
-                    .with_log_group_name(awsemf.log_group_name.clone())
-                    .with_log_stream_name(awsemf.log_stream_name.clone())
-                    .with_include_dimensions(awsemf.include_dimensions.clone())
-                    .with_exclude_dimensions(awsemf.exclude_dimensions.clone())
-                    .with_retain_initial_value_of_delta_metric(
-                        awsemf.retain_initial_value_of_delta_metric,
-                    );
+                let mut builder =
+                    AwsEmfExporterConfigBuilder::new(awsemf.retry.build_retry_config(global_retry))
+                        .with_region(awsemf.region)
+                        .with_log_group_name(awsemf.log_group_name.clone())
+                        .with_log_stream_name(awsemf.log_stream_name.clone())
+                        .with_include_dimensions(awsemf.include_dimensions.clone())
+                        .with_exclude_dimensions(awsemf.exclude_dimensions.clone())
+                        .with_retain_initial_value_of_delta_metric(
+                            awsemf.retain_initial_value_of_delta_metric,
+                        );
 
                 if let Some(log_retention) = &awsemf.log_retention {
                     builder = builder.with_log_retention(*log_retention);
@@ -403,8 +419,9 @@ impl TryIntoConfig for ExporterArgs {
 
 pub(crate) fn get_receivers_config(
     config: &AgentRun,
+    otlp_default_receiver: bool,
 ) -> Result<HashMap<Receiver, ReceiverConfig>, BoxError> {
-    if config.receivers.is_none() && config.receiver.is_none() {
+    if config.receivers.is_none() && config.receiver.is_none() && otlp_default_receiver {
         let mut map = HashMap::new();
         map.insert(Receiver::Otlp, get_receiver_config(config, Receiver::Otlp));
         return Ok(map);
@@ -469,7 +486,11 @@ fn get_multi_exporter_config(
         cfg.traces = sp
             .into_iter()
             .map(|exp| match exporter_map.get(&exp.to_string()) {
-                Some(args) => match args.try_into_config(PipelineType::Traces, environment) {
+                Some(args) => match args.try_into_config(
+                    PipelineType::Traces,
+                    &config.exporter_retry,
+                    environment,
+                ) {
                     Ok(config) => Ok(config),
                     Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
                 },
@@ -484,7 +505,11 @@ fn get_multi_exporter_config(
         cfg.metrics = sp
             .into_iter()
             .map(|exp| match exporter_map.get(&exp.to_string()) {
-                Some(args) => match args.try_into_config(PipelineType::Metrics, environment) {
+                Some(args) => match args.try_into_config(
+                    PipelineType::Metrics,
+                    &config.exporter_retry,
+                    environment,
+                ) {
                     Ok(config) => Ok(config),
                     Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
                 },
@@ -499,7 +524,11 @@ fn get_multi_exporter_config(
         cfg.logs = sp
             .into_iter()
             .map(|exp| match exporter_map.get(&exp.to_string()) {
-                Some(args) => match args.try_into_config(PipelineType::Logs, environment) {
+                Some(args) => match args.try_into_config(
+                    PipelineType::Logs,
+                    &config.exporter_retry,
+                    environment,
+                ) {
                     Ok(config) => Ok(config),
                     Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
                 },
@@ -515,7 +544,11 @@ fn get_multi_exporter_config(
             .into_iter()
             .map(|exp| match exporter_map.get(&exp.to_string()) {
                 Some(args) => {
-                    match args.try_into_config(PipelineType::InternalMetrics, environment) {
+                    match args.try_into_config(
+                        PipelineType::InternalMetrics,
+                        &config.exporter_retry,
+                        environment,
+                    ) {
                         Ok(config) => Ok(config),
                         Err(err) => Err(format!("Exporter[{}]: {}", exp, err).into()),
                     }
@@ -627,20 +660,32 @@ fn get_single_exporter_config(
             // Because the single exporter configuration has custom overrides per type, we
             // must build new args here that'll override with the custom type variations.
             let args = ExporterArgs::Otlp(build_traces_config(config.otlp_exporter.clone()));
-            cfg.traces
-                .push(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.traces.push(args.try_into_config(
+                PipelineType::Traces,
+                &config.exporter_retry,
+                environment,
+            )?);
 
             let args = ExporterArgs::Otlp(build_metrics_config(config.otlp_exporter.clone()));
-            cfg.metrics
-                .push(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.metrics.push(args.try_into_config(
+                PipelineType::Metrics,
+                &config.exporter_retry,
+                environment,
+            )?);
 
             let args = ExporterArgs::Otlp(build_logs_config(config.otlp_exporter.clone()));
-            cfg.logs
-                .push(args.try_into_config(PipelineType::Logs, environment)?);
+            cfg.logs.push(args.try_into_config(
+                PipelineType::Logs,
+                &config.exporter_retry,
+                environment,
+            )?);
 
             let args = ExporterArgs::Otlp(build_metrics_config(config.otlp_exporter.clone()));
-            cfg.internal_metrics
-                .push(args.try_into_config(PipelineType::InternalMetrics, environment)?);
+            cfg.internal_metrics.push(args.try_into_config(
+                PipelineType::InternalMetrics,
+                &config.exporter_retry,
+                environment,
+            )?);
         }
         Exporter::Blackhole => {
             cfg.traces.push(ExporterConfig::Blackhole {});
@@ -649,27 +694,45 @@ fn get_single_exporter_config(
         }
         Exporter::Datadog => {
             let args = ExporterArgs::Datadog(config.datadog_exporter.clone());
-            cfg.traces
-                .push(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.traces.push(args.try_into_config(
+                PipelineType::Traces,
+                &config.exporter_retry,
+                environment,
+            )?);
         }
         Exporter::Clickhouse => {
             let args = ExporterArgs::Clickhouse(config.clickhouse_exporter.clone());
-            cfg.logs
-                .push(args.try_into_config(PipelineType::Logs, environment)?);
-            cfg.traces
-                .push(args.try_into_config(PipelineType::Traces, environment)?);
-            cfg.metrics
-                .push(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.logs.push(args.try_into_config(
+                PipelineType::Logs,
+                &config.exporter_retry,
+                environment,
+            )?);
+            cfg.traces.push(args.try_into_config(
+                PipelineType::Traces,
+                &config.exporter_retry,
+                environment,
+            )?);
+            cfg.metrics.push(args.try_into_config(
+                PipelineType::Metrics,
+                &config.exporter_retry,
+                environment,
+            )?);
         }
         Exporter::AwsXray => {
             let args = ExporterArgs::Xray(config.aws_xray_exporter.clone());
-            cfg.traces
-                .push(args.try_into_config(PipelineType::Traces, environment)?);
+            cfg.traces.push(args.try_into_config(
+                PipelineType::Traces,
+                &config.exporter_retry,
+                environment,
+            )?);
         }
         Exporter::AwsEmf => {
             let args = ExporterArgs::Awsemf(config.aws_emf_exporter.clone());
-            cfg.metrics
-                .push(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.metrics.push(args.try_into_config(
+                PipelineType::Metrics,
+                &config.exporter_retry,
+                environment,
+            )?);
         }
 
         #[cfg(feature = "rdkafka")]
@@ -683,12 +746,21 @@ fn get_single_exporter_config(
         #[cfg(feature = "file_exporter")]
         Exporter::File => {
             let args = ExporterArgs::File(config.file_exporter.clone());
-            cfg.logs
-                .push(args.try_into_config(PipelineType::Logs, environment)?);
-            cfg.traces
-                .push(args.try_into_config(PipelineType::Traces, environment)?);
-            cfg.metrics
-                .push(args.try_into_config(PipelineType::Metrics, environment)?);
+            cfg.logs.push(args.try_into_config(
+                PipelineType::Logs,
+                &config.exporter_retry,
+                environment,
+            )?);
+            cfg.traces.push(args.try_into_config(
+                PipelineType::Traces,
+                &config.exporter_retry,
+                environment,
+            )?);
+            cfg.metrics.push(args.try_into_config(
+                PipelineType::Metrics,
+                &config.exporter_retry,
+                environment,
+            )?);
         }
     }
 
@@ -711,16 +783,26 @@ mod tests {
     use crate::init::args::AgentRun;
     use std::collections::HashMap;
     use std::env;
+    use std::sync::{Mutex, MutexGuard};
 
     // Helper struct to manage environment variables during tests
-    struct EnvManager {
+    struct EnvManager<'a> {
         original_vars: HashMap<String, Option<String>>,
+        _guard: MutexGuard<'a, ()>,
     }
 
-    impl EnvManager {
+    impl EnvManager<'_> {
         fn new() -> Self {
+            // This will be shared amongs threads of the test bin
+            // Ensuring that only one test at a time can use the EnvManager
+            // Other test thread that try to instantiate this will wait until
+            // the test using the EnvManager drops it.
+            // Note that the EnvManager Drop impl guarantees that when EnvManager
+            // is dropped, the environment is restored to its initial state.
+            static MUTEX: Mutex<()> = Mutex::new(());
             Self {
                 original_vars: HashMap::new(),
+                _guard: MUTEX.lock().unwrap(),
             }
         }
 
@@ -730,6 +812,11 @@ mod tests {
                 self.original_vars
                     .insert(key.to_string(), env::var(key).ok());
             }
+            // SAFETY:
+            // The static MUTEX shared by all the threads of the test bin
+            // ensures that only 1 thread can use [env::set_var] and [env::remove_var]
+            // Before another thread can use these functions, the EnvManager guarantees
+            // that the environment is reverted back to its initial values.
             unsafe { env::set_var(key, value) };
         }
 
@@ -739,14 +826,24 @@ mod tests {
                 self.original_vars
                     .insert(key.to_string(), env::var(key).ok());
             }
+            // SAFETY:
+            // The static MUTEX shared by all the threads of the test bin
+            // ensures that only 1 thread can use [env::set_var] and [env::remove_var]
+            // Before another thread can use these functions, the EnvManager guarantees
+            // that the environment is reverted back to its initial values.
             unsafe { env::remove_var(key) };
         }
     }
 
-    impl Drop for EnvManager {
+    impl Drop for EnvManager<'_> {
         fn drop(&mut self) {
             // Restore all environment variables
             for (key, original_value) in &self.original_vars {
+                // SAFETY:
+                // The static MUTEX shared by all the threads of the test bin
+                // ensures that only 1 thread can use [env::set_var] and [env::remove_var]
+                // Before another thread can use these functions, the EnvManager guarantees
+                // that the environment is reverted back to its initial values.
                 match original_value {
                     Some(value) => unsafe { env::set_var(key, value) },
                     None => unsafe { env::remove_var(key) },
@@ -1074,5 +1171,118 @@ mod tests {
                 assert!(err.to_string().contains("failed to parse OTLP config"));
             }
         };
+    }
+
+    #[test]
+    fn test_global_retry_defaults_clickhouse() {
+        use std::time::Duration;
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var(
+            "ROTEL_EXPORTER_CLICKHOUSE_ENDPOINT",
+            "http://localhost:8123",
+        );
+
+        // Create config with custom global retry settings
+        let config = AgentRun {
+            exporters_traces: Some("clickhouse".to_string()),
+            exporter_retry: crate::init::retry::GlobalExporterRetryArgs {
+                initial_backoff: Duration::from_secs(7),
+                max_backoff: Duration::from_secs(45),
+                max_elapsed_time: Duration::from_secs(450),
+            },
+            ..Default::default()
+        };
+
+        let result = get_multi_exporter_config(&config, "clickhouse".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert_eq!(1, exporters.traces.len());
+
+        // Verify that Clickhouse exporter uses global retry defaults
+        match &exporters.traces[0] {
+            ExporterConfig::Clickhouse(ch) => {
+                assert_eq!(Duration::from_secs(7), ch.retry_config().initial_backoff);
+                assert_eq!(Duration::from_secs(45), ch.retry_config().max_backoff);
+                assert_eq!(Duration::from_secs(450), ch.retry_config().max_elapsed_time);
+            }
+            _ => panic!("Expected Clickhouse exporter"),
+        }
+    }
+
+    #[test]
+    fn test_exporter_specific_retry_overrides_global_clickhouse() {
+        use std::time::Duration;
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_ENDPOINT", "http://localhost:8123");
+        // Set exporter-specific retry values
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_INITIAL_BACKOFF", "15s");
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_MAX_BACKOFF", "75s");
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_MAX_ELAPSED_TIME", "750s");
+
+        // Create config with different global retry settings
+        let config = AgentRun {
+            exporters_traces: Some("test".to_string()),
+            exporter_retry: crate::init::retry::GlobalExporterRetryArgs {
+                initial_backoff: Duration::from_secs(5),
+                max_backoff: Duration::from_secs(30),
+                max_elapsed_time: Duration::from_secs(300),
+            },
+            ..AgentRun::default()
+        };
+
+        let result =
+            get_multi_exporter_config(&config, "test:clickhouse".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert_eq!(1, exporters.traces.len());
+
+        // Verify that exporter-specific retry values override global defaults
+        match &exporters.traces[0] {
+            ExporterConfig::Clickhouse(ch) => {
+                assert_eq!(Duration::from_secs(15), ch.retry_config().initial_backoff);
+                assert_eq!(Duration::from_secs(75), ch.retry_config().max_backoff);
+                assert_eq!(Duration::from_secs(750), ch.retry_config().max_elapsed_time);
+            }
+            _ => panic!("Expected Clickhouse exporter"),
+        }
+    }
+
+    #[test]
+    fn test_partial_exporter_retry_override_clickhouse() {
+        use std::time::Duration;
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_TEST_ENDPOINT", "http://localhost:8123");
+        // Set only one exporter-specific retry value
+        env_manager.set_var("ROTEL_EXPORTER_TEST_RETRY_INITIAL_BACKOFF", "25s");
+
+        // Create config with global retry settings
+        let config = AgentRun {
+            exporters_traces: Some("test".to_string()),
+            exporter_retry: crate::init::retry::GlobalExporterRetryArgs {
+                initial_backoff: Duration::from_secs(5),
+                max_backoff: Duration::from_secs(30),
+                max_elapsed_time: Duration::from_secs(300),
+            },
+            ..AgentRun::default()
+        };
+
+        let result =
+            get_multi_exporter_config(&config, "test:clickhouse".to_string(), "production");
+
+        assert!(result.is_ok());
+        let exporters = result.unwrap();
+        assert_eq!(1, exporters.traces.len());
+
+        // Verify that only initial_backoff is overridden, others use global defaults
+        match &exporters.traces[0] {
+            ExporterConfig::Clickhouse(ch) => {
+                assert_eq!(Duration::from_secs(25), ch.retry_config().initial_backoff);
+                assert_eq!(Duration::from_secs(30), ch.retry_config().max_backoff);
+                assert_eq!(Duration::from_secs(300), ch.retry_config().max_elapsed_time);
+            }
+            _ => panic!("Expected Clickhouse exporter"),
+        }
     }
 }

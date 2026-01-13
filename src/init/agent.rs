@@ -33,7 +33,7 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
 use crate::topology::fanout::FanoutBuilder;
-use crate::topology::flush_control::FlushSubscriber;
+use crate::topology::flush_control::{FlushSubscriber, conditional_flush};
 use crate::topology::payload::Message;
 use crate::{telemetry, topology};
 use opentelemetry::global;
@@ -51,8 +51,7 @@ use tokio::select;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "prometheus")]
 use crate::telemetry::metrics_server::MetricsServer;
@@ -64,9 +63,11 @@ pub struct Agent {
     port_map: HashMap<SocketAddr, Listener>,
     sending_queue_size: usize,
     environment: String,
-    logs_rx: Option<BoundedReceiver<ResourceLogs>>,
+    logs_rx: Option<(BoundedReceiver<Message<ResourceLogs>>, FlushSubscriber)>,
     pipeline_flush_sub: Option<FlushSubscriber>,
     exporters_flush_sub: Option<FlushSubscriber>,
+    otlp_default_receiver: bool,
+    init_complete_chan: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl Agent {
@@ -84,11 +85,17 @@ impl Agent {
             logs_rx: None,
             pipeline_flush_sub: None,
             exporters_flush_sub: None,
+            otlp_default_receiver: true,
+            init_complete_chan: None,
         }
     }
 
-    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<ResourceLogs>) -> Self {
-        self.logs_rx = Some(logs_rx);
+    pub fn with_logs_rx(
+        mut self,
+        logs_rx: BoundedReceiver<Message<ResourceLogs>>,
+        logs_rx_flush_sub: FlushSubscriber,
+    ) -> Self {
+        self.logs_rx = Some((logs_rx, logs_rx_flush_sub));
         self
     }
 
@@ -99,6 +106,20 @@ impl Agent {
 
     pub fn with_exporters_flush(mut self, exporters_flush_sub: FlushSubscriber) -> Self {
         self.exporters_flush_sub = Some(exporters_flush_sub);
+        self
+    }
+
+    pub fn with_init_complete_chan(
+        mut self,
+        init_complete_chan: tokio::sync::oneshot::Sender<bool>,
+    ) -> Self {
+        self.init_complete_chan = Some(init_complete_chan);
+        self
+    }
+
+    /// disable the default OTLP receiver
+    pub fn disable_otlp_default_receiver(mut self) -> Self {
+        self.otlp_default_receiver = false;
         self
     }
 
@@ -142,7 +163,7 @@ impl Agent {
             bounded::<Message<ResourceMetrics>>(max(4, num_cpus));
         let internal_metrics_otlp_output = OTLPOutput::new(internal_metrics_pipeline_in_tx);
 
-        let rec_config = get_receivers_config(&config)?;
+        let rec_config = get_receivers_config(&config, self.otlp_default_receiver)?;
         #[allow(unused_mut)]
         let mut exp_config = get_exporters_config(&config, &self.environment)?;
 
@@ -189,7 +210,8 @@ impl Agent {
             exp_config.set_indefinite_retry();
         }
 
-        let activation = TelemetryActivation::from_config(&rec_config, &exp_config);
+        let activation =
+            TelemetryActivation::from_config(&rec_config, &exp_config, self.logs_rx.is_some());
 
         // If there are no listeners, suggest the blackhole exporter
         if activation.traces == TelemetryState::NoListeners
@@ -866,6 +888,8 @@ impl Agent {
                         .with_traces_output(traces_output.clone())
                         .with_metrics_output(metrics_output.clone())
                         .with_logs_output(logs_output.clone())
+                        .with_include_metadata(config.otlp_grpc_include_metadata)
+                        .with_headers_to_include(config.otlp_grpc_headers_to_include.clone())
                         .build();
 
                     let grpc_listener = self.port_map.remove(&config.otlp_grpc_endpoint).unwrap();
@@ -886,6 +910,8 @@ impl Agent {
                         .with_traces_path(config.otlp_receiver_traces_http_path.clone())
                         .with_metrics_path(config.otlp_receiver_metrics_http_path.clone())
                         .with_logs_path(config.otlp_receiver_logs_http_path.clone())
+                        .with_include_metadata(config.otlp_http_include_metadata)
+                        .with_headers_to_include(config.otlp_http_headers_to_include.clone())
                         .build();
 
                     let http_listener = self.port_map.remove(&config.otlp_http_endpoint).unwrap();
@@ -990,24 +1016,48 @@ impl Agent {
         //
         // Logs input receiver
         //
-        if let Some(mut logs_rx) = self.logs_rx {
+        if let Some((mut logs_rx, mut logs_rx_flush_sub)) = self.logs_rx {
             let receivers_cancel = receivers_cancel.clone();
             let logs_output = logs_output.clone();
+            let mut logs_flush_listener = Some(logs_rx_flush_sub.subscribe());
 
             receivers_task_set.spawn(async move {
                 loop {
                     select! {
-                        rl = logs_rx.next() => {
-                            match rl {
+                        biased;
+
+                        msg = logs_rx.next() => {
+                            match msg {
                                 None => break,
-                                Some(rl) => {
+                                Some(msg) => {
                                     if let Some(out) = &logs_output {
-                                        if let Err(e) = out.send(Message{metadata: None, payload: vec![rl]}).await {
+                                        if let Err(e) = out.send(msg).await {
                                             // todo: is this possibly in a logging loop path?
                                             warn!("Unable to send logs to logs output: {}", e)
                                         }
                                     }
                                 }
+                            }
+                        },
+                        Some(resp) = conditional_flush(&mut logs_flush_listener) => {
+                            // NOTE: We don't actually drain logs_rx here, instead we rely
+                            // on the biased select loop to ensure that messages added to logs_rx
+                            // before the flush message are consumed before the conditional_flush arm is
+                            // executed.
+                            match resp {
+                                (Some(req), listener) => {
+                                    debug!(request = ?req, "received flush for logs_rx channel");
+
+                                    let logs_rx_len = logs_rx.len();
+                                    if logs_rx_len > 0 {
+                                        warn!(logs_rx_len, "received flush on logs_rx channel with pending messages");
+                                    }
+
+                                    if let Err(e) = listener.ack(req).await {
+                                        warn!("unable to ack flush request: {}", e);
+                                    }
+                                },
+                                (None, _) => warn!("logs_rx flush channel was closed")
                             }
                         },
                         _ = receivers_cancel.cancelled() => break,
@@ -1024,6 +1074,13 @@ impl Agent {
             } else {
                 None
             };
+
+        // Signal completed initialization
+        if let Some(init_complete_chan) = self.init_complete_chan.take() {
+            if let Err(e) = init_complete_chan.send(true) {
+                warn!(error = ?e, "failed to notify completed initialization")
+            }
+        }
 
         let mut result = Ok(());
         select! {

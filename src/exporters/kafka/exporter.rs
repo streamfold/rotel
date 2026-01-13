@@ -385,6 +385,7 @@ impl KafkaExportable for ResourceMetrics {
 
                     result.push(vec![Message {
                         metadata,
+                        request_context: None,
                         payload: vec![resource_metric],
                     }]);
                 }
@@ -470,6 +471,7 @@ impl KafkaExportable for ResourceLogs {
 
                     result.push(vec![Message {
                         metadata,
+                        request_context: None,
                         payload: vec![resource_log],
                     }]);
                 }

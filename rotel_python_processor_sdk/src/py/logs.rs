@@ -4,6 +4,7 @@ use crate::model::logs::{RLogRecord, RScopeLogs};
 use crate::model::otel_transform::convert_attributes;
 use crate::model::resource::RResource;
 use crate::py::common::{AnyValue, KeyValue};
+use crate::py::request_context::RequestContext;
 use crate::py::{handle_poison_error, AttributesList, InstrumentationScope, Resource};
 use pyo3::{pyclass, pymethods, Py, PyErr, PyRef, PyRefMut, PyResult, Python};
 use std::sync::{Arc, Mutex};
@@ -14,6 +15,7 @@ pub struct ResourceLogs {
     pub resource: Arc<Mutex<Option<RResource>>>,
     pub scope_logs: Arc<Mutex<Vec<Arc<Mutex<RScopeLogs>>>>>,
     pub schema_url: String,
+    pub request_context: Option<RequestContext>,
 }
 
 #[pymethods]
@@ -66,6 +68,10 @@ impl ResourceLogs {
     fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
         self.schema_url = schema_url;
         Ok(())
+    }
+    #[getter]
+    fn request_context(&self) -> PyResult<Option<RequestContext>> {
+        Ok(self.request_context.clone())
     }
 }
 

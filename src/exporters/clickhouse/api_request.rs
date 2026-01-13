@@ -13,7 +13,6 @@ pub struct ConnectionConfig {
     pub(crate) auth_password: Option<String>,
     pub(crate) async_insert: bool,
     pub(crate) use_json: bool,
-    pub(crate) use_json_underscore: bool,
 }
 
 #[derive(Clone)]

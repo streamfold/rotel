@@ -1,6 +1,6 @@
 use super::acknowledger::Acknowledger;
 use super::response::Response;
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::{FlushReceiver, FlushRequest, conditional_flush};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt, poll};
 use http::Request;
@@ -203,7 +203,7 @@ where
                         (Some(req), listener) => {
                             debug!(?meta, request = ?req, "Received force flush in exporter");
 
-                            if let Err(res) = self.drain_futures(&mut export_futures, true).await {
+                            if let Err(res) = self.drain_futures(&mut export_futures, Some(&req), true).await {
                                 warn!(?meta, result = res, "Unable to drain exporter");
                             }
 
@@ -222,7 +222,7 @@ where
             }
         }
 
-        self.drain_futures(&mut export_futures, false).await
+        self.drain_futures(&mut export_futures, None, false).await
     }
 
     async fn drain_futures(
@@ -230,10 +230,21 @@ where
         export_futures: &mut FuturesUnordered<
             ExportFuture<<Svc as Service<Request<Payload>>>::Future>,
         >,
+        req: Option<&FlushRequest>,
         non_blocking: bool,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        let finish_encoding = Instant::now().add(self.encode_drain_max_time);
-        let finish_sending = Instant::now().add(self.export_drain_max_time);
+        // Allow the flushing component to override the deadline
+        // TODO: use a single deadline for these
+        let (finish_encoding, finish_sending) =
+            if let Some(flush_deadline) = req.and_then(|r| r.get_flush_deadline()) {
+                let flush_deadline = flush_deadline.into();
+                (flush_deadline, flush_deadline)
+            } else {
+                (
+                    Instant::now().add(self.encode_drain_max_time),
+                    Instant::now().add(self.export_drain_max_time),
+                )
+            };
 
         // If non-blocking, we must poll at least once to force any messages into the encoding futures
         // list. This allows us to do the size check later, knowing that if there was a pending msg

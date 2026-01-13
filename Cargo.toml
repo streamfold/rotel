@@ -1,6 +1,6 @@
 [package]
 name = "rotel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 homepage = "https://github.com/streamfold/rotel"
 readme = "README.md"
@@ -92,10 +92,12 @@ aws-config = { version = "1.8.6", optional = true }
 aws-credential-types = { version = "1.2.6", optional = true }
 # Use a custom branch that backdates to otel sdk 0.30.0 (we are not compatible with 0.31.0 yet). Also sort data points + attributes for visual stability
 opentelemetry-prometheus-text-exporter = { git = "https://github.com/mheffner/opentelemetry-prometheus-text-exporter", branch = "sorted-otel-0.30.0", optional = true }
+# Making utilities available to the generate-otlp binary
+utilities = { path = "utilities" }
+humantime-serde = "1.1.1"
 
 [dev-dependencies]
 tokio-test = "0.4.4"
-utilities = { path = "utilities" }
 httpmock = "0.7.0"
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tracing-test = "0.2.5"
@@ -143,6 +145,10 @@ harness = false
 
 [[bin]]
 name = "rotel"
+
+[[bin]]
+name = "generate-otlp"
+path = "src/bin/generate-otlp/main.rs"
 
 [profile.release]
 lto = "fat"

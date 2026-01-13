@@ -85,38 +85,26 @@ pub struct AwsEmfExporterConfig {
     pub exclude_dimensions: Vec<String>,
 }
 
-impl Default for AwsEmfExporterConfig {
-    fn default() -> Self {
-        Self {
-            region: Region::UsEast1,
-            log_group_name: "/metrics/default".to_string(),
-            log_stream_name: "otel-stream".to_string(),
-            log_retention: 0,
-            namespace: None,
-            custom_endpoint: None,
-            retain_initial_value_of_delta_metric: false,
-            retry_config: Default::default(),
-            include_dimensions: Vec::new(),
-            exclude_dimensions: Vec::new(),
-        }
-    }
-}
-
 pub struct AwsEmfExporterConfigBuilder {
     config: AwsEmfExporterConfig,
 }
 
-impl Default for AwsEmfExporterConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: Default::default(),
-        }
-    }
-}
-
 impl AwsEmfExporterConfigBuilder {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(retry_config: RetryConfig) -> Self {
+        Self {
+            config: AwsEmfExporterConfig {
+                region: Region::UsEast1,
+                log_group_name: "/metrics/default".to_string(),
+                log_stream_name: "otel-stream".to_string(),
+                log_retention: 0,
+                namespace: None,
+                custom_endpoint: None,
+                retain_initial_value_of_delta_metric: false,
+                retry_config,
+                include_dimensions: Vec::new(),
+                exclude_dimensions: Vec::new(),
+            },
+        }
     }
 
     pub fn with_region(mut self, region: Region) -> Self {
@@ -151,11 +139,6 @@ impl AwsEmfExporterConfigBuilder {
 
     pub fn with_retain_initial_value_of_delta_metric(mut self, retain: bool) -> Self {
         self.config.retain_initial_value_of_delta_metric = retain;
-        self
-    }
-
-    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
-        self.config.retry_config = retry_config;
         self
     }
 
@@ -293,6 +276,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -325,6 +309,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -395,6 +380,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -457,6 +443,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -528,6 +515,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: None,
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -584,6 +572,7 @@ mod tests {
         let metrics = FakeOTLP::metrics_service_request();
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: metrics.resource_metrics,
         }])
         .await
@@ -675,6 +664,7 @@ mod tests {
 
         btx.send(vec![Message {
             metadata: Some(metadata),
+            request_context: None,
             payload: all_resource_metrics,
         }])
         .await
@@ -737,17 +727,16 @@ mod tests {
         ResourceMetrics,
         crate::exporters::http::acknowledger::DefaultHTTPAcknowledger,
     > {
-        let mut builder = AwsEmfExporterConfigBuilder::new()
-            .with_region(Region::UsEast1)
-            .with_custom_endpoint(addr)
-            .with_log_group_name("test-log-group".to_string())
-            .with_log_stream_name("test-log-stream".to_string())
-            .with_retry_config(RetryConfig {
-                initial_backoff: Duration::from_millis(10),
-                max_backoff: Duration::from_millis(50),
-                max_elapsed_time: Duration::from_millis(50),
-                indefinite_retry: false,
-            });
+        let mut builder = AwsEmfExporterConfigBuilder::new(RetryConfig::new(
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+            false,
+        ))
+        .with_region(Region::UsEast1)
+        .with_custom_endpoint(addr)
+        .with_log_group_name("test-log-group".to_string())
+        .with_log_stream_name("test-log-stream".to_string());
 
         if let Some(log_retention) = &log_retention {
             builder = builder.with_log_retention(*log_retention);

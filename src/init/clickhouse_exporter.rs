@@ -2,6 +2,13 @@ use crate::exporters::clickhouse;
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
 
+crate::define_exporter_retry_args!(
+    ClickhouseRetryArgs,
+    "clickhouse-exporter",
+    "ROTEL_CLICKHOUSE_EXPORTER",
+    "Clickhouse Exporter"
+);
+
 #[derive(Debug, Clone, Args, Deserialize)]
 #[serde(default)]
 pub struct ClickhouseExporterArgs {
@@ -24,7 +31,7 @@ pub struct ClickhouseExporterArgs {
     /// Clickhouse Exporter table prefix (e.g., "otel" prefix will become "otel_traces" for traces)
     #[arg(
         long("clickhouse-exporter-table-prefix"),
-        env = "ROTEL_CLICKHOUSE_TABLE_PREFIX",
+        env = "ROTEL_CLICKHOUSE_EXPORTER_TABLE_PREFIX",
         default_value = "otel"
     )]
     pub table_prefix: String,
@@ -71,14 +78,6 @@ pub struct ClickhouseExporterArgs {
     )]
     pub enable_json: bool,
 
-    /// Clickhouse Exporter replace periods in JSON keys with underscores
-    #[arg(
-        long("clickhouse-exporter-json-underscore"),
-        env = "ROTEL_CLICKHOUSE_EXPORTER_JSON_UNDERSCORE",
-        default_value = "false"
-    )]
-    pub json_underscore: bool,
-
     /// Clickhouse Exporter request timeout
     #[arg(
         id("CLICKHOUSE_EXPORTER_REQUEST_TIMEOUT"),
@@ -87,7 +86,13 @@ pub struct ClickhouseExporterArgs {
         default_value = "5s",
         value_parser = humantime::parse_duration
     )]
+    #[serde(with = "humantime_serde")]
     pub request_timeout: std::time::Duration,
+
+    /// Clickhouse Exporter retry configuration
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub retry: ClickhouseRetryArgs,
 }
 
 impl Default for ClickhouseExporterArgs {
@@ -101,8 +106,8 @@ impl Default for ClickhouseExporterArgs {
             password: None,
             async_insert: "true".to_string(),
             enable_json: false,
-            json_underscore: false,
             request_timeout: std::time::Duration::from_secs(5),
+            retry: Default::default(),
         }
     }
 }
