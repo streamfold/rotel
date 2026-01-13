@@ -69,77 +69,6 @@ struct PersistedFileState {
     offset: u64,
 }
 
-/// File receiver for tailing log files
-pub struct FileReceiver {
-    config: FileReceiverConfig,
-    logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
-}
-
-impl FileReceiver {
-    /// Create a new file receiver
-    pub async fn new(
-        config: FileReceiverConfig,
-        logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
-    ) -> std::result::Result<Self, BoxError> {
-        config.validate().map_err(|e| -> BoxError { e.into() })?;
-
-        Ok(Self {
-            config,
-            logs_output,
-        })
-    }
-
-    /// Build the parser based on config
-    fn build_parser(config: &FileReceiverConfig) -> Result<Option<Box<dyn Parser + Send + Sync>>> {
-        match config.parser {
-            ParserType::None => Ok(None),
-            ParserType::Json => Ok(Some(Box::new(JsonParser::lenient()))),
-            ParserType::Regex => {
-                let pattern = config
-                    .regex_pattern
-                    .as_ref()
-                    .ok_or_else(|| Error::Config("Regex pattern required".to_string()))?;
-                let parser = RegexParser::new(pattern).map_err(|e| Error::Regex(e.to_string()))?;
-                Ok(Some(Box::new(parser)))
-            }
-            ParserType::NginxAccess => {
-                let parser = nginx::access_parser().map_err(|e| Error::Regex(e.to_string()))?;
-                Ok(Some(Box::new(parser)))
-            }
-            ParserType::NginxError => {
-                let parser = nginx::error_parser().map_err(|e| Error::Regex(e.to_string()))?;
-                Ok(Some(Box::new(parser)))
-            }
-        }
-    }
-
-    /// Start the file receiver
-    pub async fn start(
-        self,
-        task_set: &mut JoinSet<std::result::Result<(), BoxError>>,
-        receivers_cancel: &CancellationToken,
-    ) -> std::result::Result<(), BoxError> {
-        info!(
-            include = ?self.config.include,
-            exclude = ?self.config.exclude,
-            parser = ?self.config.parser,
-            watch_mode = ?self.config.watch_mode,
-            "Starting file receiver"
-        );
-
-        let config = self.config.clone();
-        let logs_output = self.logs_output.clone();
-        let cancel = receivers_cancel.clone();
-
-        task_set.spawn(async move {
-            let mut handler = FileHandler::new(config, logs_output)?;
-            handler.run(cancel).await
-        });
-
-        Ok(())
-    }
-}
-
 /// Checkpoint configuration for batching persistence writes
 struct CheckpointConfig {
     /// Maximum records before forcing a checkpoint
@@ -206,24 +135,495 @@ struct WorkerContext {
     max_batch_size: usize,
 }
 
+/// State of a tracked file with respect to rotation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileState {
+    /// File is at its original path (matches glob pattern)
+    Active,
+    /// File was rotated (renamed away from glob pattern), still draining
+    Rotated,
+    /// File reached EOF while rotated, waiting for rotate_wait to expire
+    RotatedEof { eof_time: Instant },
+}
+
+/// Tracked state for a file, keeping the file handle open for inode-based tracking
+struct TrackedFile {
+    /// The unique file identity (device + inode)
+    file_id: FileId,
+    /// Open file handle (kept open to maintain access after rotation)
+    #[allow(dead_code)]
+    file: File,
+    /// Current path of the file (updated when rotation is detected)
+    path: PathBuf,
+    /// Current read offset
+    offset: u64,
+    /// Current state of the file
+    state: FileState,
+    /// Generation counter for detecting stale entries (only used for Active files)
+    generation: u64,
+    /// Whether work is currently in flight for this file (prevents duplicate dispatches)
+    in_flight: bool,
+}
+
 /// Default maximum number of concurrent file processing workers
 const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
 
 /// Process a single file work item (runs in spawn_blocking)
-fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
-    // Get current timestamp for all log records in this batch
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+// Attribute key constants to avoid per-line allocations
+const ATTR_LOG_FILE_NAME: &str = "log.file.name";
+const ATTR_LOG_FILE_PATH: &str = "log.file.path";
 
-    // Extract attributes before moving work.path into reader
-    let file_name = work.file_name;
-    let path_str = if ctx.include_file_path {
-        Some(work.path.display().to_string())
-    } else {
-        None
-    };
+/// File receiver for tailing log files
+pub struct FileReceiver {
+    config: FileReceiverConfig,
+    logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+}
+
+impl FileReceiver {
+    /// Create a new file receiver
+    pub async fn new(
+        config: FileReceiverConfig,
+        logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+    ) -> std::result::Result<Self, BoxError> {
+        config.validate().map_err(|e| -> BoxError { e.into() })?;
+
+        Ok(Self {
+            config,
+            logs_output,
+        })
+    }
+
+    /// Build the parser based on config
+    fn build_parser(config: &FileReceiverConfig) -> Result<Option<Box<dyn Parser + Send + Sync>>> {
+        match config.parser {
+            ParserType::None => Ok(None),
+            ParserType::Json => Ok(Some(Box::new(JsonParser::lenient()))),
+            ParserType::Regex => {
+                let pattern = config
+                    .regex_pattern
+                    .as_ref()
+                    .ok_or_else(|| Error::Config("Regex pattern required".to_string()))?;
+                let parser = RegexParser::new(pattern).map_err(|e| Error::Regex(e.to_string()))?;
+                Ok(Some(Box::new(parser)))
+            }
+            ParserType::NginxAccess => {
+                let parser = nginx::access_parser().map_err(|e| Error::Regex(e.to_string()))?;
+                Ok(Some(Box::new(parser)))
+            }
+            ParserType::NginxError => {
+                let parser = nginx::error_parser().map_err(|e| Error::Regex(e.to_string()))?;
+                Ok(Some(Box::new(parser)))
+            }
+        }
+    }
+
+    /// Start the file receiver
+    pub async fn start(
+        self,
+        task_set: &mut JoinSet<std::result::Result<(), BoxError>>,
+        receivers_cancel: &CancellationToken,
+    ) -> std::result::Result<(), BoxError> {
+        info!(
+            include = ?self.config.include,
+            exclude = ?self.config.exclude,
+            parser = ?self.config.parser,
+            watch_mode = ?self.config.watch_mode,
+            "Starting file receiver"
+        );
+
+        let config = self.config.clone();
+        let logs_output = self.logs_output.clone();
+        let cancel = receivers_cancel.clone();
+
+        task_set.spawn(async move {
+            let mut handler = FileWorkHandler::new(config, logs_output)?;
+            handler.run(cancel).await
+        });
+
+        Ok(())
+    }
+}
+
+/// Internal handler for file watching.
+/// This runs on the tokio runtime and only handles sending to exporters.
+/// All blocking file I/O is done on a dedicated OS thread.
+struct FileWorkHandler {
+    config: FileReceiverConfig,
+    logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+    accepted_counter: Counter<u64>,
+    refused_counter: Counter<u64>,
+    tags: [KeyValue; 1],
+}
+
+impl FileWorkHandler {
+    fn new(
+        config: FileReceiverConfig,
+        logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+    ) -> std::result::Result<Self, BoxError> {
+        let accepted_counter = get_meter()
+            .u64_counter("rotel_receiver_accepted_log_records")
+            .with_description("Number of log records successfully pushed into the pipeline.")
+            .with_unit("log_records")
+            .build();
+
+        let refused_counter = get_meter()
+            .u64_counter("rotel_receiver_refused_log_records")
+            .with_description("Number of log records that could not be pushed into the pipeline.")
+            .with_unit("log_records")
+            .build();
+
+        Ok(Self {
+            config,
+            logs_output,
+            accepted_counter,
+            refused_counter,
+            tags: [KeyValue::new("receiver", "file")],
+        })
+    }
+
+    /// Run the main event loop.
+    /// Spawns a coordinator thread that watches for file changes and sends work items.
+    /// This async task manages worker concurrency via FuturesOrdered and sends to exporters.
+    async fn run(&mut self, cancel: CancellationToken) -> std::result::Result<(), BoxError> {
+        // Build parser (needs to be Arc for Send across threads)
+        let parser: Option<Arc<dyn Parser + Send + Sync>> =
+            match FileReceiver::build_parser(&self.config) {
+                Ok(Some(p)) => Some(Arc::from(p)),
+                Ok(None) => None,
+                Err(e) => {
+                    error!("Failed to build parser: {}", e);
+                    return Err(e.into());
+                }
+            };
+
+        // Open or create the persistence database
+        let db = match JsonFileDatabase::open(&self.config.offsets_path) {
+            Ok(db) => db,
+            Err(e) => {
+                error!("Failed to open persistence database: {}", e);
+                return Err(e.into());
+            }
+        };
+        let persister = db.persister("file_receiver");
+
+        // Create watcher config
+        let watcher_config = WatcherConfig {
+            mode: self.config.watch_mode,
+            poll_interval: self.config.poll_interval,
+            debounce_interval: Duration::from_millis(50),
+        };
+
+        // Create the watcher (auto mode will try native first, fall back to poll)
+        let watcher = match create_watcher(&watcher_config, &[]) {
+            Ok(w) => w,
+            Err(e) => {
+                error!("Failed to create watcher: {}", e);
+                return Err(e.into());
+            }
+        };
+
+        info!(
+            backend = watcher.backend_name(),
+            native = watcher.is_native(),
+            "File watcher initialized"
+        );
+
+        // Get max concurrent files from config (or use default)
+        let max_concurrent_files = if self.config.max_concurrent_files > 0 {
+            self.config.max_concurrent_files
+        } else {
+            DEFAULT_MAX_CONCURRENT_WORKERS
+        };
+
+        // Create channels using flume-based bounded_channel
+        //
+        // - work_tx/rx: coordinator -> async handler (work items to process)
+        // - records_tx/rx: workers -> async handler (log records for export)
+        // - results_tx/rx: workers -> coordinator (offset updates)
+        // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
+        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
+        let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(100);
+        let (results_tx, results_rx) =
+            bounded_channel::bounded::<FileWorkResult>(max_concurrent_files);
+        let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        // Create worker context (shared by all workers)
+        let worker_ctx = WorkerContext {
+            parser,
+            include_file_name: self.config.include_file_name,
+            include_file_path: self.config.include_file_path,
+            records_tx,
+            results_tx,
+            max_batch_size: self.config.max_batch_size,
+        };
+
+        // Create the coordinator
+        let finder = GlobFileFinder::new(self.config.include.clone(), self.config.exclude.clone())?;
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let shutting_down_async = shutting_down.clone();
+        let coordinator = FileCoordinator {
+            config: self.config.clone(),
+            finder,
+            persister,
+            tracked_files: HashMap::new(),
+            watcher,
+            watched_dirs: Vec::new(),
+            first_check: true,
+            checkpoint_config: CheckpointConfig::default(),
+            records_since_checkpoint: 0,
+            last_checkpoint: Instant::now(),
+            checkpoint_first_failure: None,
+            poll_first_failure: None,
+            watcher_first_error: None,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
+            shutting_down,
+        };
+
+        // Spawn the coordinator on a dedicated OS thread
+        let coord_cancel = cancel.clone();
+        let coord_handle = std::thread::spawn(move || {
+            coordinator.run(coord_cancel);
+        });
+
+        // Track in-flight worker tasks with FuturesOrdered
+        let mut worker_futures: FuturesOrdered<JoinHandle<()>> = FuturesOrdered::new();
+
+        // Main event loop - flume channels support async recv directly, no bridge needed
+        loop {
+            select! {
+                _ = cancel.cancelled() => {
+                    // Set shutting_down before breaking so coordinator sees it
+                    shutting_down_async.store(true, Ordering::SeqCst);
+                    debug!("File receiver cancelled, stopping");
+                    break;
+                }
+
+                // Receive work items and spawn workers (with concurrency limit)
+                Some(work) = work_rx.next(), if worker_futures.len() < max_concurrent_files => {
+                    let ctx = worker_ctx.clone();
+                    let handle = tokio::task::spawn_blocking(move || {
+                        process_file_work(work, ctx);
+                    });
+                    worker_futures.push_back(handle);
+                }
+
+                // Process completed workers
+                Some(result) = worker_futures.next(), if !worker_futures.is_empty() => {
+                    if let Err(e) = result {
+                        error!("Worker task failed: {}", e);
+                    }
+                }
+
+                // Receive log records from workers and send to exporters
+                Some(batch) = records_rx.next() => {
+                    if !batch.log_records.is_empty() {
+                        if let Some(ref logs_output) = self.logs_output {
+                            // Build ResourceLogs directly from LogRecords
+                            let scope_logs = ScopeLogs {
+                                scope: Some(InstrumentationScope {
+                                    name: "rotel.file".to_string(),
+                                    version: String::new(),
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                }),
+                                log_records: batch.log_records,
+                                schema_url: String::new(),
+                            };
+
+                            let resource_logs = ResourceLogs {
+                                resource: Some(Resource {
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                    entity_refs: vec![],
+                                }),
+                                scope_logs: vec![scope_logs],
+                                schema_url: String::new(),
+                            };
+
+                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+
+                            match logs_output.send(payload_msg).await {
+                                Ok(_) => {
+                                    self.accepted_counter.add(batch.count, &self.tags);
+                                }
+                                Err(e) => {
+                                    self.refused_counter.add(batch.count, &self.tags);
+                                    error!("Failed to send logs: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Drain workers and records with timeouts
+        // Note: We must drop worker_ctx after workers drain so records_tx closes
+        self.drain_shutdown(
+            &mut worker_futures,
+            &mut records_rx,
+            workers_done_tx,
+            worker_ctx,
+        )
+        .await;
+
+        // Wait for coordinator thread to finish
+        drop(records_rx);
+        drop(work_rx);
+
+        // Join coordinator with timeout
+        let coord_join_result = tokio::task::spawn_blocking(move || coord_handle.join()).await;
+        match coord_join_result {
+            Ok(Ok(())) => debug!("Coordinator thread joined successfully"),
+            Ok(Err(_)) => {
+                error!("Coordinator thread panicked");
+                return Err("Coordinator thread panicked".into());
+            }
+            Err(e) => {
+                error!("Failed to join coordinator: {}", e);
+                return Err(e.into());
+            }
+        }
+
+        info!("File receiver stopped");
+        Ok(())
+    }
+
+    /// Drain in-flight workers and remaining log records during shutdown
+    async fn drain_shutdown(
+        &mut self,
+        worker_futures: &mut FuturesOrdered<JoinHandle<()>>,
+        records_rx: &mut BoundedReceiver<LogRecordBatch>,
+        workers_done_tx: std::sync::mpsc::Sender<()>,
+        worker_ctx: WorkerContext,
+    ) {
+        use tokio::time::{Instant, timeout_at};
+
+        let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
+        let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
+
+        // Phase 1: Wait for workers to complete (they produce both results and records)
+        let worker_count = worker_futures.len();
+        if worker_count > 0 {
+            debug!("Draining {} in-flight workers", worker_count);
+        }
+
+        loop {
+            if worker_futures.is_empty() {
+                break;
+            }
+
+            match timeout_at(worker_deadline, worker_futures.next()).await {
+                Ok(Some(result)) => {
+                    if let Err(e) = result {
+                        error!("Worker task failed during drain: {}", e);
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    warn!(
+                        "Timeout waiting for workers, {} still running",
+                        worker_futures.len()
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Signal coordinator that workers are done so it can drain results and save state
+        debug!("Workers drained, signaling coordinator");
+        let _ = workers_done_tx.send(());
+
+        // Drop worker_ctx to close records_tx, allowing records_rx to return None when drained
+        drop(worker_ctx);
+
+        // Phase 2: Drain log records channel and send to pipeline
+        debug!("Draining remaining log records");
+        let mut drained_count = 0u64;
+
+        loop {
+            match timeout_at(records_deadline, records_rx.next()).await {
+                Ok(Some(batch)) => {
+                    if !batch.log_records.is_empty() {
+                        drained_count += batch.count;
+                        if let Some(ref logs_output) = self.logs_output {
+                            // Build ResourceLogs directly from LogRecords
+                            let scope_logs = ScopeLogs {
+                                scope: Some(InstrumentationScope {
+                                    name: "rotel.file".to_string(),
+                                    version: String::new(),
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                }),
+                                log_records: batch.log_records,
+                                schema_url: String::new(),
+                            };
+
+                            let resource_logs = ResourceLogs {
+                                resource: Some(Resource {
+                                    attributes: vec![],
+                                    dropped_attributes_count: 0,
+                                    entity_refs: vec![],
+                                }),
+                                scope_logs: vec![scope_logs],
+                                schema_url: String::new(),
+                            };
+
+                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+
+                            match logs_output.send(payload_msg).await {
+                                Ok(_) => {
+                                    self.accepted_counter.add(batch.count, &self.tags);
+                                }
+                                Err(e) => {
+                                    self.refused_counter.add(batch.count, &self.tags);
+                                    error!("Failed to send logs during drain: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None) => break, // Channel closed
+                Err(_) => {
+                    warn!("Timeout draining records channel");
+                    break;
+                }
+            }
+        }
+
+        if drained_count > 0 {
+            debug!("Drained {} log records during shutdown", drained_count);
+        }
+    }
+}
+
+fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
+    // Pre-build static attributes outside the loop (file name and path don't change per line)
+    let mut static_attributes = Vec::with_capacity(2);
+
+    if ctx.include_file_name {
+        if let Some(ref name) = work.file_name {
+            static_attributes.push(OtlpKeyValue {
+                key: ATTR_LOG_FILE_NAME.to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(name.clone())),
+                }),
+            });
+        }
+    }
+
+    if ctx.include_file_path {
+        static_attributes.push(OtlpKeyValue {
+            key: ATTR_LOG_FILE_PATH.to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(
+                    work.path.display().to_string(),
+                )),
+            }),
+        });
+    }
 
     // Create a reader using the cloned file handle (avoids reopening)
     let mut reader = FileReader::from_file(work.file, work.path, work.offset, work.max_log_size);
@@ -235,28 +635,14 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
     let records_tx = &ctx.records_tx;
 
     let parse_result = reader.read_lines_into(|line| {
-        // Build attributes
-        let mut attributes = Vec::new();
+        // Get timestamp for each line individually
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
 
-        if ctx.include_file_name {
-            if let Some(ref name) = file_name {
-                attributes.push(OtlpKeyValue {
-                    key: "log.file.name".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue(name.to_string())),
-                    }),
-                });
-            }
-        }
-
-        if let Some(ref path) = path_str {
-            attributes.push(OtlpKeyValue {
-                key: "log.file.path".to_string(),
-                value: Some(AnyValue {
-                    value: Some(any_value::Value::StringValue(path.clone())),
-                }),
-            });
-        }
+        // Clone static attributes and extend with parsed attributes
+        let mut attributes = static_attributes.clone();
 
         // Parse line if parser is configured
         let (parsed_attributes, severity_number, severity_text) =
@@ -343,36 +729,6 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
     }
 }
 
-/// State of a tracked file with respect to rotation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FileState {
-    /// File is at its original path (matches glob pattern)
-    Active,
-    /// File was rotated (renamed away from glob pattern), still draining
-    Rotated,
-    /// File reached EOF while rotated, waiting for rotate_wait to expire
-    RotatedEof { eof_time: Instant },
-}
-
-/// Tracked state for a file, keeping the file handle open for inode-based tracking
-struct TrackedFile {
-    /// The unique file identity (device + inode)
-    file_id: FileId,
-    /// Open file handle (kept open to maintain access after rotation)
-    #[allow(dead_code)]
-    file: File,
-    /// Current path of the file (updated when rotation is detected)
-    path: PathBuf,
-    /// Current read offset
-    offset: u64,
-    /// Current state of the file
-    state: FileState,
-    /// Generation counter for detecting stale entries (only used for Active files)
-    generation: u64,
-    /// Whether work is currently in flight for this file (prevents duplicate dispatches)
-    in_flight: bool,
-}
-
 /// Coordinator that manages file watching and dispatches work to workers.
 /// All state updates happen here (single writer pattern).
 ///
@@ -408,61 +764,82 @@ struct FileCoordinator<F: FileFinder> {
 impl<F: FileFinder> FileCoordinator<F> {
     /// Load previously saved file states from the persister.
     /// We use FileId (device + inode) to match persisted state to current files.
+    /// Returns an error if the persisted state exists but is corrupted (to prevent data loss/duplicates).
     fn load_state(&mut self) -> Result<()> {
         self.persister.load()?;
 
-        if let Some(state) = self.persister.get_json::<PersistedState>(KNOWN_FILES_KEY) {
-            debug!("Loaded {} known files from persister", state.files.len());
+        // Use try_get_json to distinguish "key doesn't exist" from "key exists but corrupted"
+        let state = match self
+            .persister
+            .try_get_json::<PersistedState>(KNOWN_FILES_KEY)
+        {
+            Ok(Some(state)) => state,
+            Ok(None) => {
+                debug!("No persisted state found, starting fresh");
+                return Ok(());
+            }
+            Err(e) => {
+                // State file exists but is corrupted - this is a fatal error
+                // Continuing would risk data loss (skipping already-processed logs)
+                // or duplicates (reprocessing logs we already sent)
+                return Err(Error::Persistence(format!(
+                    "persisted state is corrupted and cannot be loaded: {}. \
+                     To start fresh, delete the offsets file and restart.",
+                    e
+                )));
+            }
+        };
 
-            // Find current files and try to match them to persisted state
-            let paths = self.finder.find_files().unwrap_or_else(|e| {
-                error!("Failed to find files during state load: {}", e);
-                vec![]
+        debug!("Loaded {} known files from persister", state.files.len());
+
+        // Find current files and try to match them to persisted state
+        let paths = self.finder.find_files().unwrap_or_else(|e| {
+            error!("Failed to find files during state load: {}", e);
+            vec![]
+        });
+
+        for path in paths {
+            // Open file and get FileId
+            let file = match File::open(&path) {
+                Ok(f) => f,
+                Err(e) => {
+                    debug!("Failed to open file {:?} during state load: {}", path, e);
+                    continue;
+                }
+            };
+
+            let file_id = match FileId::from_file(&file) {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("Failed to get FileId for {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            // Try to find matching persisted state by FileId
+            let matched_offset = state.files.iter().find_map(|persisted| {
+                let persisted_id = FileId::new(persisted.dev, persisted.ino);
+                if file_id == persisted_id {
+                    Some(persisted.offset)
+                } else {
+                    None
+                }
             });
 
-            for path in paths {
-                // Open file and get FileId
-                let file = match File::open(&path) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        debug!("Failed to open file {:?} during state load: {}", path, e);
-                        continue;
-                    }
-                };
-
-                let file_id = match FileId::from_file(&file) {
-                    Ok(id) => id,
-                    Err(e) => {
-                        warn!("Failed to get FileId for {:?}: {}", path, e);
-                        continue;
-                    }
-                };
-
-                // Try to find matching persisted state by FileId
-                let matched_offset = state.files.iter().find_map(|persisted| {
-                    let persisted_id = FileId::new(persisted.dev, persisted.ino);
-                    if file_id == persisted_id {
-                        Some(persisted.offset)
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(offset) = matched_offset {
-                    debug!("Restored file {:?} at offset {}", path, offset);
-                    self.tracked_files.insert(
+            if let Some(offset) = matched_offset {
+                debug!("Restored file {:?} at offset {}", path, offset);
+                self.tracked_files.insert(
+                    file_id,
+                    TrackedFile {
                         file_id,
-                        TrackedFile {
-                            file_id,
-                            file,
-                            path: path.clone(),
-                            offset,
-                            state: FileState::Active,
-                            generation: 0,
-                            in_flight: false,
-                        },
-                    );
-                }
+                        file,
+                        path: path.clone(),
+                        offset,
+                        state: FileState::Active,
+                        generation: 0,
+                        in_flight: false,
+                    },
+                );
             }
         }
 
@@ -717,9 +1094,7 @@ impl<F: FileFinder> FileCoordinator<F> {
 
         // Process each glob-matching file
         for path in &paths {
-            if let Err(e) = self.process_active_file(path) {
-                error!("Error processing file {:?}: {}", path, e);
-            }
+            self.process_active_file(path);
         }
 
         // Mark files as rotated if they're no longer at a glob-matching path
@@ -749,7 +1124,7 @@ impl<F: FileFinder> FileCoordinator<F> {
             .collect();
 
         for file_id in rotated_file_ids {
-            let _ = self.dispatch_work_for_file(file_id);
+            self.dispatch_work_for_file(file_id);
         }
 
         // Remove files that have been in RotatedEof state past rotate_wait
@@ -780,13 +1155,13 @@ impl<F: FileFinder> FileCoordinator<F> {
     }
 
     /// Process an active file (one that matches glob patterns)
-    fn process_active_file(&mut self, path: &PathBuf) -> Result<()> {
+    fn process_active_file(&mut self, path: &PathBuf) {
         // Get FileId directly from path (no file handle needed yet)
         let file_id = match FileId::from_path(path) {
             Ok(id) => id,
             Err(e) => {
-                debug!("Failed to get FileId for {:?}: {}", path, e);
-                return Ok(());
+                error!("Failed to get FileId for {:?}: {}", path, e);
+                return;
             }
         };
 
@@ -798,15 +1173,16 @@ impl<F: FileFinder> FileCoordinator<F> {
             tracked.path = path.clone();
 
             // Dispatch work
-            return self.dispatch_work_for_file(file_id);
+            self.dispatch_work_for_file(file_id);
+            return;
         }
 
         // New file - now we need to open it to keep the handle
         let file = match File::open(path) {
             Ok(f) => f,
             Err(e) => {
-                debug!("Failed to open file {:?}: {}", path, e);
-                return Ok(());
+                error!("Failed to open file {:?}: {}", path, e);
+                return;
             }
         };
 
@@ -816,7 +1192,7 @@ impl<F: FileFinder> FileCoordinator<F> {
             0
         });
         if file_len == 0 {
-            return Ok(());
+            return;
         }
 
         // Determine starting offset
@@ -843,19 +1219,19 @@ impl<F: FileFinder> FileCoordinator<F> {
         );
 
         // Dispatch work
-        self.dispatch_work_for_file(file_id)
+        self.dispatch_work_for_file(file_id);
     }
 
     /// Dispatch work for a tracked file
-    fn dispatch_work_for_file(&mut self, file_id: FileId) -> Result<()> {
+    fn dispatch_work_for_file(&mut self, file_id: FileId) {
         let tracked = match self.tracked_files.get_mut(&file_id) {
             Some(t) => t,
-            None => return Ok(()),
+            None => return,
         };
 
         // Don't dispatch if work is already in flight
         if tracked.in_flight {
-            return Ok(());
+            return;
         }
 
         // Clone the file handle for the worker (avoids reopening)
@@ -863,7 +1239,7 @@ impl<F: FileFinder> FileCoordinator<F> {
             Ok(f) => f,
             Err(e) => {
                 warn!("Failed to clone file handle for {:?}: {}", tracked.path, e);
-                return Ok(());
+                return;
             }
         };
 
@@ -906,15 +1282,14 @@ impl<F: FileFinder> FileCoordinator<F> {
             // Channel already closed (shutdown in progress)
             tracked.in_flight = false;
         }
-
-        Ok(())
     }
 
     /// Run the coordinator main loop
     fn run(mut self, cancel: CancellationToken) {
-        // Load persisted state
+        // Load persisted state - fail if corrupted to prevent data loss/duplicates
         if let Err(e) = self.load_state() {
-            warn!("Failed to load persisted state: {}", e);
+            error!("Failed to load persisted state: {}", e);
+            return;
         }
 
         // Initial setup and file scan
@@ -1077,361 +1452,6 @@ impl<F: FileFinder> FileCoordinator<F> {
                     break;
                 }
             }
-        }
-    }
-}
-
-/// Internal handler for file watching.
-/// This runs on the tokio runtime and only handles sending to exporters.
-/// All blocking file I/O is done on a dedicated OS thread.
-struct FileHandler {
-    config: FileReceiverConfig,
-    logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
-    accepted_counter: Counter<u64>,
-    refused_counter: Counter<u64>,
-    tags: [KeyValue; 1],
-}
-
-impl FileHandler {
-    fn new(
-        config: FileReceiverConfig,
-        logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
-    ) -> std::result::Result<Self, BoxError> {
-        let accepted_counter = get_meter()
-            .u64_counter("rotel_receiver_accepted_log_records")
-            .with_description("Number of log records successfully pushed into the pipeline.")
-            .with_unit("log_records")
-            .build();
-
-        let refused_counter = get_meter()
-            .u64_counter("rotel_receiver_refused_log_records")
-            .with_description("Number of log records that could not be pushed into the pipeline.")
-            .with_unit("log_records")
-            .build();
-
-        Ok(Self {
-            config,
-            logs_output,
-            accepted_counter,
-            refused_counter,
-            tags: [KeyValue::new("receiver", "file")],
-        })
-    }
-
-    /// Run the main event loop.
-    /// Spawns a coordinator thread that watches for file changes and sends work items.
-    /// This async task manages worker concurrency via FuturesOrdered and sends to exporters.
-    async fn run(&mut self, cancel: CancellationToken) -> std::result::Result<(), BoxError> {
-        // Build parser (needs to be Arc for Send across threads)
-        let parser: Option<Arc<dyn Parser + Send + Sync>> =
-            match FileReceiver::build_parser(&self.config) {
-                Ok(Some(p)) => Some(Arc::from(p)),
-                Ok(None) => None,
-                Err(e) => {
-                    error!("Failed to build parser: {}", e);
-                    return Err(e.into());
-                }
-            };
-
-        // Open or create the persistence database
-        let db = match JsonFileDatabase::open(&self.config.offsets_path) {
-            Ok(db) => db,
-            Err(e) => {
-                error!("Failed to open persistence database: {}", e);
-                return Err(e.into());
-            }
-        };
-        let persister = db.persister("file_receiver");
-
-        // Create watcher config
-        let watcher_config = WatcherConfig {
-            mode: self.config.watch_mode,
-            poll_interval: self.config.poll_interval,
-            debounce_interval: Duration::from_millis(50),
-        };
-
-        // Create the watcher (auto mode will try native first, fall back to poll)
-        let watcher = match create_watcher(&watcher_config, &[]) {
-            Ok(w) => w,
-            Err(e) => {
-                error!("Failed to create watcher: {}", e);
-                return Err(e.into());
-            }
-        };
-
-        info!(
-            backend = watcher.backend_name(),
-            native = watcher.is_native(),
-            "File watcher initialized"
-        );
-
-        // Get max concurrent files from config (or use default)
-        let max_concurrent_files = if self.config.max_concurrent_files > 0 {
-            self.config.max_concurrent_files
-        } else {
-            DEFAULT_MAX_CONCURRENT_WORKERS
-        };
-
-        // Create channels using flume-based bounded_channel
-        //
-        // - work_tx/rx: coordinator -> async handler (work items to process)
-        // - records_tx/rx: workers -> async handler (log records for export)
-        // - results_tx/rx: workers -> coordinator (offset updates)
-        // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
-        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
-        let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(100);
-        let (results_tx, results_rx) =
-            bounded_channel::bounded::<FileWorkResult>(max_concurrent_files);
-        let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-
-        // Create worker context (shared by all workers)
-        let worker_ctx = WorkerContext {
-            parser,
-            include_file_name: self.config.include_file_name,
-            include_file_path: self.config.include_file_path,
-            records_tx,
-            results_tx,
-            max_batch_size: self.config.max_batch_size,
-        };
-
-        // Create the coordinator
-        let finder = GlobFileFinder::new(self.config.include.clone(), self.config.exclude.clone());
-        let shutting_down = Arc::new(AtomicBool::new(false));
-        let shutting_down_async = shutting_down.clone();
-        let coordinator = FileCoordinator {
-            config: self.config.clone(),
-            finder,
-            persister,
-            tracked_files: HashMap::new(),
-            watcher,
-            watched_dirs: Vec::new(),
-            first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
-            poll_first_failure: None,
-            watcher_first_error: None,
-            work_tx: Some(work_tx),
-            results_rx,
-            workers_done_rx,
-            shutting_down,
-        };
-
-        // Spawn the coordinator on a dedicated OS thread
-        let coord_cancel = cancel.clone();
-        let coord_handle = std::thread::spawn(move || {
-            coordinator.run(coord_cancel);
-        });
-
-        // Track in-flight worker tasks with FuturesOrdered
-        let mut worker_futures: FuturesOrdered<JoinHandle<()>> = FuturesOrdered::new();
-
-        // Main event loop - flume channels support async recv directly, no bridge needed
-        loop {
-            select! {
-                _ = cancel.cancelled() => {
-                    // Set shutting_down before breaking so coordinator sees it
-                    shutting_down_async.store(true, Ordering::SeqCst);
-                    debug!("File receiver cancelled, stopping");
-                    break;
-                }
-
-                // Receive work items and spawn workers (with concurrency limit)
-                Some(work) = work_rx.next(), if worker_futures.len() < max_concurrent_files => {
-                    let ctx = worker_ctx.clone();
-                    let handle = tokio::task::spawn_blocking(move || {
-                        process_file_work(work, ctx);
-                    });
-                    worker_futures.push_back(handle);
-                }
-
-                // Process completed workers
-                Some(result) = worker_futures.next(), if !worker_futures.is_empty() => {
-                    if let Err(e) = result {
-                        error!("Worker task failed: {}", e);
-                    }
-                }
-
-                // Receive log records from workers and send to exporters
-                Some(batch) = records_rx.next() => {
-                    if !batch.log_records.is_empty() {
-                        if let Some(ref logs_output) = self.logs_output {
-                            // Build ResourceLogs directly from LogRecords
-                            let scope_logs = ScopeLogs {
-                                scope: Some(InstrumentationScope {
-                                    name: "rotel.file".to_string(),
-                                    version: String::new(),
-                                    attributes: vec![],
-                                    dropped_attributes_count: 0,
-                                }),
-                                log_records: batch.log_records,
-                                schema_url: String::new(),
-                            };
-
-                            let resource_logs = ResourceLogs {
-                                resource: Some(Resource {
-                                    attributes: vec![],
-                                    dropped_attributes_count: 0,
-                                    entity_refs: vec![],
-                                }),
-                                scope_logs: vec![scope_logs],
-                                schema_url: String::new(),
-                            };
-
-                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
-
-                            match logs_output.send(payload_msg).await {
-                                Ok(_) => {
-                                    self.accepted_counter.add(batch.count, &self.tags);
-                                }
-                                Err(e) => {
-                                    self.refused_counter.add(batch.count, &self.tags);
-                                    error!("Failed to send logs: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Drain workers and records with timeouts
-        // Note: We must drop worker_ctx after workers drain so records_tx closes
-        self.drain_shutdown(
-            &mut worker_futures,
-            &mut records_rx,
-            workers_done_tx,
-            worker_ctx,
-        )
-        .await;
-
-        // Wait for coordinator thread to finish
-        drop(records_rx);
-        drop(work_rx);
-
-        // Join coordinator with timeout
-        let coord_join_result = tokio::task::spawn_blocking(move || coord_handle.join()).await;
-        match coord_join_result {
-            Ok(Ok(())) => debug!("Coordinator thread joined successfully"),
-            Ok(Err(_)) => {
-                error!("Coordinator thread panicked");
-                return Err("Coordinator thread panicked".into());
-            }
-            Err(e) => {
-                error!("Failed to join coordinator: {}", e);
-                return Err(e.into());
-            }
-        }
-
-        info!("File receiver stopped");
-        Ok(())
-    }
-
-    /// Drain in-flight workers and remaining log records during shutdown
-    async fn drain_shutdown(
-        &mut self,
-        worker_futures: &mut FuturesOrdered<JoinHandle<()>>,
-        records_rx: &mut BoundedReceiver<LogRecordBatch>,
-        workers_done_tx: std::sync::mpsc::Sender<()>,
-        worker_ctx: WorkerContext,
-    ) {
-        use tokio::time::{Instant, timeout_at};
-
-        let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
-        let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
-
-        // Phase 1: Wait for workers to complete (they produce both results and records)
-        let worker_count = worker_futures.len();
-        if worker_count > 0 {
-            debug!("Draining {} in-flight workers", worker_count);
-        }
-
-        loop {
-            if worker_futures.is_empty() {
-                break;
-            }
-
-            match timeout_at(worker_deadline, worker_futures.next()).await {
-                Ok(Some(result)) => {
-                    if let Err(e) = result {
-                        error!("Worker task failed during drain: {}", e);
-                    }
-                }
-                Ok(None) => break,
-                Err(_) => {
-                    warn!(
-                        "Timeout waiting for workers, {} still running",
-                        worker_futures.len()
-                    );
-                    break;
-                }
-            }
-        }
-
-        // Signal coordinator that workers are done so it can drain results and save state
-        debug!("Workers drained, signaling coordinator");
-        let _ = workers_done_tx.send(());
-
-        // Drop worker_ctx to close records_tx, allowing records_rx to return None when drained
-        drop(worker_ctx);
-
-        // Phase 2: Drain log records channel and send to pipeline
-        debug!("Draining remaining log records");
-        let mut drained_count = 0u64;
-
-        loop {
-            match timeout_at(records_deadline, records_rx.next()).await {
-                Ok(Some(batch)) => {
-                    if !batch.log_records.is_empty() {
-                        drained_count += batch.count;
-                        if let Some(ref logs_output) = self.logs_output {
-                            // Build ResourceLogs directly from LogRecords
-                            let scope_logs = ScopeLogs {
-                                scope: Some(InstrumentationScope {
-                                    name: "rotel.file".to_string(),
-                                    version: String::new(),
-                                    attributes: vec![],
-                                    dropped_attributes_count: 0,
-                                }),
-                                log_records: batch.log_records,
-                                schema_url: String::new(),
-                            };
-
-                            let resource_logs = ResourceLogs {
-                                resource: Some(Resource {
-                                    attributes: vec![],
-                                    dropped_attributes_count: 0,
-                                    entity_refs: vec![],
-                                }),
-                                scope_logs: vec![scope_logs],
-                                schema_url: String::new(),
-                            };
-
-                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
-
-                            match logs_output.send(payload_msg).await {
-                                Ok(_) => {
-                                    self.accepted_counter.add(batch.count, &self.tags);
-                                }
-                                Err(e) => {
-                                    self.refused_counter.add(batch.count, &self.tags);
-                                    error!("Failed to send logs during drain: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(None) => break, // Channel closed
-                Err(_) => {
-                    warn!("Timeout draining records channel");
-                    break;
-                }
-            }
-        }
-
-        if drained_count > 0 {
-            debug!("Drained {} log records during shutdown", drained_count);
         }
     }
 }
@@ -1665,5 +1685,89 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    #[test]
+    fn test_load_state_fails_on_corrupted_state_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let offsets_path = temp_dir.path().join("offsets.json");
+
+        // Write a valid JSON file structure, but with corrupted data for the knownFiles key.
+        // The JSON file format has scopes -> scope_name -> key -> base64(value).
+        // We'll write valid base64 that decodes to invalid JSON for the PersistedState struct.
+        let corrupted_db = r#"{
+            "scopes": {
+                "test": {
+                    "knownFiles": "bm90IHZhbGlkIGpzb24ge3t7"
+                }
+            }
+        }"#;
+        // "bm90IHZhbGlkIGpzb24ge3t7" is base64 for "not valid json {{{"
+        std::fs::write(&offsets_path, corrupted_db).unwrap();
+
+        let config = test_config(&temp_dir);
+        let finder = MockFileFinder::new();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        // Create coordinator - this will open the database with corrupted data
+        let db = JsonFileDatabase::open(&offsets_path).unwrap();
+        let persister = db.persister("test");
+
+        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
+        let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
+        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut coordinator = FileCoordinator {
+            config,
+            finder,
+            persister,
+            tracked_files: HashMap::new(),
+            watcher,
+            watched_dirs: Vec::new(),
+            first_check: true,
+            checkpoint_config: CheckpointConfig::default(),
+            records_since_checkpoint: 0,
+            last_checkpoint: Instant::now(),
+            checkpoint_first_failure: None,
+            poll_first_failure: None,
+            watcher_first_error: None,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
+            shutting_down: Arc::new(AtomicBool::new(false)),
+        };
+
+        // load_state should return an error for corrupted data
+        let result = coordinator.load_state();
+        assert!(
+            result.is_err(),
+            "load_state should return Err when state file is corrupted"
+        );
+
+        // Verify the error message is helpful
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("corrupted"),
+            "Error message should mention corruption: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_state_succeeds_with_no_state_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = test_config(&temp_dir);
+
+        let finder = MockFileFinder::new();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
+
+        // With no state file, load_state should succeed
+        let result = coordinator.load_state();
+        assert!(
+            result.is_ok(),
+            "load_state should succeed when no state file exists"
+        );
     }
 }

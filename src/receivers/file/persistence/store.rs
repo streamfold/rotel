@@ -22,10 +22,25 @@ pub trait Persister: Send + Sync {
 
 /// Extension trait for typed get/set operations
 pub trait PersisterExt: Persister {
-    /// Get a value and deserialize it from JSON
+    /// Get a value and deserialize it from JSON.
+    /// Returns None if key doesn't exist OR if deserialization fails.
+    /// Use `try_get_json` if you need to distinguish these cases.
     fn get_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         let bytes = self.get(key)?;
         serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Get a value and deserialize it from JSON, with explicit error handling.
+    /// Returns Ok(None) if key doesn't exist.
+    /// Returns Err if key exists but deserialization fails (corrupted data).
+    fn try_get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> std::result::Result<Option<T>, serde_json::Error> {
+        match self.get(key) {
+            None => Ok(None),
+            Some(bytes) => serde_json::from_slice(&bytes).map(Some),
+        }
     }
 
     /// Set a value by serializing it to JSON
@@ -64,3 +79,50 @@ pub trait PersisterExt: Persister {
 
 // Implement PersisterExt for all Persisters
 impl<T: Persister + ?Sized> PersisterExt for T {}
+
+/// Mock persister for testing
+#[cfg(test)]
+pub struct MockPersister {
+    data: std::collections::HashMap<String, Vec<u8>>,
+}
+
+#[cfg(test)]
+impl MockPersister {
+    /// Create an empty mock persister
+    pub fn new() -> Self {
+        Self {
+            data: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a mock persister with corrupted data for a key
+    pub fn with_corrupted_data(key: &str) -> Self {
+        let mut data = std::collections::HashMap::new();
+        // Invalid JSON that will fail to deserialize
+        data.insert(key.to_string(), b"not valid json {{{".to_vec());
+        Self { data }
+    }
+}
+
+#[cfg(test)]
+impl Persister for MockPersister {
+    fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.data.get(key).cloned()
+    }
+
+    fn set(&mut self, key: &str, value: Vec<u8>) {
+        self.data.insert(key.to_string(), value);
+    }
+
+    fn delete(&mut self, key: &str) {
+        self.data.remove(key);
+    }
+
+    fn load(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn sync(&self) -> Result<()> {
+        Ok(())
+    }
+}

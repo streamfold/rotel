@@ -8,4 +8,6 @@ mod json_file;
 mod store;
 
 pub use json_file::{JsonFileDatabase, JsonFilePersister};
+#[cfg(test)]
+pub use store::MockPersister;
 pub use store::{Persister, PersisterExt};
