@@ -233,14 +233,14 @@ mod tests {
     // =============================================================================
     mod test_helpers {
         use super::*;
-        use crate::model::common::{RAnyValue, RKeyValue};
         use crate::model::common::RValue::{BoolValue, BytesValue, StringValue};
-        use crate::model::resource::RResource;
-        use crate::model::trace::RResourceSpans;
+        use crate::model::common::{RAnyValue, RKeyValue};
         #[allow(unused_imports)]
         use crate::model::logs::RResourceLogs;
         #[allow(unused_imports)]
         use crate::model::metrics::RResourceMetrics;
+        use crate::model::resource::RResource;
+        use crate::model::trace::RResourceSpans;
 
         // -------------------------------------------------------------------------
         // Value Builders
@@ -256,7 +256,9 @@ mod tests {
         // -------------------------------------------------------------------------
 
         /// Creates an RAnyValue wrapped in Arc<Mutex<Option<...>>>
-        pub fn any_value(value: Arc<Mutex<Option<crate::model::common::RValue>>>) -> Arc<Mutex<Option<RAnyValue>>> {
+        pub fn any_value(
+            value: Arc<Mutex<Option<crate::model::common::RValue>>>,
+        ) -> Arc<Mutex<Option<RAnyValue>>> {
             Arc::new(Mutex::new(Some(RAnyValue { value })))
         }
 
@@ -314,11 +316,13 @@ mod tests {
 
         /// Creates ResourceSpans from FakeOTLP trace data, returning both the Python object
         /// and the internal representation for later extraction
-        pub fn py_resource_spans_from_fake(num_res: usize, num_spans: usize) -> (ResourceSpans, RResourceSpans) {
+        pub fn py_resource_spans_from_fake(
+            num_res: usize,
+            num_spans: usize,
+        ) -> (ResourceSpans, RResourceSpans) {
             let export_req = FakeOTLP::trace_service_request_with_spans(num_res, num_spans);
-            let r_resource_spans = otel_transform::transform_resource_spans(
-                export_req.resource_spans[0].clone()
-            );
+            let r_resource_spans =
+                otel_transform::transform_resource_spans(export_req.resource_spans[0].clone());
             let py_resource_spans = ResourceSpans {
                 resource: r_resource_spans.resource.clone(),
                 scope_spans: r_resource_spans.scope_spans.clone(),
@@ -333,28 +337,36 @@ mod tests {
         // -------------------------------------------------------------------------
 
         /// Extracts transformed spans from RResourceSpans
-        pub fn extract_spans(r: RResourceSpans) -> Vec<opentelemetry_proto::tonic::trace::v1::ScopeSpans> {
+        pub fn extract_spans(
+            r: RResourceSpans,
+        ) -> Vec<opentelemetry_proto::tonic::trace::v1::ScopeSpans> {
             let scope_spans_vec = Arc::into_inner(r.scope_spans).unwrap();
             let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
             py_transform::transform_spans(scope_spans_vec)
         }
 
         /// Extracts transformed logs from RResourceLogs
-        pub fn extract_logs(r: RResourceLogs) -> Vec<opentelemetry_proto::tonic::logs::v1::ScopeLogs> {
+        pub fn extract_logs(
+            r: RResourceLogs,
+        ) -> Vec<opentelemetry_proto::tonic::logs::v1::ScopeLogs> {
             let scope_logs_vec = Arc::into_inner(r.scope_logs).unwrap();
             let scope_logs_vec = scope_logs_vec.into_inner().unwrap();
             py_transform::transform_logs(scope_logs_vec)
         }
 
         /// Extracts transformed metrics from RResourceMetrics
-        pub fn extract_metrics(r: RResourceMetrics) -> Vec<opentelemetry_proto::tonic::metrics::v1::ScopeMetrics> {
+        pub fn extract_metrics(
+            r: RResourceMetrics,
+        ) -> Vec<opentelemetry_proto::tonic::metrics::v1::ScopeMetrics> {
             let scope_metrics_vec = Arc::into_inner(r.scope_metrics).unwrap();
             let scope_metrics_vec = scope_metrics_vec.into_inner().unwrap();
             py_transform::transform_metrics(scope_metrics_vec)
         }
 
         /// Extracts transformed resource from Arc<Mutex<Option<RResource>>>
-        pub fn extract_resource(r: Arc<Mutex<Option<RResource>>>) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
+        pub fn extract_resource(
+            r: Arc<Mutex<Option<RResource>>>,
+        ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
             let resource = Arc::into_inner(r).unwrap();
             let resource = resource.into_inner().unwrap();
             resource.map(|r| py_transform::transform_resource(r).unwrap())
@@ -362,11 +374,9 @@ mod tests {
 
         /// Converts attributes vector to HashMap for easy assertion
         pub fn attrs_to_map(
-            attrs: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>
+            attrs: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
         ) -> HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> {
-            attrs.into_iter()
-                .map(|kv| (kv.key, kv.value))
-                .collect()
+            attrs.into_iter().map(|kv| (kv.key, kv.value)).collect()
         }
 
         // -------------------------------------------------------------------------
@@ -374,7 +384,10 @@ mod tests {
         // -------------------------------------------------------------------------
 
         /// Asserts that an Arc<Mutex<Option<RValue>>> contains the expected string
-        pub fn assert_rvalue_string(value: &Arc<Mutex<Option<crate::model::common::RValue>>>, expected: &str) {
+        pub fn assert_rvalue_string(
+            value: &Arc<Mutex<Option<crate::model::common::RValue>>>,
+            expected: &str,
+        ) {
             match value.lock().unwrap().clone().unwrap() {
                 StringValue(s) => assert_eq!(s, expected),
                 other => panic!("Expected StringValue, got {:?}", other),
@@ -382,7 +395,10 @@ mod tests {
         }
 
         /// Asserts that an Arc<Mutex<Option<RValue>>> contains the expected bool
-        pub fn assert_rvalue_bool(value: &Arc<Mutex<Option<crate::model::common::RValue>>>, expected: bool) {
+        pub fn assert_rvalue_bool(
+            value: &Arc<Mutex<Option<crate::model::common::RValue>>>,
+            expected: bool,
+        ) {
             match value.lock().unwrap().clone().unwrap() {
                 BoolValue(b) => assert_eq!(b, expected),
                 other => panic!("Expected BoolValue, got {:?}", other),
@@ -390,7 +406,10 @@ mod tests {
         }
 
         /// Asserts that an Arc<Mutex<Option<RValue>>> contains the expected bytes
-        pub fn assert_rvalue_bytes(value: &Arc<Mutex<Option<crate::model::common::RValue>>>, expected: &[u8]) {
+        pub fn assert_rvalue_bytes(
+            value: &Arc<Mutex<Option<crate::model::common::RValue>>>,
+            expected: &[u8],
+        ) {
             match value.lock().unwrap().clone().unwrap() {
                 BytesValue(b) => assert_eq!(b, expected),
                 other => panic!("Expected BytesValue, got {:?}", other),
@@ -406,9 +425,11 @@ mod tests {
         pub fn assert_attr_string(
             map: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
             key: &str,
-            expected: &str
+            expected: &str,
         ) {
-            let value = map.get(key).unwrap_or_else(|| panic!("Key '{}' not found", key));
+            let value = map
+                .get(key)
+                .unwrap_or_else(|| panic!("Key '{}' not found", key));
             match value.as_ref().unwrap().value.as_ref().unwrap() {
                 Value::StringValue(s) => assert_eq!(s, expected),
                 other => panic!("Expected StringValue for key '{}', got {:?}", key, other),
@@ -419,9 +440,11 @@ mod tests {
         pub fn assert_attr_int(
             map: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
             key: &str,
-            expected: i64
+            expected: i64,
         ) {
-            let value = map.get(key).unwrap_or_else(|| panic!("Key '{}' not found", key));
+            let value = map
+                .get(key)
+                .unwrap_or_else(|| panic!("Key '{}' not found", key));
             match value.as_ref().unwrap().value.as_ref().unwrap() {
                 Value::IntValue(i) => assert_eq!(*i, expected),
                 other => panic!("Expected IntValue for key '{}', got {:?}", key, other),
@@ -432,9 +455,11 @@ mod tests {
         pub fn assert_attr_bool(
             map: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
             key: &str,
-            expected: bool
+            expected: bool,
         ) {
-            let value = map.get(key).unwrap_or_else(|| panic!("Key '{}' not found", key));
+            let value = map
+                .get(key)
+                .unwrap_or_else(|| panic!("Key '{}' not found", key));
             match value.as_ref().unwrap().value.as_ref().unwrap() {
                 Value::BoolValue(b) => assert_eq!(*b, expected),
                 other => panic!("Expected BoolValue for key '{}', got {:?}", key, other),
@@ -451,7 +476,9 @@ mod tests {
         let arc_value = string_value("foo");
         let any_value_arc = any_value(arc_value.clone());
 
-        let pv = AnyValue { inner: any_value_arc.clone() };
+        let pv = AnyValue {
+            inner: any_value_arc.clone(),
+        };
         Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
             .unwrap();
 
@@ -464,7 +491,9 @@ mod tests {
         let arc_value = string_value("foo");
         let any_value_arc = any_value(arc_value.clone());
 
-        let pv = AnyValue { inner: any_value_arc.clone() };
+        let pv = AnyValue {
+            inner: any_value_arc.clone(),
+        };
         Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
             .unwrap();
 
@@ -477,7 +506,9 @@ mod tests {
         let arc_value = string_value("foo");
         let any_value_arc = any_value(arc_value.clone());
 
-        let pv = AnyValue { inner: any_value_arc.clone() };
+        let pv = AnyValue {
+            inner: any_value_arc.clone(),
+        };
         Python::with_gil(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
             .unwrap();
 
@@ -490,7 +521,9 @@ mod tests {
         let arc_value = string_value("foo");
         let any_value_arc = any_value(arc_value.clone());
 
-        let pv = AnyValue { inner: any_value_arc.clone() };
+        let pv = AnyValue {
+            inner: any_value_arc.clone(),
+        };
         Python::with_gil(|py| -> PyResult<()> { run_script("write_bytes_value_test.py", py, pv) })
             .unwrap();
 
@@ -525,8 +558,10 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> { run_script("write_key_value_key_test.py", py, kv) })
-            .unwrap();
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_key_test.py", py, kv)
+        })
+        .unwrap();
 
         assert_mutex_string(&key, "new_key");
     }
@@ -542,8 +577,10 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> { run_script("read_key_value_value_test.py", py, kv) })
-            .unwrap();
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_key_value_value_test.py", py, kv)
+        })
+        .unwrap();
 
         assert_rvalue_string(&arc_value, "foo");
     }
@@ -559,8 +596,10 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> { run_script("write_key_value_value_test.py", py, kv) })
-            .unwrap();
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_value_test.py", py, kv)
+        })
+        .unwrap();
 
         assert_rvalue_string(&arc_value, "changed");
     }
@@ -576,8 +615,10 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> { run_script("write_key_value_bytes_value_test.py", py, kv) })
-            .unwrap();
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("write_key_value_bytes_value_test.py", py, kv)
+        })
+        .unwrap();
 
         assert_rvalue_bytes(&arc_value, b"111111");
     }
@@ -588,8 +629,10 @@ mod tests {
         let kv_arc = string_key_value("key", "foo");
         let resource = resource_with_single_attr(kv_arc);
 
-        Python::with_gil(|py| -> PyResult<()> { run_script("read_resource_attributes_test.py", py, resource) })
-            .unwrap();
+        Python::with_gil(|py| -> PyResult<()> {
+            run_script("read_resource_attributes_test.py", py, resource)
+        })
+        .unwrap();
     }
 
     #[test]
@@ -828,7 +871,11 @@ mod tests {
         let resource = resource_with_single_attr(kv_arc);
 
         Python::with_gil(|py| -> PyResult<()> {
-            run_script("write_resource_attributes_key_value_key_test.py", py, resource)
+            run_script(
+                "write_resource_attributes_key_value_key_test.py",
+                py,
+                resource,
+            )
         })
         .unwrap();
 
@@ -845,7 +892,11 @@ mod tests {
         let resource = resource_with_single_attr(kv_arc);
 
         Python::with_gil(|py| -> PyResult<()> {
-            run_script("write_resource_attributes_key_value_value_test.py", py, resource)
+            run_script(
+                "write_resource_attributes_key_value_value_test.py",
+                py,
+                resource,
+            )
         })
         .unwrap();
 
@@ -936,7 +987,11 @@ mod tests {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
-            run_script("read_and_write_instrumentation_scope_test.py", py, py_resource_spans)
+            run_script(
+                "read_and_write_instrumentation_scope_test.py",
+                py,
+                py_resource_spans,
+            )
         })
         .unwrap();
 
@@ -1012,9 +1067,8 @@ mod tests {
     fn read_and_write_spans() {
         initialize();
         let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            otel_transform::transform_resource_spans(export_req.resource_spans[0].clone());
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
@@ -1923,29 +1977,38 @@ mod tests {
         let log_record = scope_logs.pop().unwrap().log_records.pop().unwrap();
         let attrs_to_verify = attrs_to_map(log_record.attributes);
 
-        let verify_attrs = |attrs: &HashMap<
-            String,
-            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
-        >| {
-            assert_attr_string(attrs, "host.name", "my-server-1");
-            assert_attr_string(attrs, "http.status_code", "OK");
-            assert_attr_string(attrs, "env", "production");
-            assert_attr_string(attrs, "email", "test@example.com");
-            assert_attr_string(attrs, "user.id", "5942d94f524882e0f29bf0a1e5a6dcc952eea1c0c21dd3588a3fc7db9716db0c");
-            assert_attr_string(attrs, "trace.id", "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f");
-            assert_attr_string(attrs, "extracted_id", "123");
-            assert_attr_int(attrs, "temp_str_int", 123);
-            assert_attr_bool(attrs, "temp_str_bool", true);
-            // Check double value
-            let temp_str_float = attrs.get("temp_str_float").unwrap();
-            match temp_str_float.as_ref().unwrap().value.as_ref().unwrap() {
-                Value::DoubleValue(d) => assert_eq!(*d, 10.0),
-                other => panic!("Expected DoubleValue for 'temp_str_float', got {:?}", other),
-            }
-            // Check removed keys
-            assert!(attrs.get("path").is_none(), "Expected 'path' to be removed");
-            assert!(attrs.get("super.secret").is_none(), "Expected 'super.secret' to be removed");
-        };
+        let verify_attrs =
+            |attrs: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>| {
+                assert_attr_string(attrs, "host.name", "my-server-1");
+                assert_attr_string(attrs, "http.status_code", "OK");
+                assert_attr_string(attrs, "env", "production");
+                assert_attr_string(attrs, "email", "test@example.com");
+                assert_attr_string(
+                    attrs,
+                    "user.id",
+                    "5942d94f524882e0f29bf0a1e5a6dcc952eea1c0c21dd3588a3fc7db9716db0c",
+                );
+                assert_attr_string(
+                    attrs,
+                    "trace.id",
+                    "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f",
+                );
+                assert_attr_string(attrs, "extracted_id", "123");
+                assert_attr_int(attrs, "temp_str_int", 123);
+                assert_attr_bool(attrs, "temp_str_bool", true);
+                // Check double value
+                let temp_str_float = attrs.get("temp_str_float").unwrap();
+                match temp_str_float.as_ref().unwrap().value.as_ref().unwrap() {
+                    Value::DoubleValue(d) => assert_eq!(*d, 10.0),
+                    other => panic!("Expected DoubleValue for 'temp_str_float', got {:?}", other),
+                }
+                // Check removed keys
+                assert!(attrs.get("path").is_none(), "Expected 'path' to be removed");
+                assert!(
+                    attrs.get("super.secret").is_none(),
+                    "Expected 'super.secret' to be removed"
+                );
+            };
 
         verify_attrs(&attrs_to_verify);
 
@@ -2832,7 +2895,11 @@ mod tests {
         let kv_map = attrs_to_map(span.attributes);
 
         assert_eq!(kv_map.len(), 3);
-        assert_attr_string(&kv_map, "http.request.header.my-custom-header", "my-grpc-value");
+        assert_attr_string(
+            &kv_map,
+            "http.request.header.my-custom-header",
+            "my-grpc-value",
+        );
     }
 
     #[test]
@@ -2908,7 +2975,11 @@ mod tests {
 
         let kv_map = attrs_to_map(resource.attributes);
         assert_eq!(kv_map.len(), 7);
-        assert_attr_string(&kv_map, "http.request.header.my-custom-header", "my-grpc-value");
+        assert_attr_string(
+            &kv_map,
+            "http.request.header.my-custom-header",
+            "my-grpc-value",
+        );
     }
 
     #[test]
