@@ -300,7 +300,7 @@ impl ConnectionHandler {
 
                                 // Initiate async send without awaiting
                                 if let Some(logs_output) = &self.logs_output {
-                                    let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                                    let payload_msg = payload::Message::new(None, vec![resource_logs], None);
                                     pending_send = Some(logs_output.send_async(payload_msg));
                                     pending_send_count = count;
                                 }
@@ -440,7 +440,7 @@ impl ConnectionHandler {
 
                         // Initiate async send without awaiting
                         if let Some(logs_output) = &self.logs_output {
-                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                            let payload_msg = payload::Message::new(None, vec![resource_logs], None);
                             pending_send = Some(logs_output.send_async(payload_msg));
                             pending_send_count = count;
                         }
