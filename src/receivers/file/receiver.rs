@@ -442,7 +442,7 @@ impl FileWorkHandler {
                                 schema_url: String::new(),
                             };
 
-                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                            let payload_msg = payload::Message::new(None, vec![resource_logs], None);
 
                             match logs_output.send(payload_msg).await {
                                 Ok(_) => {
@@ -571,7 +571,8 @@ impl FileWorkHandler {
                                 schema_url: String::new(),
                             };
 
-                            let payload_msg = payload::Message::new(None, vec![resource_logs]);
+                            let payload_msg =
+                                payload::Message::new(None, vec![resource_logs], None);
 
                             match logs_output.send(payload_msg).await {
                                 Ok(_) => {
