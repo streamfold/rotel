@@ -60,6 +60,7 @@ impl GlobFileFinder {
 
 impl FileFinder for GlobFileFinder {
     /// Find all files matching the include patterns, excluding those matching exclude patterns
+    // TODO we can likely cache results and avoid the glob call every time
     fn find_files(&self) -> Result<Vec<PathBuf>> {
         let mut seen = HashSet::new();
         let mut paths = Vec::new();

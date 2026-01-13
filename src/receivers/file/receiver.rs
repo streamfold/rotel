@@ -14,16 +14,16 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use futures::stream::FuturesOrdered;
-use opentelemetry::KeyValue;
+use futures::StreamExt;
 use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::common::v1::KeyValue as OtlpKeyValue;
-use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, any_value};
+use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use tokio::select;
@@ -37,14 +37,14 @@ use crate::bounded_channel::{self, BoundedReceiver, BoundedSender};
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
 use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{
-    FileFinder, FileId, FileReader, GlobFileFinder, StartAt, get_path_from_file,
+    get_path_from_file, FileFinder, FileId, FileReader, GlobFileFinder, StartAt,
 };
-use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
+use crate::receivers::file::parser::{nginx, JsonParser, Parser, RegexParser};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
 };
 use crate::receivers::file::watcher::{
-    AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig, create_watcher,
+    create_watcher, AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig,
 };
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -499,7 +499,7 @@ impl FileWorkHandler {
         workers_done_tx: std::sync::mpsc::Sender<()>,
         worker_ctx: WorkerContext,
     ) {
-        use tokio::time::{Instant, timeout_at};
+        use tokio::time::{timeout_at, Instant};
 
         let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
         let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
@@ -1345,6 +1345,7 @@ impl<F: FileFinder> FileCoordinator<F> {
                         break;
                     }
                 }
+                // TODO - we need to reevaluate the logic below here switching to PollWatcher is PollWatcher errors
                 Err(e) => {
                     // Track when watcher errors started
                     let first_error = *self.watcher_first_error.get_or_insert_with(Instant::now);
