@@ -14,16 +14,16 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use futures::stream::FuturesOrdered;
-use opentelemetry::KeyValue;
+use futures::StreamExt;
 use opentelemetry::metrics::Counter;
+use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::common::v1::KeyValue as OtlpKeyValue;
-use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, any_value};
+use opentelemetry_proto::tonic::common::v1::{any_value, AnyValue, InstrumentationScope};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use tokio::select;
@@ -37,14 +37,14 @@ use crate::bounded_channel::{self, BoundedReceiver, BoundedSender};
 use crate::receivers::file::config::{FileReceiverConfig, ParserType};
 use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{
-    FileFinder, FileId, FileReader, GlobFileFinder, StartAt, get_path_from_file,
+    get_path_from_file, FileFinder, FileId, FileReader, GlobFileFinder, StartAt,
 };
-use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
+use crate::receivers::file::parser::{nginx, JsonParser, Parser, RegexParser};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
 };
 use crate::receivers::file::watcher::{
-    AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig, create_watcher,
+    create_watcher, AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig,
 };
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -166,7 +166,7 @@ struct TrackedFile {
 }
 
 /// Default maximum number of concurrent file processing workers
-const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
+const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 4;
 
 /// Process a single file work item (runs in spawn_blocking)
 // Attribute key constants to avoid per-line allocations
@@ -341,9 +341,9 @@ impl FileWorkHandler {
         // - records_tx/rx: workers -> async handler (log records for export)
         // - results_tx/rx: workers -> coordinator (offset updates)
         // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
-        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(4);
+        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(64);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(10);
-        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(4);
+        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(64);
         let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
 
         // Create worker context (shared by all workers)
@@ -498,7 +498,7 @@ impl FileWorkHandler {
         workers_done_tx: std::sync::mpsc::Sender<()>,
         worker_ctx: WorkerContext,
     ) {
-        use tokio::time::{Instant, timeout_at};
+        use tokio::time::{timeout_at, Instant};
 
         let worker_deadline = Instant::now() + self.config.shutdown_worker_drain_timeout;
         let records_deadline = Instant::now() + self.config.shutdown_records_drain_timeout;
