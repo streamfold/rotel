@@ -175,7 +175,7 @@ pub struct FileReceiverArgs {
     )]
     pub file_receiver_include_file_path: bool,
 
-    /// Maximum number of files to process concurrently
+    /// Maximum number of concurrent file processing threads
     #[arg(
         long,
         env = "ROTEL_FILE_RECEIVER_MAX_CONCURRENT_FILES",

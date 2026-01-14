@@ -341,10 +341,9 @@ impl FileWorkHandler {
         // - records_tx/rx: workers -> async handler (log records for export)
         // - results_tx/rx: workers -> coordinator (offset updates)
         // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
-        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
+        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(4);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(10);
-        let (results_tx, results_rx) =
-            bounded_channel::bounded::<FileWorkResult>(max_concurrent_files);
+        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(4);
         let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
 
         // Create worker context (shared by all workers)
