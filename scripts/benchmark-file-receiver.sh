@@ -14,6 +14,7 @@
 #   -r, --rate RATE        Log lines per second (default: 1000)
 #   -n, --files NUM        Number of log files to write to (default: 1)
 #   -m, --mode MODE        Watch mode: poll or native (default: poll)
+#   -D, --debounce MS      Debounce interval in ms for native watcher (default: 200) [rotel only]
 #   -p, --protocol PROTO   OTLP protocol: grpc or http (default: grpc) [verify mode only]
 #   -t, --timeout SECS     Max seconds to wait for processing (default: 300) [verify mode only]
 #   -v, --verify           Enable verify mode: export to OTLP sink and count messages
@@ -28,6 +29,7 @@ DURATION=60
 RATE=1000
 NUM_FILES=1
 WATCH_MODE="poll"
+DEBOUNCE_MS=200
 PROTOCOL="grpc"
 TIMEOUT=300
 VERIFY=false
@@ -65,6 +67,10 @@ while [[ $# -gt 0 ]]; do
             WATCH_MODE="$2"
             shift 2
             ;;
+        -D|--debounce)
+            DEBOUNCE_MS="$2"
+            shift 2
+            ;;
         -p|--protocol)
             PROTOCOL="$2"
             shift 2
@@ -82,7 +88,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            head -22 "$0" | tail -19
+            head -23 "$0" | tail -20
             exit 0
             ;;
         *)
@@ -573,26 +579,28 @@ start_rotel() {
     (cd "$ROTEL_DIR" && cargo build --release --features file_receiver 2>/dev/null)
 
     if [[ "$VERIFY" == "true" ]]; then
-        log_info "Starting Rotel file receiver (verify mode, protocol: $PROTOCOL)..."
+        log_info "Starting Rotel file receiver (verify mode, protocol: $PROTOCOL, debounce: ${DEBOUNCE_MS}ms)..."
         "$ROTEL_DIR/target/release/rotel" start \
             --receiver file \
             --file-receiver-include "${log_base}-*.log" \
             --file-receiver-parser nginx_access \
             --file-receiver-start-at beginning \
             --file-receiver-watch-mode "$WATCH_MODE" \
+            --file-receiver-debounce-interval-ms "$DEBOUNCE_MS" \
             --file-receiver-offsets-path /tmp/benchmark-rotel-offsets.json \
             --exporter otlp \
             --otlp-exporter-endpoint "localhost:$sink_port" \
             --otlp-exporter-protocol "$PROTOCOL" \
             > "$OUTPUT_DIR/rotel.log" 2>&1 &
     else
-        log_info "Starting Rotel file receiver (blackhole mode)..."
+        log_info "Starting Rotel file receiver (blackhole mode, debounce: ${DEBOUNCE_MS}ms)..."
         "$ROTEL_DIR/target/release/rotel" start \
             --receiver file \
             --file-receiver-include "${log_base}-*.log" \
             --file-receiver-parser nginx_access \
             --file-receiver-start-at beginning \
             --file-receiver-watch-mode "$WATCH_MODE" \
+            --file-receiver-debounce-interval-ms "$DEBOUNCE_MS" \
             --file-receiver-offsets-path /tmp/benchmark-rotel-offsets.json \
             --exporter blackhole \
             > "$OUTPUT_DIR/rotel.log" 2>&1 &
@@ -955,6 +963,9 @@ main() {
     log_info "Rate:       ${RATE} logs/s"
     log_info "Num Files:  $NUM_FILES"
     log_info "Watch Mode: $WATCH_MODE"
+    if [[ "$COLLECTOR" == "rotel" || "$COLLECTOR" == "both" ]]; then
+        log_info "Debounce:   ${DEBOUNCE_MS}ms (rotel only)"
+    fi
     if [[ "$VERIFY" == "true" ]]; then
         log_info "Mode:       verify (OTLP export)"
         log_info "Protocol:   $PROTOCOL"

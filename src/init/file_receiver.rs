@@ -133,6 +133,16 @@ pub struct FileReceiverArgs {
     )]
     pub file_receiver_poll_interval_ms: u64,
 
+    /// Debounce interval in milliseconds for native file watcher to coalesce rapid events.
+    /// Higher values reduce CPU usage but increase latency. On Linux with inotify,
+    /// consider using 500ms or higher for high-throughput scenarios.
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_DEBOUNCE_INTERVAL_MS",
+        default_value = "200"
+    )]
+    pub file_receiver_debounce_interval_ms: u64,
+
     /// Path to store file offsets for persistence across restarts
     #[arg(
         long,
@@ -241,6 +251,7 @@ impl Default for FileReceiverArgs {
             file_receiver_start_at: StartAtArg::End,
             file_receiver_watch_mode: WatchModeArg::Auto,
             file_receiver_poll_interval_ms: 250,
+            file_receiver_debounce_interval_ms: 200,
             file_receiver_offsets_path: PathBuf::from("/var/lib/rotel/file_offsets.json"),
             file_receiver_max_log_size: 65536,
             file_receiver_include_file_name: true,
@@ -268,6 +279,7 @@ impl FileReceiverArgs {
             start_at: self.file_receiver_start_at.into(),
             watch_mode: self.file_receiver_watch_mode.into(),
             poll_interval: Duration::from_millis(self.file_receiver_poll_interval_ms),
+            debounce_interval: Duration::from_millis(self.file_receiver_debounce_interval_ms),
             offsets_path: self.file_receiver_offsets_path.clone(),
             max_log_size: self.file_receiver_max_log_size,
             include_file_name: self.file_receiver_include_file_name,

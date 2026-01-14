@@ -310,7 +310,7 @@ impl FileWorkHandler {
         let watcher_config = WatcherConfig {
             mode: self.config.watch_mode,
             poll_interval: self.config.poll_interval,
-            debounce_interval: Duration::from_millis(200),
+            debounce_interval: self.config.debounce_interval,
         };
 
         // Create the watcher (auto mode will try native first, fall back to poll)

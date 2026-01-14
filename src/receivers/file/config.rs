@@ -41,6 +41,8 @@ pub struct FileReceiverConfig {
     pub watch_mode: WatchMode,
     /// Poll interval for checking file changes (used in poll mode or as fallback)
     pub poll_interval: Duration,
+    /// Debounce interval for native file watcher to coalesce rapid events
+    pub debounce_interval: Duration,
     /// Path to store file offsets for persistence
     pub offsets_path: PathBuf,
     /// Maximum log line size in bytes
@@ -78,6 +80,7 @@ impl Default for FileReceiverConfig {
             start_at: StartAt::End,
             watch_mode: WatchMode::Auto,
             poll_interval: Duration::from_millis(250),
+            debounce_interval: Duration::from_millis(200),
             offsets_path: PathBuf::from("/var/lib/rotel/file_offsets.json"),
             max_log_size: 65536,
             include_file_name: true,
