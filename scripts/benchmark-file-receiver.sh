@@ -12,6 +12,7 @@
 #   -c, --collector TYPE   Collector to test: rotel, otel, or both (default: rotel)
 #   -d, --duration SECS    Test duration in seconds (default: 60)
 #   -r, --rate RATE        Log lines per second (default: 1000)
+#   -n, --files NUM        Number of log files to write to (default: 1)
 #   -m, --mode MODE        Watch mode: poll or native (default: poll)
 #   -o, --output DIR       Output directory for results (default: /tmp/benchmark)
 #   -h, --help             Show this help message
@@ -22,9 +23,10 @@ set -e
 COLLECTOR="rotel"
 DURATION=60
 RATE=1000
+NUM_FILES=1
 WATCH_MODE="poll"
 OUTPUT_DIR="/tmp/benchmark"
-LOG_FILE="/tmp/benchmark-nginx.log"
+LOG_BASE="/tmp/benchmark-nginx"
 
 # Colors for output
 RED='\033[0;31m'
@@ -48,6 +50,10 @@ while [[ $# -gt 0 ]]; do
             RATE="$2"
             shift 2
             ;;
+        -n|--files)
+            NUM_FILES="$2"
+            shift 2
+            ;;
         -m|--mode)
             WATCH_MODE="$2"
             shift 2
@@ -57,7 +63,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            head -17 "$0" | tail -14
+            head -18 "$0" | tail -15
             exit 0
             ;;
         *)
@@ -96,11 +102,12 @@ calculate_interval() {
 
 # High-performance log generator using Python for speed
 generate_logs_fast() {
-    local output_file=$1
+    local log_base=$1
     local rate=$2
     local duration=$3
+    local num_files=$4
 
-    log_info "Generating logs at ${rate}/s for ${duration}s" >&2
+    log_info "Generating logs at ${rate}/s for ${duration}s across ${num_files} file(s)" >&2
 
     # Use Python for much faster log generation with rotation
     python3 << EOF
@@ -108,9 +115,10 @@ import time
 import random
 import os
 
-output_file = "$output_file"
+log_base = "$log_base"
 rate = $rate
 duration = $duration
+num_files = $num_files
 rotate_interval = 5  # Rotate every 5 seconds
 
 methods = ["GET", "POST", "PUT", "DELETE"]
@@ -125,30 +133,42 @@ sleep_interval = 1.0 / batches_per_second if batches_per_second > 0 else 0
 
 start_time = time.time()
 end_time = start_time + duration
-last_rotate = start_time
-rotation_count = 0
 count = 0
 
-# Clear any existing rotated files
-for i in range(100):
-    rotated = f"{output_file}.{i}"
-    if os.path.exists(rotated):
-        os.remove(rotated)
+# Build list of output files: {base}-0.log, {base}-1.log, etc.
+output_files = [f"{log_base}-{i}.log" for i in range(num_files)]
 
-f = open(output_file, 'w')
+# Track rotation state per file
+rotation_counts = [0] * num_files
+last_rotates = [start_time] * num_files
+
+# Clear any existing rotated files for all log files
+for output_file in output_files:
+    for i in range(100):
+        rotated = f"{output_file}.{i}"
+        if os.path.exists(rotated):
+            os.remove(rotated)
+
+# Open all files
+file_handles = [open(f, 'w') for f in output_files]
+
+# Current file index for round-robin distribution
+current_file_idx = 0
 
 while time.time() < end_time:
     batch_start = time.time()
 
-    # Check if we need to rotate
-    if batch_start - last_rotate >= rotate_interval:
-        f.close()
-        # Rotate: rename current to .N, create new file
-        rotated_name = f"{output_file}.{rotation_count}"
-        os.rename(output_file, rotated_name)
-        f = open(output_file, 'w')
-        rotation_count += 1
-        last_rotate = batch_start
+    # Check if any files need rotation
+    for idx in range(num_files):
+        if batch_start - last_rotates[idx] >= rotate_interval:
+            file_handles[idx].close()
+            # Rotate: rename current to .N, create new file
+            rotated_name = f"{output_files[idx]}.{rotation_counts[idx]}"
+            if os.path.exists(output_files[idx]):
+                os.rename(output_files[idx], rotated_name)
+            file_handles[idx] = open(output_files[idx], 'w')
+            rotation_counts[idx] += 1
+            last_rotates[idx] = batch_start
 
     # Generate a batch of log lines
     lines = []
@@ -160,17 +180,23 @@ while time.time() < end_time:
         status = random.choice(statuses)
         lines.append(f'{ip} - - [{timestamp}] "{method} {path} HTTP/1.1" {status} 1234 "-" "benchmark/{int(time.time())}"')
 
-    # Write batch at once
-    f.write('\n'.join(lines) + '\n')
-    f.flush()
+    # Write batch to current file (round-robin across files)
+    file_handles[current_file_idx].write('\n'.join(lines) + '\n')
+    file_handles[current_file_idx].flush()
     count += batch_size
+
+    # Move to next file for next batch
+    current_file_idx = (current_file_idx + 1) % num_files
 
     # Sleep to maintain rate
     elapsed = time.time() - batch_start
     if sleep_interval > elapsed:
         time.sleep(sleep_interval - elapsed)
 
-f.close()
+# Close all files
+for f in file_handles:
+    f.close()
+
 print(count)
 EOF
 }
@@ -209,17 +235,18 @@ monitor_resources() {
 
 # Start Rotel file receiver - sets COLLECTOR_PID global
 start_rotel() {
-    local log_file=$1
+    local log_base=$1
 
     log_info "Building Rotel..."
     (cd "$ROTEL_DIR" && cargo build --release --features file_receiver 2>/dev/null)
 
     log_info "Starting Rotel file receiver..."
 
-    # Create a minimal config pointing to our benchmark log
+    # Create a minimal config pointing to our benchmark logs
+    # Use glob pattern to match all log files: {base}-*.log
     "$ROTEL_DIR/target/release/rotel" start \
         --receiver file \
-        --file-receiver-include "$log_file" \
+        --file-receiver-include "${log_base}-*.log" \
         --file-receiver-parser nginx_access \
         --file-receiver-start-at beginning \
         --file-receiver-watch-mode "$WATCH_MODE" \
@@ -232,7 +259,7 @@ start_rotel() {
 
 # Start OTel Collector
 start_otel() {
-    local log_file=$1
+    local log_base=$1
     local config_file="$OUTPUT_DIR/otel-config.yaml"
 
     # Check for custom build first, then otelcol-contrib
@@ -254,11 +281,12 @@ start_otel() {
 
     log_info "Creating OTel Collector config..."
 
+    # Use glob pattern to match all log files: {base}-*.log
     cat > "$config_file" << EOF
 receivers:
   filelog:
     include:
-      - $log_file
+      - ${log_base}-*.log
     start_at: beginning
     poll_interval: 50ms
     operators:
@@ -310,13 +338,17 @@ run_benchmark() {
     local result_dir="$OUTPUT_DIR/$collector_name"
     mkdir -p "$result_dir"
 
-    # Clean up any previous state
-    rm -f "$LOG_FILE" /tmp/benchmark-*-offsets.json
-    touch "$LOG_FILE"
+    # Clean up any previous state - remove all matching log files and rotations
+    rm -f "${LOG_BASE}"-*.log "${LOG_BASE}"-*.log.* /tmp/benchmark-*-offsets.json
+
+    # Create initial log files: {base}-0.log, {base}-1.log, etc.
+    for ((i=0; i<NUM_FILES; i++)); do
+        touch "${LOG_BASE}-${i}.log"
+    done
 
     # Start the collector (sets COLLECTOR_PID global)
     COLLECTOR_PID=""
-    $start_func "$LOG_FILE"
+    $start_func "$LOG_BASE"
 
     local pid=$COLLECTOR_PID
 
@@ -334,10 +366,10 @@ run_benchmark() {
     monitor_resources "$pid" "$result_dir/resources.csv" "$DURATION" &
     local monitor_pid=$!
 
-    # Generate logs
+    # Generate logs across multiple files
     local start_time=$(python3 -c "import time; print(time.time())")
     local count
-    count=$(generate_logs_fast "$LOG_FILE" "$RATE" "$DURATION")
+    count=$(generate_logs_fast "$LOG_BASE" "$RATE" "$DURATION" "$NUM_FILES")
     local end_time=$(python3 -c "import time; print(time.time())")
 
     # Calculate actual throughput
@@ -388,6 +420,7 @@ analyze_results() {
 Benchmark Results: $collector_name
 =====================================
 Duration:        ${duration}s
+Num Files:       $NUM_FILES
 Log Count:       $log_count
 Throughput:      ${throughput} logs/s
 Avg CPU:         ${avg_cpu}%
@@ -412,7 +445,8 @@ generate_report() {
     echo "Test Parameters:"
     echo "  Duration:     ${DURATION}s"
     echo "  Target Rate:  ${RATE} logs/s"
-    echo "  Log File:     $LOG_FILE"
+    echo "  Num Files:    ${NUM_FILES}"
+    echo "  Log Pattern:  ${LOG_BASE}-*.log"
     echo ""
 
     for collector in rotel otel; do
@@ -434,6 +468,7 @@ main() {
     log_info "Collector:  $COLLECTOR"
     log_info "Duration:   ${DURATION}s"
     log_info "Rate:       ${RATE} logs/s"
+    log_info "Num Files:  $NUM_FILES"
     log_info "Watch Mode: $WATCH_MODE"
     log_info "Output:     $OUTPUT_DIR"
     echo ""
