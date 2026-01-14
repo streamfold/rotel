@@ -12,6 +12,7 @@
 #   -c, --count COUNT      Total log lines to generate (default: 10000)
 #   -r, --rotations NUM    Number of file rotations (default: 4)
 #   -m, --mode MODE        Watch mode: poll or native (default: native)
+#   -t, --timeout SECS     Max seconds to wait for processing (default: 120)
 #   -h, --help             Show this help message
 
 set -e
@@ -20,6 +21,7 @@ set -e
 LOG_COUNT=10000
 ROTATIONS=4
 WATCH_MODE="native"
+TIMEOUT=120
 OUTPUT_DIR="/tmp/verify-file-receiver"
 LOG_FILE="/tmp/verify-test.log"
 SINK_PORT=14318
@@ -46,8 +48,12 @@ while [[ $# -gt 0 ]]; do
             WATCH_MODE="$2"
             shift 2
             ;;
+        -t|--timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
         -h|--help)
-            head -15 "$0" | tail -12
+            head -16 "$0" | tail -13
             exit 0
             ;;
         *)
@@ -325,6 +331,62 @@ start_rotel() {
     ROTEL_PID=$!
 }
 
+# Wait for all messages to be captured, polling the output file
+# Returns 0 if all messages received, 1 if timeout
+# Sets PROCESSING_TIME_MS global with elapsed time in milliseconds
+wait_for_processing() {
+    local expected_count=$1
+    local captured_file=$2
+    local timeout_secs=$3
+
+    log_info "Waiting for $expected_count messages (timeout: ${timeout_secs}s)..."
+
+    local start_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+    local deadline=$(($(date +%s) + timeout_secs))
+    local last_count=0
+    local stable_count=0
+
+    while [[ $(date +%s) -lt $deadline ]]; do
+        # Count lines in captured file
+        local current_count=0
+        if [[ -f "$captured_file" ]]; then
+            current_count=$(wc -l < "$captured_file" | tr -d ' ')
+        fi
+
+        # Check if we have all messages
+        if [[ $current_count -ge $expected_count ]]; then
+            local end_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+            PROCESSING_TIME_MS=$((end_time - start_time))
+            log_info "All $expected_count messages received"
+            return 0
+        fi
+
+        # Show progress if count changed
+        if [[ $current_count -ne $last_count ]]; then
+            local pct=$((current_count * 100 / expected_count))
+            log_info "Progress: $current_count / $expected_count ($pct%)"
+            last_count=$current_count
+            stable_count=0
+        else
+            ((stable_count++))
+            # If count hasn't changed for 10 seconds and we have some messages, might be stuck
+            if [[ $stable_count -ge 10 && $current_count -gt 0 ]]; then
+                log_warn "No progress for 10s at $current_count messages"
+                stable_count=0
+            fi
+        fi
+
+        sleep 1
+    done
+
+    # Timeout reached
+    local end_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+    PROCESSING_TIME_MS=$((end_time - start_time))
+    local final_count=$(wc -l < "$captured_file" 2>/dev/null | tr -d ' ' || echo 0)
+    log_warn "Timeout after ${timeout_secs}s with $final_count / $expected_count messages"
+    return 1
+}
+
 # Verify all sequences were processed exactly once
 verify_sequences() {
     local expected_count=$1
@@ -422,6 +484,7 @@ main() {
     log_info "Log Count:   $LOG_COUNT"
     log_info "Rotations:   $ROTATIONS"
     log_info "Watch Mode:  $WATCH_MODE"
+    log_info "Timeout:     ${TIMEOUT}s"
     log_info "Output:      $OUTPUT_DIR"
     echo ""
 
@@ -439,7 +502,7 @@ main() {
     # Start the HTTP sink first
     start_http_sink "$SINK_PORT" "$captured_file"
 
-    # Start rotel
+    # Start rotel (includes build time which we exclude from timing)
     start_rotel "$LOG_FILE" "$SINK_PORT"
 
     if [[ -z "$ROTEL_PID" ]] || ! kill -0 "$ROTEL_PID" 2>/dev/null; then
@@ -450,27 +513,40 @@ main() {
 
     log_info "Rotel started with PID $ROTEL_PID"
 
-    # Give rotel a moment to initialize
+    # Give collector a moment to initialize
     sleep 2
+
+    # Start total timing AFTER build and initialization
+    local total_start_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+
+    # Time log generation
+    local gen_start_time=$(python3 -c "import time; print(int(time.time() * 1000))")
 
     # Now generate the log files (rotel will watch and process them)
     generate_sequenced_logs "$LOG_FILE" "$LOG_COUNT" "$ROTATIONS"
 
-    # Wait for rotel to process all files
-    # Calculate reasonable wait time based on count
-    local wait_time=$((LOG_COUNT / 2000 + 10))
-    log_info "Waiting ${wait_time}s for processing to complete..."
-    sleep "$wait_time"
+    local gen_end_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+    local gen_time_ms=$((gen_end_time - gen_start_time))
+
+    log_info "Log generation completed in ${gen_time_ms}ms"
+
+    # Wait for collector to process all messages (with polling)
+    local processing_start_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+    PROCESSING_TIME_MS=0
+
+    if ! wait_for_processing "$LOG_COUNT" "$captured_file" "$TIMEOUT"; then
+        log_warn "Processing did not complete within timeout"
+    fi
 
     # Stop rotel gracefully
     log_info "Stopping rotel..."
     kill -TERM "$ROTEL_PID" 2>/dev/null || true
 
     # Wait for graceful shutdown
-    local timeout=10
-    while kill -0 "$ROTEL_PID" 2>/dev/null && [[ $timeout -gt 0 ]]; do
+    local shutdown_timeout=10
+    while kill -0 "$ROTEL_PID" 2>/dev/null && [[ $shutdown_timeout -gt 0 ]]; do
         sleep 1
-        ((timeout--))
+        ((shutdown_timeout--))
     done
 
     # Force kill if still running
@@ -490,9 +566,34 @@ main() {
     sleep 1
     SINK_PID=""
 
+    # Calculate total time
+    local total_end_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+    local total_time_ms=$((total_end_time - total_start_time))
+
     # Verify the results
     echo ""
-    if verify_sequences "$LOG_COUNT" "$captured_file"; then
+    local verify_result=0
+    if ! verify_sequences "$LOG_COUNT" "$captured_file"; then
+        verify_result=1
+    fi
+
+    # Print timing summary
+    echo ""
+    echo "==========================================="
+    echo "TIMING SUMMARY"
+    echo "==========================================="
+    printf "Log Generation Time:  %d ms (%.2f s)\n" "$gen_time_ms" "$(echo "scale=2; $gen_time_ms / 1000" | bc)"
+    printf "Processing Time:      %d ms (%.2f s)\n" "$PROCESSING_TIME_MS" "$(echo "scale=2; $PROCESSING_TIME_MS / 1000" | bc)"
+    printf "Total End-to-End:     %d ms (%.2f s)\n" "$total_time_ms" "$(echo "scale=2; $total_time_ms / 1000" | bc)"
+
+    # Calculate throughput
+    if [[ $PROCESSING_TIME_MS -gt 0 ]]; then
+        local throughput=$(echo "scale=2; $LOG_COUNT * 1000 / $PROCESSING_TIME_MS" | bc)
+        printf "Processing Throughput: %.2f msgs/sec\n" "$throughput"
+    fi
+    echo "==========================================="
+
+    if [[ $verify_result -eq 0 ]]; then
         log_success "Verification PASSED!"
         exit 0
     else
