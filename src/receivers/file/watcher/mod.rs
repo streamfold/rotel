@@ -71,7 +71,7 @@ impl Default for WatcherConfig {
         Self {
             mode: WatchMode::Auto,
             poll_interval: Duration::from_millis(250),
-            debounce_interval: Duration::from_millis(100),
+            debounce_interval: Duration::from_millis(200),
         }
     }
 }
@@ -132,6 +132,6 @@ mod tests {
         let config = WatcherConfig::default();
         assert_eq!(config.mode, WatchMode::Auto);
         assert_eq!(config.poll_interval, Duration::from_millis(250));
-        assert_eq!(config.debounce_interval, Duration::from_millis(100));
+        assert_eq!(config.debounce_interval, Duration::from_millis(200));
     }
 }

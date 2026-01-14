@@ -1,82 +1,97 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native file system watcher using the `notify` crate.
+//! Native file system watcher using the `notify` crate with debouncing.
 //!
 //! Uses OS-level file system notifications:
 //! - Linux: inotify
 //! - macOS: FSEvents
 //! - Windows: ReadDirectoryChangesW
+//!
+//! Events are debounced using notify-debouncer-mini to coalesce rapid changes
+//! (e.g., many writes to a log file) into periodic batches.
 
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::RecursiveMode;
+use notify_debouncer_mini::{DebouncedEvent, DebouncedEventKind, Debouncer, new_debouncer};
 
 use super::traits::{FileEvent, FileEventKind, FileWatcher, WatcherError};
 
-/// Native file system watcher using OS-level notifications.
+/// Native file system watcher using OS-level notifications with debouncing.
+///
+/// The debouncer coalesces rapid file system events into periodic batches,
+/// significantly reducing CPU usage when tailing files with high write rates.
 pub struct NativeWatcher {
-    watcher: RecommendedWatcher,
-    receiver: Mutex<Receiver<Result<Event, notify::Error>>>,
+    debouncer: Debouncer<notify::RecommendedWatcher>,
+    receiver: Mutex<Receiver<Result<Vec<DebouncedEvent>, notify::Error>>>,
 }
 
 impl NativeWatcher {
     /// Create a new native watcher with the specified debounce interval.
+    ///
+    /// The debounce interval controls how long the watcher waits to coalesce
+    /// events for the same file before emitting them. A typical value is 200ms.
     pub fn new(debounce: Duration) -> Result<Self, WatcherError> {
         let (tx, rx) = channel();
 
-        let config = Config::default().with_poll_interval(debounce);
-
-        let watcher = RecommendedWatcher::new(
-            move |res| {
-                let _ = tx.send(res);
-            },
-            config,
-        )
+        let debouncer = new_debouncer(debounce, move |res| {
+            let _ = tx.send(res);
+        })
         .map_err(|e| WatcherError::Init(e.to_string()))?;
 
         Ok(Self {
-            watcher,
+            debouncer,
             receiver: Mutex::new(rx),
         })
     }
 
-    /// Convert a notify event to our FileEvent type
-    fn convert_event(event: Event) -> Option<FileEvent> {
+    /// Convert a debounced event to our FileEvent type.
+    ///
+    /// DebouncedEventKind only has two variants:
+    /// - Any: A change occurred (could be create, modify, or delete)
+    /// - AnyContinuous: Ongoing changes (e.g., continuous writes)
+    ///
+    /// Since both indicate "something changed", we map them to Modify.
+    /// The coordinator's poll() will determine the actual file state.
+    fn convert_event(event: DebouncedEvent) -> FileEvent {
+        // Both Any and AnyContinuous mean "file changed" - map to Modify
+        // The coordinator will determine actual state (new file, modified, deleted)
         let kind = match event.kind {
-            EventKind::Create(_) => FileEventKind::Create,
-            EventKind::Modify(_) => FileEventKind::Modify,
-            EventKind::Remove(_) => FileEventKind::Remove,
-            EventKind::Access(_) => return None, // Ignore access events
-            EventKind::Other => FileEventKind::Other,
-            EventKind::Any => FileEventKind::Other,
+            DebouncedEventKind::Any => FileEventKind::Modify,
+            DebouncedEventKind::AnyContinuous => FileEventKind::Modify,
+            // Handle potential future variants
+            _ => FileEventKind::Other,
         };
 
-        if event.paths.is_empty() {
-            return None;
-        }
+        FileEvent::new(kind, vec![event.path])
+    }
 
-        Some(FileEvent::new(kind, event.paths))
+    /// Convert a batch of debounced events to FileEvents
+    fn convert_events(events: Vec<DebouncedEvent>) -> Vec<FileEvent> {
+        events.into_iter().map(Self::convert_event).collect()
     }
 }
 
 impl FileWatcher for NativeWatcher {
     fn watch(&mut self, path: &Path) -> Result<(), WatcherError> {
-        self.watcher
+        self.debouncer
+            .watcher()
             .watch(path, RecursiveMode::NonRecursive)
             .map_err(|e| WatcherError::Watch(e.to_string()))
     }
 
     fn unwatch(&mut self, path: &Path) -> Result<(), WatcherError> {
-        self.watcher
+        self.debouncer
+            .watcher()
             .unwatch(path)
             .map_err(|e| WatcherError::Watch(e.to_string()))
     }
 
     fn try_recv(&mut self) -> Result<Vec<FileEvent>, WatcherError> {
-        let mut events = Vec::new();
+        let mut all_events = Vec::new();
 
         let receiver = self
             .receiver
@@ -85,10 +100,8 @@ impl FileWatcher for NativeWatcher {
 
         loop {
             match receiver.try_recv() {
-                Ok(Ok(event)) => {
-                    if let Some(file_event) = Self::convert_event(event) {
-                        events.push(file_event);
-                    }
+                Ok(Ok(events)) => {
+                    all_events.extend(Self::convert_events(events));
                 }
                 Ok(Err(e)) => {
                     tracing::warn!("File watcher error: {}", e);
@@ -100,29 +113,27 @@ impl FileWatcher for NativeWatcher {
             }
         }
 
-        Ok(events)
+        Ok(all_events)
     }
 
     fn recv_timeout(&mut self, timeout: Duration) -> Result<Vec<FileEvent>, WatcherError> {
-        let mut events = Vec::new();
+        let mut all_events = Vec::new();
 
         let receiver = self
             .receiver
             .lock()
             .map_err(|e| WatcherError::Channel(format!("mutex poisoned: {}", e)))?;
 
-        // First wait for at least one event with timeout
+        // First wait for at least one batch with timeout
         match receiver.recv_timeout(timeout) {
-            Ok(Ok(event)) => {
-                if let Some(file_event) = Self::convert_event(event) {
-                    events.push(file_event);
-                }
+            Ok(Ok(events)) => {
+                all_events.extend(Self::convert_events(events));
             }
             Ok(Err(e)) => {
                 tracing::warn!("File watcher error: {}", e);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                return Ok(events);
+                return Ok(all_events);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(WatcherError::Channel("watcher channel disconnected".into()));
@@ -132,10 +143,10 @@ impl FileWatcher for NativeWatcher {
         // Drop the lock before calling try_recv again
         drop(receiver);
 
-        // Then drain any additional pending events
-        events.extend(self.try_recv()?);
+        // Then drain any additional pending batches
+        all_events.extend(self.try_recv()?);
 
-        Ok(events)
+        Ok(all_events)
     }
 
     fn is_native(&self) -> bool {
@@ -194,15 +205,11 @@ mod tests {
         let file_path = temp_dir.path().join("test.log");
         File::create(&file_path).unwrap();
 
-        // Wait a bit for the event
+        // Wait for debounce interval plus some buffer
         std::thread::sleep(Duration::from_millis(200));
 
         let events = watcher.try_recv().unwrap();
         assert!(!events.is_empty(), "Should detect file creation");
-
-        // At least one create event
-        let has_create = events.iter().any(|e| e.kind == FileEventKind::Create);
-        assert!(has_create, "Should have a create event");
     }
 
     #[test]
@@ -239,14 +246,8 @@ mod tests {
         // FSEvents on macOS can have noticeable latency
         let events = watcher.recv_timeout(Duration::from_secs(2)).unwrap();
 
-        // Should have at least one event (might be modify, or create if file was recreated)
+        // Should have at least one event
         assert!(!events.is_empty(), "Should detect file modification");
-
-        // Check for modify or create event (some systems report create on open-for-write)
-        let has_change = events
-            .iter()
-            .any(|e| e.kind == FileEventKind::Modify || e.kind == FileEventKind::Create);
-        assert!(has_change, "Should have a modify or create event");
     }
 
     #[test]
@@ -266,5 +267,43 @@ mod tests {
 
         #[cfg(target_os = "macos")]
         assert_eq!(name, "FSEvents");
+    }
+
+    #[test]
+    fn test_debouncing_coalesces_rapid_writes() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("rapid.log");
+
+        // Create file first
+        File::create(&file_path).unwrap();
+
+        let mut watcher = NativeWatcher::new(Duration::from_millis(100)).unwrap();
+        watcher.watch(temp_dir.path()).unwrap();
+
+        // Clear initial events
+        std::thread::sleep(Duration::from_millis(150));
+        let _ = watcher.try_recv();
+
+        // Perform many rapid writes
+        for i in 0..100 {
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(&file_path)
+                .unwrap();
+            writeln!(file, "line {}", i).unwrap();
+        }
+
+        // Wait for debounce to complete
+        std::thread::sleep(Duration::from_millis(200));
+
+        let events = watcher.try_recv().unwrap();
+
+        // Should have coalesced into a small number of events (not 100)
+        // The exact number depends on timing, but should be much less than 100
+        assert!(
+            events.len() < 20,
+            "Expected debouncing to coalesce events, got {} events",
+            events.len()
+        );
     }
 }
