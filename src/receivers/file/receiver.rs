@@ -414,6 +414,9 @@ impl FileWorkHandler {
                         process_file_work(work, ctx);
                     });
                     worker_futures.push_back(handle);
+                    let current_workers = worker_futures.len();
+                    info!(current_workers = current_workers, "After spawning process_file_work and push_back on worker_futures");
+
                 }
 
                 // Process completed workers
