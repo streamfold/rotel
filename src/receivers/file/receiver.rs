@@ -166,7 +166,7 @@ struct TrackedFile {
 }
 
 /// Default maximum number of concurrent file processing workers
-const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
+const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 4;
 
 /// Process a single file work item (runs in spawn_blocking)
 // Attribute key constants to avoid per-line allocations
