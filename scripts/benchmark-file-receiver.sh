@@ -617,7 +617,7 @@ start_otel() {
 
     # Check for custom build first, then otelcol-contrib
     local otelcol_bin=""
-    local custom_build="$ROTEL_DIR/benchmark/otel-collector/otelcol-benchmark/otelcol-benchmark"
+    local custom_build="$ROTEL_DIR/otel_benchmark_builder/otel-collector/otelcol-benchmark/otelcol-benchmark"
     local use_custom=false
 
     if [[ -x "$custom_build" ]]; then
@@ -629,7 +629,7 @@ start_otel() {
         log_info "Using system otelcol-contrib"
     else
         log_warn "OTel Collector not found."
-        log_warn "Either build it: cd benchmark/otel-collector && make build"
+        log_warn "Either build it: cd otel_benchmark_builder/otel-collector && make build"
         log_warn "Or install: brew install open-telemetry/opentelemetry-collector/otelcol-contrib"
         return 1
     fi
