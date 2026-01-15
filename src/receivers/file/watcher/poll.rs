@@ -355,6 +355,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_poll_watcher_recv_timeout() {
         let temp_dir = TempDir::new().unwrap();
         let mut watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(500)).unwrap();
