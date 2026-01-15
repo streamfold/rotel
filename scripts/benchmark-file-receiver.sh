@@ -828,6 +828,19 @@ run_benchmark() {
 
     # Analyze results
     analyze_results "$collector_name" "$result_dir" "$count" "$RECEIVED_COUNT" "$gen_time_ms" "$PROCESSING_TIME_MS" "$total_time_ms"
+
+    # Show rotel logs if requested
+    if [[ "$collector_name" == "rotel" ]]; then
+        echo ""
+        log_info "=== Rotel Logs (last 100 lines) ==="
+        if [[ -f "$OUTPUT_DIR/rotel.log" ]]; then
+            tail -100 "$OUTPUT_DIR/rotel.log"
+        else
+            log_warn "No rotel log file found"
+        fi
+        echo ""
+        log_info "=== Full logs at: $OUTPUT_DIR/rotel.log ==="
+    fi
 }
 
 # Analyze benchmark results

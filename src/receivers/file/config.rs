@@ -85,7 +85,7 @@ impl Default for FileReceiverConfig {
             max_log_size: 65536,
             include_file_name: true,
             include_file_path: false,
-            max_concurrent_files: 4,
+            max_concurrent_files: 64,
             rotate_wait: Duration::from_secs(1),
             shutdown_worker_drain_timeout: Duration::from_secs(3),
             shutdown_records_drain_timeout: Duration::from_secs(2),

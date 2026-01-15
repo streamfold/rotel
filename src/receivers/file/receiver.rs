@@ -166,7 +166,7 @@ struct TrackedFile {
 }
 
 /// Default maximum number of concurrent file processing workers
-const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 4;
+const DEFAULT_MAX_CONCURRENT_WORKERS: usize = 64;
 
 /// Process a single file work item (runs in spawn_blocking)
 // Attribute key constants to avoid per-line allocations
@@ -341,9 +341,9 @@ impl FileWorkHandler {
         // - records_tx/rx: workers -> async handler (log records for export)
         // - results_tx/rx: workers -> coordinator (offset updates)
         // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
-        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(64);
+        let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(10);
-        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(64);
+        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
 
         // Create worker context (shared by all workers)
@@ -401,6 +401,14 @@ impl FileWorkHandler {
 
                 // Receive work items and spawn workers (with concurrency limit)
                 Some(work) = work_rx.next(), if worker_futures.len() < max_concurrent_files => {
+                    let current_workers = worker_futures.len();
+                    info!(
+                        file_id = %work.file_id,
+                        path = ?work.path,
+                        current_workers = current_workers,
+                        max_workers = max_concurrent_files,
+                        "Spawning worker for file"
+                    );
                     let ctx = worker_ctx.clone();
                     let handle = tokio::task::spawn_blocking(move || {
                         process_file_work(work, ctx);
@@ -600,6 +608,13 @@ impl FileWorkHandler {
 }
 
 fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
+    info!(
+        file_id = %work.file_id,
+        path = ?work.path,
+        start_offset = work.offset,
+        "Worker starting file processing"
+    );
+
     // Pre-build static attributes outside the loop (file name and path don't change per line)
     let mut static_attributes = Vec::with_capacity(2);
 
@@ -719,10 +734,20 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
     }
 
     // Send offset update back to coordinator
+    let reached_eof = reader.is_eof();
+    info!(
+        file_id = %work.file_id,
+        start_offset = work.offset,
+        end_offset = new_offset,
+        bytes_read = new_offset - work.offset,
+        reached_eof = reached_eof,
+        "Worker finished file processing"
+    );
+
     let result = FileWorkResult {
         file_id: work.file_id,
         new_offset,
-        reached_eof: reader.is_eof(),
+        reached_eof,
     };
     if ctx.results_tx.send_blocking(result).is_err() {
         debug!("Results channel closed, offset update discarded");
@@ -984,8 +1009,16 @@ impl<F: FileFinder> FileCoordinator<F> {
         let rotate_wait = self.config.rotate_wait;
 
         // Non-blocking drain of all available results
+        let mut results_processed = 0u32;
         while let Some(result) = self.results_rx.try_recv() {
+            results_processed += 1;
             if let Some(tracked) = self.tracked_files.get_mut(&result.file_id) {
+                info!(
+                    file_id = %result.file_id,
+                    new_offset = result.new_offset,
+                    reached_eof = result.reached_eof,
+                    "Worker completed, clearing in_flight"
+                );
                 tracked.offset = result.new_offset;
                 tracked.in_flight = false; // Work completed, allow new dispatches
                 self.records_since_checkpoint += 1;
@@ -1020,6 +1053,15 @@ impl<F: FileFinder> FileCoordinator<F> {
                     }
                 }
             }
+        }
+
+        if results_processed > 0 {
+            let in_flight_count = self.tracked_files.values().filter(|t| t.in_flight).count();
+            info!(
+                results_processed = results_processed,
+                remaining_in_flight = in_flight_count,
+                "Finished processing worker results"
+            );
         }
     }
 
@@ -1263,6 +1305,13 @@ impl<F: FileFinder> FileCoordinator<F> {
         // Mark as in flight before sending
         tracked.in_flight = true;
 
+        info!(
+            file_id = %file_id,
+            path = ?tracked.path,
+            offset = tracked.offset,
+            "Dispatching work for file"
+        );
+
         // Send work to async handler via bounded channel (blocks if at capacity)
         if let Some(ref work_tx) = self.work_tx {
             if let Err(_e) = work_tx.send_blocking(work) {
@@ -1327,6 +1376,18 @@ impl<F: FileFinder> FileCoordinator<F> {
                     if self.watcher_first_error.is_some() {
                         debug!("Watcher recovered after previous errors");
                         self.watcher_first_error = None;
+                    }
+
+                    // Log event count for debugging coordination behavior
+                    if !events.is_empty() {
+                        let in_flight_count =
+                            self.tracked_files.values().filter(|t| t.in_flight).count();
+                        info!(
+                            event_count = events.len(),
+                            tracked_files = self.tracked_files.len(),
+                            in_flight = in_flight_count,
+                            "Watcher events received, calling poll()"
+                        );
                     }
 
                     // Log file events

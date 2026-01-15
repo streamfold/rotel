@@ -179,7 +179,7 @@ pub struct FileReceiverArgs {
     #[arg(
         long,
         env = "ROTEL_FILE_RECEIVER_MAX_CONCURRENT_FILES",
-        default_value = "4"
+        default_value = "64"
     )]
     pub file_receiver_max_concurrent_files: usize,
 
@@ -256,7 +256,7 @@ impl Default for FileReceiverArgs {
             file_receiver_max_log_size: 65536,
             file_receiver_include_file_name: true,
             file_receiver_include_file_path: false,
-            file_receiver_max_concurrent_files: 4,
+            file_receiver_max_concurrent_files: 64,
             file_receiver_rotate_wait_ms: 1000,
             file_receiver_shutdown_worker_drain_timeout_ms: 3000,
             file_receiver_shutdown_records_drain_timeout_ms: 2000,
