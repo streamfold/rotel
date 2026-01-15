@@ -402,7 +402,7 @@ impl FileWorkHandler {
                 // Receive work items and spawn workers (with concurrency limit)
                 Some(work) = work_rx.next(), if worker_futures.len() < max_concurrent_files => {
                     let current_workers = worker_futures.len();
-                    info!(
+                    debug!(
                         file_id = %work.file_id,
                         path = ?work.path,
                         current_workers = current_workers,
@@ -414,9 +414,6 @@ impl FileWorkHandler {
                         process_file_work(work, ctx);
                     });
                     worker_futures.push_back(handle);
-                    let current_workers = worker_futures.len();
-                    info!(current_workers = current_workers, "After spawning process_file_work and push_back on worker_futures");
-
                 }
 
                 // Process completed workers
@@ -433,7 +430,7 @@ impl FileWorkHandler {
                             // Build ResourceLogs directly from LogRecords
                             let scope_logs = ScopeLogs {
                                 scope: Some(InstrumentationScope {
-                                    name: "rotel.file".to_string(),
+                                    name: String::new(),
                                     version: String::new(),
                                     attributes: vec![],
                                     dropped_attributes_count: 0,
@@ -562,7 +559,7 @@ impl FileWorkHandler {
                             // Build ResourceLogs directly from LogRecords
                             let scope_logs = ScopeLogs {
                                 scope: Some(InstrumentationScope {
-                                    name: "rotel.file".to_string(),
+                                    name: String::new(),
                                     version: String::new(),
                                     attributes: vec![],
                                     dropped_attributes_count: 0,
@@ -611,7 +608,7 @@ impl FileWorkHandler {
 }
 
 fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
-    info!(
+    debug!(
         file_id = %work.file_id,
         path = ?work.path,
         start_offset = work.offset,
@@ -738,7 +735,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
 
     // Send offset update back to coordinator
     let reached_eof = reader.is_eof();
-    info!(
+    debug!(
         file_id = %work.file_id,
         start_offset = work.offset,
         end_offset = new_offset,
@@ -1016,7 +1013,7 @@ impl<F: FileFinder> FileCoordinator<F> {
         while let Some(result) = self.results_rx.try_recv() {
             results_processed += 1;
             if let Some(tracked) = self.tracked_files.get_mut(&result.file_id) {
-                info!(
+                debug!(
                     file_id = %result.file_id,
                     new_offset = result.new_offset,
                     reached_eof = result.reached_eof,
@@ -1060,7 +1057,7 @@ impl<F: FileFinder> FileCoordinator<F> {
 
         if results_processed > 0 {
             let in_flight_count = self.tracked_files.values().filter(|t| t.in_flight).count();
-            info!(
+            debug!(
                 results_processed = results_processed,
                 remaining_in_flight = in_flight_count,
                 "Finished processing worker results"
@@ -1308,7 +1305,7 @@ impl<F: FileFinder> FileCoordinator<F> {
         // Mark as in flight before sending
         tracked.in_flight = true;
 
-        info!(
+        debug!(
             file_id = %file_id,
             path = ?tracked.path,
             offset = tracked.offset,
@@ -1385,7 +1382,7 @@ impl<F: FileFinder> FileCoordinator<F> {
                     if !events.is_empty() {
                         let in_flight_count =
                             self.tracked_files.values().filter(|t| t.in_flight).count();
-                        info!(
+                        debug!(
                             event_count = events.len(),
                             tracked_files = self.tracked_files.len(),
                             in_flight = in_flight_count,
