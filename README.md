@@ -753,6 +753,119 @@ rotel start \
 
 _Compression and message acknowledgement are not supported at the moment._
 
+### File Receiver configuration
+
+**NOTE**: The File Receiver is currently experimental and under development. Users should expect potential breaking changes in future releases.
+
+The File Receiver allows Rotel to tail log files and convert them to OpenTelemetry logs. It supports glob patterns for file discovery, multiple parsing formats, and efficient file watching using native OS mechanisms (inotify on Linux, FSEvents on macOS) with fallback to polling.
+
+To enable the File Receiver, specify it with `--receiver file` and provide at least one include pattern.
+
+| Option                                              | Default                          | Description                                                                    |
+| --------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------ |
+| --file-receiver-include                             |                                  | Comma-separated glob patterns for files to include (e.g., "/var/log/\*.log")   |
+| --file-receiver-exclude                             |                                  | Comma-separated glob patterns for files to exclude                             |
+| --file-receiver-parser                              | none                             | Parser type: none, json, regex, nginx_access, nginx_error                      |
+| --file-receiver-regex-pattern                       |                                  | Regex pattern with named capture groups (required when parser=regex)           |
+| --file-receiver-start-at                            | end                              | Where to start reading: beginning or end                                       |
+| --file-receiver-watch-mode                          | auto                             | Watch mode: auto, native, poll                                                 |
+| --file-receiver-poll-interval-ms                    | 250                              | Poll interval in milliseconds for file changes                                 |
+| --file-receiver-debounce-interval-ms                | 200                              | Debounce interval in milliseconds for native watcher events                    |
+| --file-receiver-offsets-path                        | /var/lib/rotel/file_offsets.json | Path to store file offsets for persistence across restarts                     |
+| --file-receiver-max-log-size                        | 65536                            | Maximum log line size in bytes (lines exceeding this will be truncated)        |
+| --file-receiver-include-file-name                   | true                             | Include file name as a log attribute                                           |
+| --file-receiver-include-file-path                   | false                            | Include full file path as a log attribute                                      |
+| --file-receiver-max-concurrent-files                | 4                                | Maximum number of concurrent file processing threads                           |
+| --file-receiver-rotate-wait-ms                      | 1000                             | Time in ms to wait after EOF on a rotated file before closing                  |
+| --file-receiver-shutdown-worker-drain-timeout-ms    | 3000                             | Max time in ms to wait for workers to complete during shutdown                 |
+| --file-receiver-shutdown-records-drain-timeout-ms   | 2000                             | Max time in ms to wait for records to be sent during shutdown                  |
+| --file-receiver-max-checkpoint-failure-duration-ms  | 60000                            | Max duration in ms of consecutive checkpoint failures before exiting           |
+| --file-receiver-max-poll-failure-duration-ms        | 60000                            | Max duration in ms of consecutive poll failures before exiting                 |
+| --file-receiver-max-watcher-error-duration-ms       | 60000                            | Max duration in ms of consecutive watcher errors before falling back to poll   |
+| --file-receiver-max-batch-size                      | 100                              | Maximum number of log records to batch before sending to pipeline              |
+
+#### Watch Modes
+
+The File Receiver supports three watch modes:
+
+- **auto** (default): Uses native file system watching (inotify/kqueue/FSEvents) with automatic fallback to polling if native watching fails
+- **native**: Forces native file system watching only
+- **poll**: Forces polling mode, useful for NFS or network file systems where native watching is unreliable
+
+#### Parsers
+
+The receiver includes several built-in parsers:
+
+- **none**: Raw log lines are passed through as-is in the log body
+- **json**: Parses JSON log lines and extracts fields as attributes
+- **regex**: Uses a custom regex pattern with named capture groups to extract attributes
+- **nginx_access**: Parses nginx combined access log format
+- **nginx_error**: Parses nginx error log format
+
+When using the regex parser, provide a pattern with named capture groups:
+
+```shell
+--file-receiver-parser regex \
+--file-receiver-regex-pattern '^(?P<timestamp>\S+) (?P<level>\S+) (?P<message>.*)$'
+```
+
+#### Offset Persistence
+
+The File Receiver tracks file offsets to resume reading from where it left off after restarts. Offsets are persisted to the path specified by `--file-receiver-offsets-path`. The receiver uses file device ID and inode number to identify files, allowing it to handle log rotation correctly.
+
+#### Example Usage
+
+Parsing nginx access logs and exporting to ClickHouse:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/nginx/access.log" \
+  --file-receiver-parser nginx_access \
+  --file-receiver-start-at end \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443" \
+  --clickhouse-exporter-user "default" \
+  --clickhouse-exporter-password "your-password"
+```
+
+Basic example tailing nginx access logs to OTLP:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/nginx/access.log" \
+  --file-receiver-parser nginx_access \
+  --file-receiver-start-at end \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Tailing multiple log files with glob patterns:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/*.log,/var/log/apps/**/*.log" \
+  --file-receiver-exclude "/var/log/debug.log" \
+  --file-receiver-start-at beginning \
+  --file-receiver-offsets-path "/tmp/rotel-offsets.json" \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443"
+```
+
+Using regex parser for custom log format:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/myapp/*.log" \
+  --file-receiver-parser regex \
+  --file-receiver-regex-pattern '^(?P<timestamp>[^ ]+) \[(?P<level>\w+)\] (?P<message>.*)$' \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
 ### Batch configuration
 
 You can configure the properties of the batch processor, controlling both the size limit of the batch and how long the
@@ -820,10 +933,10 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 
 The following configuration parameters enable multiple receivers:
 
-| Option      | Default | Options                           |
-| ----------- | ------- | --------------------------------- |
-| --receiver  | otlp    | otlp, kafka                       |
-| --receivers |         | comma-separated list (otlp,kafka) |
+| Option      | Default | Options                                 |
+| ----------- | ------- | --------------------------------------- |
+| --receiver  | otlp    | otlp, kafka, fluent, file               |
+| --receivers |         | comma-separated list (otlp,kafka,file)  |
 
 **Important Notes:**
 
