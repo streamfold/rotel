@@ -309,7 +309,10 @@ impl FileWorkHandler {
         let db = match JsonFileDatabase::open(&self.config.offsets_path) {
             Ok(db) => db,
             Err(e) => {
-                error!("Failed to open persistence database: {}", e);
+                error!(
+                    "Failed to open persistence database at {:?}: {}",
+                    self.config.offsets_path, e
+                );
                 return Err(e.into());
             }
         };
