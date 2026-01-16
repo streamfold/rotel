@@ -52,6 +52,29 @@ use crate::topology::payload;
 
 const KNOWN_FILES_KEY: &str = "knownFiles";
 
+/// Helper to send logs with cancellation support.
+/// Returns true if sent successfully, false if cancelled or failed.
+async fn send_with_cancellation(
+    output: &OTLPOutput<payload::Message<ResourceLogs>>,
+    message: payload::Message<ResourceLogs>,
+    cancel_token: &CancellationToken,
+) -> std::result::Result<(), &'static str> {
+    let send_fut = output.send_async(message);
+    tokio::pin!(send_fut);
+
+    select! {
+        result = send_fut => {
+            match result {
+                Ok(()) => Ok(()),
+                Err(_) => Err("channel disconnected"),
+            }
+        }
+        _ = cancel_token.cancelled() => {
+            Err("cancelled")
+        }
+    }
+}
+
 /// Persisted state for all known files
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PersistedState {
@@ -392,11 +415,13 @@ impl FileWorkHandler {
         // Main event loop - flume channels support async recv directly, no bridge needed
         loop {
             select! {
-                _ = cancel.cancelled() => {
-                    // Set shutting_down before breaking so coordinator sees it
-                    shutting_down_async.store(true, Ordering::SeqCst);
-                    debug!("File receiver cancelled, stopping");
-                    break;
+                biased;
+
+                // Process completed workers
+                Some(result) = worker_futures.next(), if !worker_futures.is_empty() => {
+                    if let Err(e) = result {
+                        error!("Worker task failed: {}", e);
+                    }
                 }
 
                 // Receive work items and spawn workers (with concurrency limit)
@@ -414,13 +439,6 @@ impl FileWorkHandler {
                         process_file_work(work, ctx);
                     });
                     worker_futures.push_back(handle);
-                }
-
-                // Process completed workers
-                Some(result) = worker_futures.next(), if !worker_futures.is_empty() => {
-                    if let Err(e) = result {
-                        error!("Worker task failed: {}", e);
-                    }
                 }
 
                 // Receive log records from workers and send to exporters
@@ -451,17 +469,30 @@ impl FileWorkHandler {
 
                             let payload_msg = payload::Message::new(None, vec![resource_logs], None);
 
-                            match logs_output.send(payload_msg).await {
+                            match send_with_cancellation(logs_output, payload_msg, &cancel).await {
                                 Ok(_) => {
                                     self.accepted_counter.add(batch.count, &self.tags);
                                 }
-                                Err(e) => {
+                                Err(reason) => {
                                     self.refused_counter.add(batch.count, &self.tags);
-                                    error!("Failed to send logs: {}", e);
+                                    if reason == "cancelled" {
+                                        debug!("Send cancelled during shutdown");
+                                        shutting_down_async.store(true, Ordering::SeqCst);
+                                        break;
+                                    } else {
+                                        error!("Failed to send logs: {}", reason);
+                                    }
                                 }
                             }
                         }
                     }
+                }
+
+                _ = cancel.cancelled() => {
+                    // Set shutting_down before breaking so coordinator sees it
+                    shutting_down_async.store(true, Ordering::SeqCst);
+                    debug!("File receiver cancelled, stopping");
+                    break;
                 }
             }
         }
@@ -581,13 +612,20 @@ impl FileWorkHandler {
                             let payload_msg =
                                 payload::Message::new(None, vec![resource_logs], None);
 
-                            match logs_output.send(payload_msg).await {
-                                Ok(_) => {
+                            // Use timeout on send to avoid blocking shutdown indefinitely
+                            match timeout_at(records_deadline, logs_output.send(payload_msg)).await
+                            {
+                                Ok(Ok(_)) => {
                                     self.accepted_counter.add(batch.count, &self.tags);
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     self.refused_counter.add(batch.count, &self.tags);
                                     error!("Failed to send logs during drain: {}", e);
+                                }
+                                Err(_) => {
+                                    self.refused_counter.add(batch.count, &self.tags);
+                                    warn!("Timeout sending logs during drain");
+                                    break;
                                 }
                             }
                         }
