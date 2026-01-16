@@ -777,8 +777,8 @@ To enable the File Receiver, specify it with `--receiver file` and provide at le
 | --file-receiver-include-file-path                   | false                            | Include full file path as a log attribute                                      |
 | --file-receiver-max-concurrent-files                | 4                                | Maximum number of concurrent file processing threads                           |
 | --file-receiver-rotate-wait-ms                      | 1000                             | Time in ms to wait after EOF on a rotated file before closing                  |
-| --file-receiver-shutdown-worker-drain-timeout-ms    | 3000                             | Max time in ms to wait for workers to complete during shutdown                 |
-| --file-receiver-shutdown-records-drain-timeout-ms   | 2000                             | Max time in ms to wait for records to be sent during shutdown                  |
+| --file-receiver-shutdown-worker-drain-timeout-ms    | 250                              | Max time in ms to wait for workers to complete during shutdown                 |
+| --file-receiver-shutdown-records-drain-timeout-ms   | 100                              | Max time in ms to wait for records to be sent during shutdown                  |
 | --file-receiver-max-checkpoint-failure-duration-ms  | 60000                            | Max duration in ms of consecutive checkpoint failures before exiting           |
 | --file-receiver-max-poll-failure-duration-ms        | 60000                            | Max duration in ms of consecutive poll failures before exiting                 |
 | --file-receiver-max-watcher-error-duration-ms       | 60000                            | Max duration in ms of consecutive watcher errors before falling back to poll   |

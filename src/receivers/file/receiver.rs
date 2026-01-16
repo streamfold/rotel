@@ -52,27 +52,13 @@ use crate::topology::payload;
 
 const KNOWN_FILES_KEY: &str = "knownFiles";
 
-/// Helper to send logs with cancellation support.
-/// Returns true if sent successfully, false if cancelled or failed.
-async fn send_with_cancellation(
-    output: &OTLPOutput<payload::Message<ResourceLogs>>,
-    message: payload::Message<ResourceLogs>,
-    cancel_token: &CancellationToken,
-) -> std::result::Result<(), &'static str> {
-    let send_fut = output.send_async(message);
-    tokio::pin!(send_fut);
-
-    select! {
-        result = send_fut => {
-            match result {
-                Ok(()) => Ok(()),
-                Err(_) => Err("channel disconnected"),
-            }
-        }
-        _ = cancel_token.cancelled() => {
-            Err("cancelled")
-        }
-    }
+/// Error type for send operations with cancellation support.
+#[derive(Debug)]
+enum SendError {
+    /// The operation was cancelled via the cancellation token.
+    Cancelled,
+    /// The channel was disconnected.
+    ChannelClosed,
 }
 
 /// Persisted state for all known files
@@ -473,15 +459,17 @@ impl FileWorkHandler {
                                 Ok(_) => {
                                     self.accepted_counter.add(batch.count, &self.tags);
                                 }
-                                Err(reason) => {
+                                Err(SendError::Cancelled) => {
                                     self.refused_counter.add(batch.count, &self.tags);
-                                    if reason == "cancelled" {
-                                        debug!("Send cancelled during shutdown");
-                                        shutting_down_async.store(true, Ordering::SeqCst);
-                                        break;
-                                    } else {
-                                        error!("Failed to send logs: {}", reason);
-                                    }
+                                    debug!("Send cancelled during shutdown");
+                                    shutting_down_async.store(true, Ordering::SeqCst);
+                                    break;
+                                }
+                                Err(SendError::ChannelClosed) => {
+                                    self.refused_counter.add(batch.count, &self.tags);
+                                    error!("Output channel closed, stopping file receiver");
+                                    shutting_down_async.store(true, Ordering::SeqCst);
+                                    break;
                                 }
                             }
                         }
@@ -511,17 +499,24 @@ impl FileWorkHandler {
         drop(records_rx);
         drop(work_rx);
 
-        // Join coordinator with timeout
-        let coord_join_result = tokio::task::spawn_blocking(move || coord_handle.join()).await;
+        // Join coordinator with timeout (100ms should be plenty since it checks shutting_down flag)
+        let coord_join_result = tokio::time::timeout(
+            Duration::from_millis(100),
+            tokio::task::spawn_blocking(move || coord_handle.join()),
+        )
+        .await;
         match coord_join_result {
-            Ok(Ok(())) => debug!("Coordinator thread joined successfully"),
-            Ok(Err(_)) => {
+            Ok(Ok(Ok(()))) => debug!("Coordinator thread joined successfully"),
+            Ok(Ok(Err(_))) => {
                 error!("Coordinator thread panicked");
                 return Err("Coordinator thread panicked".into());
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("Failed to join coordinator: {}", e);
                 return Err(e.into());
+            }
+            Err(_) => {
+                warn!("Timeout waiting for coordinator thread to join");
             }
         }
 
@@ -1489,7 +1484,8 @@ impl<F: FileFinder> FileCoordinator<F> {
         debug!("Work channel closed, waiting for workers to finish");
 
         // Wait for async handler to signal that workers are done
-        let wait_timeout = Duration::from_secs(5);
+        // Keep this short since agent only waits 1s for receiver exit
+        let wait_timeout = Duration::from_millis(200);
         match self.workers_done_rx.recv_timeout(wait_timeout) {
             Ok(()) => debug!("Workers finished, draining final results"),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -1518,7 +1514,8 @@ impl<F: FileFinder> FileCoordinator<F> {
 
     /// Drain results from in-flight workers during shutdown
     fn drain_results(&mut self) {
-        let drain_timeout = Duration::from_secs(5); // Hardcoded for coordinator side
+        // Keep this short since agent only waits 1s for receiver exit
+        let drain_timeout = Duration::from_millis(100);
         let drain_deadline = Instant::now() + drain_timeout;
 
         loop {
@@ -1552,6 +1549,28 @@ impl<F: FileFinder> FileCoordinator<F> {
                     break;
                 }
             }
+        }
+    }
+}
+
+/// Helper to send logs with cancellation support.
+async fn send_with_cancellation(
+    output: &OTLPOutput<payload::Message<ResourceLogs>>,
+    message: payload::Message<ResourceLogs>,
+    cancel_token: &CancellationToken,
+) -> std::result::Result<(), SendError> {
+    let send_fut = output.send_async(message);
+    tokio::pin!(send_fut);
+
+    select! {
+        result = send_fut => {
+            match result {
+                Ok(()) => Ok(()),
+                Err(_) => Err(SendError::ChannelClosed),
+            }
+        }
+        _ = cancel_token.cancelled() => {
+            Err(SendError::Cancelled)
         }
     }
 }

@@ -196,7 +196,7 @@ pub struct FileReceiverArgs {
     #[arg(
         long,
         env = "ROTEL_FILE_RECEIVER_SHUTDOWN_WORKER_DRAIN_TIMEOUT_MS",
-        default_value = "3000"
+        default_value = "250"
     )]
     pub file_receiver_shutdown_worker_drain_timeout_ms: u64,
 
@@ -204,7 +204,7 @@ pub struct FileReceiverArgs {
     #[arg(
         long,
         env = "ROTEL_FILE_RECEIVER_SHUTDOWN_RECORDS_DRAIN_TIMEOUT_MS",
-        default_value = "2000"
+        default_value = "100"
     )]
     pub file_receiver_shutdown_records_drain_timeout_ms: u64,
 
@@ -258,8 +258,8 @@ impl Default for FileReceiverArgs {
             file_receiver_include_file_path: false,
             file_receiver_max_concurrent_files: 4,
             file_receiver_rotate_wait_ms: 1000,
-            file_receiver_shutdown_worker_drain_timeout_ms: 3000,
-            file_receiver_shutdown_records_drain_timeout_ms: 2000,
+            file_receiver_shutdown_worker_drain_timeout_ms: 250,
+            file_receiver_shutdown_records_drain_timeout_ms: 100,
             file_receiver_max_checkpoint_failure_duration_ms: 60000,
             file_receiver_max_poll_failure_duration_ms: 60000,
             file_receiver_max_watcher_error_duration_ms: 60000,

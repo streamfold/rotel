@@ -1128,7 +1128,7 @@ impl Agent {
 
         // Wait up until one second for receivers to finish
         let res =
-            wait::wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(1))
+            wait::wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(3))
                 .await;
         if let Err(e) = res {
             return Err(format!("timed out waiting for receiver exit: {}", e).into());
