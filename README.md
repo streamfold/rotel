@@ -54,19 +54,19 @@ To quickly get started with Rotel you can leverage the bundled [Python](https://
 follow these steps:
 
 1. **Running Rotel**
-   - We use the prebuilt docker image for this example, but you can also download a binary from the
-     [releases](https://github.com/streamfold/rotel/releases) page.
-   - Execute Rotel with the following arguments. To debug metrics or logs, add
-     an additional `--debug-log metrics|logs`.
+    - We use the prebuilt docker image for this example, but you can also download a binary from the
+      [releases](https://github.com/streamfold/rotel/releases) page.
+    - Execute Rotel with the following arguments. To debug metrics or logs, add
+      an additional `--debug-log metrics|logs`.
 
    ```bash
    docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
    ```
 
-   - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+    - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
 2. **Verify**
-   - Send OTLP traces to Rotel and verify that it is receiving data:
+    - Send OTLP traces to Rotel and verify that it is receiving data:
 
    ```bash
    go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
@@ -89,7 +89,7 @@ follow these steps:
      --data-binary @trace.pb
    ```
 
-   - Check the output from Rotel and you should see several "Received traces" log lines.
+    - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
 
@@ -107,7 +107,7 @@ variable `ROTEL_OTLP_GRPC_ENDPOINT=localhost:5317`.
 Any option above that does not contain a default is considered false or unset by default.
 
 | Option                            | Default              | Options                                                            |
-| --------------------------------- | -------------------- | ------------------------------------------------------------------ |
+|-----------------------------------|----------------------|--------------------------------------------------------------------|
 | --daemon                          |                      |                                                                    |
 | --log-format                      | text                 | json                                                               |
 | --pid-file                        | /tmp/rotel-agent.pid |                                                                    |
@@ -136,7 +136,7 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
 | Option                                 | Default                        | Options    |
-| -------------------------------------- | ------------------------------ | ---------- |
+|----------------------------------------|--------------------------------|------------|
 | --otlp-exporter-endpoint               |                                |            |
 | --otlp-exporter-protocol               | grpc                           | grpc, http |
 | --otlp-exporter-custom-headers         |                                |            |
@@ -207,7 +207,7 @@ The Datadog exporter can be selected by passing `--exporter datadog`. The Datado
 moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
 
 | Option                                    | Default                        | Options                |
-| ----------------------------------------- | ------------------------------ | ---------------------- |
+|-------------------------------------------|--------------------------------|------------------------|
 | --datadog-exporter-region                 | us1                            | us1, us3, us5, eu, ap1 |
 | --datadog-exporter-custom-endpoint        |                                |                        |
 | --datadog-exporter-api-key                |                                |                        |
@@ -224,7 +224,7 @@ logs,
 and traces.
 
 | Option                                       | Default                        | Options     |
-| -------------------------------------------- | ------------------------------ | ----------- |
+|----------------------------------------------|--------------------------------|-------------|
 | --clickhouse-exporter-endpoint               |                                |             |
 | --clickhouse-exporter-database               | otel                           |             |
 | --clickhouse-exporter-table-prefix           | otel                           |             |
@@ -274,7 +274,7 @@ See the [AWS Authentication](#aws-authentication) section for how to configure A
 X-Ray exporter.
 
 | Option                                    | Default                                              | Options          |
-| ----------------------------------------- | ---------------------------------------------------- | ---------------- |
+|-------------------------------------------|------------------------------------------------------|------------------|
 | --awsxray-exporter-region                 | `$AWS_REGION`, `$AWS_DEFAULT_REGION`, or `us-east-1` | aws region codes |
 | --awsxray-exporter-custom-endpoint        |                                                      |                  |
 | --awsxray-exporter-retry-initial-backoff  | (uses global exporter default)                       |                  |
@@ -295,7 +295,7 @@ See the [AWS Authentication](#aws-authentication) section for how to configure A
 exporter.
 
 | Option                                                 | Default                                              | Options          |
-| ------------------------------------------------------ | ---------------------------------------------------- | ---------------- |
+|--------------------------------------------------------|------------------------------------------------------|------------------|
 | --awsemf-exporter-region                               | `$AWS_REGION`, `$AWS_DEFAULT_REGION`, or `us-east-1` | aws region codes |
 | --awsemf-exporter-custom-endpoint                      |                                                      |                  |
 | --awsemf-exporter-log-group-name                       | /metrics/default                                     |                  |
@@ -356,7 +356,7 @@ The Kafka exporter can be selected by passing `--exporter kafka`. The Kafka expo
 logs, and traces.
 
 | Option                                                    | Default           | Options                                                                     |
-| --------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
+|-----------------------------------------------------------|-------------------|-----------------------------------------------------------------------------|
 | --kafka-exporter-brokers                                  | localhost:9092    |                                                                             |
 | --kafka-exporter-traces-topic                             | otlp_traces       |                                                                             |
 | --kafka-exporter-metrics-topic                            | otlp_metrics      |                                                                             |
@@ -503,7 +503,7 @@ out as periodic files on the local filesystem. Currently **Parquet** and
 **JSON** formats are supported.
 
 | Option                              | Default    | Description                                                                                                  |
-| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+|-------------------------------------|------------|--------------------------------------------------------------------------------------------------------------|
 | --file-exporter-format              | parquet    | `parquet` or `json`                                                                                          |
 | --file-exporter-output-dir          | /tmp/rotel | Directory to place output files                                                                              |
 | --file-exporter-flush-interval      | 5s         | How often to flush accumulated telemetry to a new file (accepts Go-style durations like `30s`, `2m`, `1h`)   |
@@ -530,7 +530,7 @@ To enable the Kafka receiver, you must specify which telemetry types to consume 
 - `--kafka-receiver-logs` to consume logs
 
 | Option                                             | Default        | Options                                                                |
-| -------------------------------------------------- | -------------- | ---------------------------------------------------------------------- |
+|----------------------------------------------------|----------------|------------------------------------------------------------------------|
 | --kafka-receiver-brokers                           | localhost:9092 | Kafka broker addresses (comma-separated)                               |
 | --kafka-receiver-traces-topic                      | otlp_traces    | Topic name for traces                                                  |
 | --kafka-receiver-metrics-topic                     | otlp_metrics   | Topic name for metrics                                                 |
@@ -616,9 +616,9 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 **Offset Management:**
 
 - `--kafka-receiver-auto-offset-reset`: Controls behavior when no initial offset exists or the current offset is invalid
-  - `earliest`: Start consuming from the beginning of the topic
-  - `latest`: Start consuming from the end of the topic (default)
-  - `error`: Throw an error if no offset is found
+    - `earliest`: Start consuming from the beginning of the topic
+    - `latest`: Start consuming from the end of the topic (default)
+    - `error`: Throw an error if no offset is found
 
 **Session and Heartbeat Configuration:**
 
@@ -636,8 +636,8 @@ The Kafka receiver acts as a consumer and supports standard Kafka consumer confi
 
 - `--kafka-receiver-check-crcs`: Enables CRC32 checking of consumed messages for data integrity
 - `--kafka-receiver-isolation-level`: Controls which messages are visible to the consumer
-  - `read-uncommitted`: Read all messages including those from uncommitted transactions
-  - `read-committed`: Only read messages from committed transactions (default)
+    - `read-uncommitted`: Read all messages including those from uncommitted transactions
+    - `read-committed`: Only read messages from committed transactions (default)
 
 #### Security Configuration
 
@@ -716,16 +716,21 @@ rotel start \
 
 _The Fluent Receiver is currently only included when built with the opt-in feature `--features fluent_receiver`._
 
-The Fluent Receiver allows Rotel to receive telemetry data in Fluentd/Fluent Bit [forward protocol format](https://chronosphere.io/learn/forward-protocol-fluentd-fluent-bit/). This enables compatibility with existing Fluentd and Fluent Bit deployments, allowing them to send logs directly to Rotel for processing and export. Select the Fluent receiver with the option `--receiver fluent`.
+The Fluent Receiver allows Rotel to receive telemetry data in Fluentd/Fluent
+Bit [forward protocol format](https://chronosphere.io/learn/forward-protocol-fluentd-fluent-bit/). This enables
+compatibility with existing Fluentd and Fluent Bit deployments, allowing them to send logs directly to Rotel for
+processing and export. Select the Fluent receiver with the option `--receiver fluent`.
 
-The receiver supports both UNIX domain sockets and TCP endpoints, converting incoming Fluent messages to OpenTelemetry logs format.
+The receiver supports both UNIX domain sockets and TCP endpoints, converting incoming Fluent messages to OpenTelemetry
+logs format.
 
 | Option                        | Default | Description                                            |
-| ----------------------------- | ------- | ------------------------------------------------------ |
+|-------------------------------|---------|--------------------------------------------------------|
 | --fluent-receiver-socket-path |         | Path to UNIX socket file for receiving Fluent messages |
 | --fluent-receiver-endpoint    |         | TCP endpoint to bind (e.g., 127.0.0.1:24224)           |
 
-**Note**: At least one of `--fluent-receiver-socket-path` or `--fluent-receiver-endpoint` must be specified when using the Fluent
+**Note**: At least one of `--fluent-receiver-socket-path` or `--fluent-receiver-endpoint` must be specified when using
+the Fluent
 receiver.
 
 **Example Usage**:
@@ -755,40 +760,44 @@ _Compression and message acknowledgement are not supported at the moment._
 
 ### File Receiver configuration
 
-**NOTE**: The File Receiver is currently experimental and under development. Users should expect potential breaking changes in future releases.
+**NOTE**: The File Receiver is currently experimental and under development. Users should expect potential breaking
+changes in future releases.
 
-The File Receiver allows Rotel to tail log files and convert them to OpenTelemetry logs. It supports glob patterns for file discovery, multiple parsing formats, and efficient file watching using native OS mechanisms (inotify on Linux, FSEvents on macOS) with fallback to polling.
+The File Receiver allows Rotel to tail log files and convert them to OpenTelemetry logs. It supports glob patterns for
+file discovery, multiple parsing formats, and efficient file watching using native OS mechanisms (inotify on Linux,
+FSEvents on macOS) with fallback to polling.
 
 To enable the File Receiver, specify it with `--receiver file` and provide at least one include pattern.
 
-| Option                                              | Default                          | Description                                                                    |
-| --------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------ |
-| --file-receiver-include                             |                                  | Comma-separated glob patterns for files to include (e.g., "/var/log/\*.log")   |
-| --file-receiver-exclude                             |                                  | Comma-separated glob patterns for files to exclude                             |
-| --file-receiver-parser                              | none                             | Parser type: none, json, regex, nginx_access, nginx_error                      |
-| --file-receiver-regex-pattern                       |                                  | Regex pattern with named capture groups (required when parser=regex)           |
-| --file-receiver-start-at                            | end                              | Where to start reading: beginning or end                                       |
-| --file-receiver-watch-mode                          | auto                             | Watch mode: auto, native, poll                                                 |
-| --file-receiver-poll-interval-ms                    | 250                              | Poll interval in milliseconds for file changes                                 |
-| --file-receiver-debounce-interval-ms                | 200                              | Debounce interval in milliseconds for native watcher events                    |
-| --file-receiver-offsets-path                        | /var/lib/rotel/file_offsets.json | Path to store file offsets for persistence across restarts                     |
-| --file-receiver-max-log-size                        | 65536                            | Maximum log line size in bytes (lines exceeding this will be truncated)        |
-| --file-receiver-include-file-name                   | true                             | Include file name as a log attribute                                           |
-| --file-receiver-include-file-path                   | false                            | Include full file path as a log attribute                                      |
-| --file-receiver-max-concurrent-files                | 4                                | Maximum number of concurrent file processing threads                           |
-| --file-receiver-rotate-wait-ms                      | 1000                             | Time in ms to wait after EOF on a rotated file before closing                  |
-| --file-receiver-shutdown-worker-drain-timeout-ms    | 250                              | Max time in ms to wait for workers to complete during shutdown                 |
-| --file-receiver-shutdown-records-drain-timeout-ms   | 100                              | Max time in ms to wait for records to be sent during shutdown                  |
-| --file-receiver-max-checkpoint-failure-duration-ms  | 60000                            | Max duration in ms of consecutive checkpoint failures before exiting           |
-| --file-receiver-max-poll-failure-duration-ms        | 60000                            | Max duration in ms of consecutive poll failures before exiting                 |
-| --file-receiver-max-watcher-error-duration-ms       | 60000                            | Max duration in ms of consecutive watcher errors before falling back to poll   |
-| --file-receiver-max-batch-size                      | 100                              | Maximum number of log records to batch before sending to pipeline              |
+| Option                                             | Default                          | Description                                                                  |
+|----------------------------------------------------|----------------------------------|------------------------------------------------------------------------------|
+| --file-receiver-include                            |                                  | Comma-separated glob patterns for files to include (e.g., "/var/log/\*.log") |
+| --file-receiver-exclude                            |                                  | Comma-separated glob patterns for files to exclude                           |
+| --file-receiver-parser                             | none                             | Parser type: none, json, regex, nginx_access, nginx_error                    |
+| --file-receiver-regex-pattern                      |                                  | Regex pattern with named capture groups (required when parser=regex)         |
+| --file-receiver-start-at                           | end                              | Where to start reading: beginning or end                                     |
+| --file-receiver-watch-mode                         | auto                             | Watch mode: auto, native, poll                                               |
+| --file-receiver-poll-interval-ms                   | 250                              | Poll interval in milliseconds for file changes                               |
+| --file-receiver-debounce-interval-ms               | 200                              | Debounce interval in milliseconds for native watcher events                  |
+| --file-receiver-offsets-path                       | /var/lib/rotel/file_offsets.json | Path to store file offsets for persistence across restarts                   |
+| --file-receiver-max-log-size                       | 65536                            | Maximum log line size in bytes (lines exceeding this will be truncated)      |
+| --file-receiver-include-file-name                  | true                             | Include file name as a log attribute                                         |
+| --file-receiver-include-file-path                  | false                            | Include full file path as a log attribute                                    |
+| --file-receiver-max-concurrent-files               | 4                                | Maximum number of concurrent file processing threads                         |
+| --file-receiver-rotate-wait-ms                     | 1000                             | Time in ms to wait after EOF on a rotated file before closing                |
+| --file-receiver-shutdown-worker-drain-timeout-ms   | 250                              | Max time in ms to wait for workers to complete during shutdown               |
+| --file-receiver-shutdown-records-drain-timeout-ms  | 100                              | Max time in ms to wait for records to be sent during shutdown                |
+| --file-receiver-max-checkpoint-failure-duration-ms | 60000                            | Max duration in ms of consecutive checkpoint failures before exiting         |
+| --file-receiver-max-poll-failure-duration-ms       | 60000                            | Max duration in ms of consecutive poll failures before exiting               |
+| --file-receiver-max-watcher-error-duration-ms      | 60000                            | Max duration in ms of consecutive watcher errors before falling back to poll |
+| --file-receiver-max-batch-size                     | 100                              | Maximum number of log records to batch before sending to pipeline            |
 
 #### Watch Modes
 
 The File Receiver supports three watch modes:
 
-- **auto** (default): Uses native file system watching (inotify/kqueue/FSEvents) with automatic fallback to polling if native watching fails
+- **auto** (default): Uses native file system watching (inotify/kqueue/FSEvents) with automatic fallback to polling if
+  native watching fails
 - **native**: Forces native file system watching only
 - **poll**: Forces polling mode, useful for NFS or network file systems where native watching is unreliable
 
@@ -811,7 +820,9 @@ When using the regex parser, provide a pattern with named capture groups:
 
 #### Offset Persistence
 
-The File Receiver tracks file offsets to resume reading from where it left off after restarts. Offsets are persisted to the path specified by `--file-receiver-offsets-path`. The receiver uses file device ID and inode number to identify files, allowing it to handle log rotation correctly.
+The File Receiver tracks file offsets to resume reading from where it left off after restarts. Offsets are persisted to
+the path specified by `--file-receiver-offsets-path`. The receiver uses file device ID and inode number to identify
+files, allowing it to handle log rotation correctly.
 
 #### Example Usage
 
@@ -822,11 +833,10 @@ rotel start \
   --receiver file \
   --file-receiver-include "/var/log/nginx/access.log" \
   --file-receiver-parser nginx_access \
-  --file-receiver-start-at end \
+  --file-receiver-start-at beginning \
   --exporter clickhouse \
-  --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443" \
-  --clickhouse-exporter-user "default" \
-  --clickhouse-exporter-password "your-password"
+  --clickhouse-exporter-endpoint "http://localhost:8123" \
+  --file-receiver-offsets-path "/tmp/rotel-offsets.json"
 ```
 
 Basic example tailing nginx access logs to OTLP:
@@ -851,7 +861,7 @@ rotel start \
   --file-receiver-start-at beginning \
   --file-receiver-offsets-path "/tmp/rotel-offsets.json" \
   --exporter clickhouse \
-  --clickhouse-exporter-endpoint "https://clickhouse.example.com:8443"
+  --clickhouse-exporter-endpoint "http://localhost:8123"
 ```
 
 Using regex parser for custom log format:
@@ -876,7 +886,7 @@ logs,
 or traces). For example, `--traces-batch-max-size` will override the batch max size for traces only.
 
 | Option           | Default | Options |
-| ---------------- | ------- | ------- |
+|------------------|---------|---------|
 | --batch-max-size | 8192    |         |
 | --batch-timeout  | 200ms   |         |
 
@@ -933,10 +943,10 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 
 The following configuration parameters enable multiple receivers:
 
-| Option      | Default | Options                                 |
-| ----------- | ------- | --------------------------------------- |
-| --receiver  | otlp    | otlp, kafka, fluent, file               |
-| --receivers |         | comma-separated list (otlp,kafka,file)  |
+| Option      | Default | Options                                |
+|-------------|---------|----------------------------------------|
+| --receiver  | otlp    | otlp, kafka, fluent, file              |
+| --receivers |         | comma-separated list (otlp,kafka,file) |
 
 **Important Notes:**
 
@@ -1021,7 +1031,7 @@ environment variables as well. It is not possible to set `--exporter` and
 `--exporters` at the same time.
 
 | Option                       | Default | Options                          |
-| ---------------------------- | ------- | -------------------------------- |
+|------------------------------|---------|----------------------------------|
 | --exporters                  |         | name:type pairs, comma-separated |
 | --exporters-traces           |         | exporter name                    |
 | --exporters-metrics          |         | exporter name                    |
@@ -1148,7 +1158,7 @@ rotel_python_processor_sdk directory.
 Current prebuilt processors include...
 
 | Name                 | Supported telemetry types |
-| -------------------- | ------------------------- |
+|----------------------|---------------------------|
 | Attributes Processor | logs, metrics, traces,    |
 | Redaction Processor  | logs, metrics, traces     |
 
