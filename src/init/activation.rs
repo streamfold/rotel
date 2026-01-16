@@ -68,6 +68,8 @@ fn all_traces_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool
             }
             #[cfg(feature = "fluent_receiver")]
             ReceiverConfig::Fluent(_) => {}
+            #[cfg(feature = "file_receiver")]
+            ReceiverConfig::File(_) => {} // File receiver doesn't handle traces
         }
     }
     true
@@ -90,6 +92,8 @@ fn all_metrics_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> boo
 
             #[cfg(feature = "fluent_receiver")]
             ReceiverConfig::Fluent(_) => {}
+            #[cfg(feature = "file_receiver")]
+            ReceiverConfig::File(_) => {} // File receiver doesn't handle metrics
         }
     }
     true
@@ -111,6 +115,8 @@ fn all_logs_receivers_disabled(rc: &HashMap<Receiver, ReceiverConfig>) -> bool {
             }
             #[cfg(feature = "fluent_receiver")]
             ReceiverConfig::Fluent(_) => return false,
+            #[cfg(feature = "file_receiver")]
+            ReceiverConfig::File(_) => return false, // File receiver handles logs
         }
     }
     true

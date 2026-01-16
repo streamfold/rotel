@@ -20,6 +20,8 @@ use crate::init::otlp_exporter::{
 use crate::init::parse::parse_bool_value;
 use crate::init::retry::GlobalExporterRetryArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
+#[cfg(feature = "file_receiver")]
+use crate::receivers::file::config::FileReceiverConfig;
 #[cfg(feature = "fluent_receiver")]
 use crate::receivers::fluent::config::FluentReceiverConfig;
 #[cfg(feature = "rdkafka")]
@@ -206,6 +208,8 @@ pub(crate) enum ReceiverConfig {
     Kafka(KafkaReceiverConfig),
     #[cfg(feature = "fluent_receiver")]
     Fluent(FluentReceiverConfig),
+    #[cfg(feature = "file_receiver")]
+    File(FileReceiverConfig),
 }
 
 impl TryIntoConfig for ExporterArgs {
@@ -637,6 +641,8 @@ fn get_receiver_config(config: &AgentRun, receiver: Receiver) -> ReceiverConfig 
         Receiver::Kafka => ReceiverConfig::Kafka(config.kafka_receiver.build_config()),
         #[cfg(feature = "fluent_receiver")]
         Receiver::Fluent => ReceiverConfig::Fluent(config.fluent_receiver.build_config()),
+        #[cfg(feature = "file_receiver")]
+        Receiver::File => ReceiverConfig::File(config.file_receiver.build_config()),
     }
 }
 
