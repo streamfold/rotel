@@ -6,6 +6,7 @@ use crate::init::parse;
 use crate::init::retry::GlobalExporterRetryArgs;
 use serde::Deserialize;
 use std::time::Duration;
+use tower::BoxError;
 
 // Define OTLP-specific retry arguments with proper prefixes
 crate::define_exporter_retry_args!(
@@ -65,10 +66,11 @@ pub struct OTLPExporterBaseArgs {
     pub authenticator: Option<OTLPExporterAuthenticator>,
 
     /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
-    #[arg(long("otlp-exporter-custom-headers"), env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
+    #[arg(
+        long("otlp-exporter-custom-headers"),
+        env = "ROTEL_OTLP_EXPORTER_CUSTOM_HEADERS"
     )]
-    #[serde(deserialize_with = "parse::deserialize_key_value_pairs")]
-    pub custom_headers: Vec<(String, String)>,
+    pub custom_headers: Option<String>,
 
     /// OTLP Exporter Compression - Used as default for all OTLP data types unless more specific flag specified
     #[arg(
@@ -124,7 +126,7 @@ impl Default for OTLPExporterBaseArgs {
             logs_endpoint: None,
             protocol: OTLPExporterProtocol::Grpc,
             authenticator: None,
-            custom_headers: vec![],
+            custom_headers: None,
             compression: CompressionEncoding::Gzip,
             cert_group: CertGroup {
                 tls_cert_file: None,
@@ -163,18 +165,16 @@ pub struct OTLPExporterArgs {
     pub otlp_exporter_logs_protocol: Option<OTLPExporterProtocol>,
 
     /// OTLP Exporter Traces Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
-    )]
-    pub otlp_exporter_traces_custom_headers: Option<Vec<(String, String)>>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_TRACES_CUSTOM_HEADERS")]
+    pub otlp_exporter_traces_custom_headers: Option<String>,
 
     /// OTLP Exporter Metrics Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ','
-    )]
-    pub otlp_exporter_metrics_custom_headers: Option<Vec<(String, String)>>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_METRICS_CUSTOM_HEADERS")]
+    pub otlp_exporter_metrics_custom_headers: Option<String>,
 
     /// OTLP Exporter Logs Headers - Overrides otlp_exporter_custom_headers if specified
-    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
-    pub otlp_exporter_logs_custom_headers: Option<Vec<(String, String)>>,
+    #[arg(long, env = "ROTEL_OTLP_EXPORTER_LOGS_CUSTOM_HEADERS")]
+    pub otlp_exporter_logs_custom_headers: Option<String>,
 
     /// OTLP Exporter Traces Compression - Overrides otlp_exporter_compression if specified
     #[arg(value_enum, long, env = "ROTEL_OTLP_EXPORTER_TRACES_COMPRESSION")]
@@ -441,7 +441,7 @@ pub fn build_traces_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
         config.protocol = protocol
     }
     if let Some(headers) = agent.otlp_exporter_traces_custom_headers {
-        config.custom_headers = headers
+        config.custom_headers = Some(headers)
     }
     if let Some(compression) = agent.otlp_exporter_traces_compression {
         config.compression = compression
@@ -499,7 +499,7 @@ pub fn build_metrics_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
         config.protocol = protocol
     }
     if let Some(headers) = agent.otlp_exporter_metrics_custom_headers {
-        config.custom_headers = headers
+        config.custom_headers = Some(headers)
     }
     if let Some(compression) = agent.otlp_exporter_metrics_compression {
         config.compression = compression
@@ -557,7 +557,7 @@ pub fn build_logs_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
         config.protocol = protocol
     }
     if let Some(headers) = agent.otlp_exporter_logs_custom_headers {
-        config.custom_headers = headers
+        config.custom_headers = Some(headers)
     }
     if let Some(compression) = agent.otlp_exporter_logs_compression {
         config.compression = compression
@@ -609,12 +609,18 @@ pub fn build_logs_config(agent: OTLPExporterArgs) -> OTLPExporterBaseArgs {
 }
 
 impl OTLPExporterBaseArgs {
-    pub fn into_exporter_config(
+    pub fn try_into_exporter_config(
         self,
         type_name: &str,
         endpoint: Endpoint,
         global_retry: &GlobalExporterRetryArgs,
-    ) -> OTLPExporterConfig {
+    ) -> Result<OTLPExporterConfig, BoxError> {
+        // Parse custom headers from Option<String> to Vec<(String, String)>
+        let custom_headers = match &self.custom_headers {
+            Some(s) => parse::parse_key_vals::<String, String>(s)?,
+            None => Vec::new(),
+        };
+
         let mut builder = otlp::config_builder(
             type_name,
             endpoint,
@@ -623,7 +629,7 @@ impl OTLPExporterBaseArgs {
         )
         .with_authenticator(self.authenticator.map(|a| a.into()))
         .with_tls_skip_verify(self.tls_skip_verify)
-        .with_headers(self.custom_headers.as_slice())
+        .with_headers(custom_headers.as_slice())
         .with_request_timeout(self.request_timeout.into())
         .with_compression_encoding(self.compression.into());
 
@@ -644,6 +650,6 @@ impl OTLPExporterBaseArgs {
             builder = builder.with_cert_pem(tls_ca_pem.as_str());
         }
 
-        builder
+        Ok(builder)
     }
 }

@@ -13,6 +13,7 @@ use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::kafka_receiver::KafkaReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;
+#[cfg(feature = "prometheus")]
 use crate::init::parse;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
@@ -93,8 +94,8 @@ pub struct AgentRun {
     pub otlp_with_metrics_processor: Vec<String>,
 
     /// Comma-separated, key=value pairs of resource attributes to set
-    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
-    pub otel_resource_attributes: Vec<(String, String)>,
+    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES")]
+    pub otel_resource_attributes: Option<String>,
 
     /// Enable reporting of internal telemetry
     #[arg(long, env = "ROTEL_ENABLE_INTERNAL_TELEMETRY", default_value = "false")]
@@ -176,7 +177,7 @@ impl Default for AgentRun {
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
-            otel_resource_attributes: Vec::new(),
+            otel_resource_attributes: None,
             enable_internal_telemetry: false,
             batch: BatchArgs::default(),
             exporter: None,

@@ -4,9 +4,9 @@ use crate::exporters::kafka::config::{
     AcknowledgementMode, Compression, KafkaExporterConfig, PartitionerType, SaslMechanism,
     SecurityProtocol, SerializationFormat,
 };
-use crate::init::parse::parse_key_val;
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
+use tower::BoxError;
 
 #[derive(Debug, Args, Clone, Deserialize)]
 #[serde(default)]
@@ -179,12 +179,9 @@ pub struct KafkaExporterArgs {
     #[arg(
         id("KAFKA_EXPORTER_CUSTOM_CONFIG"),
         long("kafka-exporter-custom-config"),
-        env = "ROTEL_KAFKA_EXPORTER_CUSTOM_CONFIG",
-        value_parser = parse_key_val::<String, String>,
-        value_delimiter = ','
+        env = "ROTEL_KAFKA_EXPORTER_CUSTOM_CONFIG"
     )]
-    #[serde(deserialize_with = "crate::init::parse::deserialize_key_value_pairs")]
-    pub custom_config: Vec<(String, String)>,
+    pub custom_config: Option<String>,
 
     /// SASL username for authentication
     #[arg(
@@ -243,7 +240,7 @@ impl Default for KafkaExporterArgs {
             partitioner: Default::default(),
             partition_metrics_by_resource_attributes: false,
             partition_logs_by_resource_attributes: false,
-            custom_config: vec![],
+            custom_config: None,
             compression: Default::default(),
             sasl_username: None,
             sasl_password: None,
@@ -424,7 +421,7 @@ impl From<KafkaPartitionerType> for PartitionerType {
 }
 
 impl KafkaExporterArgs {
-    pub fn build_config(&self) -> KafkaExporterConfig {
+    pub fn build_config(&self) -> Result<KafkaExporterConfig, BoxError> {
         let mut config = KafkaExporterConfig::new(self.brokers.clone())
             .with_traces_topic(self.traces_topic.clone())
             .with_metrics_topic(self.metrics_topic.clone())
@@ -445,8 +442,14 @@ impl KafkaExporterArgs {
             .with_partition_metrics_by_resource_attributes(
                 self.partition_metrics_by_resource_attributes,
             )
-            .with_partition_logs_by_resource_attributes(self.partition_logs_by_resource_attributes)
-            .with_custom_config(self.custom_config.clone());
+            .with_partition_logs_by_resource_attributes(self.partition_logs_by_resource_attributes);
+
+        // Parse custom config from Option<String> to Vec<(String, String)>
+        let custom_config = match &self.custom_config {
+            Some(s) => crate::init::parse::parse_key_vals::<String, String>(s)?,
+            None => Vec::new(),
+        };
+        config = config.with_custom_config(custom_config);
 
         // Configure SASL if credentials are provided
         if let (Some(username), Some(password), Some(mechanism)) = (
@@ -464,7 +467,7 @@ impl KafkaExporterArgs {
             config.security_protocol = Some(self.security_protocol.into());
         }
 
-        config
+        Ok(config)
     }
 }
 

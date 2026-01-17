@@ -129,7 +129,12 @@ impl Agent {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let config = self.config;
 
-        info!("Starting Rotel.",);
+        info!("Starting Rotel.");
+
+        let resource_attributes = match &config.otel_resource_attributes {
+            Some(s) => crate::init::parse::parse_key_vals::<String, String>(s)?,
+            None => Vec::new(),
+        };
 
         // Initialize the TLS library, we may want to do this conditionally
         init_crypto_provider()?;
@@ -773,7 +778,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_traces_batch_config(config.batch.clone()),
                 config.otlp_with_trace_processor.clone(),
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_traces = config.debug_log.contains(&DebugLogParam::Traces);
@@ -800,7 +805,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
                 config.otlp_with_metrics_processor.clone(),
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
@@ -827,7 +832,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_logs_batch_config(config.batch.clone()),
                 config.otlp_with_logs_processor.clone(),
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_logs = config.debug_log.contains(&DebugLogParam::Logs);
@@ -854,7 +859,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
                 vec![],
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
