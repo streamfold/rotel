@@ -47,59 +47,47 @@ pub trait Inspect<T> {
     fn inspect_with_prefix(&self, prefix: Option<String>, value: &[T]);
 }
 
-pub trait ResourceAttributeSettable {
-    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>);
+/// Trait for types that contain a Resource field that can be accessed mutably
+pub trait ResourceContainer {
+    fn resource_mut(&mut self) -> &mut Option<Resource>;
 }
 
-impl ResourceAttributeSettable for ResourceSpans {
-    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
-        self.resource = Some(match self.resource.take() {
-            Some(rs) => Resource {
-                attributes: build_attrs(rs.attributes, attributes),
-                dropped_attributes_count: rs.dropped_attributes_count,
-                entity_refs: rs.entity_refs,
-            },
-            None => Resource {
-                attributes: build_attrs(Vec::new(), attributes),
-                dropped_attributes_count: 0,
-                entity_refs: Vec::new(),
-            },
-        });
+impl ResourceContainer for ResourceSpans {
+    fn resource_mut(&mut self) -> &mut Option<Resource> {
+        &mut self.resource
     }
 }
 
-impl ResourceAttributeSettable for ResourceMetrics {
-    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
-        self.resource = Some(match self.resource.take() {
-            Some(rs) => Resource {
-                attributes: build_attrs(rs.attributes, attributes),
-                dropped_attributes_count: rs.dropped_attributes_count,
-                entity_refs: rs.entity_refs,
-            },
-            None => Resource {
-                attributes: build_attrs(Vec::new(), attributes),
-                dropped_attributes_count: 0,
-                entity_refs: Vec::new(),
-            },
-        });
+impl ResourceContainer for ResourceMetrics {
+    fn resource_mut(&mut self) -> &mut Option<Resource> {
+        &mut self.resource
     }
 }
 
-impl ResourceAttributeSettable for ResourceLogs {
-    fn set_or_append_attributes(&mut self, attributes: Vec<KeyValue>) {
-        self.resource = Some(match self.resource.take() {
-            Some(rs) => Resource {
-                attributes: build_attrs(rs.attributes, attributes),
-                dropped_attributes_count: rs.dropped_attributes_count,
-                entity_refs: rs.entity_refs,
-            },
-            None => Resource {
-                attributes: build_attrs(Vec::new(), attributes),
-                dropped_attributes_count: 0,
-                entity_refs: Vec::new(),
-            },
-        });
+impl ResourceContainer for ResourceLogs {
+    fn resource_mut(&mut self) -> &mut Option<Resource> {
+        &mut self.resource
     }
+}
+
+/// Sets or appends resource attributes to any type that implements ResourceContainer
+pub fn set_or_append_resource_attributes<T: ResourceContainer>(
+    target: &mut T,
+    attributes: Vec<KeyValue>,
+) {
+    let resource = target.resource_mut();
+    *resource = Some(match resource.take() {
+        Some(rs) => Resource {
+            attributes: build_attrs(rs.attributes, attributes),
+            dropped_attributes_count: rs.dropped_attributes_count,
+            entity_refs: rs.entity_refs,
+        },
+        None => Resource {
+            attributes: build_attrs(Vec::new(), attributes),
+            dropped_attributes_count: 0,
+            entity_refs: Vec::new(),
+        },
+    });
 }
 
 pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: Vec<KeyValue>) -> Vec<KeyValue> {
@@ -151,12 +139,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
 
 impl<T> Pipeline<T>
 where
-    T: BatchSizer
-        + BatchSplittable
-        + PythonProcessable
-        + ResourceAttributeSettable
-        + Clone
-        + 'static,
+    T: BatchSizer + BatchSplittable + PythonProcessable + ResourceContainer + Clone + 'static,
     Vec<T>: Send,
 {
     pub fn new(
@@ -400,7 +383,7 @@ where
                     // If any resource attributes were provided on start, set or append them to the resources
                     if !self.resource_attributes.is_empty() {
                         for item in &mut message.payload {
-                            item.set_or_append_attributes(self.resource_attributes.clone())
+                            set_or_append_resource_attributes(item, self.resource_attributes.clone())
                         }
                     }
 
@@ -497,17 +480,17 @@ mod tests {
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
         let mut spans = trace_request.resource_spans.pop().unwrap();
-        spans.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut spans, new_attrs.clone());
         verify_attr_appended(spans.resource.unwrap().attributes, 7, 6);
 
         let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
         let mut logs = logs_request.resource_logs.pop().unwrap();
-        logs.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut logs, new_attrs.clone());
         verify_attr_appended(logs.resource.unwrap().attributes, 7, 6);
 
         let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
         let mut metrics = metrics_request.resource_metrics.pop().unwrap();
-        metrics.set_or_append_attributes(new_attrs);
+        set_or_append_resource_attributes(&mut metrics, new_attrs);
         verify_attr_appended(metrics.resource.unwrap().attributes, 7, 6);
     }
 
@@ -523,19 +506,19 @@ mod tests {
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
         let mut spans = trace_request.resource_spans.pop().unwrap();
         spans.resource = None;
-        spans.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut spans, new_attrs.clone());
         verify_attr_appended(spans.resource.unwrap().attributes, 1, 0);
 
         let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
         let mut logs = logs_request.resource_logs.pop().unwrap();
         logs.resource = None;
-        logs.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut logs, new_attrs.clone());
         verify_attr_appended(logs.resource.unwrap().attributes, 1, 0);
 
         let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
         let mut metrics = metrics_request.resource_metrics.pop().unwrap();
         metrics.resource = None;
-        metrics.set_or_append_attributes(new_attrs);
+        set_or_append_resource_attributes(&mut metrics, new_attrs);
         verify_attr_appended(metrics.resource.unwrap().attributes, 1, 0);
     }
 
@@ -564,17 +547,17 @@ mod tests {
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
         let mut spans = trace_request.resource_spans.pop().unwrap();
-        spans.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut spans, new_attrs.clone());
         verify_attr_updated(spans.resource.unwrap().attributes);
 
         let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
         let mut logs = logs_request.resource_logs.pop().unwrap();
-        logs.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut logs, new_attrs.clone());
         verify_attr_updated(logs.resource.unwrap().attributes);
 
         let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
         let mut metrics = metrics_request.resource_metrics.pop().unwrap();
-        metrics.set_or_append_attributes(new_attrs.clone());
+        set_or_append_resource_attributes(&mut metrics, new_attrs.clone());
         verify_attr_updated(metrics.resource.unwrap().attributes);
     }
 
