@@ -3,7 +3,7 @@ name: release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   release:
@@ -24,6 +24,21 @@ jobs:
             os: macos
     steps:
       - uses: actions/checkout@v4
+      - name: Check version matches tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${REF_NAME#v}"
+          if [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
+            if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+              echo "ERROR: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+              exit 1
+            fi
+            echo "Version check passed: $TAG_VERSION"
+          else
+            echo "Tag does not match version pattern, skipping version check"
+          fi
       - name: update apt cache on linux
         if: matrix.os == 'ubuntu'
         run: sudo apt-get update
