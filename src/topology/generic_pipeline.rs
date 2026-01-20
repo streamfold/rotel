@@ -248,12 +248,6 @@ where
         } else {
             inspector.inspect(&items);
         }
-        // If any resource attributes were provided on start, set or append them to the resources
-        if !self.resource_attributes.is_empty() {
-            for item in &mut items {
-                item.set_or_append_attributes(self.resource_attributes.clone())
-            }
-        }
         for p in processor_modules {
             let mut new_items = Vec::new();
             // Extract headers from request_context if available
@@ -402,6 +396,14 @@ where
                     }
 
                     let mut message = item.unwrap();
+
+                    // If any resource attributes were provided on start, set or append them to the resources
+                    if !self.resource_attributes.is_empty() {
+                        for item in &mut message.payload {
+                            item.set_or_append_attributes(self.resource_attributes.clone())
+                        }
+                    }
+
                     message = self.run_processors(message, len_processor_modules, &processor_modules, &inspector);
 
                     match batch.offer(vec![message]) {
@@ -588,5 +590,116 @@ mod tests {
                 panic!("unexpected type for attribute value")
             }
         }
+    }
+
+    /// Test that verifies Pipeline constructed with attributes actually adds them to the payload.
+    ///
+    #[tokio::test]
+    async fn test_pipeline_adds_resource_attributes_to_payload() {
+        use crate::bounded_channel::bounded;
+
+        // Create a simple inspector that does nothing
+        struct NoOpInspector;
+        impl Inspect<ResourceSpans> for NoOpInspector {
+            fn inspect(&self, _value: &[ResourceSpans]) {}
+            fn inspect_with_prefix(&self, _prefix: Option<String>, _value: &[ResourceSpans]) {}
+        }
+
+        // Create channels for the pipeline
+        let (input_tx, input_rx) = bounded(10);
+        let (output_tx, mut output_rx) = bounded(10);
+
+        // Create fanout with a single consumer
+        let fanout = Fanout::new("test", vec![("test_exporter", output_tx)]);
+
+        // Create batch config with disabled batching for immediate processing
+        let batch_config = BatchConfig {
+            max_size: 100,
+            timeout: Duration::from_secs(1),
+            disabled: true,
+        };
+
+        // Create pipeline with resource attributes
+        let attributes = vec![
+            ("env".to_string(), "test".to_string()),
+            ("team".to_string(), "platform".to_string()),
+        ];
+
+        let mut pipeline = Pipeline::new(
+            "traces",
+            input_rx,
+            fanout,
+            None, // no flush listener
+            batch_config,
+            vec![], // no processors
+            attributes.clone(),
+        );
+
+        // Start the pipeline in a background task
+        let pipeline_token = CancellationToken::new();
+        let pipeline_token_clone = pipeline_token.clone();
+        let pipeline_handle =
+            tokio::spawn(async move { pipeline.start(NoOpInspector, pipeline_token_clone).await });
+
+        // Create a test trace request with spans
+        let trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let original_spans = trace_request.resource_spans[0].clone();
+
+        // Get the original resource attributes count
+        let original_attr_count = original_spans
+            .resource
+            .as_ref()
+            .map(|r| r.attributes.len())
+            .unwrap_or(0);
+
+        // Send the message through the pipeline
+        let message = Message::new(None, vec![original_spans.clone()], None);
+        input_tx.send(message).await.unwrap();
+
+        // Close the input to allow the pipeline to exit
+        drop(input_tx);
+
+        // Receive the processed message from output
+        let output_messages = output_rx
+            .next()
+            .await
+            .expect("Should receive output message");
+        assert_eq!(1, output_messages.len());
+
+        let processed_message = &output_messages[0];
+        assert_eq!(1, processed_message.payload.len());
+
+        let processed_spans = &processed_message.payload[0];
+        let processed_resource = processed_spans
+            .resource
+            .as_ref()
+            .expect("Resource should exist");
+
+        // Verify that the resource attributes were added
+        // Original had 6 attributes (from FakeOTLP), plus 2 new ones = 8 total
+        assert_eq!(original_attr_count + 2, processed_resource.attributes.len());
+
+        // Verify the new attributes are present
+        //
+        for (k, v) in attributes {
+            let attr = processed_resource.attributes.iter().find(|a| a.key == k);
+            assert!(attr.is_some(), "{} attribute should be present", k);
+            match attr
+                .unwrap()
+                .value
+                .as_ref()
+                .unwrap()
+                .value
+                .as_ref()
+                .unwrap()
+            {
+                StringValue(value) => assert_eq!(v, *value),
+                _ => panic!("attribute should be a string"),
+            }
+        }
+
+        // Cancel the pipeline and wait for it to finish
+        pipeline_token.cancel();
+        let _ = pipeline_handle.await;
     }
 }

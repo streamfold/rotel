@@ -237,17 +237,17 @@ impl TryIntoConfig for ExporterArgs {
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
                         if pipeline_type == PipelineType::Metrics {
-                            Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                            Ok(ExporterConfig::Otlp(otlp.try_into_exporter_config(
                                 "metrics",
                                 endpoint,
                                 global_retry,
-                            )))
+                            )?))
                         } else {
-                            Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                            Ok(ExporterConfig::Otlp(otlp.try_into_exporter_config(
                                 "internal_metrics",
                                 endpoint,
                                 global_retry,
-                            )))
+                            )?))
                         }
                     }
                     PipelineType::Logs => {
@@ -260,11 +260,11 @@ impl TryIntoConfig for ExporterArgs {
                             .map(|e| Endpoint::Full(e.clone()))
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
-                        Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                        Ok(ExporterConfig::Otlp(otlp.try_into_exporter_config(
                             "logs",
                             endpoint,
                             global_retry,
-                        )))
+                        )?))
                     }
                     PipelineType::Traces => {
                         if endpoint.is_none() && otlp.traces_endpoint.is_none() {
@@ -276,11 +276,11 @@ impl TryIntoConfig for ExporterArgs {
                             .map(|e| Endpoint::Full(e.clone()))
                             .unwrap_or_else(|| Endpoint::Base(endpoint.unwrap().clone()));
 
-                        Ok(ExporterConfig::Otlp(otlp.into_exporter_config(
+                        Ok(ExporterConfig::Otlp(otlp.try_into_exporter_config(
                             "traces",
                             endpoint,
                             global_retry,
-                        )))
+                        )?))
                     }
                 }
             }
@@ -411,7 +411,7 @@ impl TryIntoConfig for ExporterArgs {
                 if k.brokers.is_empty() {
                     return Err("must specify a Kafka broker address".into());
                 }
-                Ok(ExporterConfig::Kafka(k.build_config()))
+                Ok(ExporterConfig::Kafka(k.build_config()?))
             }
         }
     }
@@ -423,7 +423,7 @@ pub(crate) fn get_receivers_config(
 ) -> Result<HashMap<Receiver, ReceiverConfig>, BoxError> {
     if config.receivers.is_none() && config.receiver.is_none() && otlp_default_receiver {
         let mut map = HashMap::new();
-        map.insert(Receiver::Otlp, get_receiver_config(config, Receiver::Otlp));
+        map.insert(Receiver::Otlp, get_receiver_config(config, Receiver::Otlp)?);
         return Ok(map);
     }
     if config.receivers.is_some() && config.receiver.is_some() {
@@ -432,7 +432,7 @@ pub(crate) fn get_receivers_config(
 
     if let Some(receiver) = config.receiver {
         let mut map = HashMap::new();
-        map.insert(receiver, get_receiver_config(config, receiver));
+        map.insert(receiver, get_receiver_config(config, receiver)?);
         return Ok(map);
     }
 
@@ -441,7 +441,7 @@ pub(crate) fn get_receivers_config(
         let rec: Vec<&str> = recs.split(",").collect();
         for receiver in rec {
             let receiver: Receiver = receiver.parse()?;
-            receivers.insert(receiver, get_receiver_config(config, receiver));
+            receivers.insert(receiver, get_receiver_config(config, receiver)?);
         }
     }
     Ok(receivers)
@@ -634,16 +634,16 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
 }
 
 // Function is currently small but expect it will grow over time so splitting out rather than inlining for now.
-fn get_receiver_config(config: &AgentRun, receiver: Receiver) -> ReceiverConfig {
-    match receiver {
+fn get_receiver_config(config: &AgentRun, receiver: Receiver) -> Result<ReceiverConfig, BoxError> {
+    Ok(match receiver {
         Receiver::Otlp => ReceiverConfig::Otlp(OTLPReceiverConfig::from(&config.otlp_receiver)),
         #[cfg(feature = "rdkafka")]
-        Receiver::Kafka => ReceiverConfig::Kafka(config.kafka_receiver.build_config()),
+        Receiver::Kafka => ReceiverConfig::Kafka(config.kafka_receiver.build_config()?),
         #[cfg(feature = "fluent_receiver")]
         Receiver::Fluent => ReceiverConfig::Fluent(config.fluent_receiver.build_config()),
         #[cfg(feature = "file_receiver")]
         Receiver::File => ReceiverConfig::File(config.file_receiver.build_config()),
-    }
+    })
 }
 
 fn get_single_exporter_config(
@@ -737,7 +737,7 @@ fn get_single_exporter_config(
 
         #[cfg(feature = "rdkafka")]
         Exporter::Kafka => {
-            let kafka_config = config.kafka_exporter.build_config();
+            let kafka_config = config.kafka_exporter.build_config()?;
             cfg.traces.push(ExporterConfig::Kafka(kafka_config.clone()));
             cfg.metrics
                 .push(ExporterConfig::Kafka(kafka_config.clone()));

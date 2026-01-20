@@ -1,14 +1,10 @@
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, Visitor},
-};
+use serde::{Deserialize, Deserializer};
 use std::error::Error;
-use std::fmt;
 use std::net::SocketAddr;
 use tower::BoxError;
 
 /// Parse a single key-value pair
-pub(crate) fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
+pub(crate) fn parse_key_val<T, U>(s: &str) -> Result<(T, U), BoxError>
 where
     T: std::str::FromStr,
     T::Err: Error + Send + Sync + 'static,
@@ -21,63 +17,19 @@ where
     Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
 }
 
-// Parse comma-separated, key value pairs: apple=orange,dog=cat
-pub(crate) fn deserialize_key_value_pairs<'de, D>(
-    deserializer: D,
-) -> Result<Vec<(String, String)>, D::Error>
+/// Parse a single key-value pair
+pub(crate) fn parse_key_vals<T, U>(s: &str) -> Result<Vec<(T, U)>, BoxError>
 where
-    D: Deserializer<'de>,
+    T: std::str::FromStr,
+    T::Err: Error + Send + Sync + 'static,
+    U: std::str::FromStr,
+    U::Err: Error + Send + Sync + 'static,
 {
-    struct KeyValueVisitor;
-
-    impl<'de> Visitor<'de> for KeyValueVisitor {
-        type Value = Vec<(String, String)>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a string containing comma-separated key=value pairs")
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let mut pairs = Vec::new();
-
-            if value.is_empty() {
-                return Ok(pairs);
-            }
-
-            for pair in value.split(',') {
-                let pair = pair.trim();
-
-                if pair.is_empty() {
-                    continue;
-                }
-
-                // Check if the pair contains exactly one '='
-                let parts: Vec<&str> = pair.split('=').collect();
-                if parts.len() != 2 {
-                    return Err(E::custom(format!(
-                        "Invalid key=value pair: '{}'. Expected format: key=value",
-                        pair
-                    )));
-                }
-
-                let key = parts[0].trim().to_string();
-                let value = parts[1].trim().to_string();
-
-                if key.is_empty() {
-                    return Err(E::custom(format!("Empty key in pair: '{}'", pair)));
-                }
-
-                pairs.push((key, value));
-            }
-
-            Ok(pairs)
-        }
-    }
-
-    deserializer.deserialize_str(KeyValueVisitor)
+    Ok(s.trim()
+        .split(",")
+        .filter(|s| !s.is_empty())
+        .map(|s| parse_key_val::<T, U>(s))
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 /// Parse an endpoint
@@ -153,125 +105,6 @@ mod test {
     }
 
     #[derive(Deserialize, Debug)]
-    struct Config {
-        #[serde(deserialize_with = "deserialize_key_value_pairs")]
-        properties: Vec<(String, String)>,
-    }
-
-    #[test]
-    fn test_valid_key_value_pairs() {
-        let json = r#"{"properties": "apple=orange,dog=cat"}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-
-        assert_eq!(
-            config.properties,
-            vec![
-                ("apple".to_string(), "orange".to_string()),
-                ("dog".to_string(), "cat".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn test_empty_string() {
-        let json = r#"{"properties": ""}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-
-        assert!(config.properties.is_empty());
-    }
-
-    #[test]
-    fn test_single_pair() {
-        let json = r#"{"properties": "key=value"}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-
-        assert_eq!(
-            config.properties,
-            vec![("key".to_string(), "value".to_string())]
-        );
-    }
-
-    #[test]
-    fn test_whitespace_handling() {
-        let json = r#"{"properties": " key1 = value1 , key2 = value2 "}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-
-        assert_eq!(
-            config.properties,
-            vec![
-                ("key1".to_string(), "value1".to_string()),
-                ("key2".to_string(), "value2".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn test_preserves_order() {
-        let json = r#"{"properties": "first=1,second=2,third=3"}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-
-        assert_eq!(
-            config.properties,
-            vec![
-                ("first".to_string(), "1".to_string()),
-                ("second".to_string(), "2".to_string()),
-                ("third".to_string(), "3".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn test_allows_duplicate_keys() {
-        let json = r#"{"properties": "key=value1,key=value2"}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-
-        assert_eq!(
-            config.properties,
-            vec![
-                ("key".to_string(), "value1".to_string()),
-                ("key".to_string(), "value2".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn test_invalid_no_equals() {
-        let json = r#"{"properties": "apple=orange,dog"}"#;
-        let result: Result<Config, _> = serde_json::from_str(json);
-
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid key=value pair: 'dog'")
-        );
-    }
-
-    #[test]
-    fn test_invalid_multiple_equals() {
-        let json = r#"{"properties": "apple=orange=fruit"}"#;
-        let result: Result<Config, _> = serde_json::from_str(json);
-
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid key=value pair")
-        );
-    }
-
-    #[test]
-    fn test_empty_key() {
-        let json = r#"{"properties": "=value"}"#;
-        let result: Result<Config, _> = serde_json::from_str(json);
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Empty key"));
-    }
-
-    #[derive(Deserialize, Debug)]
     struct StringConfig {
         #[serde(deserialize_with = "deser_into_string")]
         value: String,
@@ -336,5 +169,66 @@ mod test {
                 .to_string()
                 .contains("unexpected value for string parameter")
         );
+    }
+
+    #[test]
+    fn test_parse_key_vals_empty_string() {
+        let result = parse_key_vals::<String, String>("").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_key_vals_whitespace_only() {
+        let result = parse_key_vals::<String, String>("   ").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_key_vals_single_pair() {
+        let result = parse_key_vals::<String, String>("key=value").unwrap();
+        assert_eq!(result, vec![("key".to_string(), "value".to_string())]);
+    }
+
+    #[test]
+    fn test_parse_key_vals_multiple_pairs() {
+        let result = parse_key_vals::<String, String>("service.name=myapp,env=prod").unwrap();
+        assert_eq!(
+            result,
+            vec![
+                ("service.name".to_string(), "myapp".to_string()),
+                ("env".to_string(), "prod".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_key_vals_trailing_comma() {
+        let result = parse_key_vals::<String, String>("key=value,").unwrap();
+        assert_eq!(result, vec![("key".to_string(), "value".to_string())]);
+    }
+
+    #[test]
+    fn test_parse_key_vals_multiple_trailing_commas() {
+        let result = parse_key_vals::<String, String>("key=value,,,").unwrap();
+        assert_eq!(result, vec![("key".to_string(), "value".to_string())]);
+    }
+
+    #[test]
+    fn test_parse_key_vals_leading_comma() {
+        let result = parse_key_vals::<String, String>(",key=value").unwrap();
+        assert_eq!(result, vec![("key".to_string(), "value".to_string())]);
+    }
+
+    #[test]
+    fn test_parse_key_vals_invalid_no_equals() {
+        let result = parse_key_vals::<String, String>("invalid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no `=` found"));
+    }
+
+    #[test]
+    fn test_parse_key_vals_invalid_in_list() {
+        let result = parse_key_vals::<String, String>("valid=value,invalid");
+        assert!(result.is_err());
     }
 }
