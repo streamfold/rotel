@@ -1,6 +1,8 @@
-from rotel_sdk.open_telemetry.common.v1 import InstrumentationScope, KeyValue
-from rotel_sdk.open_telemetry.resource.v1 import Resource
 from typing import Optional
+
+from rotel_sdk.open_telemetry.common.v1 import InstrumentationScope, KeyValue
+from rotel_sdk.open_telemetry.request import RequestContext
+from rotel_sdk.open_telemetry.resource.v1 import Resource
 
 
 class ResourceSpans:
@@ -25,6 +27,7 @@ class ResourceSpans:
     This schema_url applies to the data in the "resource" field. It does not apply
     to the data in the "scope_spans" field which have their own schema_url field.
     """
+    request_context: Optional[RequestContext]
 
 
 class ScopeSpans:

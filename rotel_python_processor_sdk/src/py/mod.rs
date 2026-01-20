@@ -1,6 +1,7 @@
 pub mod common;
 pub mod logs;
 pub mod metrics;
+pub mod request_context;
 pub mod resource;
 pub mod trace;
 
@@ -12,6 +13,7 @@ use crate::py::metrics::{
     HistogramDataPoint, Metric, MetricData, NumberDataPoint, NumberDataPointValue, ResourceMetrics,
     ScopeMetrics, Sum, Summary, SummaryDataPoint, ValueAtQuantile,
 };
+use crate::py::request_context::{GrpcContext, HttpContext, RequestContext};
 use py::common::*;
 use py::logs::*;
 use py::resource::*;
@@ -42,8 +44,9 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let trace_module = PyModule::new(open_telemetry_module.py(), "trace")?;
     let resource_module = PyModule::new(open_telemetry_module.py(), "resource")?;
     let common_module = PyModule::new(open_telemetry_module.py(), "common")?;
-    let logs_module = PyModule::new(open_telemetry_module.py(), "logs")?; // Added logs module
-    let metrics_module = PyModule::new(open_telemetry_module.py(), "metrics")?; // Added logs module
+    let logs_module = PyModule::new(open_telemetry_module.py(), "logs")?;
+    let metrics_module = PyModule::new(open_telemetry_module.py(), "metrics")?;
+    let request_module = PyModule::new(open_telemetry_module.py(), "request")?;
     let trace_v1_module = PyModule::new(trace_module.py(), "v1")?;
     let common_v1_module = PyModule::new(common_module.py(), "v1")?;
     let resource_v1_module = PyModule::new(resource_module.py(), "v1")?;
@@ -56,6 +59,7 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     open_telemetry_module.add_submodule(&trace_module)?;
     open_telemetry_module.add_submodule(&resource_module)?;
     open_telemetry_module.add_submodule(&common_module)?;
+    open_telemetry_module.add_submodule(&request_module)?;
     m.add_submodule(&open_telemetry_module)?;
 
     m.py()
@@ -108,6 +112,11 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .getattr("modules")?
         .set_item("rotel_sdk.open_telemetry.metrics.v1", &metrics_v1_module)?;
 
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("rotel_sdk.open_telemetry.request", &request_module)?;
+
     common_v1_module.add_class::<AnyValue>()?;
     common_v1_module.add_class::<ArrayValue>()?;
     common_v1_module.add_class::<EntityRef>()?;
@@ -153,6 +162,10 @@ pub fn rotel_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     metrics_v1_module.add_class::<SummaryDataPoint>()?;
     metrics_v1_module.add_class::<ValueAtQuantile>()?;
 
+    request_module.add_class::<RequestContext>()?;
+    request_module.add_class::<HttpContext>()?;
+    request_module.add_class::<GrpcContext>()?;
+
     Ok(())
 }
 
@@ -164,6 +177,7 @@ mod tests {
     use crate::model::common::{REntityRef, RValue::*};
     use crate::model::{otel_transform, py_transform};
     use crate::py::metrics::ResourceMetrics;
+    use crate::py::request_context::RequestContext;
     use chrono::Utc;
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
@@ -214,255 +228,406 @@ mod tests {
         Ok(())
     }
 
+    // =============================================================================
+    // Test Helpers Module
+    // =============================================================================
+    mod test_helpers {
+        use super::*;
+        use crate::model::common::RValue::{BoolValue, BytesValue, StringValue};
+        use crate::model::common::{RAnyValue, RKeyValue};
+        #[allow(unused_imports)]
+        use crate::model::logs::RResourceLogs;
+        #[allow(unused_imports)]
+        use crate::model::metrics::RResourceMetrics;
+        use crate::model::resource::RResource;
+        use crate::model::trace::RResourceSpans;
+
+        // -------------------------------------------------------------------------
+        // Value Builders
+        // -------------------------------------------------------------------------
+
+        /// Creates an Arc<Mutex<Option<RValue>>> containing a string value
+        pub fn string_value(s: &str) -> Arc<Mutex<Option<crate::model::common::RValue>>> {
+            Arc::new(Mutex::new(Some(StringValue(s.to_string()))))
+        }
+
+        // -------------------------------------------------------------------------
+        // RAnyValue Builders
+        // -------------------------------------------------------------------------
+
+        /// Creates an RAnyValue wrapped in Arc<Mutex<Option<...>>>
+        pub fn any_value(
+            value: Arc<Mutex<Option<crate::model::common::RValue>>>,
+        ) -> Arc<Mutex<Option<RAnyValue>>> {
+            Arc::new(Mutex::new(Some(RAnyValue { value })))
+        }
+
+        /// Creates an RAnyValue with a string value
+        pub fn string_any_value(s: &str) -> Arc<Mutex<Option<RAnyValue>>> {
+            any_value(string_value(s))
+        }
+
+        // -------------------------------------------------------------------------
+        // KeyValue Builders
+        // -------------------------------------------------------------------------
+
+        /// Creates an RKeyValue with separate key and value Arcs for testing
+        pub fn key_value_with_arcs(
+            key: Arc<Mutex<String>>,
+            value: Arc<Mutex<Option<RAnyValue>>>,
+        ) -> Arc<Mutex<RKeyValue>> {
+            Arc::new(Mutex::new(RKeyValue { key, value }))
+        }
+
+        /// Creates an RKeyValue with a string key and any value
+        pub fn key_value(key: &str, value: Arc<Mutex<Option<RAnyValue>>>) -> Arc<Mutex<RKeyValue>> {
+            Arc::new(Mutex::new(RKeyValue {
+                key: Arc::new(Mutex::new(key.to_string())),
+                value,
+            }))
+        }
+
+        /// Creates an RKeyValue with a string key and string value
+        pub fn string_key_value(key: &str, val: &str) -> Arc<Mutex<RKeyValue>> {
+            key_value(key, string_any_value(val))
+        }
+
+        // -------------------------------------------------------------------------
+        // Resource Builders
+        // -------------------------------------------------------------------------
+
+        /// Creates a Resource with the given attributes
+        pub fn resource_with_attrs(attrs: Vec<Arc<Mutex<RKeyValue>>>) -> Resource {
+            Resource {
+                attributes: Arc::new(Mutex::new(attrs)),
+                dropped_attributes_count: Arc::new(Mutex::new(0)),
+                entity_refs: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        /// Creates a Resource with a single key-value attribute
+        pub fn resource_with_single_attr(kv: Arc<Mutex<RKeyValue>>) -> Resource {
+            resource_with_attrs(vec![kv])
+        }
+
+        // -------------------------------------------------------------------------
+        // Python Type Factories
+        // -------------------------------------------------------------------------
+
+        /// Creates ResourceSpans from FakeOTLP trace data, returning both the Python object
+        /// and the internal representation for later extraction
+        pub fn py_resource_spans_from_fake(
+            num_res: usize,
+            num_spans: usize,
+        ) -> (ResourceSpans, RResourceSpans) {
+            let export_req = FakeOTLP::trace_service_request_with_spans(num_res, num_spans);
+            let r_resource_spans =
+                otel_transform::transform_resource_spans(export_req.resource_spans[0].clone());
+            let py_resource_spans = ResourceSpans {
+                resource: r_resource_spans.resource.clone(),
+                scope_spans: r_resource_spans.scope_spans.clone(),
+                schema_url: r_resource_spans.schema_url.clone(),
+                request_context: None,
+            };
+            (py_resource_spans, r_resource_spans)
+        }
+
+        // -------------------------------------------------------------------------
+        // Result Extractors
+        // -------------------------------------------------------------------------
+
+        /// Extracts transformed spans from RResourceSpans
+        pub fn extract_spans(
+            r: RResourceSpans,
+        ) -> Vec<opentelemetry_proto::tonic::trace::v1::ScopeSpans> {
+            let scope_spans_vec = Arc::into_inner(r.scope_spans).unwrap();
+            let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
+            py_transform::transform_spans(scope_spans_vec)
+        }
+
+        /// Extracts transformed logs from RResourceLogs
+        pub fn extract_logs(
+            r: RResourceLogs,
+        ) -> Vec<opentelemetry_proto::tonic::logs::v1::ScopeLogs> {
+            let scope_logs_vec = Arc::into_inner(r.scope_logs).unwrap();
+            let scope_logs_vec = scope_logs_vec.into_inner().unwrap();
+            py_transform::transform_logs(scope_logs_vec)
+        }
+
+        /// Extracts transformed metrics from RResourceMetrics
+        pub fn extract_metrics(
+            r: RResourceMetrics,
+        ) -> Vec<opentelemetry_proto::tonic::metrics::v1::ScopeMetrics> {
+            let scope_metrics_vec = Arc::into_inner(r.scope_metrics).unwrap();
+            let scope_metrics_vec = scope_metrics_vec.into_inner().unwrap();
+            py_transform::transform_metrics(scope_metrics_vec)
+        }
+
+        /// Extracts transformed resource from Arc<Mutex<Option<RResource>>>
+        pub fn extract_resource(
+            r: Arc<Mutex<Option<RResource>>>,
+        ) -> Option<opentelemetry_proto::tonic::resource::v1::Resource> {
+            let resource = Arc::into_inner(r).unwrap();
+            let resource = resource.into_inner().unwrap();
+            resource.map(|r| py_transform::transform_resource(r).unwrap())
+        }
+
+        /// Converts attributes vector to HashMap for easy assertion
+        pub fn attrs_to_map(
+            attrs: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
+        ) -> HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> {
+            attrs.into_iter().map(|kv| (kv.key, kv.value)).collect()
+        }
+
+        // -------------------------------------------------------------------------
+        // Assertion Helpers
+        // -------------------------------------------------------------------------
+
+        /// Asserts that an Arc<Mutex<Option<RValue>>> contains the expected string
+        pub fn assert_rvalue_string(
+            value: &Arc<Mutex<Option<crate::model::common::RValue>>>,
+            expected: &str,
+        ) {
+            match value.lock().unwrap().clone().unwrap() {
+                StringValue(s) => assert_eq!(s, expected),
+                other => panic!("Expected StringValue, got {:?}", other),
+            }
+        }
+
+        /// Asserts that an Arc<Mutex<Option<RValue>>> contains the expected bool
+        pub fn assert_rvalue_bool(
+            value: &Arc<Mutex<Option<crate::model::common::RValue>>>,
+            expected: bool,
+        ) {
+            match value.lock().unwrap().clone().unwrap() {
+                BoolValue(b) => assert_eq!(b, expected),
+                other => panic!("Expected BoolValue, got {:?}", other),
+            }
+        }
+
+        /// Asserts that an Arc<Mutex<Option<RValue>>> contains the expected bytes
+        pub fn assert_rvalue_bytes(
+            value: &Arc<Mutex<Option<crate::model::common::RValue>>>,
+            expected: &[u8],
+        ) {
+            match value.lock().unwrap().clone().unwrap() {
+                BytesValue(b) => assert_eq!(b, expected),
+                other => panic!("Expected BytesValue, got {:?}", other),
+            }
+        }
+
+        /// Asserts that an Arc<Mutex<String>> contains the expected string
+        pub fn assert_mutex_string(value: &Arc<Mutex<String>>, expected: &str) {
+            assert_eq!(*value.lock().unwrap(), expected);
+        }
+
+        /// Asserts a KeyValue in a HashMap matches expected string value
+        pub fn assert_attr_string(
+            map: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
+            key: &str,
+            expected: &str,
+        ) {
+            let value = map
+                .get(key)
+                .unwrap_or_else(|| panic!("Key '{}' not found", key));
+            match value.as_ref().unwrap().value.as_ref().unwrap() {
+                Value::StringValue(s) => assert_eq!(s, expected),
+                other => panic!("Expected StringValue for key '{}', got {:?}", key, other),
+            }
+        }
+
+        /// Asserts a KeyValue in a HashMap matches expected int value
+        pub fn assert_attr_int(
+            map: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
+            key: &str,
+            expected: i64,
+        ) {
+            let value = map
+                .get(key)
+                .unwrap_or_else(|| panic!("Key '{}' not found", key));
+            match value.as_ref().unwrap().value.as_ref().unwrap() {
+                Value::IntValue(i) => assert_eq!(*i, expected),
+                other => panic!("Expected IntValue for key '{}', got {:?}", key, other),
+            }
+        }
+
+        /// Asserts a KeyValue in a HashMap matches expected bool value
+        pub fn assert_attr_bool(
+            map: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>,
+            key: &str,
+            expected: bool,
+        ) {
+            let value = map
+                .get(key)
+                .unwrap_or_else(|| panic!("Key '{}' not found", key));
+            match value.as_ref().unwrap().value.as_ref().unwrap() {
+                Value::BoolValue(b) => assert_eq!(*b, expected),
+                other => panic!("Expected BoolValue for key '{}', got {:?}", key, other),
+            }
+        }
+    }
+
+    // Import all helpers into the test module scope
+    use test_helpers::*;
+
     #[test]
     fn test_read_any_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
 
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
         Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
             .unwrap();
-        let av = any_value_arc.lock().unwrap().clone().unwrap();
-        let avx = av.value.lock().unwrap().clone();
-        match avx.unwrap() {
-            StringValue(s) => {
-                assert_eq!(s, "foo");
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_string(&arc_value, "foo");
     }
 
     #[test]
     fn write_string_any_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
+
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
         Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
             .unwrap();
-        let av = any_value_arc.lock().unwrap().clone().unwrap();
-        let avx = av.value.lock().unwrap().clone();
-        match avx.unwrap() {
-            StringValue(s) => {
-                assert_eq!(s, "changed");
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_string(&arc_value, "changed");
     }
 
     #[test]
     fn write_bool_any_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
 
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-
         Python::with_gil(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
             .unwrap();
-        match arc_value.lock().unwrap().clone().unwrap() {
-            BoolValue(b) => {
-                assert!(b);
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_bool(&arc_value, true);
     }
 
     #[test]
     fn write_bytes_any_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
 
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-
         Python::with_gil(|py| -> PyResult<()> { run_script("write_bytes_value_test.py", py, pv) })
             .unwrap();
-        match arc_value.lock().unwrap().clone().unwrap() {
-            BytesValue(b) => {
-                assert_eq!(b"111111".to_vec(), b);
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_bytes(&arc_value, b"111111");
     }
 
     #[test]
     fn read_key_value_key() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
 
         let kv = KeyValue {
-            inner: Arc::new(Mutex::new(RKeyValue {
-                key: key.clone(),
-                value: any_value_arc.clone(),
-            })),
+            inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
         Python::with_gil(|py| -> PyResult<()> { run_script("read_key_value_key_test.py", py, kv) })
             .unwrap();
-        let av = key.clone().lock().unwrap().clone();
-        assert_eq!(av, "key".to_string());
-        println!("{:?}", av);
+
+        assert_mutex_string(&key, "key");
     }
 
     #[test]
     fn write_key_value_key() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
 
         let kv = KeyValue {
-            inner: Arc::new(Mutex::new(RKeyValue {
-                key: key.clone(),
-                value: any_value_arc.clone(),
-            })),
+            inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_key_value_key_test.py", py, kv)
         })
         .unwrap();
-        let av = key.clone().lock().unwrap().clone();
-        assert_eq!(av, "new_key".to_string());
-        println!("{:?}", av);
+
+        assert_mutex_string(&key, "new_key");
     }
 
     #[test]
     fn read_key_value_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
 
         let kv = KeyValue {
-            inner: Arc::new(Mutex::new(RKeyValue {
-                key: key.clone(),
-                value: any_value_arc.clone(),
-            })),
+            inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script("read_key_value_value_test.py", py, kv)
         })
         .unwrap();
-        match arc_value.lock().unwrap().clone().unwrap() {
-            StringValue(s) => {
-                assert_eq!(s, "foo");
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_string(&arc_value, "foo");
     }
 
     #[test]
     fn write_key_value_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
 
         let kv = KeyValue {
-            inner: Arc::new(Mutex::new(RKeyValue {
-                key: key.clone(),
-                value: any_value_arc.clone(),
-            })),
+            inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_key_value_value_test.py", py, kv)
         })
         .unwrap();
-        match arc_value.lock().unwrap().clone().unwrap() {
-            StringValue(s) => {
-                assert_eq!(s, "changed");
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_string(&arc_value, "changed");
     }
 
     #[test]
     fn write_key_value_bytes_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
 
         let kv = KeyValue {
-            inner: Arc::new(Mutex::new(RKeyValue {
-                key: key.clone(),
-                value: any_value_arc.clone(),
-            })),
+            inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_key_value_bytes_value_test.py", py, kv)
         })
         .unwrap();
-        match arc_value.lock().unwrap().clone().unwrap() {
-            BytesValue(s) => {
-                assert_eq!(b"111111".to_vec(), s);
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_bytes(&arc_value, b"111111");
     }
 
     #[test]
     fn read_resource_attributes() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
-        let key = Arc::new(Mutex::new("key".to_string()));
-
-        let kv = RKeyValue {
-            key: key.clone(),
-            value: any_value_arc.clone(),
-        };
-
-        let kv_arc = Arc::new(Mutex::new(kv));
-
-        let resource = Resource {
-            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: Arc::new(Mutex::new(0)),
-            entity_refs: Arc::new(Mutex::new(Vec::new())),
-        };
+        let kv_arc = string_key_value("key", "foo");
+        let resource = resource_with_single_attr(kv_arc);
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script("read_resource_attributes_test.py", py, resource)
@@ -699,24 +864,11 @@ mod tests {
     #[test]
     fn write_resource_attributes_key_value_key() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
-
-        let kv = RKeyValue {
-            key: key.clone(),
-            value: any_value_arc.clone(),
-        };
-
-        let kv_arc = Arc::new(Mutex::new(kv));
-
-        let resource = Resource {
-            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: Arc::new(Mutex::new(0)),
-            entity_refs: Arc::new(Mutex::new(Vec::new())),
-        };
+        let kv_arc = key_value_with_arcs(key.clone(), any_value_arc);
+        let resource = resource_with_single_attr(kv_arc);
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
@@ -726,32 +878,18 @@ mod tests {
             )
         })
         .unwrap();
-        let av = key.clone().lock().unwrap().clone();
-        assert_eq!(av, "new_key".to_string());
-        println!("{:?}", av);
+
+        assert_mutex_string(&key, "new_key");
     }
 
     #[test]
     fn write_resource_attributes_key_value_value() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
+        let arc_value = string_value("foo");
+        let any_value_arc = any_value(arc_value.clone());
         let key = Arc::new(Mutex::new("key".to_string()));
-
-        let kv = RKeyValue {
-            key: key.clone(),
-            value: any_value_arc.clone(),
-        };
-
-        let kv_arc = Arc::new(Mutex::new(kv));
-
-        let resource = Resource {
-            attributes: Arc::new(Mutex::new(vec![kv_arc.clone()])),
-            dropped_attributes_count: Arc::new(Mutex::new(0)),
-            entity_refs: Arc::new(Mutex::new(Vec::new())),
-        };
+        let kv_arc = key_value_with_arcs(key.clone(), any_value_arc);
+        let resource = resource_with_single_attr(kv_arc);
 
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
@@ -761,30 +899,14 @@ mod tests {
             )
         })
         .unwrap();
-        match arc_value.lock().unwrap().clone().unwrap() {
-            StringValue(s) => {
-                assert_eq!(s, "changed");
-            }
-            _ => panic!("wrong type"),
-        }
-        println!("{:?}", any_value_arc.lock().unwrap().clone().unwrap());
+
+        assert_rvalue_string(&arc_value, "changed");
     }
 
     #[test]
     fn resource_attributes_append_attribute() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
-        let key = Arc::new(Mutex::new("key".to_string()));
-
-        let kv = RKeyValue {
-            key: key.clone(),
-            value: any_value_arc.clone(),
-        };
-
-        let kv_arc = Arc::new(Mutex::new(kv));
+        let kv_arc = string_key_value("key", "foo");
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = Resource {
             attributes: attrs_arc.clone(),
@@ -796,24 +918,12 @@ mod tests {
             run_script("resource_attributes_append_attribute.py", py, resource)
         })
         .unwrap();
-        println!("{:#?}", attrs_arc.lock().unwrap());
     }
 
     #[test]
     fn resource_attributes_set_attributes() {
         initialize();
-        let arc_value = Arc::new(Mutex::new(Some(StringValue("foo".to_string()))));
-        let any_value_arc = Arc::new(Mutex::new(Some(RAnyValue {
-            value: arc_value.clone(),
-        })));
-        let key = Arc::new(Mutex::new("key".to_string()));
-
-        let kv = RKeyValue {
-            key: key.clone(),
-            value: any_value_arc.clone(),
-        };
-
-        let kv_arc = Arc::new(Mutex::new(kv));
+        let kv_arc = string_key_value("key", "foo");
         let attrs_arc = Arc::new(Mutex::new(vec![kv_arc.clone()]));
         let resource = Resource {
             attributes: attrs_arc.clone(),
@@ -825,7 +935,7 @@ mod tests {
             run_script("resource_attributes_set_attributes.py", py, resource)
         })
         .unwrap();
-        println!("{:#?}", attrs_arc.lock().unwrap());
+
         let attrs = attrs_arc.lock().unwrap();
         assert_eq!(2, attrs.len());
         for kv in attrs.iter() {
@@ -853,6 +963,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: Arc::new(Mutex::new(vec![])),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_append_attribute.py", py, py_resource_spans)
@@ -864,34 +975,17 @@ mod tests {
     #[test]
     fn resource_spans_iterate_spans() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, _) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
         })
         .unwrap();
-        println!("{:#?}", resource_spans.resource.lock().unwrap());
     }
 
     #[test]
     fn read_and_write_instrumentation_scope() {
         initialize();
-        let export_req = utilities::otlp::FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
                 "read_and_write_instrumentation_scope_test.py",
@@ -901,10 +995,7 @@ mod tests {
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
         let scope_spans = scope_spans.pop().unwrap();
         let scope = scope_spans.scope.unwrap();
         assert_eq!("name_changed", scope.name);
@@ -940,24 +1031,13 @@ mod tests {
     #[test]
     fn set_instrumentation_scope() {
         initialize();
-        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
         let scope_spans = scope_spans.pop().unwrap();
         let scope = scope_spans.scope.unwrap();
         assert_eq!("name_changed", scope.name);
@@ -987,13 +1067,13 @@ mod tests {
     fn read_and_write_spans() {
         initialize();
         let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
+        let resource_spans =
+            otel_transform::transform_resource_spans(export_req.resource_spans[0].clone());
         let py_resource_spans = ResourceSpans {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script("read_and_write_spans_test.py", py, py_resource_spans)
@@ -1009,8 +1089,7 @@ mod tests {
 
         let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
         let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = py_transform::transform_spans(scope_spans_vec);
         let mut scope_spans = scope_spans.pop().unwrap();
         let mut span = scope_spans.spans.pop().unwrap();
         assert_eq!(b"5555555555".to_vec(), span.trace_id);
@@ -1077,24 +1156,13 @@ mod tests {
     #[test]
     fn set_scope_spans_span_test() {
         initialize();
-        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script("set_scope_spans_span_test.py", py, py_resource_spans)
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
         let mut scope_spans = scope_spans.pop().unwrap();
         let mut span = scope_spans.spans.pop().unwrap();
         assert_eq!(b"5555555555".to_vec(), span.trace_id);
@@ -1169,6 +1237,7 @@ mod tests {
             resource: resource_spans.resource.clone(),
             scope_spans: resource_spans.scope_spans.clone(),
             schema_url: resource_spans.schema_url,
+            request_context: None,
         };
         Python::with_gil(|py| -> PyResult<()> {
             run_script(
@@ -1201,24 +1270,13 @@ mod tests {
     #[test]
     fn set_span_events() {
         initialize();
-        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_span_events_test.py", py, py_resource_spans)
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
         let mut scope_spans = scope_spans.pop().unwrap();
         let span = scope_spans.spans.pop().unwrap();
 
@@ -1250,24 +1308,13 @@ mod tests {
     #[test]
     fn set_scope_spans() {
         initialize();
-        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_scope_spans_test.py", py, py_resource_spans)
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
         let mut scope_spans = scope_spans.pop().unwrap();
         assert_eq!(
             "https://github.com/streamfold/rotel",
@@ -1304,24 +1351,13 @@ mod tests {
     #[test]
     fn set_spans() {
         initialize();
-        let export_req = FakeOTLP::trace_service_request_with_spans(1, 1);
-        let resource_spans = crate::model::otel_transform::transform_resource_spans(
-            export_req.resource_spans[0].clone(),
-        );
-        let py_resource_spans = ResourceSpans {
-            resource: resource_spans.resource.clone(),
-            scope_spans: resource_spans.scope_spans.clone(),
-            schema_url: resource_spans.schema_url,
-        };
+        let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
         Python::with_gil(|py| -> PyResult<()> {
             run_script("write_spans_test.py", py, py_resource_spans)
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(resource_spans.scope_spans).unwrap();
-        let scope_spans_vec = scope_spans_vec.into_inner().unwrap();
-
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
         let mut scope_spans = scope_spans.pop().unwrap();
         let span = scope_spans.spans.pop().unwrap();
         assert_eq!(b"5555555555".to_vec(), span.trace_id);
@@ -1408,6 +1444,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script
@@ -1416,11 +1453,7 @@ mod tests {
         })
         .unwrap();
 
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut transformed_scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut transformed_scope_logs = extract_logs(r_resource_logs);
 
         // Assert the changes made by the Python script
         assert_eq!(transformed_scope_logs.len(), 1);
@@ -1501,6 +1534,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that adds a new log record
@@ -1510,16 +1544,7 @@ mod tests {
         .unwrap();
 
         // Transform the modified RResourceLogs back into protobuf format
-        let mut resource = r_resource_logs.resource.lock().unwrap();
-        let _resource_proto = resource
-            .take()
-            .map(|r| crate::model::py_transform::transform_resource(r).unwrap());
-
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut transformed_scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut transformed_scope_logs = extract_logs(r_resource_logs);
 
         // Assert the changes made by the Python script
         assert_eq!(transformed_scope_logs.len(), 1);
@@ -1627,6 +1652,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -1636,16 +1662,7 @@ mod tests {
         .unwrap();
 
         // Transform the modified RResourceLogs back into protobuf format
-        let mut resource = r_resource_logs.resource.lock().unwrap();
-        let _resource_proto = resource
-            .take()
-            .map(|r| crate::model::py_transform::transform_resource(r).unwrap());
-
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut transformed_scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut transformed_scope_logs = extract_logs(r_resource_logs);
 
         // Assert the changes made by the Python script
         assert_eq!(transformed_scope_logs.len(), 1);
@@ -1764,6 +1781,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -1940,6 +1958,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -1953,109 +1972,45 @@ mod tests {
         })
         .unwrap();
 
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut scope_logs = extract_logs(r_resource_logs);
 
         let log_record = scope_logs.pop().unwrap().log_records.pop().unwrap();
-        let attrs_to_verify: HashMap<
-            String,
-            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
-        > = log_record
-            .attributes
-            .into_iter()
-            .map(|kv| (kv.key, kv.value))
-            .collect();
+        let attrs_to_verify = attrs_to_map(log_record.attributes);
 
-        let verify_attrs = |mut attrs: HashMap<
-            String,
-            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
-        >| {
-            let host_name = attrs.remove("host.name").unwrap();
-            match host_name.unwrap().value.unwrap() {
-                Value::StringValue(h) => {
-                    assert_eq!(h, "my-server-1");
+        let verify_attrs =
+            |attrs: &HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>>| {
+                assert_attr_string(attrs, "host.name", "my-server-1");
+                assert_attr_string(attrs, "http.status_code", "OK");
+                assert_attr_string(attrs, "env", "production");
+                assert_attr_string(attrs, "email", "test@example.com");
+                assert_attr_string(
+                    attrs,
+                    "user.id",
+                    "5942d94f524882e0f29bf0a1e5a6dcc952eea1c0c21dd3588a3fc7db9716db0c",
+                );
+                assert_attr_string(
+                    attrs,
+                    "trace.id",
+                    "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f",
+                );
+                assert_attr_string(attrs, "extracted_id", "123");
+                assert_attr_int(attrs, "temp_str_int", 123);
+                assert_attr_bool(attrs, "temp_str_bool", true);
+                // Check double value
+                let temp_str_float = attrs.get("temp_str_float").unwrap();
+                match temp_str_float.as_ref().unwrap().value.as_ref().unwrap() {
+                    Value::DoubleValue(d) => assert_eq!(*d, 10.0),
+                    other => panic!("Expected DoubleValue for 'temp_str_float', got {:?}", other),
                 }
-                _ => panic!("Unexpected value type"),
-            }
-            let http_status_code = attrs.remove("http.status_code").unwrap();
-            match http_status_code.unwrap().value.unwrap() {
-                Value::StringValue(c) => {
-                    assert_eq!(c, "OK");
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let env = attrs.remove("env").unwrap();
-            match env.unwrap().value.unwrap() {
-                Value::StringValue(e) => {
-                    assert_eq!(e, "production");
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let email = attrs.remove("email").unwrap();
-            match email.unwrap().value.unwrap() {
-                Value::StringValue(h) => {
-                    assert_eq!(h, "test@example.com");
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let user_id = attrs.remove("user.id").unwrap();
-            match user_id.unwrap().value.unwrap() {
-                Value::StringValue(s) => {
-                    assert_eq!(
-                        s,
-                        "5942d94f524882e0f29bf0a1e5a6dcc952eea1c0c21dd3588a3fc7db9716db0c"
-                    );
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let trace_id = attrs.remove("trace.id").unwrap();
-            match trace_id.unwrap().value.unwrap() {
-                Value::StringValue(s) => {
-                    assert_eq!(
-                        s,
-                        "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f"
-                    );
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let id = attrs.remove("extracted_id").unwrap();
-            match id.unwrap().value.unwrap() {
-                Value::StringValue(s) => {
-                    assert_eq!(s, "123");
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let temp_str_int = attrs.remove("temp_str_int").unwrap();
-            match temp_str_int.unwrap().value.unwrap() {
-                Value::IntValue(i) => {
-                    assert_eq!(i, 123);
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let temp_str_bool = attrs.remove("temp_str_bool").unwrap();
-            match temp_str_bool.unwrap().value.unwrap() {
-                Value::BoolValue(b) => {
-                    assert_eq!(b, true);
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let temp_str_float = attrs.remove("temp_str_float").unwrap();
-            match temp_str_float.unwrap().value.unwrap() {
-                Value::DoubleValue(d) => {
-                    assert_eq!(d, 10.0);
-                }
-                _ => panic!("Unexpected value type"),
-            }
-            let path = attrs.remove("path");
-            assert_eq!(path, None);
-            let super_secret = attrs.remove("super.secret");
-            assert_eq!(super_secret, None);
-        };
+                // Check removed keys
+                assert!(attrs.get("path").is_none(), "Expected 'path' to be removed");
+                assert!(
+                    attrs.get("super.secret").is_none(),
+                    "Expected 'super.secret' to be removed"
+                );
+            };
 
-        verify_attrs(attrs_to_verify);
+        verify_attrs(&attrs_to_verify);
 
         let mut trace_request = FakeOTLP::trace_service_request();
         trace_request.resource_spans[0].scope_spans[0].spans[0].attributes = attrs.clone();
@@ -2070,6 +2025,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2090,16 +2046,9 @@ mod tests {
         let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
 
         let span = scope_spans.pop().unwrap().spans.pop().unwrap();
-        let attrs_to_verify: HashMap<
-            String,
-            Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
-        > = span
-            .attributes
-            .into_iter()
-            .map(|kv| (kv.key, kv.value))
-            .collect();
+        let attrs_to_verify = attrs_to_map(span.attributes);
 
-        verify_attrs(attrs_to_verify);
+        verify_attrs(&attrs_to_verify);
 
         let mut metrics_request = FakeOTLP::metrics_service_request();
 
@@ -2129,6 +2078,7 @@ mod tests {
             resource: r_resource_metrics.resource.clone(),
             scope_metrics: r_resource_metrics.scope_metrics.clone(),
             schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: None,
         };
         // Execute the Python script that removes a log record
         Python::with_gil(|py| -> PyResult<()> {
@@ -2141,26 +2091,14 @@ mod tests {
         })
         .unwrap();
 
-        let scope_metrics_vec = Arc::into_inner(r_resource_metrics.scope_metrics)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut scope_metrics = crate::model::py_transform::transform_metrics(scope_metrics_vec);
+        let mut scope_metrics = extract_metrics(r_resource_metrics);
 
         let mut metric = scope_metrics.pop().unwrap().metrics.pop().unwrap();
         let data = metric.data.take().unwrap();
         match data {
             Data::Gauge(g) => {
-                let kv_map: HashMap<
-                    String,
-                    Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
-                > = g.data_points[0]
-                    .clone()
-                    .attributes
-                    .into_iter()
-                    .map(|kv| (kv.key.clone(), kv.value.clone()))
-                    .collect();
-                verify_attrs(kv_map);
+                let kv_map = attrs_to_map(g.data_points[0].clone().attributes);
+                verify_attrs(&kv_map);
             }
             _ => panic!("unexpected data type"),
         }
@@ -2287,6 +2225,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2300,19 +2239,9 @@ mod tests {
         })
         .unwrap();
 
-        let resource = Arc::into_inner(r_resource_spans.resource)
-            .unwrap()
-            .into_inner()
-            .unwrap()
-            .unwrap();
-        let resource = crate::model::py_transform::transform_resource(resource).unwrap();
+        let resource = extract_resource(r_resource_spans.resource).unwrap();
         assert_eq!(9, resource.attributes.len());
-        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
-            resource
-                .attributes
-                .into_iter()
-                .map(|kv| (kv.key.clone(), kv.value.clone()))
-                .collect();
+        let kv_map = attrs_to_map(resource.attributes);
 
         let expected_resource_attributes = HashMap::from([
             ("host.arch", "amd64"),
@@ -2368,11 +2297,7 @@ mod tests {
         let span = scope_spans.pop().unwrap().spans.pop().unwrap();
         assert_eq!(7, span.attributes.len());
 
-        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
-            span.attributes
-                .into_iter()
-                .map(|kv| (kv.key.clone(), kv.value.clone()))
-                .collect();
+        let kv_map = attrs_to_map(span.attributes);
 
         let expected_span_attributes = HashMap::from([
             ("operation", "get_data"),
@@ -2419,6 +2344,7 @@ mod tests {
             resource: r_resource_metrics.resource.clone(),
             scope_metrics: r_resource_metrics.scope_metrics.clone(),
             schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: None,
         };
         // Execute the Python script that removes a log record
         Python::with_gil(|py| -> PyResult<()> {
@@ -2431,19 +2357,9 @@ mod tests {
         })
         .unwrap();
 
-        let resource = Arc::into_inner(r_resource_metrics.resource)
-            .unwrap()
-            .into_inner()
-            .unwrap()
-            .unwrap();
-        let resource = py_transform::transform_resource(resource).unwrap();
+        let resource = extract_resource(r_resource_metrics.resource).unwrap();
         assert_eq!(9, resource.attributes.len());
-        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
-            resource
-                .attributes
-                .into_iter()
-                .map(|kv| (kv.key.clone(), kv.value.clone()))
-                .collect();
+        let kv_map = attrs_to_map(resource.attributes);
         validate(kv_map, expected_resource_attributes.clone());
 
         let scope_metrics_vec = Arc::into_inner(r_resource_metrics.scope_metrics)
@@ -2456,15 +2372,7 @@ mod tests {
         let data = metric.data.take().unwrap();
         match data {
             Data::Gauge(g) => {
-                let kv_map: HashMap<
-                    String,
-                    Option<opentelemetry_proto::tonic::common::v1::AnyValue>,
-                > = g.data_points[0]
-                    .clone()
-                    .attributes
-                    .into_iter()
-                    .map(|kv| (kv.key.clone(), kv.value.clone()))
-                    .collect();
+                let kv_map = attrs_to_map(g.data_points[0].clone().attributes);
                 assert_eq!(7, kv_map.len());
                 let expected_span_attributes = HashMap::from([
                     ("operation", "get_data"),
@@ -2554,6 +2462,7 @@ mod tests {
             resource: r_resource_spans.resource.clone(),
             scope_spans: r_resource_spans.scope_spans.clone(),
             schema_url: r_resource_spans.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2567,20 +2476,12 @@ mod tests {
         })
         .unwrap();
 
-        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut scope_spans = crate::model::py_transform::transform_spans(scope_spans_vec);
+        let mut scope_spans = extract_spans(r_resource_spans);
 
         let span = scope_spans.pop().unwrap().spans.pop().unwrap();
         assert_eq!(13, span.attributes.len());
 
-        let kv_map: HashMap<String, Option<opentelemetry_proto::tonic::common::v1::AnyValue>> =
-            span.attributes
-                .into_iter()
-                .map(|kv| (kv.key.clone(), kv.value.clone()))
-                .collect();
+        let kv_map = attrs_to_map(span.attributes);
 
         let expected_attributes = HashMap::from([
             ("visa", "8d9e470bdd9f6e6e18023938497857dc"),
@@ -2641,6 +2542,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2654,11 +2556,7 @@ mod tests {
         })
         .unwrap();
 
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut scope_logs = extract_logs(r_resource_logs);
         let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
         let body = log.body.unwrap().value.unwrap();
         match body {
@@ -2695,6 +2593,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2708,11 +2607,7 @@ mod tests {
         })
         .unwrap();
 
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut scope_logs = extract_logs(r_resource_logs);
         let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
         let body = log.body.unwrap().value.unwrap();
         match body {
@@ -2775,6 +2670,7 @@ mod tests {
             resource: r_resource_logs.resource.clone(),
             scope_logs: r_resource_logs.scope_logs.clone(),
             schema_url: r_resource_logs.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that removes a log record
@@ -2787,11 +2683,7 @@ mod tests {
             )
         })
         .unwrap();
-        let scope_logs_vec = Arc::into_inner(r_resource_logs.scope_logs)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let mut scope_logs = crate::model::py_transform::transform_logs(scope_logs_vec);
+        let mut scope_logs = extract_logs(r_resource_logs);
         let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
         let body = log.body.unwrap().value.unwrap();
         match body {
@@ -2824,6 +2716,270 @@ mod tests {
                 panic!("Unexpected log record value type");
             }
         }
+    }
+
+    #[test]
+    fn context_processor_logs_test() {
+        initialize();
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::StringValue(
+                "Login successful: password=1234567890".to_string(),
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+            request_context: Some(RequestContext::HttpContext(HttpContext {
+                headers: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+
+        let mut scope_logs = extract_logs(r_resource_logs);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let kv_map = attrs_to_map(log.attributes);
+        assert_eq!(kv_map.len(), 1);
+        assert_attr_string(&kv_map, "http.request.header.my-custom-header", "my-value");
+
+        let mut logs_request = FakeOTLP::logs_service_request();
+        let log_body = opentelemetry_proto::tonic::common::v1::AnyValue {
+            value: Some(Value::StringValue(
+                "Login successful: password=1234567890".to_string(),
+            )),
+        };
+        logs_request.resource_logs[0].scope_logs[0].log_records[0].body = Some(log_body);
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_logs = crate::model::otel_transform::transform_resource_logs(
+            logs_request.resource_logs[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_logs = ResourceLogs {
+            resource: r_resource_logs.resource.clone(),
+            scope_logs: r_resource_logs.scope_logs.clone(),
+            schema_url: r_resource_logs.schema_url.clone(),
+            request_context: Some(RequestContext::GrpcContext(GrpcContext {
+                metadata: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_logs,
+                Some("process_logs".to_string()),
+            )
+        })
+        .unwrap();
+
+        let mut scope_logs = extract_logs(r_resource_logs);
+        let log = scope_logs.pop().unwrap().log_records.pop().unwrap();
+        let kv_map = attrs_to_map(log.attributes);
+        assert_eq!(kv_map.len(), 1);
+        assert_attr_string(&kv_map, "http.request.header.my-custom-header", "my-value");
+    }
+
+    #[test]
+    fn context_processor_trace_test() {
+        initialize();
+        let trace_request = FakeOTLP::trace_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans =
+            otel_transform::transform_resource_spans(trace_request.resource_spans[0].clone());
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+            request_context: Some(RequestContext::HttpContext(HttpContext {
+                headers: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+
+        let kv_map = attrs_to_map(span.attributes);
+
+        assert_eq!(kv_map.len(), 3);
+        assert_attr_string(&kv_map, "http.request.header.my-custom-header", "my-value");
+
+        let trace_request = FakeOTLP::trace_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_spans =
+            otel_transform::transform_resource_spans(trace_request.resource_spans[0].clone());
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-grpc-value".to_string());
+
+        // Create the Python-exposed ResourceLogs object
+        let py_resource_spans = ResourceSpans {
+            resource: r_resource_spans.resource.clone(),
+            scope_spans: r_resource_spans.scope_spans.clone(),
+            schema_url: r_resource_spans.schema_url.clone(),
+            request_context: Some(RequestContext::GrpcContext(GrpcContext {
+                metadata: req_context,
+            })),
+        };
+
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_spans,
+                Some("process_spans".to_string()),
+            )
+        })
+        .unwrap();
+
+        let scope_spans_vec = Arc::into_inner(r_resource_spans.scope_spans)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let mut scope_spans = py_transform::transform_spans(scope_spans_vec);
+
+        let span = scope_spans.pop().unwrap().spans.pop().unwrap();
+
+        let kv_map = attrs_to_map(span.attributes);
+
+        assert_eq!(kv_map.len(), 3);
+        assert_attr_string(
+            &kv_map,
+            "http.request.header.my-custom-header",
+            "my-grpc-value",
+        );
+    }
+
+    #[test]
+    fn context_processor_metrics_test() {
+        initialize();
+        let metrics_request = FakeOTLP::metrics_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_metrics = crate::model::otel_transform::transform_resource_metrics(
+            metrics_request.resource_metrics[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-value".to_string());
+
+        // Create the Python-exposed ResourceMetrics object
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: Some(RequestContext::HttpContext(HttpContext {
+                headers: req_context,
+            })),
+        };
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        let resource = extract_resource(r_resource_metrics.resource).unwrap();
+
+        let kv_map = attrs_to_map(resource.attributes);
+        assert_eq!(kv_map.len(), 7);
+        assert_attr_string(&kv_map, "http.request.header.my-custom-header", "my-value");
+
+        let metrics_request = FakeOTLP::metrics_service_request();
+
+        // Transform the protobuf ResourceLogs into our internal RResourceLogs
+        let r_resource_metrics = crate::model::otel_transform::transform_resource_metrics(
+            metrics_request.resource_metrics[0].clone(),
+        );
+
+        let mut req_context = HashMap::new();
+        req_context.insert("my-custom-header".to_string(), "my-grpc-value".to_string());
+
+        // Create the Python-exposed ResourceMetrics object
+        let py_resource_metrics = ResourceMetrics {
+            resource: r_resource_metrics.resource.clone(),
+            scope_metrics: r_resource_metrics.scope_metrics.clone(),
+            schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: Some(RequestContext::GrpcContext(GrpcContext {
+                metadata: req_context,
+            })),
+        };
+        // Execute the Python script that removes a log record
+        Python::with_gil(|py| -> PyResult<()> {
+            _run_script(
+                "context_processor_test.py",
+                py,
+                py_resource_metrics,
+                Some("process_metrics".to_string()),
+            )
+        })
+        .unwrap();
+
+        let resource = extract_resource(r_resource_metrics.resource).unwrap();
+
+        let kv_map = attrs_to_map(resource.attributes);
+        assert_eq!(kv_map.len(), 7);
+        assert_attr_string(
+            &kv_map,
+            "http.request.header.my-custom-header",
+            "my-grpc-value",
+        );
     }
 
     #[test]
@@ -3123,6 +3279,7 @@ mod tests {
             resource: r_resource_metrics.resource.clone(),
             scope_metrics: r_resource_metrics.scope_metrics.clone(),
             schema_url: r_resource_metrics.schema_url.clone(),
+            request_context: None,
         };
 
         // Execute the Python script that will verify initial values and then mutate them
@@ -3152,12 +3309,7 @@ mod tests {
         assert_eq!(proto_scope_metrics.metrics.len(), 5);
 
         // --- Verify ResourceMetrics mutations ---
-        let resource = Arc::into_inner(r_resource_metrics.resource)
-            .unwrap()
-            .into_inner()
-            .unwrap()
-            .unwrap();
-        let resource_proto = py_transform::transform_resource(resource).unwrap();
+        let resource_proto = extract_resource(r_resource_metrics.resource).unwrap();
         assert_eq!(resource_proto.dropped_attributes_count, 25); // Changed from 10 to 25
         assert_eq!(resource_proto.attributes.len(), 2); // Added one attribute
         assert_eq!(

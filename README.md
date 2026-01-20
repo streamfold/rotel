@@ -74,6 +74,21 @@ follow these steps:
    telemetrygen traces --otlp-insecure --duration 5s
    ```
 
+   Alternatively, use the built-in `generate-otlp` tool:
+
+   ```bash
+   # Generate and send traces directly to Rotel
+   cargo run --bin generate-otlp -- traces --http-endpoint localhost:4318
+
+   # Or generate a trace file for testing
+   cargo run --bin generate-otlp -- traces --file trace.pb
+
+   # Then send it with curl
+   curl -X POST http://localhost:4318/v1/traces \
+     -H "Content-Type: application/x-protobuf" \
+     --data-binary @trace.pb
+   ```
+
     - Check the output from Rotel and you should see several "Received traces" log lines.
 
 ## Configuration
@@ -120,24 +135,24 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
-| Option                                 | Default | Options    |
-|----------------------------------------|---------|------------|
-| --otlp-exporter-endpoint               |         |            |
-| --otlp-exporter-protocol               | grpc    | grpc, http |
-| --otlp-exporter-custom-headers         |         |            |
-| --otlp-exporter-compression            | gzip    | gzip, none |
-| --otlp-exporter-authenticator          |         | sigv4auth  |
-| --otlp-exporter-tls-cert-file          |         |            |
-| --otlp-exporter-tls-cert-pem           |         |            |
-| --otlp-exporter-tls-key-file           |         |            |
-| --otlp-exporter-tls-key-pem            |         |            |
-| --otlp-exporter-tls-ca-file            |         |            |
-| --otlp-exporter-tls-ca-pem             |         |            |
-| --otlp-exporter-tls-skip-verify        |         |            |
-| --otlp-exporter-request-timeout        | 5s      |            |
-| --otlp-exporter-retry-initial-backoff  | 5s      |            |
-| --otlp-exporter-retry-max-backoff      | 30s     |            |
-| --otlp-exporter-retry-max-elapsed-time | 300s    |            |
+| Option                                 | Default                        | Options    |
+|----------------------------------------|--------------------------------|------------|
+| --otlp-exporter-endpoint               |                                |            |
+| --otlp-exporter-protocol               | grpc                           | grpc, http |
+| --otlp-exporter-custom-headers         |                                |            |
+| --otlp-exporter-compression            | gzip                           | gzip, none |
+| --otlp-exporter-authenticator          |                                | sigv4auth  |
+| --otlp-exporter-tls-cert-file          |                                |            |
+| --otlp-exporter-tls-cert-pem           |                                |            |
+| --otlp-exporter-tls-key-file           |                                |            |
+| --otlp-exporter-tls-key-pem            |                                |            |
+| --otlp-exporter-tls-ca-file            |                                |            |
+| --otlp-exporter-tls-ca-pem             |                                |            |
+| --otlp-exporter-tls-skip-verify        |                                |            |
+| --otlp-exporter-request-timeout        | 5s                             |            |
+| --otlp-exporter-retry-initial-backoff  | (uses global exporter default) |            |
+| --otlp-exporter-retry-max-backoff      | (uses global exporter default) |            |
+| --otlp-exporter-retry-max-elapsed-time | (uses global exporter default) |            |
 
 Any of the options that start with `--otlp-exporter*` can be set per telemetry type: metrics, traces or logs. For
 example, to set a custom endpoint to export traces to, set: `--otlp-exporter-traces-endpoint`. For other telemetry
@@ -191,11 +206,14 @@ ROTEL_EXPORTERS_LOGS=logs
 The Datadog exporter can be selected by passing `--exporter datadog`. The Datadog exporter only supports traces at the
 moment. For more information, see the [Datadog Exporter](src/exporters/datadog/README.md) docs.
 
-| Option                             | Default | Options                |
-|------------------------------------|---------|------------------------|
-| --datadog-exporter-region          | us1     | us1, us3, us5, eu, ap1 |
-| --datadog-exporter-custom-endpoint |         |                        |
-| --datadog-exporter-api-key         |         |                        |
+| Option                                    | Default                        | Options                |
+|-------------------------------------------|--------------------------------|------------------------|
+| --datadog-exporter-region                 | us1                            | us1, us3, us5, eu, ap1 |
+| --datadog-exporter-custom-endpoint        |                                |                        |
+| --datadog-exporter-api-key                |                                |                        |
+| --datadog-exporter-retry-initial-backoff  | (uses global exporter default) |                        |
+| --datadog-exporter-retry-max-backoff      | (uses global exporter default) |                        |
+| --datadog-exporter-retry-max-elapsed-time | (uses global exporter default) |                        |
 
 Specifying a custom endpoint will override the region selection.
 
@@ -205,18 +223,21 @@ The ClickHouse exporter can be selected by passing `--exporter clickhouse`. The 
 logs,
 and traces.
 
-| Option                                | Default | Options     |
-|---------------------------------------|---------|-------------|
-| --clickhouse-exporter-endpoint        |         |             |
-| --clickhouse-exporter-database        | otel    |             |
-| --clickhouse-exporter-table-prefix    | otel    |             |
-| --clickhouse-exporter-compression     | lz4     | none, lz4   |
-| --clickhouse-exporter-async-insert    | true    | true, false |
-| --clickhouse-exporter-request-timeout | 5s      |             |
-| --clickhouse-exporter-enable-json     |         |             |
-| --clickhouse-exporter-json-underscore |         |             |
-| --clickhouse-exporter-user            |         |             |
-| --clickhouse-exporter-password        |         |             |
+| Option                                       | Default                        | Options     |
+|----------------------------------------------|--------------------------------|-------------|
+| --clickhouse-exporter-endpoint               |                                |             |
+| --clickhouse-exporter-database               | otel                           |             |
+| --clickhouse-exporter-table-prefix           | otel                           |             |
+| --clickhouse-exporter-compression            | lz4                            | none, lz4   |
+| --clickhouse-exporter-async-insert           | true                           | true, false |
+| --clickhouse-exporter-request-timeout        | 5s                             |             |
+| --clickhouse-exporter-enable-json            |                                |             |
+| --clickhouse-exporter-json-underscore        |                                |             |
+| --clickhouse-exporter-user                   |                                |             |
+| --clickhouse-exporter-password               |                                |             |
+| --clickhouse-exporter-retry-initial-backoff  | (uses global exporter default) |             |
+| --clickhouse-exporter-retry-max-backoff      | (uses global exporter default) |             |
+| --clickhouse-exporter-retry-max-elapsed-time | (uses global exporter default) |             |
 
 The ClickHouse endpoint must be specified while all other options can be left as defaults. The table prefix is prefixed
 onto the specific telemetry table name with underscore, so a table prefix of `otel` will be combined with `_traces` to
@@ -252,10 +273,13 @@ The AWS X-Ray exporter can be selected by passing `--exporter awsxray`. The X-Ra
 See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS
 X-Ray exporter.
 
-| Option                             | Default   | Options          |
-|------------------------------------|-----------|------------------|
-| --awsxray-exporter-region          | us-east-1 | aws region codes |
-| --awsxray-exporter-custom-endpoint |           |                  |
+| Option                                    | Default                                              | Options          |
+|-------------------------------------------|------------------------------------------------------|------------------|
+| --awsxray-exporter-region                 | `$AWS_REGION`, `$AWS_DEFAULT_REGION`, or `us-east-1` | aws region codes |
+| --awsxray-exporter-custom-endpoint        |                                                      |                  |
+| --awsxray-exporter-retry-initial-backoff  | (uses global exporter default)                       |                  |
+| --awsxray-exporter-retry-max-backoff      | (uses global exporter default)                       |                  |
+| --awsxray-exporter-retry-max-elapsed-time | (uses global exporter default)                       |                  |
 
 For a list of available AWS X-Ray region codes here: https://docs.aws.amazon.com/general/latest/gr/xray.html
 
@@ -270,17 +294,20 @@ send those as JSON log lines to Cloudwatch. Cloudwatch will convert the log line
 See the [AWS Authentication](#aws-authentication) section for how to configure AWS credentials required for the AWS EMF
 exporter.
 
-| Option                                                 | Default          | Options          |
-|--------------------------------------------------------|------------------|------------------|
-| --awsemf-exporter-region                               | us-east-1        | aws region codes |
-| --awsemf-exporter-custom-endpoint                      |                  |                  |
-| --awsemf-exporter-log-group-name                       | /metrics/default |                  |
-| --awsemf-exporter-log-stream-name                      | otel-stream      |                  |
-| --awsemf-exporter-log-retention                        | 0                |                  |
-| --awsemf-exporter-namespace                            |                  |                  |
-| --awsemf-exporter-retain-initial-value-of-delta-metric | false            |                  |
-| --awsemf-exporter-include-dimensions                   |                  |                  |
-| --awsemf-exporter-exclude-dimensions                   |                  |                  |
+| Option                                                 | Default                                              | Options          |
+|--------------------------------------------------------|------------------------------------------------------|------------------|
+| --awsemf-exporter-region                               | `$AWS_REGION`, `$AWS_DEFAULT_REGION`, or `us-east-1` | aws region codes |
+| --awsemf-exporter-custom-endpoint                      |                                                      |                  |
+| --awsemf-exporter-log-group-name                       | /metrics/default                                     |                  |
+| --awsemf-exporter-log-stream-name                      | otel-stream                                          |                  |
+| --awsemf-exporter-log-retention                        | 0                                                    |                  |
+| --awsemf-exporter-namespace                            |                                                      |                  |
+| --awsemf-exporter-retain-initial-value-of-delta-metric | false                                                |                  |
+| --awsemf-exporter-include-dimensions                   |                                                      |                  |
+| --awsemf-exporter-exclude-dimensions                   |                                                      |                  |
+| --awsemf-exporter-retry-initial-backoff                | (uses global exporter default)                       |                  |
+| --awsemf-exporter-retry-max-backoff                    | (uses global exporter default)                       |                  |
+| --awsemf-exporter-retry-max-elapsed-time               | (uses global exporter default)                       |                  |
 
 **DIMENSION FILTERING**:
 
@@ -566,7 +593,7 @@ receiver to continue processing new messages.
 To revert to the legacy auto-commit behavior where offsets are committed immediately regardless of export success:
 
 ```shell
---kafka-receiver-enable-auto-commit 
+--kafka-receiver-enable-auto-commit
 ```
 
 **Warning**: Auto-commit mode may result in data loss if exports fail, as Kafka will mark messages as consumed even if
@@ -689,16 +716,21 @@ rotel start \
 
 _The Fluent Receiver is currently only included when built with the opt-in feature `--features fluent_receiver`._
 
-The Fluent Receiver allows Rotel to receive telemetry data in Fluentd/Fluent Bit [forward protocol format](https://chronosphere.io/learn/forward-protocol-fluentd-fluent-bit/). This enables compatibility with existing Fluentd and Fluent Bit deployments, allowing them to send logs directly to Rotel for processing and export. Select the Fluent receiver with the option `--receiver fluent`.
+The Fluent Receiver allows Rotel to receive telemetry data in Fluentd/Fluent
+Bit [forward protocol format](https://chronosphere.io/learn/forward-protocol-fluentd-fluent-bit/). This enables
+compatibility with existing Fluentd and Fluent Bit deployments, allowing them to send logs directly to Rotel for
+processing and export. Select the Fluent receiver with the option `--receiver fluent`.
 
-The receiver supports both UNIX domain sockets and TCP endpoints, converting incoming Fluent messages to OpenTelemetry logs format.
+The receiver supports both UNIX domain sockets and TCP endpoints, converting incoming Fluent messages to OpenTelemetry
+logs format.
 
-| Option                              | Default | Description                                             |
-|-------------------------------------|---------|---------------------------------------------------------|
-| --fluent-receiver-socket-path       |         | Path to UNIX socket file for receiving Fluent messages  |
-| --fluent-receiver-endpoint          |         | TCP endpoint to bind (e.g., 127.0.0.1:24224)            |
+| Option                        | Default | Description                                            |
+|-------------------------------|---------|--------------------------------------------------------|
+| --fluent-receiver-socket-path |         | Path to UNIX socket file for receiving Fluent messages |
+| --fluent-receiver-endpoint    |         | TCP endpoint to bind (e.g., 127.0.0.1:24224)           |
 
-**Note**: At least one of `--fluent-receiver-socket-path` or `--fluent-receiver-endpoint` must be specified when using the Fluent
+**Note**: At least one of `--fluent-receiver-socket-path` or `--fluent-receiver-endpoint` must be specified when using
+the Fluent
 receiver.
 
 **Example Usage**:
@@ -725,6 +757,124 @@ rotel start \
 ```
 
 _Compression and message acknowledgement are not supported at the moment._
+
+### File Receiver configuration
+
+**NOTE**: The File Receiver is currently experimental and under development. Users should expect potential breaking
+changes in future releases.
+
+The File Receiver allows Rotel to tail log files and convert them to OpenTelemetry logs. It supports glob patterns for
+file discovery, multiple parsing formats, and efficient file watching using native OS mechanisms (inotify on Linux,
+FSEvents on macOS) with fallback to polling.
+
+To enable the File Receiver, specify it with `--receiver file` and provide at least one include pattern.
+
+| Option                                             | Default                          | Description                                                                  |
+|----------------------------------------------------|----------------------------------|------------------------------------------------------------------------------|
+| --file-receiver-include                            |                                  | Comma-separated glob patterns for files to include (e.g., "/var/log/\*.log") |
+| --file-receiver-exclude                            |                                  | Comma-separated glob patterns for files to exclude                           |
+| --file-receiver-parser                             | none                             | Parser type: none, json, regex, nginx_access, nginx_error                    |
+| --file-receiver-regex-pattern                      |                                  | Regex pattern with named capture groups (required when parser=regex)         |
+| --file-receiver-start-at                           | end                              | Where to start reading: beginning or end                                     |
+| --file-receiver-watch-mode                         | auto                             | Watch mode: auto, native, poll                                               |
+| --file-receiver-poll-interval-ms                   | 250                              | Poll interval in milliseconds for file changes                               |
+| --file-receiver-debounce-interval-ms               | 200                              | Debounce interval in milliseconds for native watcher events                  |
+| --file-receiver-offsets-path                       | /var/lib/rotel/file_offsets.json | Path to store file offsets for persistence across restarts                   |
+| --file-receiver-max-log-size                       | 65536                            | Maximum log line size in bytes (lines exceeding this will be truncated)      |
+| --file-receiver-include-file-name                  | true                             | Include file name as a log attribute                                         |
+| --file-receiver-include-file-path                  | false                            | Include full file path as a log attribute                                    |
+| --file-receiver-max-concurrent-files               | 4                                | Maximum number of concurrent file processing threads                         |
+| --file-receiver-rotate-wait-ms                     | 1000                             | Time in ms to wait after EOF on a rotated file before closing                |
+| --file-receiver-shutdown-worker-drain-timeout-ms   | 250                              | Max time in ms to wait for workers to complete during shutdown               |
+| --file-receiver-shutdown-records-drain-timeout-ms  | 100                              | Max time in ms to wait for records to be sent during shutdown                |
+| --file-receiver-max-checkpoint-failure-duration-ms | 60000                            | Max duration in ms of consecutive checkpoint failures before exiting         |
+| --file-receiver-max-poll-failure-duration-ms       | 60000                            | Max duration in ms of consecutive poll failures before exiting               |
+| --file-receiver-max-watcher-error-duration-ms      | 60000                            | Max duration in ms of consecutive watcher errors before falling back to poll |
+| --file-receiver-max-batch-size                     | 100                              | Maximum number of log records to batch before sending to pipeline            |
+
+#### Watch Modes
+
+The File Receiver supports three watch modes:
+
+- **auto** (default): Uses native file system watching (inotify/kqueue/FSEvents) with automatic fallback to polling if
+  native watching fails
+- **native**: Forces native file system watching only
+- **poll**: Forces polling mode, useful for NFS or network file systems where native watching is unreliable
+
+#### Parsers
+
+The receiver includes several built-in parsers:
+
+- **none**: Raw log lines are passed through as-is in the log body
+- **json**: Parses JSON log lines and extracts fields as attributes
+- **regex**: Uses a custom regex pattern with named capture groups to extract attributes
+- **nginx_access**: Parses nginx combined access log format
+- **nginx_error**: Parses nginx error log format
+
+When using the regex parser, provide a pattern with named capture groups:
+
+```shell
+--file-receiver-parser regex \
+--file-receiver-regex-pattern '^(?P<timestamp>\S+) (?P<level>\S+) (?P<message>.*)$'
+```
+
+#### Offset Persistence
+
+The File Receiver tracks file offsets to resume reading from where it left off after restarts. Offsets are persisted to
+the path specified by `--file-receiver-offsets-path`. The receiver uses file device ID and inode number to identify
+files, allowing it to handle log rotation correctly.
+
+#### Example Usage
+
+Parsing nginx access logs and exporting to ClickHouse:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/nginx/access.log" \
+  --file-receiver-parser nginx_access \
+  --file-receiver-start-at beginning \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "http://localhost:8123" \
+  --file-receiver-offsets-path "/tmp/rotel-offsets.json"
+```
+
+Basic example tailing nginx access logs to OTLP:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/nginx/access.log" \
+  --file-receiver-parser nginx_access \
+  --file-receiver-start-at end \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Tailing multiple log files with glob patterns:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/*.log,/var/log/apps/**/*.log" \
+  --file-receiver-exclude "/var/log/debug.log" \
+  --file-receiver-start-at beginning \
+  --file-receiver-offsets-path "/tmp/rotel-offsets.json" \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "http://localhost:8123"
+```
+
+Using regex parser for custom log format:
+
+```shell
+rotel start \
+  --receiver file \
+  --file-receiver-include "/var/log/myapp/*.log" \
+  --file-receiver-parser regex \
+  --file-receiver-regex-pattern '^(?P<timestamp>[^ ]+) \[(?P<level>\w+)\] (?P<message>.*)$' \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
 
 ### Batch configuration
 
@@ -757,20 +907,24 @@ Alternatively you can use the `ROTEL_OTEL_RESOURCE_ATTRIBUTES` environment varia
 
 ### Retries and timeouts
 
-You can override the default request timeout of 5 seconds for the OTLP Exporter with the exporter setting:
+Requests will be retried if they match retryable error codes like 429 (Too Many Requests) or timeout. You can control
+the retry behavior globally for all exporters with the following options:
+
+- `--exporter-retry-initial-backoff`: Initial backoff duration (default: 5s)
+- `--exporter-retry-max-backoff`: Maximum backoff interval (default: 30s)
+- `--exporter-retry-max-elapsed-time`: Maximum wall time a request will be retried for until it is marked as
+  permanent failure (default: 300s)
+
+These global retry settings apply to all exporters unless overridden by exporter-specific retry options (see individual
+exporter configuration sections below).
+
+Each exporter can also override the default request timeout. For example, the OTLP Exporter default timeout of 5 seconds
+can be overridden with:
 
 - `--otlp-exporter-request-timeout`: Takes a string time duration, so `"250ms"` for 250 milliseconds, `"3s"` for 3
   seconds, etc.
 
-Requests will be retried if they match retryable error codes like 429 (Too Many Requests) or timeout. You can control
-the behavior with the following exporter options:
-
-- `--otlp-exporter-retry-initial-backoff`: Initial backoff duration
-- `--otlp-exporter-retry-max-backoff`: Maximum backoff interval
-- `--otlp-exporter-retry-max-elapsed-time`: Maximum wall time a request will be retried for until it is marked as
-  permanent failure
-
-All options should be represented as string time durations.
+All time options should be represented as string time durations.
 
 ### Internal telemetry
 
@@ -789,10 +943,10 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 
 The following configuration parameters enable multiple receivers:
 
-| Option      | Default | Options                           |
-|-------------|---------|-----------------------------------|
-| --receiver  | otlp    | otlp, kafka                       |
-| --receivers |         | comma-separated list (otlp,kafka) |
+| Option      | Default | Options                                |
+|-------------|---------|----------------------------------------|
+| --receiver  | otlp    | otlp, kafka, fluent, file              |
+| --receivers |         | comma-separated list (otlp,kafka,file) |
 
 **Important Notes:**
 

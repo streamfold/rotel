@@ -170,6 +170,7 @@ where
         // Clone metadata for both parts - future reference counting will handle proper ack semantics
         Message {
             metadata: self.metadata.clone(),
+            request_context: self.request_context.clone(),
             payload: split_payload,
         }
     }
@@ -296,6 +297,7 @@ mod tests {
         let first_request = FakeOTLP::trace_service_request_with_spans(1, 5);
         let message = Message {
             metadata: None,
+            request_context: None,
             payload: first_request.resource_spans,
         };
 
@@ -307,6 +309,7 @@ mod tests {
         let second_request = FakeOTLP::trace_service_request_with_spans(1, 7);
         let message2 = Message {
             metadata: None,
+            request_context: None,
             payload: second_request.resource_spans,
         };
 
@@ -335,6 +338,7 @@ mod tests {
         };
         let message = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata.clone())),
+            request_context: None,
             payload: first_request.resource_spans,
         };
 
@@ -352,6 +356,7 @@ mod tests {
         };
         let message2 = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata2)),
+            request_context: None,
             payload: second_request.resource_spans,
         };
 
@@ -397,6 +402,7 @@ mod tests {
         };
         let message = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata.clone())),
+            request_context: None,
             payload: first_request.resource_spans,
         };
 
@@ -414,6 +420,7 @@ mod tests {
         };
         let message2 = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata2.clone())),
+            request_context: None,
             payload: second_request.resource_spans,
         };
 
@@ -478,6 +485,7 @@ mod tests {
         };
         let message = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata.clone())),
+            request_context: None,
             payload: request.resource_spans,
         };
 
@@ -522,6 +530,7 @@ mod tests {
         let request = FakeOTLP::trace_service_request_with_spans(1, 21);
         let message = Message {
             metadata: None,
+            request_context: None,
             payload: request.resource_spans,
         };
 
@@ -547,6 +556,7 @@ mod tests {
         };
         let message = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata)),
+            request_context: None,
             payload: request.resource_spans,
         };
 
@@ -565,6 +575,7 @@ mod tests {
         let request = FakeOTLP::trace_service_request_with_spans(1, 5);
         let message = Message {
             metadata: None,
+            request_context: None,
             payload: request.resource_spans,
         };
         let resp = batch.offer(vec![message]);
@@ -580,6 +591,7 @@ mod tests {
         let request = FakeOTLP::trace_service_request_with_spans(1, 5);
         let message = Message {
             metadata: None,
+            request_context: None,
             payload: request.resource_spans,
         };
         let resp = batch.offer(vec![message]);
@@ -606,6 +618,7 @@ mod tests {
         };
         let message = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata)),
+            request_context: None,
             payload: request.resource_spans,
         };
 
@@ -642,6 +655,7 @@ mod tests {
         let first_request = FakeOTLP::metrics_service_request_with_metrics(1, 5);
         let message1 = Message {
             metadata: None,
+            request_context: None,
             payload: first_request.resource_metrics,
         };
 
@@ -659,6 +673,7 @@ mod tests {
         };
         let message2 = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata)),
+            request_context: None,
             payload: second_request.resource_metrics,
         };
 
@@ -703,6 +718,7 @@ mod tests {
         let first_request = FakeOTLP::logs_service_request_with_logs(1, 5);
         let message1 = Message {
             metadata: None,
+            request_context: None,
             payload: first_request.resource_logs,
         };
 
@@ -720,6 +736,7 @@ mod tests {
         };
         let message2 = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata)),
+            request_context: None,
             payload: second_request.resource_logs,
         };
 
@@ -770,6 +787,7 @@ mod tests {
         };
         let message1 = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata)),
+            request_context: None,
             payload: request1.resource_spans,
         };
 
@@ -777,6 +795,7 @@ mod tests {
         let request2 = FakeOTLP::trace_service_request_with_spans(1, 4);
         let message2 = Message {
             metadata: None,
+            request_context: None,
             payload: request2.resource_spans,
         };
 
@@ -790,6 +809,7 @@ mod tests {
         };
         let message3 = Message {
             metadata: Some(MessageMetadata::kafka(kafka_metadata2)),
+            request_context: None,
             payload: request3.resource_spans,
         };
 

@@ -14,6 +14,7 @@ use crate::model::metrics::{
     RNumberDataPoint, RNumberDataPointValue, RScopeMetrics, RSum, RSummary, RSummaryDataPoint,
     RValueAtQuantile,
 };
+use crate::py::request_context::RequestContext;
 
 // --- PyO3 Bindings for RResourceMetrics ---
 #[pyclass]
@@ -22,6 +23,7 @@ pub struct ResourceMetrics {
     pub resource: Arc<Mutex<Option<RResource>>>,
     pub scope_metrics: Arc<Mutex<Vec<Arc<Mutex<RScopeMetrics>>>>>,
     pub schema_url: String,
+    pub request_context: Option<RequestContext>,
 }
 
 #[pymethods]
@@ -79,6 +81,10 @@ impl ResourceMetrics {
     fn set_schema_url(&mut self, schema_url: String) -> PyResult<()> {
         self.schema_url = schema_url;
         Ok(())
+    }
+    #[getter]
+    fn request_context(&self) -> PyResult<Option<RequestContext>> {
+        Ok(self.request_context.clone())
     }
 }
 

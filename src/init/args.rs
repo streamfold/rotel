@@ -1,9 +1,10 @@
-use crate::exporters::otlp::Authenticator;
 use crate::init::batch::BatchArgs;
 use crate::init::clickhouse_exporter::ClickhouseExporterArgs;
 use crate::init::datadog_exporter::DatadogExporterArgs;
 #[cfg(feature = "file_exporter")]
 use crate::init::file_exporter::FileExporterArgs;
+#[cfg(feature = "file_receiver")]
+use crate::init::file_receiver::FileReceiverArgs;
 #[cfg(feature = "fluent_receiver")]
 use crate::init::fluent_receiver::FluentReceiverArgs;
 #[cfg(feature = "rdkafka")]
@@ -12,9 +13,11 @@ use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::kafka_receiver::KafkaReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;
+#[cfg(feature = "prometheus")]
 use crate::init::parse;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
+use crate::{exporters::otlp::Authenticator, init::retry::GlobalExporterRetryArgs};
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
 #[cfg(feature = "prometheus")]
@@ -56,6 +59,9 @@ pub struct AgentRun {
     pub prometheus_endpoint: SocketAddr,
 
     #[command(flatten)]
+    pub exporter_retry: GlobalExporterRetryArgs,
+
+    #[command(flatten)]
     pub otlp_receiver: OTLPReceiverArgs,
 
     #[command(flatten)]
@@ -65,6 +71,10 @@ pub struct AgentRun {
     #[command(flatten)]
     #[cfg(feature = "fluent_receiver")]
     pub fluent_receiver: FluentReceiverArgs,
+
+    #[command(flatten)]
+    #[cfg(feature = "file_receiver")]
+    pub file_receiver: FileReceiverArgs,
 
     /// Single receiver (type)
     #[arg(value_enum, long, env = "ROTEL_RECEIVER")]
@@ -84,8 +94,8 @@ pub struct AgentRun {
     pub otlp_with_metrics_processor: Vec<String>,
 
     /// Comma-separated, key=value pairs of resource attributes to set
-    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES", value_parser = parse::parse_key_val::<String, String>, value_delimiter = ',')]
-    pub otel_resource_attributes: Vec<(String, String)>,
+    #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES")]
+    pub otel_resource_attributes: Option<String>,
 
     /// Enable reporting of internal telemetry
     #[arg(long, env = "ROTEL_ENABLE_INTERNAL_TELEMETRY", default_value = "false")]
@@ -157,15 +167,18 @@ impl Default for AgentRun {
             debug_log_verbosity: DebugLogVerbosity::Basic,
             receiver: None,
             receivers: None,
+            exporter_retry: Default::default(),
             otlp_receiver: OTLPReceiverArgs::default(),
             #[cfg(feature = "rdkafka")]
             kafka_receiver: KafkaReceiverArgs::default(),
             #[cfg(feature = "fluent_receiver")]
             fluent_receiver: FluentReceiverArgs::default(),
+            #[cfg(feature = "file_receiver")]
+            file_receiver: FileReceiverArgs::default(),
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
-            otel_resource_attributes: Vec::new(),
+            otel_resource_attributes: None,
             enable_internal_telemetry: false,
             batch: BatchArgs::default(),
             exporter: None,
@@ -262,6 +275,8 @@ pub enum Receiver {
     Kafka,
     #[cfg(feature = "fluent_receiver")]
     Fluent,
+    #[cfg(feature = "file_receiver")]
+    File,
 }
 
 impl FromStr for Receiver {
@@ -273,6 +288,8 @@ impl FromStr for Receiver {
             "kafka" => Ok(Receiver::Kafka),
             #[cfg(feature = "fluent_receiver")]
             "fluent" => Ok(Receiver::Fluent),
+            #[cfg(feature = "file_receiver")]
+            "file" => Ok(Receiver::File),
             _ => Err("Unknown receiver"),
         }
     }

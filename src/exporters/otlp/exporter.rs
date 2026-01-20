@@ -24,7 +24,7 @@ use crate::exporters::otlp::{Authenticator, errors, get_meter, request};
 use crate::exporters::shared::aws_signing_service::AwsSigningServiceBuilder;
 use crate::telemetry::RotelCounter;
 use crate::topology::batch::BatchSizer;
-use crate::topology::flush_control::{FlushReceiver, conditional_flush};
+use crate::topology::flush_control::{FlushReceiver, FlushRequest, conditional_flush};
 use crate::topology::payload::{Message, MessageMetadata, OTLPFrom};
 use futures::stream::FuturesUnordered;
 use http::Request;
@@ -538,7 +538,7 @@ where
                         (Some(req), listener) => {
                             debug!(exporter_type = "otlp", telemetry_type = type_name, "received force flush in OTLP exporter: {:?}", req);
 
-                            if let Err(res) = self.drain_futures().await {
+                            if let Err(res) = self.drain_futures(Some(&req)).await {
                                 warn!(exporter_type = "otlp", telemetry_type = type_name, "unable to drain exporter: {}", res);
                             }
 
@@ -559,7 +559,7 @@ where
             }
         }
 
-        self.drain_futures().await
+        self.drain_futures(None).await
     }
 
     /// Drains in-flight requests during shutdown or on a forced flush
@@ -569,14 +569,27 @@ where
     /// - Requests being sent to endpoints
     ///
     /// Times out after configured durations to prevent hanging
-    async fn drain_futures(&mut self) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        // Use checked_add to prevent overflow with very large drain times, fall back to defaults
-        let finish_encoding = Instant::now()
-            .checked_add(self.encode_drain_max_time)
-            .unwrap_or_else(|| Instant::now() + Duration::from_secs(2)); // Default: 2s
-        let finish_sending = Instant::now()
-            .checked_add(self.export_drain_max_time)
-            .unwrap_or_else(|| Instant::now() + Duration::from_secs(3)); // Default: 3s
+    async fn drain_futures(
+        &mut self,
+        req: Option<&FlushRequest>,
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        // Allow the flushing component to override the deadline
+        // TODO: use a single deadline for these
+        let (finish_encoding, finish_sending) =
+            if let Some(flush_deadline) = req.and_then(|r| r.get_flush_deadline()) {
+                let flush_deadline = flush_deadline.into();
+                (flush_deadline, flush_deadline)
+            } else {
+                let finish_encoding = Instant::now()
+                    .checked_add(self.encode_drain_max_time)
+                    .unwrap_or_else(|| Instant::now() + Duration::from_secs(2)); // Default: 2s
+                let finish_sending = Instant::now()
+                    .checked_add(self.export_drain_max_time)
+                    .unwrap_or_else(|| Instant::now() + Duration::from_secs(3)); // Default: 3s
+
+                (finish_encoding, finish_sending)
+            };
+
         let type_name = self.type_name.to_string();
 
         // First we must wait on currently encoding futures

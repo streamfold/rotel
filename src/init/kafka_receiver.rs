@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::init::parse::parse_key_val;
 use crate::receivers::kafka::config::KafkaReceiverConfig;
 use clap::Args;
 use serde::Deserialize;
+use tower::BoxError;
 
 #[derive(Default, Debug, Args, Clone, Deserialize)]
 #[serde(default)]
@@ -252,7 +252,7 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_SECURITY_PROTOCOL"),
         long("kafka-receiver-security-protocol"),
-        env = "ROTEL_KAFKA_RECEIVER_SECURITY_PROTOCOL", 
+        env = "ROTEL_KAFKA_RECEIVER_SECURITY_PROTOCOL",
         default_value = None,
     )]
     pub security_protocol: Option<crate::receivers::kafka::config::SecurityProtocol>,
@@ -294,16 +294,13 @@ pub struct KafkaReceiverArgs {
     #[arg(
         id("KAFKA_RECEIVER_CUSTOM_CONFIG"),
         long("kafka-receiver-custom-config"),
-        env = "ROTEL_KAFKA_RECEIVER_CUSTOM_CONFIG",
-        value_parser = parse_key_val::<String, String>,
-        value_delimiter = ','
+        env = "ROTEL_KAFKA_RECEIVER_CUSTOM_CONFIG"
     )]
-    #[serde(deserialize_with = "crate::init::parse::deserialize_key_value_pairs")]
-    pub custom_config: Vec<(String, String)>,
+    pub custom_config: Option<String>,
 }
 
 impl KafkaReceiverArgs {
-    pub fn build_config(&self) -> KafkaReceiverConfig {
+    pub fn build_config(&self) -> Result<KafkaReceiverConfig, BoxError> {
         let mut config = KafkaReceiverConfig::new(self.brokers.clone(), self.group_id.clone())
             .with_traces(self.traces)
             .with_metrics(self.metrics)
@@ -320,8 +317,14 @@ impl KafkaReceiverArgs {
                 self.fetch_max_wait_ms,
                 self.max_partition_fetch_bytes,
             )
-            .with_isolation_level(self.isolation_level)
-            .with_custom_config(self.custom_config.clone());
+            .with_isolation_level(self.isolation_level);
+
+        // Parse custom config from Option<String> to Vec<(String, String)>
+        let custom_config = match &self.custom_config {
+            Some(s) => crate::init::parse::parse_key_vals::<String, String>(s)?,
+            None => Vec::new(),
+        };
+        config = config.with_custom_config(custom_config);
 
         // Set topics if provided
         if let Some(ref topic) = self.traces_topic {
@@ -363,7 +366,7 @@ impl KafkaReceiverArgs {
             self.ssl_key_password.clone(),
         );
 
-        config
+        Ok(config)
     }
 }
 

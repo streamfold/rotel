@@ -37,6 +37,7 @@ mod grpc_codec;
 mod http_codec;
 pub mod signer;
 
+use crate::exporters::http::retry::RetryConfig;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use clap::ValueEnum;
 use opentelemetry::global;
@@ -83,18 +84,15 @@ pub fn config_builder(
     type_name: &str,
     endpoint: Endpoint,
     protocol: Protocol,
+    retry_config: RetryConfig,
 ) -> OTLPExporterConfig {
-    OTLPExporterConfig {
-        type_name: type_name.to_string(),
-        endpoint,
-        protocol,
-        ..Default::default()
-    }
+    OTLPExporterConfig::new(type_name.to_string(), endpoint, protocol, retry_config)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::bounded_channel::{BoundedSender, bounded};
+    use crate::exporters::http::retry::RetryConfig;
     use crate::exporters::otlp::{Endpoint, Protocol, config_builder};
     use crate::topology;
     extern crate utilities;
@@ -499,11 +497,12 @@ mod tests {
         let res = trace_btx
             .send(vec![topology::payload::Message {
                 metadata: None,
+                request_context: None,
                 payload: FakeOTLP::trace_service_request().resource_spans,
             }])
             .await;
         assert!(&res.is_ok());
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
@@ -578,12 +577,13 @@ mod tests {
         let res = metrics_btx
             .send(vec![topology::payload::Message {
                 metadata: None,
+                request_context: None,
                 payload: FakeOTLP::metrics_service_request().resource_metrics,
             }])
             .await;
         assert!(&res.is_ok());
 
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
@@ -658,11 +658,12 @@ mod tests {
             .send(vec![topology::payload::Message {
                 payload: FakeOTLP::logs_service_request().resource_logs,
                 metadata: None,
+                request_context: None,
             }])
             .await;
         assert!(&res.is_ok());
 
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         if tokio::time::timeout(Duration::from_secs(5), server_rx.recv())
             .await
@@ -704,12 +705,18 @@ mod tests {
         // Full client auth should succeed
         let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(1);
 
-        let traces_config = trace_config_builder(
+        let retry = RetryConfig::new(
+            Duration::from_millis(5),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+            false,
+        );
+        let traces_config = config_builder(
+            "otlp_traces",
             Endpoint::Base(format!("localhost:{}", port)),
             Protocol::Grpc,
-        )
-        .with_initial_backoff(Duration::from_millis(5))
-        .with_max_elapsed_time(Duration::from_millis(50));
+            retry,
+        );
 
         let (mut flush_pipeline_tx, mut flush_pipeline_sub) = FlushBroadcast::new().into_parts();
 
@@ -729,12 +736,13 @@ mod tests {
             .send(vec![topology::payload::Message {
                 payload: FakeOTLP::trace_service_request().resource_spans,
                 metadata: None,
+                request_context: None,
             }])
             .await;
         assert!(&res.is_ok());
 
         // broadcast a flush to immediately drain
-        flush_pipeline_tx.broadcast().await.unwrap();
+        flush_pipeline_tx.broadcast(None).await.unwrap();
 
         // We should get at least one retry here, so wait for two responses
         for i in 0..=1 {
@@ -916,13 +924,20 @@ mod tests {
         });
 
         let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
-        let traces_config = trace_config_builder(
+
+        let retry = RetryConfig::new(
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+            false,
+        );
+        let traces_config = config_builder(
+            "otlp_traces",
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
+            retry,
         )
-        .with_request_timeout(Duration::from_millis(5))
-        .with_initial_backoff(Duration::from_millis(5))
-        .with_max_elapsed_time(Duration::from_millis(20));
+        .with_request_timeout(Duration::from_millis(5));
 
         let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
         assert!(otlp_res.is_ok());
@@ -986,12 +1001,18 @@ mod tests {
         });
 
         let (trace_btx, trace_brx) = bounded::<Vec<topology::payload::Message<ResourceSpans>>>(100);
-        let traces_config = trace_config_builder(
+        let retry = RetryConfig::new(
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+            false,
+        );
+        let traces_config = config_builder(
+            "otlp_traces",
             Endpoint::Base(format!("http://127.0.0.1:{}", server.port())),
             Protocol::Http,
+            retry,
         )
-        .with_initial_backoff(Duration::from_millis(5))
-        .with_max_elapsed_time(Duration::from_millis(20))
         .with_encode_drain_max_time(Duration::from_millis(10));
 
         let otlp_res = otlp::exporter::build_traces_exporter(traces_config, trace_brx, None, None);
@@ -1094,6 +1115,7 @@ mod tests {
             .send(vec![topology::payload::Message {
                 payload: FakeOTLP::trace_service_request().resource_spans,
                 metadata: None,
+                request_context: None,
             }])
             .await;
         if let Err(e) = res {
@@ -1173,6 +1195,7 @@ mod tests {
                 .send(vec![topology::payload::Message {
                     payload,
                     metadata: None,
+                    request_context: None,
                 }])
                 .await;
             if let Err(e) = res {
@@ -1206,6 +1229,7 @@ mod tests {
                 .send(vec![topology::payload::Message {
                     payload,
                     metadata: None,
+                    request_context: None,
                 }])
                 .await;
             if let Err(e) = res {
@@ -1235,6 +1259,7 @@ mod tests {
                 .send(vec![topology::payload::Message {
                     payload,
                     metadata: None,
+                    request_context: None,
                 }])
                 .await;
             if let Err(e) = res {
@@ -1313,6 +1338,7 @@ mod tests {
         trace_btx
             .send(vec![topology::payload::Message {
                 metadata: Some(metadata),
+                request_context: None,
                 payload: traces.resource_spans,
             }])
             .await
@@ -1364,14 +1390,14 @@ mod tests {
     }
 
     fn trace_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
-        config_builder("otlp_traces", endpoint, protocol)
+        config_builder("otlp_traces", endpoint, protocol, Default::default())
     }
 
     fn metrics_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
-        config_builder("otlp_metrics", endpoint, protocol)
+        config_builder("otlp_metrics", endpoint, protocol, Default::default())
     }
 
     fn logs_config_builder(endpoint: Endpoint, protocol: Protocol) -> OTLPExporterConfig {
-        config_builder("otlp_logs", endpoint, protocol)
+        config_builder("otlp_logs", endpoint, protocol, Default::default())
     }
 }

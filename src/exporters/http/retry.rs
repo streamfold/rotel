@@ -16,7 +16,7 @@ use tower::BoxError;
 use tower::retry::Policy;
 use tracing::info;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RetryConfig {
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
@@ -24,6 +24,23 @@ pub struct RetryConfig {
     pub indefinite_retry: bool,
 }
 
+impl RetryConfig {
+    pub fn new(
+        initial_backoff: Duration,
+        max_backoff: Duration,
+        max_elapsed_time: Duration,
+        indefinite_retry: bool,
+    ) -> Self {
+        Self {
+            initial_backoff,
+            max_backoff,
+            max_elapsed_time,
+            indefinite_retry,
+        }
+    }
+}
+
+#[cfg(test)]
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {

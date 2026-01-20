@@ -19,6 +19,8 @@ use crate::init::datadog_exporter::DatadogRegion;
 use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
+#[cfg(feature = "file_receiver")]
+use crate::receivers::file::receiver::FileReceiver;
 #[cfg(feature = "fluent_receiver")]
 use crate::receivers::fluent::receiver::FluentReceiver;
 #[cfg(feature = "rdkafka")]
@@ -31,7 +33,7 @@ use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
 use crate::topology::fanout::FanoutBuilder;
-use crate::topology::flush_control::FlushSubscriber;
+use crate::topology::flush_control::{FlushSubscriber, conditional_flush};
 use crate::topology::payload::Message;
 use crate::{telemetry, topology};
 use opentelemetry::global;
@@ -49,8 +51,7 @@ use tokio::select;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "prometheus")]
 use crate::telemetry::metrics_server::MetricsServer;
@@ -62,10 +63,11 @@ pub struct Agent {
     port_map: HashMap<SocketAddr, Listener>,
     sending_queue_size: usize,
     environment: String,
-    logs_rx: Option<BoundedReceiver<ResourceLogs>>,
+    logs_rx: Option<(BoundedReceiver<Message<ResourceLogs>>, FlushSubscriber)>,
     pipeline_flush_sub: Option<FlushSubscriber>,
     exporters_flush_sub: Option<FlushSubscriber>,
     otlp_default_receiver: bool,
+    init_complete_chan: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
 impl Agent {
@@ -84,11 +86,16 @@ impl Agent {
             pipeline_flush_sub: None,
             exporters_flush_sub: None,
             otlp_default_receiver: true,
+            init_complete_chan: None,
         }
     }
 
-    pub fn with_logs_rx(mut self, logs_rx: BoundedReceiver<ResourceLogs>) -> Self {
-        self.logs_rx = Some(logs_rx);
+    pub fn with_logs_rx(
+        mut self,
+        logs_rx: BoundedReceiver<Message<ResourceLogs>>,
+        logs_rx_flush_sub: FlushSubscriber,
+    ) -> Self {
+        self.logs_rx = Some((logs_rx, logs_rx_flush_sub));
         self
     }
 
@@ -99,6 +106,14 @@ impl Agent {
 
     pub fn with_exporters_flush(mut self, exporters_flush_sub: FlushSubscriber) -> Self {
         self.exporters_flush_sub = Some(exporters_flush_sub);
+        self
+    }
+
+    pub fn with_init_complete_chan(
+        mut self,
+        init_complete_chan: tokio::sync::oneshot::Sender<bool>,
+    ) -> Self {
+        self.init_complete_chan = Some(init_complete_chan);
         self
     }
 
@@ -114,7 +129,12 @@ impl Agent {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let config = self.config;
 
-        info!("Starting Rotel.",);
+        info!("Starting Rotel.");
+
+        let resource_attributes = match &config.otel_resource_attributes {
+            Some(s) => crate::init::parse::parse_key_vals::<String, String>(s)?,
+            None => Vec::new(),
+        };
 
         // Initialize the TLS library, we may want to do this conditionally
         init_crypto_provider()?;
@@ -758,7 +778,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_traces_batch_config(config.batch.clone()),
                 config.otlp_with_trace_processor.clone(),
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_traces = config.debug_log.contains(&DebugLogParam::Traces);
@@ -785,7 +805,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
                 config.otlp_with_metrics_processor.clone(),
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
@@ -812,7 +832,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_logs_batch_config(config.batch.clone()),
                 config.otlp_with_logs_processor.clone(),
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_logs = config.debug_log.contains(&DebugLogParam::Logs);
@@ -839,7 +859,7 @@ impl Agent {
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
                 vec![],
-                config.otel_resource_attributes.clone(),
+                resource_attributes.clone(),
             );
 
             let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
@@ -873,6 +893,8 @@ impl Agent {
                         .with_traces_output(traces_output.clone())
                         .with_metrics_output(metrics_output.clone())
                         .with_logs_output(logs_output.clone())
+                        .with_include_metadata(config.otlp_grpc_include_metadata)
+                        .with_headers_to_include(config.otlp_grpc_headers_to_include.clone())
                         .build();
 
                     let grpc_listener = self.port_map.remove(&config.otlp_grpc_endpoint).unwrap();
@@ -893,6 +915,8 @@ impl Agent {
                         .with_traces_path(config.otlp_receiver_traces_http_path.clone())
                         .with_metrics_path(config.otlp_receiver_metrics_http_path.clone())
                         .with_logs_path(config.otlp_receiver_logs_http_path.clone())
+                        .with_include_metadata(config.otlp_http_include_metadata)
+                        .with_headers_to_include(config.otlp_http_headers_to_include.clone())
                         .build();
 
                     let http_listener = self.port_map.remove(&config.otlp_http_endpoint).unwrap();
@@ -949,6 +973,35 @@ impl Agent {
                         }
                     });
                 }
+                #[cfg(feature = "file_receiver")]
+                ReceiverConfig::File(config) => {
+                    let file_receiver =
+                        FileReceiver::new(config.clone(), logs_output.clone()).await?;
+
+                    let mut file_task_set = JoinSet::new();
+                    file_receiver
+                        .start(&mut file_task_set, &receivers_cancel)
+                        .await?;
+
+                    let receivers_cancel = receivers_cancel.clone();
+                    receivers_task_set.spawn(async move {
+                        loop {
+                            select! {
+                                e = wait::wait_for_any_task(&mut file_task_set) => {
+                                    match e {
+                                        Ok(()) => {
+                                            info!("Unexpected early exit of file receiver task.");
+                                        },
+                                        Err(e) => break Err(e),
+                                    }
+                                },
+                                _ = receivers_cancel.cancelled() => {
+                                    break wait::wait_for_tasks_with_timeout(&mut file_task_set, Duration::from_millis(500)).await;
+                                }
+                            }
+                        }
+                    });
+                }
             }
         }
 
@@ -968,24 +1021,48 @@ impl Agent {
         //
         // Logs input receiver
         //
-        if let Some(mut logs_rx) = self.logs_rx {
+        if let Some((mut logs_rx, mut logs_rx_flush_sub)) = self.logs_rx {
             let receivers_cancel = receivers_cancel.clone();
             let logs_output = logs_output.clone();
+            let mut logs_flush_listener = Some(logs_rx_flush_sub.subscribe());
 
             receivers_task_set.spawn(async move {
                 loop {
                     select! {
-                        rl = logs_rx.next() => {
-                            match rl {
+                        biased;
+
+                        msg = logs_rx.next() => {
+                            match msg {
                                 None => break,
-                                Some(rl) => {
+                                Some(msg) => {
                                     if let Some(out) = &logs_output {
-                                        if let Err(e) = out.send(Message{metadata: None, payload: vec![rl]}).await {
+                                        if let Err(e) = out.send(msg).await {
                                             // todo: is this possibly in a logging loop path?
                                             warn!("Unable to send logs to logs output: {}", e)
                                         }
                                     }
                                 }
+                            }
+                        },
+                        Some(resp) = conditional_flush(&mut logs_flush_listener) => {
+                            // NOTE: We don't actually drain logs_rx here, instead we rely
+                            // on the biased select loop to ensure that messages added to logs_rx
+                            // before the flush message are consumed before the conditional_flush arm is
+                            // executed.
+                            match resp {
+                                (Some(req), listener) => {
+                                    debug!(request = ?req, "received flush for logs_rx channel");
+
+                                    let logs_rx_len = logs_rx.len();
+                                    if logs_rx_len > 0 {
+                                        warn!(logs_rx_len, "received flush on logs_rx channel with pending messages");
+                                    }
+
+                                    if let Err(e) = listener.ack(req).await {
+                                        warn!("unable to ack flush request: {}", e);
+                                    }
+                                },
+                                (None, _) => warn!("logs_rx flush channel was closed")
                             }
                         },
                         _ = receivers_cancel.cancelled() => break,
@@ -1002,6 +1079,13 @@ impl Agent {
             } else {
                 None
             };
+
+        // Signal completed initialization
+        if let Some(init_complete_chan) = self.init_complete_chan.take() {
+            if let Err(e) = init_complete_chan.send(true) {
+                warn!(error = ?e, "failed to notify completed initialization")
+            }
+        }
 
         let mut result = Ok(());
         select! {
@@ -1049,7 +1133,7 @@ impl Agent {
 
         // Wait up until one second for receivers to finish
         let res =
-            wait::wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(1))
+            wait::wait_for_tasks_with_timeout(&mut receivers_task_set, Duration::from_secs(3))
                 .await;
         if let Err(e) = res {
             return Err(format!("timed out waiting for receiver exit: {}", e).into());
