@@ -94,18 +94,21 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: &[KeyValue]) 
     if resource_attributes.is_empty() {
         return attributes.to_vec();
     }
-    // Let's retain the order and create a map of keys to reduce the number of iterations required to find/replace an existing key
-    let mut map = indexmap::IndexMap::<String, KeyValue>::new();
-    // Consume the owned resource_attributes without cloning
+    // Let's retain the order and create a map of keys to values (not KeyValue structs)
+    let mut map = indexmap::IndexMap::<String, Option<AnyValue>>::new();
     for attr in resource_attributes {
-        map.insert(attr.key.clone(), attr);
+        map.insert(attr.key, attr.value);
     }
 
     // Now iterate the new attributes and see if we already have a key or not
     for new_attr in attributes {
-        map.insert(new_attr.key.clone(), new_attr.clone());
+        map.insert(new_attr.key.clone(), new_attr.value.clone());
     }
-    map.into_values().collect()
+
+    // Reconstruct KeyValue structs from the map entries
+    map.into_iter()
+        .map(|(key, value)| KeyValue { key, value })
+        .collect()
 }
 
 #[cfg(not(feature = "pyo3"))]
