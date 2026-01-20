@@ -73,7 +73,7 @@ impl ResourceContainer for ResourceLogs {
 /// Sets or appends resource attributes to any type that implements ResourceContainer
 pub fn set_or_append_resource_attributes<T: ResourceContainer>(
     target: &mut T,
-    attributes: Vec<KeyValue>,
+    attributes: &[KeyValue],
 ) {
     let resource = target.resource_mut();
     *resource = Some(match resource.take() {
@@ -90,22 +90,22 @@ pub fn set_or_append_resource_attributes<T: ResourceContainer>(
     });
 }
 
-pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: Vec<KeyValue>) -> Vec<KeyValue> {
+pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: &[KeyValue]) -> Vec<KeyValue> {
     if resource_attributes.is_empty() {
-        return attributes;
+        return attributes.to_vec();
     }
     // Let's retain the order and create a map of keys to reduce the number of iterations required to find/replace an existing key
     let mut map = indexmap::IndexMap::<String, KeyValue>::new();
-    // Yes there is only one, but we've already determined that we have one.
-    for attr in resource_attributes.iter() {
-        map.insert(attr.key.clone(), attr.clone());
+    // Consume the owned resource_attributes without cloning
+    for attr in resource_attributes {
+        map.insert(attr.key.clone(), attr);
     }
 
     // Now iterate the new attributes and see if we already have a key or not
     for new_attr in attributes {
-        map.insert(new_attr.key.clone(), new_attr);
+        map.insert(new_attr.key.clone(), new_attr.clone());
     }
-    map.values().cloned().collect()
+    map.into_values().collect()
 }
 
 #[cfg(not(feature = "pyo3"))]
@@ -383,7 +383,7 @@ where
                     // If any resource attributes were provided on start, set or append them to the resources
                     if !self.resource_attributes.is_empty() {
                         for item in &mut message.payload {
-                            set_or_append_resource_attributes(item, self.resource_attributes.clone())
+                            set_or_append_resource_attributes(item, &self.resource_attributes)
                         }
                     }
 
@@ -480,17 +480,17 @@ mod tests {
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
         let mut spans = trace_request.resource_spans.pop().unwrap();
-        set_or_append_resource_attributes(&mut spans, new_attrs.clone());
+        set_or_append_resource_attributes(&mut spans, &new_attrs);
         verify_attr_appended(spans.resource.unwrap().attributes, 7, 6);
 
         let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
         let mut logs = logs_request.resource_logs.pop().unwrap();
-        set_or_append_resource_attributes(&mut logs, new_attrs.clone());
+        set_or_append_resource_attributes(&mut logs, &new_attrs);
         verify_attr_appended(logs.resource.unwrap().attributes, 7, 6);
 
         let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
         let mut metrics = metrics_request.resource_metrics.pop().unwrap();
-        set_or_append_resource_attributes(&mut metrics, new_attrs);
+        set_or_append_resource_attributes(&mut metrics, &new_attrs);
         verify_attr_appended(metrics.resource.unwrap().attributes, 7, 6);
     }
 
@@ -506,19 +506,19 @@ mod tests {
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
         let mut spans = trace_request.resource_spans.pop().unwrap();
         spans.resource = None;
-        set_or_append_resource_attributes(&mut spans, new_attrs.clone());
+        set_or_append_resource_attributes(&mut spans, &new_attrs);
         verify_attr_appended(spans.resource.unwrap().attributes, 1, 0);
 
         let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
         let mut logs = logs_request.resource_logs.pop().unwrap();
         logs.resource = None;
-        set_or_append_resource_attributes(&mut logs, new_attrs.clone());
+        set_or_append_resource_attributes(&mut logs, &new_attrs);
         verify_attr_appended(logs.resource.unwrap().attributes, 1, 0);
 
         let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
         let mut metrics = metrics_request.resource_metrics.pop().unwrap();
         metrics.resource = None;
-        set_or_append_resource_attributes(&mut metrics, new_attrs);
+        set_or_append_resource_attributes(&mut metrics, &new_attrs);
         verify_attr_appended(metrics.resource.unwrap().attributes, 1, 0);
     }
 
@@ -547,17 +547,17 @@ mod tests {
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
         let mut spans = trace_request.resource_spans.pop().unwrap();
-        set_or_append_resource_attributes(&mut spans, new_attrs.clone());
+        set_or_append_resource_attributes(&mut spans, &new_attrs);
         verify_attr_updated(spans.resource.unwrap().attributes);
 
         let mut logs_request = FakeOTLP::logs_service_request_with_logs(1, 1);
         let mut logs = logs_request.resource_logs.pop().unwrap();
-        set_or_append_resource_attributes(&mut logs, new_attrs.clone());
+        set_or_append_resource_attributes(&mut logs, &new_attrs);
         verify_attr_updated(logs.resource.unwrap().attributes);
 
         let mut metrics_request = FakeOTLP::metrics_service_request_with_metrics(1, 1);
         let mut metrics = metrics_request.resource_metrics.pop().unwrap();
-        set_or_append_resource_attributes(&mut metrics, new_attrs.clone());
+        set_or_append_resource_attributes(&mut metrics, &new_attrs);
         verify_attr_updated(metrics.resource.unwrap().attributes);
     }
 
