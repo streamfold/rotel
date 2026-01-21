@@ -304,7 +304,6 @@ mod tests {
 
     #[test]
     fn test_regex_parser_timestamp_field_not_matched() {
-        // Configure timestamp for a field that doesn't exist in the regex
         let parser = RegexParser::new(r"^(?P<message>.+)$")
             .unwrap()
             .with_timestamp("nonexistent_field", NGINX_TIME_FORMAT);
@@ -314,5 +313,23 @@ mod tests {
             result.timestamp.is_none(),
             "Non-matching timestamp field should result in None"
         );
+    }
+
+    #[test]
+    fn test_regex_parser_optional_timestamp_not_present() {
+        let parser = RegexParser::new(r"^(?P<message>\w+)(?: \[(?P<ts>[^\]]+)\])?$")
+            .unwrap()
+            .with_timestamp("ts", NGINX_TIME_FORMAT);
+
+        let result = parser.parse("Hello").unwrap();
+
+        assert!(result.timestamp.is_none());
+        assert_eq!(
+            result.attributes.iter().find(|kv| kv.key == "ts").is_none(),
+            true
+        );
+
+        let result_with_ts = parser.parse("Hello [17/Dec/2025:10:15:32 +0000]").unwrap();
+        assert!(result_with_ts.timestamp.is_some());
     }
 }
