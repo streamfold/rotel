@@ -24,6 +24,18 @@ pub enum ParserType {
     NginxError,
 }
 
+/// Format for nginx access logs
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NginxAccessFormat {
+    /// Auto-detect format per line (JSON vs combined)
+    #[default]
+    Auto,
+    /// Combined log format (regex-based)
+    Combined,
+    /// JSON log format
+    Json,
+}
+
 /// Configuration for the file receiver
 #[derive(Debug, Clone)]
 pub struct FileReceiverConfig {
@@ -35,6 +47,8 @@ pub struct FileReceiverConfig {
     pub parser: ParserType,
     /// Regex pattern (when parser is Regex)
     pub regex_pattern: Option<String>,
+    /// Nginx access log format (when parser is NginxAccess)
+    pub nginx_access_format: NginxAccessFormat,
     /// Where to start reading: beginning or end of file
     pub start_at: StartAt,
     /// Watch mode: auto, native, or poll
@@ -77,6 +91,7 @@ impl Default for FileReceiverConfig {
             exclude: Vec::new(),
             parser: ParserType::None,
             regex_pattern: None,
+            nginx_access_format: NginxAccessFormat::Auto,
             start_at: StartAt::End,
             watch_mode: WatchMode::Auto,
             poll_interval: Duration::from_millis(250),

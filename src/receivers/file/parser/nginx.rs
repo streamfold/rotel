@@ -28,6 +28,9 @@
 //! 2025/12/17 10:15:32 [error] 1234#5678: *9 open() "/var/www/missing.html" failed (2: No such file or directory)
 //! ```
 //!
+use chrono::DateTime;
+use opentelemetry_proto::tonic::common::v1::{AnyValue, any_value};
+
 use super::json::JsonParser;
 use super::regex::RegexParser;
 use super::traits::{ParsedLog, Parser};
@@ -82,8 +85,14 @@ pub fn error_parser() -> Result<NginxErrorParser> {
 ///   '"body_bytes_sent":$body_bytes_sent'
 /// '}';
 /// ```
-pub fn json_access_parser() -> JsonParser {
-    JsonParser::new()
+pub fn json_access_parser() -> NginxJsonAccessParser {
+    NginxJsonAccessParser::new()
+}
+
+/// Create an auto-detecting parser for nginx access logs.
+/// Detects JSON vs combined format per-line.
+pub fn auto_access_parser() -> Result<NginxAutoAccessParser> {
+    NginxAutoAccessParser::new()
 }
 
 /// Parser for nginx combined access log format.
@@ -105,7 +114,9 @@ impl NginxAccessParser {
 
 impl Parser for NginxAccessParser {
     fn parse(&self, line: &str) -> Result<ParsedLog> {
-        self.regex.parse(line)
+        let mut parsed = self.regex.parse(line)?;
+        parsed.add_string("source", "nginx");
+        Ok(parsed)
     }
 }
 
@@ -124,7 +135,86 @@ impl NginxErrorParser {
 
 impl Parser for NginxErrorParser {
     fn parse(&self, line: &str) -> Result<ParsedLog> {
-        self.regex.parse(line)
+        let mut parsed = self.regex.parse(line)?;
+        parsed.add_string("source", "nginx");
+        Ok(parsed)
+    }
+}
+
+/// Parse nginx time_local field from attributes and set timestamp on ParsedLog.
+fn parse_time_local_timestamp(parsed: &mut ParsedLog) {
+    let time_local = parsed.attributes.iter().find_map(|kv| {
+        if kv.key == "time_local" {
+            if let Some(AnyValue {
+                value: Some(any_value::Value::StringValue(s)),
+            }) = &kv.value
+            {
+                return Some(s.as_str());
+            }
+        }
+        None
+    });
+
+    if let Some(ts) = time_local {
+        if let Some(nanos) = DateTime::parse_from_str(ts, NGINX_TIME_LOCAL_FORMAT)
+            .ok()
+            .and_then(|dt| dt.timestamp_nanos_opt())
+            .map(|n| n as u64)
+        {
+            parsed.timestamp = Some(nanos);
+        }
+    }
+}
+
+/// Parser for nginx JSON access log format.
+pub struct NginxJsonAccessParser {
+    json: JsonParser,
+}
+
+impl NginxJsonAccessParser {
+    pub fn new() -> Self {
+        Self {
+            json: JsonParser::new(),
+        }
+    }
+}
+
+impl Parser for NginxJsonAccessParser {
+    fn parse(&self, line: &str) -> Result<ParsedLog> {
+        let mut parsed = self.json.parse(line)?;
+        parse_time_local_timestamp(&mut parsed);
+        parsed.add_string("source", "nginx");
+        Ok(parsed)
+    }
+}
+
+/// Auto-detecting parser for nginx access logs.
+/// Detects JSON vs combined format based on whether the line starts with '{'.
+pub struct NginxAutoAccessParser {
+    combined: RegexParser,
+    json: JsonParser,
+}
+
+impl NginxAutoAccessParser {
+    pub fn new() -> Result<Self> {
+        let combined = RegexParser::new(NGINX_COMBINED_PATTERN)?
+            .with_timestamp("time_local", NGINX_TIME_LOCAL_FORMAT);
+        let json = JsonParser::new();
+        Ok(Self { combined, json })
+    }
+}
+
+impl Parser for NginxAutoAccessParser {
+    fn parse(&self, line: &str) -> Result<ParsedLog> {
+        let mut parsed = if line.starts_with('{') {
+            let mut p = self.json.parse(line)?;
+            parse_time_local_timestamp(&mut p);
+            p
+        } else {
+            self.combined.parse(line)?
+        };
+        parsed.add_string("source", "nginx");
+        Ok(parsed)
     }
 }
 
@@ -379,6 +469,43 @@ mod tests {
                 .iter()
                 .any(|kv| kv.key == "body_bytes_sent")
         );
+
+        assert_eq!(
+            get_string_value(&result, "source"),
+            Some("nginx"),
+            "NginxJsonAccessParser should add source attribute"
+        );
+
+        assert!(
+            result.timestamp.is_some(),
+            "NginxJsonAccessParser should parse time_local as timestamp"
+        );
+        let expected_nanos = 1765966532_000_000_000u64;
+        assert_eq!(result.timestamp.unwrap(), expected_nanos);
+    }
+
+    #[test]
+    fn test_json_access_parser_without_time_local() {
+        let parser = json_access_parser();
+
+        let json_log =
+            r#"{"remote_addr":"192.168.1.1","request":"GET /api HTTP/1.1","status":200}"#;
+
+        let result = parser.parse(json_log).unwrap();
+
+        assert_eq!(
+            get_string_value(&result, "remote_addr"),
+            Some("192.168.1.1")
+        );
+        assert_eq!(
+            get_string_value(&result, "source"),
+            Some("nginx"),
+            "Source attribute should still be added"
+        );
+        assert!(
+            result.timestamp.is_none(),
+            "Timestamp should be None when time_local is not present"
+        );
     }
 
     // Timestamp parsing tests are in regex.rs where the parsing logic lives.
@@ -417,15 +544,78 @@ mod tests {
 
     #[test]
     fn test_error_parser_no_timestamp() {
-        // NginxErrorParser doesn't parse timestamp (different format)
         let parser = error_parser().unwrap();
-
         let result = parser.parse(ERROR_LOG_SAMPLES[0]).unwrap();
+        assert!(result.timestamp.is_none());
+    }
 
-        // Error parser doesn't extract timestamp (it could be extended later)
-        assert!(
-            result.timestamp.is_none(),
-            "NginxErrorParser should not set timestamp"
+    const JSON_ACCESS_LOG_SAMPLES: &[&str] = &[
+        r#"{"time_local":"17/Dec/2025:10:15:32 +0000","remote_addr":"192.168.1.1","request":"GET /api/users HTTP/1.1","status":200,"body_bytes_sent":1234}"#,
+        r#"{"time_local":"17/Dec/2025:10:15:33 +0000","remote_addr":"10.0.0.50","remote_user":"alice","request":"POST /api/login HTTP/1.1","status":302}"#,
+    ];
+
+    #[test]
+    fn test_auto_parser_combined_format() {
+        let parser = auto_access_parser().unwrap();
+        let result = parser.parse(ACCESS_LOG_SAMPLES[0]).unwrap();
+
+        assert_eq!(
+            get_string_value(&result, "remote_addr"),
+            Some("192.168.1.1")
         );
+        assert_eq!(get_string_value(&result, "status"), Some("200"));
+        assert_eq!(get_string_value(&result, "source"), Some("nginx"));
+        assert!(result.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_auto_parser_json_format() {
+        let parser = auto_access_parser().unwrap();
+        let result = parser.parse(JSON_ACCESS_LOG_SAMPLES[0]).unwrap();
+
+        assert_eq!(
+            get_string_value(&result, "remote_addr"),
+            Some("192.168.1.1")
+        );
+        assert_eq!(
+            get_string_value(&result, "request"),
+            Some("GET /api/users HTTP/1.1")
+        );
+        assert_eq!(get_string_value(&result, "source"), Some("nginx"));
+        assert!(result.timestamp.is_some());
+        assert_eq!(result.timestamp.unwrap(), 1765966532_000_000_000u64);
+    }
+
+    #[test]
+    fn test_auto_parser_mixed_formats() {
+        let parser = auto_access_parser().unwrap();
+
+        let combined = parser.parse(ACCESS_LOG_SAMPLES[0]).unwrap();
+        assert_eq!(
+            get_string_value(&combined, "remote_addr"),
+            Some("192.168.1.1")
+        );
+
+        let json = parser.parse(JSON_ACCESS_LOG_SAMPLES[0]).unwrap();
+        assert_eq!(get_string_value(&json, "remote_addr"), Some("192.168.1.1"));
+
+        let combined2 = parser.parse(ACCESS_LOG_SAMPLES[1]).unwrap();
+        assert_eq!(
+            get_string_value(&combined2, "remote_addr"),
+            Some("10.0.0.50")
+        );
+    }
+
+    #[test]
+    fn test_auto_parser_json_without_time_local() {
+        let parser = auto_access_parser().unwrap();
+        let json_no_time = r#"{"remote_addr":"192.168.1.1","status":200}"#;
+        let result = parser.parse(json_no_time).unwrap();
+
+        assert_eq!(
+            get_string_value(&result, "remote_addr"),
+            Some("192.168.1.1")
+        );
+        assert!(result.timestamp.is_none());
     }
 }
