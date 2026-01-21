@@ -696,13 +696,14 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         let mut attributes = static_attributes.clone();
 
         // Parse line if parser is configured
-        let (parsed_attributes, severity_number, severity_text) =
+        let (parsed_attributes, severity_number, severity_text, parsed_timestamp) =
             if let Some(ref parser) = ctx.parser {
                 match parser.parse(&line) {
                     Ok(parsed) => (
                         parsed.attributes,
                         parsed.severity_number.unwrap_or(0),
                         parsed.severity_text.unwrap_or_default(),
+                        parsed.timestamp,
                     ),
                     Err(e) => {
                         debug!("Parse error: {}", e);
@@ -710,15 +711,18 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                     }
                 }
             } else {
-                (Vec::new(), 0, String::new())
+                (Vec::new(), 0, String::new(), None)
             };
+
+        // Use parsed timestamp if available, otherwise use current time
+        let time_unix_nano = parsed_timestamp.unwrap_or(now);
 
         // Add parsed attributes
         attributes.extend(parsed_attributes);
 
         // Build LogRecord
         let log_record = LogRecord {
-            time_unix_nano: now,
+            time_unix_nano,
             observed_time_unix_nano: now,
             severity_number,
             severity_text,
@@ -1890,6 +1894,90 @@ mod tests {
         assert!(
             result.is_ok(),
             "load_state should succeed when no state file exists"
+        );
+    }
+
+    #[test]
+    fn test_parsed_timestamp_flows_to_log_record() {
+        use crate::receivers::file::parser::Parser;
+        use crate::receivers::file::parser::nginx::access_parser;
+
+        let parser = access_parser().unwrap();
+        let log_line = r#"192.168.1.1 - - [17/Dec/2025:10:15:32 +0000] "GET /api/users HTTP/1.1" 200 1234 "-" "curl/7.68.0""#;
+        let parsed = parser.parse(log_line).unwrap();
+
+        assert!(parsed.timestamp.is_some());
+
+        let parsed_timestamp = parsed.timestamp.unwrap();
+        let expected_timestamp = 1765966532_000_000_000u64;
+        assert_eq!(parsed_timestamp, expected_timestamp);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+
+        let time_unix_nano = parsed.timestamp.unwrap_or(now);
+
+        let log_record = LogRecord {
+            time_unix_nano,
+            observed_time_unix_nano: now,
+            severity_number: parsed.severity_number.unwrap_or(0),
+            severity_text: parsed.severity_text.unwrap_or_default(),
+            body: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(log_line.to_string())),
+            }),
+            attributes: parsed.attributes,
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![],
+            span_id: vec![],
+            event_name: String::new(),
+        };
+
+        assert_eq!(log_record.time_unix_nano, expected_timestamp);
+        assert_ne!(
+            log_record.time_unix_nano,
+            log_record.observed_time_unix_nano
+        );
+    }
+
+    #[test]
+    fn test_log_record_uses_current_time_when_no_parsed_timestamp() {
+        use crate::receivers::file::parser::{Parser, RegexParser};
+
+        let parser = RegexParser::new(r"^(?P<message>.+)$").unwrap();
+        let log_line = "Just a simple log message";
+        let parsed = parser.parse(log_line).unwrap();
+
+        assert!(parsed.timestamp.is_none());
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+
+        let time_unix_nano = parsed.timestamp.unwrap_or(now);
+
+        let log_record = LogRecord {
+            time_unix_nano,
+            observed_time_unix_nano: now,
+            severity_number: 0,
+            severity_text: String::new(),
+            body: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(log_line.to_string())),
+            }),
+            attributes: parsed.attributes,
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![],
+            span_id: vec![],
+            event_name: String::new(),
+        };
+
+        assert_eq!(
+            log_record.time_unix_nano,
+            log_record.observed_time_unix_nano
         );
     }
 }

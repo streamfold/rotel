@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use chrono::DateTime;
 use regex::Regex;
 
 use super::traits::{ParsedLog, Parser};
@@ -13,6 +14,10 @@ pub struct RegexParser {
     group_names: Vec<String>,
     /// Number of capture groups (for pre-allocation)
     num_groups: usize,
+    /// Optional field name that contains a timestamp to parse
+    timestamp_field: Option<String>,
+    /// Chrono format string for parsing the timestamp field
+    timestamp_format: Option<String>,
 }
 
 impl RegexParser {
@@ -43,7 +48,24 @@ impl RegexParser {
             regex,
             group_names,
             num_groups,
+            timestamp_field: None,
+            timestamp_format: None,
         })
+    }
+
+    /// Configure a field to be parsed as a timestamp.
+    ///
+    /// When the specified field is encountered during parsing, its value
+    /// will be parsed using the provided chrono format string and stored
+    /// in `ParsedLog.timestamp` as nanoseconds since Unix epoch.
+    ///
+    /// # Arguments
+    /// * `field` - The name of the capture group containing the timestamp
+    /// * `format` - A chrono format string (e.g., "%d/%b/%Y:%H:%M:%S %z")
+    pub fn with_timestamp(mut self, field: impl Into<String>, format: impl Into<String>) -> Self {
+        self.timestamp_field = Some(field.into());
+        self.timestamp_format = Some(format.into());
+        self
     }
 
     /// Get the names of the capture groups in this regex
@@ -71,7 +93,25 @@ impl Parser for RegexParser {
 
         for name in &self.group_names {
             if let Some(m) = captures.name(name) {
-                result.add_string(name.clone(), m.as_str().to_string());
+                let value = m.as_str();
+
+                // Check if this field should be parsed as a timestamp
+                if let (Some(ts_field), Some(ts_format)) =
+                    (&self.timestamp_field, &self.timestamp_format)
+                {
+                    if name == ts_field {
+                        // Parse timestamp and store in result.timestamp
+                        if let Some(nanos) = DateTime::parse_from_str(value, ts_format)
+                            .ok()
+                            .and_then(|dt| dt.timestamp_nanos_opt())
+                            .map(|n| n as u64)
+                        {
+                            result.timestamp = Some(nanos);
+                        }
+                    }
+                }
+
+                result.add_string(name.clone(), value.to_string());
             }
         }
 
@@ -161,5 +201,109 @@ mod tests {
         let result = parser.parse("x-y-z").unwrap();
         // Should have exactly 3 attributes
         assert_eq!(result.attributes.len(), 3);
+    }
+
+    // Timestamp parsing tests
+
+    /// Nginx time_local format for testing
+    const NGINX_TIME_FORMAT: &str = "%d/%b/%Y:%H:%M:%S %z";
+
+    #[test]
+    fn test_regex_parser_with_timestamp_timezone_offsets() {
+        let parser = RegexParser::new(r"^\[(?P<ts>[^\]]+)\]$")
+            .unwrap()
+            .with_timestamp("ts", NGINX_TIME_FORMAT);
+
+        // Test negative timezone offset (-0500 = EST)
+        // 10:15:32 -0500 = 15:15:32 UTC (5 hours later than +0000)
+        let result_neg = parser.parse("[17/Dec/2025:10:15:32 -0500]").unwrap();
+        assert!(result_neg.timestamp.is_some());
+
+        // Test positive timezone offset (+0530 = IST)
+        // 10:15:32 +0530 = 04:45:32 UTC (5.5 hours earlier than +0000)
+        let result_pos = parser.parse("[17/Dec/2025:10:15:32 +0530]").unwrap();
+        assert!(result_pos.timestamp.is_some());
+
+        // UTC reference
+        let result_utc = parser.parse("[17/Dec/2025:10:15:32 +0000]").unwrap();
+        let timestamp_utc = result_utc.timestamp.unwrap();
+
+        // -0500 should be 5 hours (18000 seconds) later than UTC
+        let expected_neg = timestamp_utc + (5 * 60 * 60 * 1_000_000_000);
+        assert_eq!(result_neg.timestamp.unwrap(), expected_neg);
+
+        // +0530 should be 5.5 hours (19800 seconds) earlier than UTC
+        let expected_pos = timestamp_utc - (5 * 60 * 60 * 1_000_000_000 + 30 * 60 * 1_000_000_000);
+        assert_eq!(result_pos.timestamp.unwrap(), expected_pos);
+
+        assert_eq!(
+            get_string_value(&result_utc, "ts"),
+            Some("17/Dec/2025:10:15:32 +0000")
+        );
+    }
+
+    #[test]
+    fn test_regex_parser_with_timestamp_invalid_format() {
+        let parser = RegexParser::new(r"^\[(?P<ts>[^\]]+)\]$")
+            .unwrap()
+            .with_timestamp("ts", NGINX_TIME_FORMAT);
+
+        // Invalid timestamp format - regex matches but timestamp parsing fails
+        let result = parser.parse("[invalid timestamp]").unwrap();
+        assert!(
+            result.timestamp.is_none(),
+            "Invalid timestamp should result in None"
+        );
+
+        // Wrong date format
+        let result = parser.parse("[2025/12/17 10:15:32]").unwrap();
+        assert!(result.timestamp.is_none());
+
+        // Missing timezone
+        let result = parser.parse("[17/Dec/2025:10:15:32]").unwrap();
+        assert!(result.timestamp.is_none());
+    }
+
+    #[test]
+    fn test_regex_parser_without_timestamp_config() {
+        // Parser without timestamp configuration should not set timestamp
+        let parser = RegexParser::new(r"^\[(?P<ts>[^\]]+)\]$").unwrap();
+
+        let result = parser.parse("[17/Dec/2025:10:15:32 +0000]").unwrap();
+        assert!(
+            result.timestamp.is_none(),
+            "Parser without timestamp config should not set timestamp"
+        );
+    }
+
+    #[test]
+    fn test_regex_parser_timestamp_field_not_matched() {
+        let parser = RegexParser::new(r"^(?P<message>.+)$")
+            .unwrap()
+            .with_timestamp("nonexistent_field", NGINX_TIME_FORMAT);
+
+        let result = parser.parse("Hello world").unwrap();
+        assert!(
+            result.timestamp.is_none(),
+            "Non-matching timestamp field should result in None"
+        );
+    }
+
+    #[test]
+    fn test_regex_parser_optional_timestamp_not_present() {
+        let parser = RegexParser::new(r"^(?P<message>\w+)(?: \[(?P<ts>[^\]]+)\])?$")
+            .unwrap()
+            .with_timestamp("ts", NGINX_TIME_FORMAT);
+
+        let result = parser.parse("Hello").unwrap();
+
+        assert!(result.timestamp.is_none());
+        assert_eq!(
+            result.attributes.iter().find(|kv| kv.key == "ts").is_none(),
+            true
+        );
+
+        let result_with_ts = parser.parse("Hello [17/Dec/2025:10:15:32 +0000]").unwrap();
+        assert!(result_with_ts.timestamp.is_some());
     }
 }

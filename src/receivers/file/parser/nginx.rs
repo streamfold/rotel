@@ -33,6 +33,9 @@ use super::regex::RegexParser;
 use super::traits::{ParsedLog, Parser};
 use crate::receivers::file::error::Result;
 
+/// Nginx time_local format string for chrono parsing.
+pub const NGINX_TIME_LOCAL_FORMAT: &str = "%d/%b/%Y:%H:%M:%S %z";
+
 /// Regex pattern for nginx combined access log format.
 ///
 /// Captures:
@@ -94,7 +97,8 @@ pub struct NginxAccessParser {
 impl NginxAccessParser {
     /// Create a new nginx access log parser.
     pub fn new() -> Result<Self> {
-        let regex = RegexParser::new(NGINX_COMBINED_PATTERN)?;
+        let regex = RegexParser::new(NGINX_COMBINED_PATTERN)?
+            .with_timestamp("time_local", NGINX_TIME_LOCAL_FORMAT);
         Ok(Self { regex })
     }
 }
@@ -374,6 +378,54 @@ mod tests {
                 .attributes
                 .iter()
                 .any(|kv| kv.key == "body_bytes_sent")
+        );
+    }
+
+    // Timestamp parsing tests are in regex.rs where the parsing logic lives.
+    // These tests verify NginxAccessParser correctly configures timestamp extraction.
+
+    #[test]
+    fn test_access_parser_sets_timestamp() {
+        let parser = access_parser().unwrap();
+
+        let result = parser.parse(ACCESS_LOG_SAMPLES[0]).unwrap();
+
+        // Verify timestamp is set
+        assert!(
+            result.timestamp.is_some(),
+            "NginxAccessParser should set timestamp from time_local"
+        );
+
+        // Verify it's the expected value (17/Dec/2025:10:15:32 +0000)
+        let expected_nanos = 1765966532_000_000_000u64;
+        assert_eq!(result.timestamp.unwrap(), expected_nanos);
+    }
+
+    #[test]
+    fn test_access_parser_all_samples_have_timestamp() {
+        let parser = access_parser().unwrap();
+
+        for (i, sample) in ACCESS_LOG_SAMPLES.iter().enumerate() {
+            let result = parser.parse(sample).unwrap();
+            assert!(
+                result.timestamp.is_some(),
+                "Sample {} should have timestamp set",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_error_parser_no_timestamp() {
+        // NginxErrorParser doesn't parse timestamp (different format)
+        let parser = error_parser().unwrap();
+
+        let result = parser.parse(ERROR_LOG_SAMPLES[0]).unwrap();
+
+        // Error parser doesn't extract timestamp (it could be extended later)
+        assert!(
+            result.timestamp.is_none(),
+            "NginxErrorParser should not set timestamp"
         );
     }
 }

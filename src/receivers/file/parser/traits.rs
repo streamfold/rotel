@@ -15,6 +15,8 @@ use crate::receivers::file::error::Result;
 /// which will be used to construct a LogRecord directly.
 #[derive(Debug, Default)]
 pub struct ParsedLog {
+    /// Timestamp in nanoseconds since Unix epoch (for time_unix_nano)
+    pub timestamp: Option<u64>,
     /// Parsed attributes (key-value pairs extracted from the log)
     pub attributes: Vec<KeyValue>,
     /// Optional severity number (OTLP severity 1-24)
@@ -32,6 +34,7 @@ impl ParsedLog {
     /// Create a ParsedLog with pre-allocated capacity for attributes
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
+            timestamp: None,
             attributes: Vec::with_capacity(capacity),
             severity_number: None,
             severity_text: None,
