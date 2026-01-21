@@ -774,6 +774,7 @@ To enable the File Receiver, specify it with `--receiver file` and provide at le
 | --file-receiver-include                            |                                  | Comma-separated glob patterns for files to include (e.g., "/var/log/\*.log") |
 | --file-receiver-exclude                            |                                  | Comma-separated glob patterns for files to exclude                           |
 | --file-receiver-parser                             | none                             | Parser type: none, json, regex, nginx_access, nginx_error                    |
+| --file-receiver-nginx-access-format                | auto                             | Nginx access log format: auto, combined, json (when parser=nginx_access)     |
 | --file-receiver-regex-pattern                      |                                  | Regex pattern with named capture groups (required when parser=regex)         |
 | --file-receiver-start-at                           | end                              | Where to start reading: beginning or end                                     |
 | --file-receiver-watch-mode                         | auto                             | Watch mode: auto, native, poll                                               |
@@ -808,7 +809,10 @@ The receiver includes several built-in parsers:
 - **none**: Raw log lines are passed through as-is in the log body
 - **json**: Parses JSON log lines and extracts fields as attributes
 - **regex**: Uses a custom regex pattern with named capture groups to extract attributes
-- **nginx_access**: Parses nginx combined access log format
+- **nginx_access**: Parses nginx access logs. Supports multiple formats via `--file-receiver-nginx-access-format`:
+  - `auto` (default): Auto-detects format per line (JSON vs combined)
+  - `combined`: Standard nginx combined log format (regex-based)
+  - `json`: JSON-formatted nginx logs (for nginx configured with `log_format json`)
 - **nginx_error**: Parses nginx error log format
 
 When using the regex parser, provide a pattern with named capture groups:
