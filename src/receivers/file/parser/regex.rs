@@ -209,37 +209,6 @@ mod tests {
     const NGINX_TIME_FORMAT: &str = "%d/%b/%Y:%H:%M:%S %z";
 
     #[test]
-    fn test_regex_parser_with_timestamp_utc() {
-        let parser = RegexParser::new(r"^\[(?P<timestamp>[^\]]+)\] (?P<message>.+)$")
-            .unwrap()
-            .with_timestamp("timestamp", NGINX_TIME_FORMAT);
-
-        let result = parser
-            .parse("[17/Dec/2025:10:15:32 +0000] Hello world")
-            .unwrap();
-
-        // Verify timestamp is set
-        assert!(result.timestamp.is_some());
-
-        // Verify the timestamp is reasonable (2025 is after 2020)
-        let nanos = result.timestamp.unwrap();
-        let min_2020 = 1577836800_000_000_000u64; // 2020-01-01 00:00:00 UTC
-        let max_2030 = 1893456000_000_000_000u64; // 2030-01-01 00:00:00 UTC
-        assert!(nanos > min_2020, "Timestamp should be after 2020");
-        assert!(nanos < max_2030, "Timestamp should be before 2030");
-
-        // Verify exact value: 2025-12-17 10:15:32 UTC
-        let expected_nanos = 1765966532_000_000_000u64;
-        assert_eq!(nanos, expected_nanos);
-
-        // Verify the timestamp is still in attributes as a string
-        assert_eq!(
-            get_string_value(&result, "timestamp"),
-            Some("17/Dec/2025:10:15:32 +0000")
-        );
-    }
-
-    #[test]
     fn test_regex_parser_with_timestamp_timezone_offsets() {
         let parser = RegexParser::new(r"^\[(?P<ts>[^\]]+)\]$")
             .unwrap()
@@ -266,6 +235,11 @@ mod tests {
         // +0530 should be 5.5 hours (19800 seconds) earlier than UTC
         let expected_pos = timestamp_utc - (5 * 60 * 60 * 1_000_000_000 + 30 * 60 * 1_000_000_000);
         assert_eq!(result_pos.timestamp.unwrap(), expected_pos);
+
+        assert_eq!(
+            get_string_value(&result_utc, "ts"),
+            Some("17/Dec/2025:10:15:32 +0000")
+        );
     }
 
     #[test]
