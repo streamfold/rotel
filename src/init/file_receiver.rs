@@ -5,7 +5,10 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::receivers::file::config::{FileReceiverConfig, ParserType as ConfigParserType};
+use crate::receivers::file::config::{
+    FileReceiverConfig, NginxAccessFormat as ConfigNginxAccessFormat,
+    ParserType as ConfigParserType,
+};
 use crate::receivers::file::input::StartAt;
 use crate::receivers::file::watcher::WatchMode;
 
@@ -36,6 +39,29 @@ impl From<ParserType> for ConfigParserType {
             ParserType::Regex => ConfigParserType::Regex,
             ParserType::NginxAccess => ConfigParserType::NginxAccess,
             ParserType::NginxError => ConfigParserType::NginxError,
+        }
+    }
+}
+
+/// Nginx access log format
+#[derive(Copy, Clone, Debug, Default, ValueEnum, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NginxAccessFormat {
+    /// Auto-detect format per line (JSON vs combined)
+    #[default]
+    Auto,
+    /// Combined log format (regex-based)
+    Combined,
+    /// JSON log format
+    Json,
+}
+
+impl From<NginxAccessFormat> for ConfigNginxAccessFormat {
+    fn from(f: NginxAccessFormat) -> Self {
+        match f {
+            NginxAccessFormat::Auto => ConfigNginxAccessFormat::Auto,
+            NginxAccessFormat::Combined => ConfigNginxAccessFormat::Combined,
+            NginxAccessFormat::Json => ConfigNginxAccessFormat::Json,
         }
     }
 }
@@ -106,6 +132,15 @@ pub struct FileReceiverArgs {
     /// Regex pattern with named capture groups (when parser=regex)
     #[arg(long, env = "ROTEL_FILE_RECEIVER_REGEX_PATTERN")]
     pub file_receiver_regex_pattern: Option<String>,
+
+    /// Nginx access log format: auto (default), combined, json (when parser=nginx_access)
+    #[arg(
+        value_enum,
+        long,
+        env = "ROTEL_FILE_RECEIVER_NGINX_ACCESS_FORMAT",
+        default_value = "auto"
+    )]
+    pub file_receiver_nginx_access_format: NginxAccessFormat,
 
     /// Where to start reading: beginning or end of file
     #[arg(
@@ -248,6 +283,7 @@ impl Default for FileReceiverArgs {
             file_receiver_exclude: Vec::new(),
             file_receiver_parser: ParserType::None,
             file_receiver_regex_pattern: None,
+            file_receiver_nginx_access_format: NginxAccessFormat::Auto,
             file_receiver_start_at: StartAtArg::End,
             file_receiver_watch_mode: WatchModeArg::Auto,
             file_receiver_poll_interval_ms: 250,
@@ -276,6 +312,7 @@ impl FileReceiverArgs {
             exclude: self.file_receiver_exclude.clone(),
             parser: self.file_receiver_parser.into(),
             regex_pattern: self.file_receiver_regex_pattern.clone(),
+            nginx_access_format: self.file_receiver_nginx_access_format.into(),
             start_at: self.file_receiver_start_at.into(),
             watch_mode: self.file_receiver_watch_mode.into(),
             poll_interval: Duration::from_millis(self.file_receiver_poll_interval_ms),

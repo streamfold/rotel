@@ -34,7 +34,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::bounded_channel::{self, BoundedReceiver, BoundedSender};
 
-use crate::receivers::file::config::{FileReceiverConfig, ParserType};
+use crate::receivers::file::config::{FileReceiverConfig, NginxAccessFormat, ParserType};
 use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{
     FileFinder, FileId, FileReader, GlobFileFinder, StartAt, get_path_from_file,
@@ -215,10 +215,21 @@ impl FileReceiver {
                 let parser = RegexParser::new(pattern).map_err(|e| Error::Regex(e.to_string()))?;
                 Ok(Some(Box::new(parser)))
             }
-            ParserType::NginxAccess => {
-                let parser = nginx::access_parser().map_err(|e| Error::Regex(e.to_string()))?;
-                Ok(Some(Box::new(parser)))
-            }
+            ParserType::NginxAccess => match config.nginx_access_format {
+                NginxAccessFormat::Auto => {
+                    let parser =
+                        nginx::auto_access_parser().map_err(|e| Error::Regex(e.to_string()))?;
+                    Ok(Some(Box::new(parser)))
+                }
+                NginxAccessFormat::Combined => {
+                    let parser = nginx::access_parser().map_err(|e| Error::Regex(e.to_string()))?;
+                    Ok(Some(Box::new(parser)))
+                }
+                NginxAccessFormat::Json => {
+                    let parser = nginx::json_access_parser();
+                    Ok(Some(Box::new(parser)))
+                }
+            },
             ParserType::NginxError => {
                 let parser = nginx::error_parser().map_err(|e| Error::Regex(e.to_string()))?;
                 Ok(Some(Box::new(parser)))

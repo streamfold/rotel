@@ -15,6 +15,7 @@
 #   -n, --files NUM        Number of log files to write to (default: 1)
 #   -m, --mode MODE        Watch mode: poll or native (default: poll)
 #   -D, --debounce MS      Debounce interval in ms for native watcher (default: 200) [rotel only]
+#   -f, --format FORMAT    Log format: combined or json (default: combined)
 #   -p, --protocol PROTO   OTLP protocol: grpc or http (default: grpc) [verify mode only]
 #   -t, --timeout SECS     Max seconds to wait for processing (default: 300) [verify mode only]
 #   -v, --verify           Enable verify mode: export to OTLP sink and count messages
@@ -30,6 +31,7 @@ RATE=1000
 NUM_FILES=1
 WATCH_MODE="native"
 DEBOUNCE_MS=200
+LOG_FORMAT="combined"
 PROTOCOL="grpc"
 TIMEOUT=300
 VERIFY=false
@@ -69,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -D|--debounce)
             DEBOUNCE_MS="$2"
+            shift 2
+            ;;
+        -f|--format)
+            LOG_FORMAT="$2"
             shift 2
             ;;
         -p|--protocol)
@@ -443,24 +449,44 @@ generate_logs_fast() {
     local rate=$2
     local duration=$3
     local num_files=$4
+    local log_format=$5
 
-    log_info "Generating logs at ${rate}/s for ${duration}s across ${num_files} file(s)" >&2
+    log_info "Generating $log_format logs at ${rate}/s for ${duration}s across ${num_files} file(s)" >&2
 
     # Use Python for much faster log generation with rotation
     python3 << EOF
 import time
 import random
 import os
+import json
 
 log_base = "$log_base"
 rate = $rate
 duration = $duration
 num_files = $num_files
+log_format = "$log_format"
 rotate_interval = 5  # Rotate every 5 seconds
 
 methods = ["GET", "POST", "PUT", "DELETE"]
 paths = ["/api/users", "/api/orders", "/api/products", "/api/health"]
 statuses = [200, 201, 204, 400, 404, 500]
+
+def generate_combined_line(ip, timestamp, method, path, status):
+    return f'{ip} - - [{timestamp}] "{method} {path} HTTP/1.1" {status} 1234 "-" "benchmark/{int(time.time())}"'
+
+def generate_json_line(ip, timestamp, method, path, status):
+    return json.dumps({
+        "time_local": timestamp,
+        "remote_addr": ip,
+        "remote_user": "-",
+        "request": f"{method} {path} HTTP/1.1",
+        "status": status,
+        "body_bytes_sent": 1234,
+        "http_referer": "-",
+        "http_user_agent": f"benchmark/{int(time.time())}"
+    }, separators=(',', ':'))
+
+generate_line = generate_json_line if log_format == "json" else generate_combined_line
 
 # Calculate batch size and interval
 # Write in batches of 1000 lines, sleep between batches
@@ -515,7 +541,7 @@ while time.time() < end_time:
         method = random.choice(methods)
         path = random.choice(paths)
         status = random.choice(statuses)
-        lines.append(f'{ip} - - [{timestamp}] "{method} {path} HTTP/1.1" {status} 1234 "-" "benchmark/{int(time.time())}"')
+        lines.append(generate_line(ip, timestamp, method, path, status))
 
     # Write batch to current file (round-robin across files)
     file_handles[current_file_idx].write('\n'.join(lines) + '\n')
@@ -687,10 +713,9 @@ receivers:
 processors:
   memory_limiter:
     check_interval: 1s
-    limit_mib: 512
+    limit_mib: 1024
   batch:
-    timeout: 100ms
-    send_batch_size: 1000
+    timeout: 200ms
 
 exporters:
 $exporter_config
@@ -782,7 +807,7 @@ run_benchmark() {
     # Generate logs across multiple files
     local gen_start_time=$(python3 -c "import time; print(int(time.time() * 1000))")
     local count
-    count=$(generate_logs_fast "$LOG_BASE" "$RATE" "$DURATION" "$NUM_FILES")
+    count=$(generate_logs_fast "$LOG_BASE" "$RATE" "$DURATION" "$NUM_FILES" "$LOG_FORMAT")
     local gen_end_time=$(python3 -c "import time; print(int(time.time() * 1000))")
     local gen_time_ms=$((gen_end_time - gen_start_time))
 
@@ -909,6 +934,7 @@ Benchmark Results: $collector_name
 =====================================
 Status:          $status
 Mode:            $mode_str
+Log Format:      $LOG_FORMAT
 Watch Mode:      $WATCH_MODE
 Num Files:       $NUM_FILES
 
@@ -945,6 +971,7 @@ generate_report() {
     echo "  Duration:     ${DURATION}s"
     echo "  Target Rate:  ${RATE} logs/s"
     echo "  Num Files:    ${NUM_FILES}"
+    echo "  Log Format:   $LOG_FORMAT"
     echo "  Watch Mode:   $WATCH_MODE"
     if [[ "$VERIFY" == "true" ]]; then
         echo "  Mode:         verify (OTLP export)"
@@ -975,6 +1002,7 @@ main() {
     log_info "Duration:   ${DURATION}s"
     log_info "Rate:       ${RATE} logs/s"
     log_info "Num Files:  $NUM_FILES"
+    log_info "Log Format: $LOG_FORMAT"
     log_info "Watch Mode: $WATCH_MODE"
     if [[ "$COLLECTOR" == "rotel" || "$COLLECTOR" == "both" ]]; then
         log_info "Debounce:   ${DEBOUNCE_MS}ms (rotel only)"
@@ -988,6 +1016,12 @@ main() {
     fi
     log_info "Output:     $OUTPUT_DIR"
     echo ""
+
+    # Validate log format
+    if [[ "$LOG_FORMAT" != "combined" && "$LOG_FORMAT" != "json" ]]; then
+        log_error "Invalid log format: $LOG_FORMAT (must be 'combined' or 'json')"
+        exit 1
+    fi
 
     # Validate protocol (only needed in verify mode)
     if [[ "$VERIFY" == "true" && "$PROTOCOL" != "grpc" && "$PROTOCOL" != "http" ]]; then
