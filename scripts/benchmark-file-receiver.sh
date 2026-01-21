@@ -713,10 +713,9 @@ receivers:
 processors:
   memory_limiter:
     check_interval: 1s
-    limit_mib: 512
+    limit_mib: 1024
   batch:
-    timeout: 100ms
-    send_batch_size: 1000
+    timeout: 200ms
 
 exporters:
 $exporter_config
