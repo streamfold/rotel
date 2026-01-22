@@ -107,8 +107,8 @@ impl TransformPayload<ResourceLogs> for Transformer {
 mod tests {
     use super::*;
     use crate::exporters::clickhouse::transformer::Transformer;
-    use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue};
     use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValueValue;
+    use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue};
     use opentelemetry_proto::tonic::logs::v1::{LogRecord, ScopeLogs};
     use opentelemetry_proto::tonic::resource::v1::Resource;
 
@@ -121,14 +121,12 @@ mod tests {
             body: Some(AnyValue {
                 value: Some(AnyValueValue::StringValue(body.to_string())),
             }),
-            attributes: vec![
-                KeyValue {
-                    key: "test.attr".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(AnyValueValue::StringValue("test_value".to_string())),
-                    }),
-                },
-            ],
+            attributes: vec![KeyValue {
+                key: "test.attr".to_string(),
+                value: Some(AnyValue {
+                    value: Some(AnyValueValue::StringValue("test_value".to_string())),
+                }),
+            }],
             dropped_attributes_count: 0,
             flags: 1,
             trace_id: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
@@ -197,7 +195,10 @@ mod tests {
         };
 
         let (result, _) = transformer.transform(vec![message]);
-        assert!(result.is_ok(), "Transform should succeed with empty event_name");
+        assert!(
+            result.is_ok(),
+            "Transform should succeed with empty event_name"
+        );
     }
 
     #[test]
