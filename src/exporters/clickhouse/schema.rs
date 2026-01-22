@@ -104,6 +104,7 @@ pub struct LogRecordRow<'a> {
     pub(crate) scope_version: &'a str,
     pub(crate) scope_attributes: &'a MapOrJson<'a>,
     pub(crate) log_attributes: MapOrJson<'a>,
+    pub(crate) event_name: &'a str,
 }
 
 pub fn get_log_row_col_keys() -> String {
@@ -123,6 +124,7 @@ pub fn get_log_row_col_keys() -> String {
         "ScopeVersion",
         "ScopeAttributes",
         "LogAttributes",
+        "EventName",
     ];
 
     fields.join(",")

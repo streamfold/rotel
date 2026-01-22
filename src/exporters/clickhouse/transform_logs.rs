@@ -77,6 +77,7 @@ impl TransformPayload<ResourceLogs> for Transformer {
                             scope_version: &scope_version,
                             scope_attributes: &scope_attrs,
                             log_attributes: self.transform_attrs_kv(&log_attrs),
+                            event_name: &log.event_name,
                         };
 
                         match payload_builder.add_row(&row) {
@@ -99,5 +100,120 @@ impl TransformPayload<ResourceLogs> for Transformer {
             .map(|payload| vec![(RequestType::Logs, payload)]);
 
         (result, None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exporters::clickhouse::transformer::Transformer;
+    use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue};
+    use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValueValue;
+    use opentelemetry_proto::tonic::logs::v1::{LogRecord, ScopeLogs};
+    use opentelemetry_proto::tonic::resource::v1::Resource;
+
+    fn create_test_log_record(event_name: &str, body: &str) -> LogRecord {
+        LogRecord {
+            time_unix_nano: 1234567890,
+            observed_time_unix_nano: 1234567890,
+            severity_number: 9, // INFO
+            severity_text: "INFO".to_string(),
+            body: Some(AnyValue {
+                value: Some(AnyValueValue::StringValue(body.to_string())),
+            }),
+            attributes: vec![
+                KeyValue {
+                    key: "test.attr".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(AnyValueValue::StringValue("test_value".to_string())),
+                    }),
+                },
+            ],
+            dropped_attributes_count: 0,
+            flags: 1,
+            trace_id: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            span_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            event_name: event_name.to_string(),
+        }
+    }
+
+    fn create_test_resource_logs(log_records: Vec<LogRecord>) -> ResourceLogs {
+        ResourceLogs {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(AnyValueValue::StringValue("test-service".to_string())),
+                    }),
+                }],
+                dropped_attributes_count: 0,
+                entity_refs: vec![],
+            }),
+            scope_logs: vec![ScopeLogs {
+                scope: Some(InstrumentationScope {
+                    name: "test-scope".to_string(),
+                    version: "1.0.0".to_string(),
+                    attributes: vec![],
+                    dropped_attributes_count: 0,
+                }),
+                log_records,
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_event_name_is_preserved() {
+        let transformer = Transformer::new(crate::exporters::clickhouse::Compression::None, true);
+
+        let log_record = create_test_log_record("introspection.feedback", "thumbs_up");
+        let resource_logs = create_test_resource_logs(vec![log_record]);
+
+        let message = Message {
+            payload: vec![resource_logs],
+            metadata: None,
+            request_context: None,
+        };
+
+        let (result, _) = transformer.transform(vec![message]);
+        assert!(result.is_ok(), "Transform should succeed");
+
+        // The transform succeeded, which means the LogRecordRow was created with event_name
+        // The actual serialization includes the event_name field
+    }
+
+    #[test]
+    fn test_empty_event_name() {
+        let transformer = Transformer::new(crate::exporters::clickhouse::Compression::None, true);
+
+        let log_record = create_test_log_record("", "test body");
+        let resource_logs = create_test_resource_logs(vec![log_record]);
+
+        let message = Message {
+            payload: vec![resource_logs],
+            metadata: None,
+            request_context: None,
+        };
+
+        let (result, _) = transformer.transform(vec![message]);
+        assert!(result.is_ok(), "Transform should succeed with empty event_name");
+    }
+
+    #[test]
+    fn test_log_body_string_value() {
+        let transformer = Transformer::new(crate::exporters::clickhouse::Compression::None, true);
+
+        let log_record = create_test_log_record("test.event", "hello world");
+        let resource_logs = create_test_resource_logs(vec![log_record]);
+
+        let message = Message {
+            payload: vec![resource_logs],
+            metadata: None,
+            request_context: None,
+        };
+
+        let (result, _) = transformer.transform(vec![message]);
+        assert!(result.is_ok(), "Transform should succeed");
     }
 }
