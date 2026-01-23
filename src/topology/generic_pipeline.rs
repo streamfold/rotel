@@ -4,7 +4,7 @@ use crate::bounded_channel::BoundedReceiver;
 use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBatch};
 use crate::topology::fanout::{Fanout, FanoutFuture};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
-use crate::topology::payload::Message;
+use crate::topology::payload::{Ack, Message};
 use opentelemetry::KeyValue as InstKeyValue;
 use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -392,14 +392,23 @@ where
 
                     message = self.run_processors(message, len_processor_modules, &processor_modules, &inspector);
 
-                    match batch.offer(vec![message]) {
-                        Ok(Some(popped)) => {
-                            let fut = self.fanout.send_async(popped);
-                            send_fut = Some(fut);
+                    // If we ended up deleting all items, then simply ack and drop here
+                    if message.size_of() == 0 {
+                        if let Some(metadata) = message.metadata.take() {
+                            if let Err(e) = metadata.ack().await {
+                                warn!("Failed to acknowledge message: {:?}", e);
+                            }
                         }
-                        Ok(None) => {},
-                        Err(_) => {
-                            error!("Too many batch items split, dropping data. Consider increasing the batch size.")
+                    } else {
+                        match batch.offer(vec![message]) {
+                            Ok(Some(popped)) => {
+                                let fut = self.fanout.send_async(popped);
+                                send_fut = Some(fut);
+                            }
+                            Ok(None) => {},
+                            Err(_) => {
+                                error!("Too many batch items split, dropping data. Consider increasing the batch size.")
+                            }
                         }
                     }
                 },
@@ -687,5 +696,103 @@ mod tests {
         // Cancel the pipeline and wait for it to finish
         pipeline_token.cancel();
         let _ = pipeline_handle.await;
+    }
+
+    /// Test that verifies when run_processors() is called with an actual Python processor
+    /// that deletes all items in the payload, ack() is called on the Message metadata.
+    #[cfg(feature = "pyo3")]
+    #[tokio::test]
+    async fn test_run_processors_with_python_processor_acks_when_payload_emptied() {
+        use crate::bounded_channel::bounded;
+        use crate::topology::payload::{
+            ForwarderAcknowledgement, ForwarderMetadata, MessageMetadata,
+        };
+
+        // Create a simple inspector that does nothing
+        struct NoOpInspector;
+        impl Inspect<ResourceSpans> for NoOpInspector {
+            fn inspect(&self, _value: &[ResourceSpans]) {}
+            fn inspect_with_prefix(&self, _prefix: Option<String>, _value: &[ResourceSpans]) {}
+        }
+
+        // Create channels for acknowledgment
+        let (ack_tx, mut ack_rx) = bounded::<ForwarderAcknowledgement>(10);
+
+        // Create forwarder metadata
+        let forwarder_metadata =
+            ForwarderMetadata::new("test-request-id-py".to_string(), Some(ack_tx));
+
+        // Create message metadata
+        let metadata = MessageMetadata::forwarder(forwarder_metadata);
+
+        // Create a test trace request with spans
+        let trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
+        let spans = trace_request.resource_spans;
+
+        // Create a message with metadata
+        let message = Message {
+            metadata: Some(metadata),
+            request_context: None,
+            payload: spans,
+        };
+
+        // Create channels for the pipeline
+        let (input_tx, input_rx) = crate::bounded_channel::bounded(10);
+        let (output_tx, _output_rx) = crate::bounded_channel::bounded(10);
+
+        // Create fanout
+        let fanout = Fanout::new("test", vec![("test_exporter", output_tx)]);
+
+        // Create batch config
+        let batch_config = BatchConfig {
+            max_size: 100,
+            timeout: Duration::from_secs(1),
+            disabled: true,
+        };
+
+        // Register a Python processor that deletes all items
+        let processor_code = r#"
+def process_spans(resource_spans):
+    # Delete all scope_spans to simulate processor deleting all items
+    while len(resource_spans.scope_spans) > 0:
+        del resource_spans.scope_spans[0]
+"#;
+
+        // Create a temporary Python file with the processor code
+        let temp_file = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+        std::fs::write(temp_file.path(), processor_code).expect("Failed to write to temp file");
+
+        let proc_path = temp_file.path().to_string_lossy().to_string();
+
+        // Create pipeline
+        let mut pipeline: Pipeline<ResourceSpans> = Pipeline::new(
+            "traces",
+            input_rx,
+            fanout,
+            None,
+            batch_config,
+            vec![proc_path],
+            vec![], // no resource attributes
+        );
+
+        let pipeline_token = CancellationToken::new();
+        let pipeline_token_clone = pipeline_token.clone();
+        let pipeline_handle =
+            tokio::spawn(async move { pipeline.start(NoOpInspector, pipeline_token_clone).await });
+
+        input_tx.send(message).await.unwrap();
+
+        // Close the input to allow the pipeline to exit
+        drop(input_tx);
+
+        // Verify that acknowledgment was sent
+        tokio::time::timeout(Duration::from_millis(500), ack_rx.next())
+            .await
+            .expect("Should receive acknowledgment within timeout")
+            .expect("Channel should not be closed");
+
+        // Cancel the pipeline and wait for it to finish
+        pipeline_token.cancel();
+        pipeline_handle.await.unwrap().unwrap()
     }
 }
