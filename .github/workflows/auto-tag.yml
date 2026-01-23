@@ -1,0 +1,118 @@
+name: Auto Tag on Version Bump
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  auto-tag:
+    # Only run if PR was merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if PR is a version bump
+        id: check
+        run: |
+          PR_BRANCH="${{ github.event.pull_request.head.ref }}"
+          echo "PR branch: $PR_BRANCH"
+
+          # Check if branch matches pattern re/bump-for-*
+          if [[ "$PR_BRANCH" =~ ^re/bump-for-(.+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            echo "This is a version bump PR for version: $VERSION"
+            echo "is_version_bump=true" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "This is not a version bump PR"
+            echo "is_version_bump=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for no-auto-tag label
+        id: check_label
+        if: steps.check.outputs.is_version_bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          # Get PR labels
+          LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name')
+
+          if echo "$LABELS" | grep -q "no-auto-tag"; then
+            echo "PR has 'no-auto-tag' label - skipping automatic tagging"
+            echo "skip_tag=true" >> $GITHUB_OUTPUT
+          else
+            echo "PR does not have 'no-auto-tag' label - will create tag"
+            echo "skip_tag=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if tag already exists
+        if: steps.check.outputs.is_version_bump == 'true' && steps.check_label.outputs.skip_tag == 'false'
+        run: |
+          TAG_NAME="v${{ steps.check.outputs.version }}"
+          echo "Checking if tag $TAG_NAME already exists..."
+
+          # Fetch all tags from remote
+          git fetch --tags
+
+          # Check if tag exists locally or remotely
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "❌ ERROR: Tag $TAG_NAME already exists!"
+            echo "This usually means:"
+            echo "  1. A release for this version was already created"
+            echo "  2. The version in Cargo.toml was not bumped correctly"
+            echo ""
+            echo "To fix this:"
+            echo "  - If the tag is incorrect, delete it: git push --delete origin $TAG_NAME"
+            echo "  - If the version is wrong, create a new version bump PR with the correct version"
+            exit 1
+          fi
+
+          echo "✅ Tag $TAG_NAME does not exist, safe to create"
+
+      - name: Configure git
+        if: steps.check.outputs.is_version_bump == 'true' && steps.check_label.outputs.skip_tag == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Clear git credentials
+        if: steps.check.outputs.is_version_bump == 'true' && steps.check_label.outputs.skip_tag == 'false'
+        run: |
+          git config --unset-all http.https://github.com/.extraheader || true
+          git config --global --unset-all credential.helper || true
+          git config --local --unset-all credential.helper || true
+
+      - name: Create and push tag
+        if: steps.check.outputs.is_version_bump == 'true' && steps.check_label.outputs.skip_tag == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_RELEASE_ENGINEER }}
+        run: |
+          TAG_NAME="v${{ steps.check.outputs.version }}"
+          echo "Creating tag: $TAG_NAME"
+
+          # Create annotated tag
+          git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+
+          # Push tag
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "$TAG_NAME"
+
+          echo "✅ Successfully created and pushed tag $TAG_NAME"
+          echo "This will trigger the release workflow."
+
+      - name: Skip tagging notification
+        if: steps.check.outputs.is_version_bump == 'true' && steps.check_label.outputs.skip_tag == 'true'
+        run: |
+          echo "⏭️ Skipping automatic tagging due to 'no-auto-tag' label"
+          echo "To create a release manually, run:"
+          echo "  git tag v${{ steps.check.outputs.version }}"
+          echo "  git push origin v${{ steps.check.outputs.version }}"

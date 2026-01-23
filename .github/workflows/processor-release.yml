@@ -1,9 +1,8 @@
 name: processor-release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [created]
 
 jobs:
   release:
@@ -121,11 +120,13 @@ jobs:
       - name: tar
         run: tar --directory=target/${{ matrix.target }}/release -czf archive.tar.gz rotel
       - name: upload
-        run: |
-          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id)
-          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
         env:
+          REF_NAME: ${{ github.event.release.tag_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/releases/tags/${REF_NAME} --jq .id)
+          curl --fail-with-body -sS  -X POST --data-binary @"archive.tar.gz" -H 'Content-Type: application/octet-stream' -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://uploads.github.com/repos/${{ github.repository }}/releases/$id/assets?name=rotel_py_processor_${{matrix.python-version}}_${REF_NAME}_${{ matrix.target }}.tar.gz"
+
   docker-push:
     name: docker push
     runs-on: ubuntu-latest
@@ -159,7 +160,6 @@ jobs:
             type=sha
 
       - name: Login to DockerHub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -174,6 +174,6 @@ jobs:
           context: .
           file: Dockerfile.python-processor
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
