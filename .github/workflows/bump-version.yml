@@ -1,0 +1,114 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Read current version and calculate new version
+        id: version
+        run: |
+          # Read current version from Cargo.toml
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version: $CURRENT_VERSION"
+
+          # Split version into parts
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          # Bump version based on input
+          case "${{ github.event.inputs.bump_type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create branch
+        run: |
+          BRANCH_NAME="re/bump-for-${{ steps.version.outputs.new }}"
+          echo "Creating branch: $BRANCH_NAME"
+          git checkout -b "$BRANCH_NAME"
+          echo "branch=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Update Cargo.toml version
+        run: |
+          sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.new }}"/' Cargo.toml
+          echo "Updated Cargo.toml to version ${{ steps.version.outputs.new }}"
+
+      - name: Run cargo check to update Cargo.lock
+        run: cargo check
+
+      - name: Commit and push changes
+        run: |
+          git add Cargo.toml Cargo.lock
+          git commit -m "Bump version to ${{ steps.version.outputs.new }}"
+          git push origin "${{ env.branch }}"
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.PAT_RELEASE_ENGINEER }}
+        run: |
+          gh pr create \
+            --title "Release: Bump version to ${{ steps.version.outputs.new }}" \
+            --assignee "${{ github.actor }}" \
+            --body "This PR bumps the version from ${{ steps.version.outputs.current }} to ${{ steps.version.outputs.new }}.
+
+          **Bump type:** ${{ github.event.inputs.bump_type }}
+
+          After merging this PR, a tag \`v${{ steps.version.outputs.new }}\` will be automatically created and pushed, which will trigger the release workflow.
+
+          If you want to prevent automatic tagging, add the \`no-auto-tag\` label to this PR before merging." \
+            --base main \
+            --head "${{ env.branch }}"

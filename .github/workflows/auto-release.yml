@@ -1,0 +1,140 @@
+name: Auto Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag format
+        id: validate
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          echo "Tag name: $TAG_NAME"
+
+          # Verify tag matches semver pattern
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ ERROR: Tag $TAG_NAME does not match semantic versioning pattern"
+            echo "Expected format: vX.Y.Z (e.g., v1.2.3)"
+            exit 1
+          fi
+
+          VERSION="${TAG_NAME#v}"
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if release already exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+
+          # Check if release already exists
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "❌ ERROR: Release for tag $TAG_NAME already exists!"
+            echo "If you want to recreate the release, delete it first:"
+            echo "  gh release delete $TAG_NAME"
+            exit 1
+          fi
+
+          echo "✅ No existing release found for $TAG_NAME"
+
+      - name: Generate release notes
+        id: release_notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${{ steps.validate.outputs.version }}"
+
+          # Get the previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1)
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous release found, this is the first release"
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "Generating release notes from $PREV_TAG to $TAG_NAME"
+
+          # Get list of merged PRs between tags
+          echo "Fetching merged PRs..."
+          PR_LIST=""
+
+          # Get merge commits between previous tag and current tag
+          MERGE_COMMITS=$(git log ${PREV_TAG}..${TAG_NAME} --merges --pretty=format:"%H %s" | grep "Merge pull request #" || echo "")
+
+          if [ -n "$MERGE_COMMITS" ]; then
+            while IFS= read -r commit_line; do
+              # Extract PR number from commit message (format: "Merge pull request #123 from ...")
+              PR_NUMBER=$(echo "$commit_line" | sed -n 's/.*Merge pull request #\([0-9]*\).*/\1/p')
+
+              if [ -n "$PR_NUMBER" ]; then
+                # Fetch PR details from GitHub API
+                PR_DATA=$(gh pr view "$PR_NUMBER" --json title,author --jq '{title: .title, author: .author.login}')
+                PR_TITLE=$(echo "$PR_DATA" | jq -r '.title')
+                PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.author')
+
+                # Add to PR list
+                PR_LIST="${PR_LIST}- ${PR_TITLE} by @${PR_AUTHOR} in [#${PR_NUMBER}](https://github.com/${{ github.repository }}/pull/${PR_NUMBER})"$'\n'
+              fi
+            done <<< "$MERGE_COMMITS"
+          fi
+
+          # Generate basic release notes
+          cat > release_notes.md << EOF
+          ### What's Changed
+
+          EOF
+
+          # Add PR list if available
+          if [ -n "$PR_LIST" ]; then
+            echo "$PR_LIST" >> release_notes.md
+            echo "" >> release_notes.md
+          else
+            echo "No merged pull requests found in this release." >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+
+          # Add full changelog link
+          cat >> release_notes.md << EOF
+          ### Full Changelog
+
+          [${PREV_TAG}...${TAG_NAME}](https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG_NAME})
+
+          ### Installation
+
+          Download the appropriate binary for your platform from the assets below.
+
+          For detailed installation instructions, see the [README](https://github.com/${{ github.repository }}/blob/main/README.md).
+          EOF
+
+          echo "release_notes_file=release_notes.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.PAT_RELEASE_ENGINEER }}
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${{ steps.validate.outputs.version }}"
+
+          gh release create "$TAG_NAME" \
+            --title "$TAG_NAME" \
+            --notes-file "${{ steps.release_notes.outputs.release_notes_file }}" \
+            --draft=false \
+            --prerelease=false
+
+          echo "✅ Successfully created release $TAG_NAME"
+          echo "The release workflow will now be triggered to build and upload artifacts."

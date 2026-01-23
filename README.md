@@ -1245,3 +1245,7 @@ your thoughts and ideas. See you there! 🚀
 ## Developing
 
 See the [DEVELOPING.md](DEVELOPING.md) doc for building and development instructions.
+
+## Releasing
+
+For information about creating releases, see [RELEASING.md](RELEASING.md).
