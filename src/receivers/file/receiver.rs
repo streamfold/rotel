@@ -47,7 +47,9 @@ use crate::receivers::file::input::{
 use crate::receivers::file::offset_tracker::{FileOffsetTracker, LineOffset};
 use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
-    JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
+    JsonFileDatabase, JsonFilePersister, KNOWN_FILES_KEY, PERSISTED_STATE_VERSION,
+    PersistedFileEntryV1, PersistedStateV0, PersistedStateV1, Persister, PersisterExt,
+    file_id_to_key,
 };
 use crate::receivers::file::watcher::{
     AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig, create_watcher,
@@ -56,11 +58,6 @@ use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload::{self, FileAcknowledgement, FileMetadata, MessageMetadata};
 
-const KNOWN_FILES_KEY: &str = "knownFiles";
-
-/// Current schema version for persisted state
-const PERSISTED_STATE_VERSION: u8 = 1;
-
 /// Error type for send operations with cancellation support.
 #[derive(Debug)]
 enum SendError {
@@ -68,77 +65,6 @@ enum SendError {
     Cancelled,
     /// The channel was disconnected.
     ChannelClosed,
-}
-
-/// Legacy persisted state for all known files (v0, no version field)
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-struct PersistedStateV0 {
-    files: Vec<PersistedFileStateV0>,
-}
-
-/// Legacy persisted state for a single file (v0)
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct PersistedFileStateV0 {
-    /// Device ID (Unix) or volume serial (Windows)
-    dev: u64,
-    /// Inode number (Unix) or file index (Windows)
-    ino: u64,
-    /// Current read offset
-    offset: u64,
-}
-
-/// Persisted state for all known files (v1)
-/// Key is base64(dev:ino) for efficient lookup
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct PersistedStateV1 {
-    /// Schema version (always 1 for this format)
-    version: u8,
-    /// Map from file key (base64 of dev:ino) to file entry
-    files: HashMap<String, PersistedFileEntryV1>,
-}
-
-impl Default for PersistedStateV1 {
-    fn default() -> Self {
-        Self {
-            version: PERSISTED_STATE_VERSION,
-            files: HashMap::new(),
-        }
-    }
-}
-
-/// Persisted state for a single file (v1)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct PersistedFileEntryV1 {
-    // Human-readable metadata (for user visibility)
-    /// Last known path to the file
-    path: String,
-    /// Last known filename
-    filename: String,
-
-    // Identity (for matching across restarts)
-    /// Device ID (Unix) or volume serial (Windows)
-    dev: u64,
-    /// Inode number (Unix) or file index (Windows)
-    ino: u64,
-
-    // Position tracking
-    /// Persisted offset (byte position in file)
-    offset: u64,
-    /// Manual override by user - if set and differs from offset, use this value
-    #[serde(skip_serializing_if = "Option::is_none")]
-    user_override_offset: Option<u64>,
-}
-
-impl PersistedFileEntryV1 {
-    /// Generate the map key for this entry (base64 encoded dev:ino)
-    fn key(&self) -> String {
-        file_id_to_key(self.dev, self.ino)
-    }
-}
-
-/// Generate a map key from dev and ino ("dev:ino" format)
-fn file_id_to_key(dev: u64, ino: u64) -> String {
-    format!("{}:{}", dev, ino)
 }
 
 /// Checkpoint configuration for batching persistence writes
@@ -1003,7 +929,7 @@ impl<F: FileFinder> FileCoordinator<F> {
     ///
     /// Supports both v0 (legacy) and v1 (versioned) schema formats:
     /// - v0: `{files: [{dev, ino, offset}]}`
-    /// - v1: `{version: 1, files: {key: {path, filename, dev, ino, offset, user_override_offset}}}`
+    /// - v1: `{version: 1, files: {key: {path, filename, dev, ino, offset}}}`
     fn load_state(&mut self) -> Result<()> {
         self.persister.load()?;
 
@@ -1062,7 +988,6 @@ impl<F: FileFinder> FileCoordinator<F> {
                             dev: entry.dev,
                             ino: entry.ino,
                             offset: entry.offset,
-                            user_override_offset: None,
                         },
                     );
                 }
@@ -1116,27 +1041,14 @@ impl<F: FileFinder> FileCoordinator<F> {
 
             // Try to find matching persisted state by key
             if let Some(entry) = state_v1.files.get(&key) {
-                // Check for user override
-                let offset = if let Some(override_offset) = entry.user_override_offset {
-                    if override_offset != entry.offset {
-                        info!(
-                            "Applying user override offset for {:?}: {} -> {}",
-                            path, entry.offset, override_offset
-                        );
-                    }
-                    override_offset
-                } else {
-                    entry.offset
-                };
-
-                debug!("Restored file {:?} at offset {}", path, offset);
+                debug!("Restored file {:?} at offset {}", path, entry.offset);
                 self.tracked_files.insert(
                     file_id,
                     TrackedFile {
                         file_id,
                         file,
                         path: path.clone(),
-                        offset,
+                        offset: entry.offset,
                         state: FileState::Active,
                         generation: 0,
                         in_flight: false,
@@ -1181,7 +1093,6 @@ impl<F: FileFinder> FileCoordinator<F> {
                 dev: tracked.file_id.dev(),
                 ino: tracked.file_id.ino(),
                 offset,
-                user_override_offset: None,
             };
             let key = entry.key();
             files.insert(key, entry);
@@ -1862,6 +1773,7 @@ async fn send_with_cancellation(
 mod tests {
     use super::*;
     use crate::receivers::file::input::MockFileFinder;
+    use crate::receivers::file::persistence::PersistedFileStateV0;
     use crate::receivers::file::watcher::MockWatcher;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -2286,7 +2198,6 @@ mod tests {
             assert_eq!(entry.offset, 12345);
             assert_eq!(entry.path, test_file_path.display().to_string());
             assert_eq!(entry.filename, "test.log");
-            assert!(entry.user_override_offset.is_none());
         }
 
         // Now create a fresh coordinator and load the v1 state
@@ -2337,113 +2248,6 @@ mod tests {
             tracked3.offset, 12345,
             "Offset should be restored from v1 state"
         );
-    }
-
-    #[test]
-    fn test_user_override_offset_is_applied_and_cleared() {
-        let temp_dir = TempDir::new().unwrap();
-        let offsets_path = temp_dir.path().join("offsets.json");
-
-        // Create a test file
-        let test_file_path = temp_dir.path().join("test.log");
-        std::fs::write(&test_file_path, "line1\nline2\nline3\n").unwrap();
-
-        let test_file = File::open(&test_file_path).unwrap();
-        let file_id = FileId::from_file(&test_file).unwrap();
-        drop(test_file);
-
-        // Write v1 format state with user_override_offset set
-        {
-            let db = JsonFileDatabase::open(&offsets_path).unwrap();
-            let mut persister = db.persister("test");
-
-            let key = file_id_to_key(file_id.dev(), file_id.ino());
-            let mut files = HashMap::new();
-            files.insert(
-                key,
-                PersistedFileEntryV1 {
-                    path: test_file_path.display().to_string(),
-                    filename: "test.log".to_string(),
-                    dev: file_id.dev(),
-                    ino: file_id.ino(),
-                    offset: 100,                     // Original offset
-                    user_override_offset: Some(500), // User wants to skip to 500
-                },
-            );
-            let v1_state = PersistedStateV1 { version: 1, files };
-            // V1 is stored as raw JSON (not base64) for human readability
-            persister.set_raw_json(KNOWN_FILES_KEY, &v1_state).unwrap();
-            persister.sync().unwrap();
-        }
-
-        // Create coordinator and load state
-        let mut config = test_config(&temp_dir);
-        config.include = vec![test_file_path.display().to_string()];
-
-        let db = JsonFileDatabase::open(&offsets_path).unwrap();
-        let persister = db.persister("test");
-        let finder = GlobFileFinder::new(config.include.clone(), config.exclude.clone()).unwrap();
-        let watcher = AnyWatcher::Mock(MockWatcher::new());
-
-        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
-        let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
-        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-        let offset_tracker: SharedOffsetTracker =
-            Arc::new(StdMutex::new(FileOffsetTracker::new(false)));
-
-        let mut coordinator = FileCoordinator {
-            config,
-            finder,
-            persister,
-            tracked_files: HashMap::new(),
-            watcher,
-            watched_dirs: Vec::new(),
-            first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
-            poll_first_failure: None,
-            watcher_first_error: None,
-            work_tx: Some(work_tx),
-            results_rx,
-            offset_tracker,
-            workers_done_rx,
-            shutting_down: Arc::new(AtomicBool::new(false)),
-        };
-
-        // Load state - should apply user override
-        let result = coordinator.load_state();
-        assert!(result.is_ok(), "load_state should succeed");
-
-        // Verify the user override was applied
-        let tracked = coordinator.tracked_files.get(&file_id).unwrap();
-        assert_eq!(
-            tracked.offset, 500,
-            "Offset should be the user override value, not the original"
-        );
-
-        // Save state
-        let result = coordinator.save_state();
-        assert!(result.is_ok(), "save_state should succeed");
-
-        // Read back and verify user_override_offset is cleared (None)
-        {
-            let db2 = JsonFileDatabase::open(&offsets_path).unwrap();
-            let mut persister2 = db2.persister("test");
-            persister2.load().unwrap();
-
-            // V1 is stored as raw JSON (not base64)
-            let saved_state: PersistedStateV1 = persister2.get_raw_json(KNOWN_FILES_KEY).unwrap();
-
-            let key = file_id_to_key(file_id.dev(), file_id.ino());
-            let entry = saved_state.files.get(&key).unwrap();
-            assert_eq!(entry.offset, 500, "Offset should now be 500");
-            assert!(
-                entry.user_override_offset.is_none(),
-                "user_override_offset should be cleared after being applied"
-            );
-        }
     }
 
     #[test]
