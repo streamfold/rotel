@@ -339,6 +339,7 @@ impl FileReceiverArgs {
                 self.file_receiver_max_watcher_error_duration_ms,
             ),
             max_batch_size: self.file_receiver_max_batch_size,
+            finite_retry_enabled: false, // Always use indefinite retry for file receiver
         }
     }
 }

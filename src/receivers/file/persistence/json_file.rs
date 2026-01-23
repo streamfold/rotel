@@ -15,10 +15,12 @@ use super::store::Persister;
 use crate::receivers::file::error::{Error, Result};
 
 /// State stored in the JSON file
+/// Values can be either base64-encoded strings (legacy) or raw JSON objects (v1+)
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DatabaseState {
-    /// Map of scope -> (key -> base64-encoded value)
-    scopes: HashMap<String, HashMap<String, String>>,
+    /// Map of scope -> (key -> value)
+    /// Values are serde_json::Value to support both string (base64) and object (raw JSON)
+    scopes: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 /// A shared JSON file database handle
@@ -91,7 +93,10 @@ pub struct JsonFilePersister {
     path: PathBuf,
     state: Arc<RwLock<DatabaseState>>,
     scope: String,
+    /// Cache for base64-encoded values (legacy format)
     cache: HashMap<String, Vec<u8>>,
+    /// Cache for raw JSON values (v1+ format, human-readable)
+    raw_json_cache: HashMap<String, serde_json::Value>,
 }
 
 impl JsonFilePersister {
@@ -102,6 +107,39 @@ impl JsonFilePersister {
             state,
             scope,
             cache: HashMap::new(),
+            raw_json_cache: HashMap::new(),
+        }
+    }
+
+    /// Set a raw JSON value (stored as-is, not base64 encoded)
+    /// This makes the value human-readable and editable in the JSON file
+    pub fn set_raw_json<T: serde::Serialize>(&mut self, key: &str, value: &T) -> Result<()> {
+        let json_value = serde_json::to_value(value)
+            .map_err(|e| Error::Persistence(format!("failed to serialize to JSON: {}", e)))?;
+        self.raw_json_cache.insert(key.to_string(), json_value);
+        // Remove from regular cache if it exists there
+        self.cache.remove(key);
+        Ok(())
+    }
+
+    /// Get a raw JSON value
+    /// Returns None if the key doesn't exist
+    pub fn get_raw_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.raw_json_cache
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// Try to get a raw JSON value with explicit error handling
+    /// Returns Ok(None) if key doesn't exist
+    /// Returns Err if key exists but deserialization fails
+    pub fn try_get_raw_json<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> std::result::Result<Option<T>, serde_json::Error> {
+        match self.raw_json_cache.get(key) {
+            None => Ok(None),
+            Some(v) => serde_json::from_value(v.clone()).map(Some),
         }
     }
 }
@@ -113,10 +151,13 @@ impl Persister for JsonFilePersister {
 
     fn set(&mut self, key: &str, value: Vec<u8>) {
         self.cache.insert(key.to_string(), value);
+        // Remove from raw_json_cache if it exists there
+        self.raw_json_cache.remove(key);
     }
 
     fn delete(&mut self, key: &str) {
         self.cache.remove(key);
+        self.raw_json_cache.remove(key);
     }
 
     fn load(&mut self) -> Result<()> {
@@ -126,11 +167,21 @@ impl Persister for JsonFilePersister {
             .map_err(|e| Error::Persistence(e.to_string()))?;
 
         self.cache.clear();
+        self.raw_json_cache.clear();
 
         if let Some(scope_data) = state.scopes.get(&self.scope) {
-            for (key, value_b64) in scope_data {
-                if let Ok(value) = base64_decode(value_b64) {
-                    self.cache.insert(key.clone(), value);
+            for (key, value) in scope_data {
+                match value {
+                    // String value = base64 encoded (legacy format)
+                    serde_json::Value::String(s) => {
+                        if let Ok(decoded) = base64_decode(s) {
+                            self.cache.insert(key.clone(), decoded);
+                        }
+                    }
+                    // Object/Array value = raw JSON (v1+ format)
+                    other => {
+                        self.raw_json_cache.insert(key.clone(), other.clone());
+                    }
                 }
             }
         }
@@ -149,8 +200,14 @@ impl Persister for JsonFilePersister {
             let scope_data = state.scopes.entry(self.scope.clone()).or_default();
             scope_data.clear();
 
+            // Write base64-encoded values
             for (key, value) in &self.cache {
-                scope_data.insert(key.clone(), base64_encode(value));
+                scope_data.insert(key.clone(), serde_json::Value::String(base64_encode(value)));
+            }
+
+            // Write raw JSON values (these take precedence if same key exists in both)
+            for (key, value) in &self.raw_json_cache {
+                scope_data.insert(key.clone(), value.clone());
             }
         }
 

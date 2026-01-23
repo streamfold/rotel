@@ -92,17 +92,28 @@ impl FileReader {
     /// Read all new lines from the file
     pub fn read_lines(&mut self) -> io::Result<Vec<String>> {
         let mut lines = Vec::new();
-        self.read_lines_into(|line| {
+        self.read_lines_into(|line, _begin_offset, _len| {
             lines.push(line);
+            true // continue reading
         })?;
         Ok(lines)
     }
 
     /// Read new lines from the file, calling the callback for each line.
     /// This avoids allocating a Vec<String> when the caller can process lines directly.
+    ///
+    /// The callback receives `(line, begin_offset, len)` where:
+    /// - `begin_offset` is the byte position where the line BEGINS in the file
+    /// - `len` is the total bytes consumed (including newline)
+    ///
+    /// This allows the log record's offset to represent "where this line starts"
+    /// while still providing enough information to compute the resume position.
+    ///
+    /// The callback should return `true` to continue reading or `false` to stop early.
+    /// This allows callers to terminate reading when shutting down.
     pub fn read_lines_into<F>(&mut self, mut on_line: F) -> io::Result<()>
     where
-        F: FnMut(String),
+        F: FnMut(String, u64, u32) -> bool,
     {
         self.eof = false;
 
@@ -120,12 +131,16 @@ impl FileReader {
 
         loop {
             self.line_buffer.clear();
+            // Record the begin offset BEFORE reading
+            let begin_offset = self.offset;
+
             match reader.read_line(&mut self.line_buffer) {
                 Ok(0) => {
                     // EOF reached
                     break;
                 }
                 Ok(bytes_read) => {
+                    let len = bytes_read as u32;
                     self.offset += bytes_read as u64;
 
                     // Remove trailing newline
@@ -139,12 +154,17 @@ impl FileReader {
                     }
 
                     // Check max log size and call callback
-                    if line.len() > self.max_log_size {
+                    let should_continue = if line.len() > self.max_log_size {
                         // Truncate the line
                         let truncated = line.chars().take(self.max_log_size).collect::<String>();
-                        on_line(truncated);
+                        on_line(truncated, begin_offset, len)
                     } else {
-                        on_line(line.to_string());
+                        on_line(line.to_string(), begin_offset, len)
+                    };
+
+                    // Allow caller to terminate early (e.g., on shutdown)
+                    if !should_continue {
+                        break;
                     }
                 }
                 Err(e) => {

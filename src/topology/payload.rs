@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::{BoundedSender, SendError};
+use crate::receivers::file::offset_tracker::LineOffset;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -56,6 +57,7 @@ pub enum RequestContext {
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
     Forwarder(ForwarderMetadata),
+    File(FileMetadata),
 }
 
 #[allow(clippy::from_over_into)]
@@ -89,6 +91,14 @@ impl MessageMetadata {
     pub fn forwarder(metadata: ForwarderMetadata) -> Self {
         Self {
             data: MessageMetadataInner::Forwarder(metadata),
+            ref_count: Arc::new(AtomicU32::new(1)),
+        }
+    }
+
+    /// Create new MessageMetadata with File variant, starting with ref_count = 1
+    pub fn file(metadata: FileMetadata) -> Self {
+        Self {
+            data: MessageMetadataInner::File(metadata),
             ref_count: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -299,6 +309,16 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
+                MessageMetadataInner::File(fm) => {
+                    if let Some(ack_chan) = &fm.ack_chan {
+                        ack_chan
+                            .send(FileAcknowledgement::Ack(FileAck {
+                                file_id: fm.file_id,
+                                offsets: fm.offsets.clone(),
+                            }))
+                            .await?;
+                    }
+                }
             }
         }
         Ok(())
@@ -333,6 +353,17 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
+                MessageMetadataInner::File(fm) => {
+                    if let Some(ack_chan) = &fm.ack_chan {
+                        ack_chan
+                            .send(FileAcknowledgement::Nack(FileNack {
+                                file_id: fm.file_id,
+                                offsets: fm.offsets.clone(),
+                                reason,
+                            }))
+                            .await?;
+                    }
+                }
             }
         }
         Ok(())
@@ -354,6 +385,70 @@ pub struct KafkaNack {
     pub offset: i64,
     pub partition: i32,
     pub topic_id: u8,
+    pub reason: ExporterError,
+}
+
+/// Metadata for file receiver messages
+#[derive(Clone)]
+pub struct FileMetadata {
+    /// The unique file identity
+    pub file_id: crate::receivers::file::input::FileId,
+    /// Line offsets (begin offset + length) for all lines in this batch
+    pub offsets: Vec<LineOffset>,
+    /// Channel to send acknowledgements back to the file receiver
+    pub ack_chan: Option<BoundedSender<FileAcknowledgement>>,
+}
+
+impl FileMetadata {
+    /// Create new FileMetadata
+    pub fn new(
+        file_id: crate::receivers::file::input::FileId,
+        offsets: Vec<LineOffset>,
+        ack_chan: Option<BoundedSender<FileAcknowledgement>>,
+    ) -> Self {
+        Self {
+            file_id,
+            offsets,
+            ack_chan,
+        }
+    }
+}
+
+// Manual Debug for FileMetadata since BoundedSender doesn't implement Debug
+impl std::fmt::Debug for FileMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileMetadata")
+            .field("file_id", &self.file_id)
+            .field("offsets", &self.offsets)
+            .field("ack_chan", &self.ack_chan.is_some())
+            .finish()
+    }
+}
+
+// Manual PartialEq for FileMetadata since BoundedSender can't be compared
+impl PartialEq for FileMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_id == other.file_id && self.offsets == other.offsets
+        // We don't compare ack_chan as it's not meaningful for equality
+    }
+}
+
+/// Acknowledgement message from exporter back to file receiver
+pub enum FileAcknowledgement {
+    Ack(FileAck),
+    Nack(FileNack),
+}
+
+/// Successful acknowledgement of a file batch
+pub struct FileAck {
+    pub file_id: crate::receivers::file::input::FileId,
+    pub offsets: Vec<LineOffset>,
+}
+
+/// Failed acknowledgement of a file batch
+pub struct FileNack {
+    pub file_id: crate::receivers::file::input::FileId,
+    pub offsets: Vec<LineOffset>,
     pub reason: ExporterError,
 }
 

@@ -43,6 +43,19 @@ pub trait PersisterExt: Persister {
         }
     }
 
+    /// Get raw JSON string value with explicit error handling.
+    /// Returns Ok(None) if key doesn't exist.
+    /// Returns Err if key exists but cannot be converted to UTF-8 string.
+    fn try_get_raw(
+        &self,
+        key: &str,
+    ) -> std::result::Result<Option<String>, std::string::FromUtf8Error> {
+        match self.get(key) {
+            None => Ok(None),
+            Some(bytes) => String::from_utf8(bytes).map(Some),
+        }
+    }
+
     /// Set a value by serializing it to JSON
     fn set_json<T: serde::Serialize>(&mut self, key: &str, value: &T) -> Result<()> {
         let bytes = serde_json::to_vec(value)?;

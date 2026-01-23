@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDateTime};
 use regex::Regex;
 
 use super::traits::{ParsedLog, Parser};
@@ -79,6 +79,31 @@ impl RegexParser {
     }
 }
 
+/// Common timestamp formats to try when the primary format fails.
+/// These cover common non-standard nginx time_local configurations.
+const FALLBACK_TIMESTAMP_FORMATS: &[&str] = &[
+    "%Y-%m-%d %H:%M:%S", // ISO-ish: 2019-02-13 20:58:22
+    "%Y-%m-%dT%H:%M:%S", // ISO 8601: 2019-02-13T20:58:22
+    "%Y/%m/%d %H:%M:%S", // Slash format: 2019/02/13 20:58:22
+    "%d/%b/%Y %H:%M:%S", // Without colon separator: 13/Feb/2019 20:58:22
+];
+
+/// Try to parse a timestamp value using common naive datetime formats.
+/// Assumes UTC for timestamps without timezone information.
+fn try_parse_naive_timestamp(value: &str) -> Option<u64> {
+    for format in FALLBACK_TIMESTAMP_FORMATS {
+        if let Some(nanos) = NaiveDateTime::parse_from_str(value, format)
+            .ok()
+            .map(|dt| dt.and_utc())
+            .and_then(|dt| dt.timestamp_nanos_opt())
+            .map(|n| n as u64)
+        {
+            return Some(nanos);
+        }
+    }
+    None
+}
+
 impl Parser for RegexParser {
     fn parse(&self, line: &str) -> Result<ParsedLog> {
         let captures = self.regex.captures(line).ok_or_else(|| {
@@ -101,12 +126,17 @@ impl Parser for RegexParser {
                 {
                     if name == ts_field {
                         // Parse timestamp and store in result.timestamp
+                        // Try the configured format first (may include timezone)
                         if let Some(nanos) = DateTime::parse_from_str(value, ts_format)
                             .ok()
                             .and_then(|dt| dt.timestamp_nanos_opt())
                             .map(|n| n as u64)
                         {
                             result.timestamp = Some(nanos);
+                        } else {
+                            // Try as naive datetime (no timezone, assume UTC)
+                            // This handles formats like "2019-02-13 20:58:22"
+                            result.timestamp = try_parse_naive_timestamp(value);
                         }
                     }
                 }
@@ -255,13 +285,42 @@ mod tests {
             "Invalid timestamp should result in None"
         );
 
-        // Wrong date format
-        let result = parser.parse("[2025/12/17 10:15:32]").unwrap();
+        // Completely unparseable date format (month 99, day 99)
+        let result = parser.parse("[99/99/2025 10:15:32]").unwrap();
         assert!(result.timestamp.is_none());
 
-        // Missing timezone
-        let result = parser.parse("[17/Dec/2025:10:15:32]").unwrap();
+        // Partial/truncated date
+        let result = parser.parse("[2025-12]").unwrap();
         assert!(result.timestamp.is_none());
+    }
+
+    #[test]
+    fn test_regex_parser_with_fallback_timestamp_formats() {
+        let parser = RegexParser::new(r"^\[(?P<ts>[^\]]+)\]$")
+            .unwrap()
+            .with_timestamp("ts", NGINX_TIME_FORMAT);
+
+        // ISO-ish format without timezone - now supported via fallback
+        let result = parser.parse("[2019-02-13 20:58:22]").unwrap();
+        assert!(
+            result.timestamp.is_some(),
+            "ISO-ish format should parse via fallback"
+        );
+
+        // Slash format - also supported via fallback
+        let result = parser.parse("[2025/12/17 10:15:32]").unwrap();
+        assert!(
+            result.timestamp.is_some(),
+            "Slash format should parse via fallback"
+        );
+
+        // nginx format without timezone but with colon separator - this should NOT parse
+        // because we don't have a fallback for %d/%b/%Y:%H:%M:%S (note the colon after year)
+        let result = parser.parse("[17/Dec/2025:10:15:32]").unwrap();
+        assert!(
+            result.timestamp.is_none(),
+            "nginx format without timezone should not parse"
+        );
     }
 
     #[test]
