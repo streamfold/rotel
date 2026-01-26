@@ -13,6 +13,7 @@
 pub mod config;
 pub mod error;
 pub mod input;
+pub mod offset_committer;
 pub mod offset_tracker;
 pub mod parser;
 pub mod persistence;
@@ -22,6 +23,7 @@ pub mod watcher;
 pub use config::FileReceiverConfig;
 pub use error::{Error, Result};
 pub use input::{FileFinder, FileInputConfig, FileReader, StartAt};
+pub use offset_committer::{FileOffsetCommitter, OffsetCommitterConfig, TrackedFileInfo};
 pub use offset_tracker::{FileOffsetTracker, LineOffset};
 pub use parser::{JsonParser, ParsedLog, Parser, RegexParser};
 pub use persistence::{JsonFileDatabase, JsonFilePersister, Persister, PersisterExt};

@@ -44,6 +44,9 @@ use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{
     FileFinder, FileId, FileReader, GlobFileFinder, StartAt, get_path_from_file,
 };
+use crate::receivers::file::offset_committer::{
+    FileOffsetCommitter, OffsetCommitterConfig, TrackedFileInfo,
+};
 use crate::receivers::file::offset_tracker::{FileOffsetTracker, LineOffset};
 use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
@@ -65,23 +68,6 @@ enum SendError {
     Cancelled,
     /// The channel was disconnected.
     ChannelClosed,
-}
-
-/// Checkpoint configuration for batching persistence writes
-struct CheckpointConfig {
-    /// Maximum records before forcing a checkpoint
-    max_records: u64,
-    /// Maximum time between checkpoints
-    max_interval: Duration,
-}
-
-impl Default for CheckpointConfig {
-    fn default() -> Self {
-        Self {
-            max_records: 1000,
-            max_interval: Duration::from_secs(1),
-        }
-    }
 }
 
 /// Message sent from workers to the async task
@@ -183,6 +169,14 @@ const ATTR_LOG_FILE_PATH: &str = "log.file.path";
 pub struct FileReceiver {
     config: FileReceiverConfig,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+    /// Offset committer for handling acks and persistence (extracted before start)
+    offset_committer: Option<FileOffsetCommitter>,
+    /// Sender for acks from the pipeline (passed to handler)
+    ack_tx: BoundedSender<FileAcknowledgement>,
+    /// Sender for file info updates to the committer
+    file_info_tx: BoundedSender<TrackedFileInfo>,
+    /// Shared offset tracker
+    offset_tracker: SharedOffsetTracker,
 }
 
 impl FileReceiver {
@@ -193,10 +187,53 @@ impl FileReceiver {
     ) -> std::result::Result<Self, BoxError> {
         config.validate().map_err(|e| -> BoxError { e.into() })?;
 
+        // Open or create the persistence database
+        let db = JsonFileDatabase::open(&config.offsets_path).map_err(|e| -> BoxError {
+            format!(
+                "Failed to open persistence database at {:?}: {}",
+                config.offsets_path, e
+            )
+            .into()
+        })?;
+        let persister = db.persister("file_receiver");
+
+        // Create channels for acks and file info
+        let (ack_tx, ack_rx) = bounded_channel::bounded::<FileAcknowledgement>(100);
+        let (file_info_tx, file_info_rx) = bounded_channel::bounded::<TrackedFileInfo>(100);
+
+        // Create shared offset tracker
+        let offset_tracker: SharedOffsetTracker = Arc::new(StdMutex::new(FileOffsetTracker::new(
+            config.finite_retry_enabled,
+        )));
+
+        // Create the offset committer
+        let committer_config = OffsetCommitterConfig {
+            max_checkpoint_failure_duration: config.max_checkpoint_failure_duration,
+            ..Default::default()
+        };
+        let offset_committer = FileOffsetCommitter::new(
+            ack_rx,
+            offset_tracker.clone(),
+            persister,
+            committer_config,
+            file_info_rx,
+        );
+
         Ok(Self {
             config,
             logs_output,
+            offset_committer: Some(offset_committer),
+            ack_tx,
+            file_info_tx,
+            offset_tracker,
         })
+    }
+
+    /// Extract the offset committer for running in a separate task.
+    /// Must be called before start() - the committer handles ack processing
+    /// and state persistence, and should outlive the main receiver loop.
+    pub fn take_offset_committer(&mut self) -> Option<FileOffsetCommitter> {
+        self.offset_committer.take()
     }
 
     /// Build the parser based on config
@@ -251,9 +288,13 @@ impl FileReceiver {
         let config = self.config.clone();
         let logs_output = self.logs_output.clone();
         let cancel = receivers_cancel.clone();
+        let ack_tx = self.ack_tx.clone();
+        let file_info_tx = self.file_info_tx.clone();
+        let offset_tracker = self.offset_tracker.clone();
 
         task_set.spawn(async move {
-            let mut handler = FileWorkHandler::new(config, logs_output)?;
+            let mut handler =
+                FileWorkHandler::new(config, logs_output, ack_tx, file_info_tx, offset_tracker)?;
             handler.run(cancel).await
         });
 
@@ -270,12 +311,21 @@ struct FileWorkHandler {
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
     tags: [KeyValue; 1],
+    /// Sender for acks to the offset committer
+    ack_tx: BoundedSender<FileAcknowledgement>,
+    /// Sender for file info updates to the offset committer
+    file_info_tx: BoundedSender<TrackedFileInfo>,
+    /// Shared offset tracker
+    offset_tracker: SharedOffsetTracker,
 }
 
 impl FileWorkHandler {
     fn new(
         config: FileReceiverConfig,
         logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+        ack_tx: BoundedSender<FileAcknowledgement>,
+        file_info_tx: BoundedSender<TrackedFileInfo>,
+        offset_tracker: SharedOffsetTracker,
     ) -> std::result::Result<Self, BoxError> {
         let accepted_counter = get_meter()
             .u64_counter("rotel_receiver_accepted_log_records")
@@ -295,6 +345,9 @@ impl FileWorkHandler {
             accepted_counter,
             refused_counter,
             tags: [KeyValue::new("receiver", "file")],
+            ack_tx,
+            file_info_tx,
+            offset_tracker,
         })
     }
 
@@ -313,7 +366,8 @@ impl FileWorkHandler {
                 }
             };
 
-        // Open or create the persistence database
+        // Open persistence database for coordinator (read-only for loading state)
+        // The FileOffsetCommitter handles all writes
         let db = match JsonFileDatabase::open(&self.config.offsets_path) {
             Ok(db) => db,
             Err(e) => {
@@ -361,19 +415,18 @@ impl FileWorkHandler {
         // - records_tx/rx: workers -> async handler (log records for export)
         // - results_tx/rx: workers -> coordinator (offset updates for EOF tracking)
         // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
-        // - ack_tx/rx: pipeline -> handler (acknowledgements for at-least-once delivery)
-        // - offset_tracker: shared between handler (tracks/acks) and coordinator (checkpoints)
+        //
+        // Note: ack channel and offset_tracker are created in FileReceiver::new()
+        // and shared with the FileOffsetCommitter
         let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(10);
         let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-        let (ack_tx, mut ack_rx) = bounded_channel::bounded::<FileAcknowledgement>(100);
 
-        // Create shared offset tracker for at-least-once delivery
-        // Shared between async handler (tracks/acks) and coordinator (checkpoints)
-        let offset_tracker: SharedOffsetTracker = Arc::new(StdMutex::new(FileOffsetTracker::new(
-            self.config.finite_retry_enabled,
-        )));
+        // Use shared offset tracker from FileReceiver
+        let offset_tracker = self.offset_tracker.clone();
+        let ack_tx = self.ack_tx.clone();
+        let file_info_tx = self.file_info_tx.clone();
 
         // Create shutdown flag (shared between coordinator, async handler, and workers)
         let shutting_down = Arc::new(AtomicBool::new(false));
@@ -401,15 +454,10 @@ impl FileWorkHandler {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
             results_rx,
-            offset_tracker: offset_tracker.clone(),
             workers_done_rx,
             shutting_down,
         };
@@ -445,6 +493,19 @@ impl FileWorkHandler {
                         max_workers = max_concurrent_files,
                         "Spawning worker for file"
                     );
+
+                    // Send file info to offset committer for persistence metadata
+                    let file_info = TrackedFileInfo {
+                        file_id: work.file_id,
+                        path: work.path.display().to_string(),
+                        filename: work.path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    };
+                    // Best effort - don't block if channel is full
+                    let _ = file_info_tx.try_send(file_info);
+
                     let ctx = worker_ctx.clone();
                     let handle = tokio::task::spawn_blocking(move || {
                         process_file_work(work, ctx);
@@ -515,19 +576,7 @@ impl FileWorkHandler {
                     }
                 }
 
-                // Process acknowledgements from the pipeline
-                Some(ack) = ack_rx.next() => {
-                    let mut tracker = offset_tracker.lock().unwrap();
-                    match ack {
-                        FileAcknowledgement::Ack(file_ack) => {
-                            tracker.acknowledge_batch(file_ack.file_id, &file_ack.offsets);
-                        }
-                        FileAcknowledgement::Nack(file_nack) => {
-                            // nack() will panic if finite_retry_enabled is false
-                            tracker.nack_batch(file_nack.file_id, &file_nack.offsets);
-                        }
-                    }
-                }
+                // Note: Ack processing is handled by FileOffsetCommitter
 
                 _ = cancel.cancelled() => {
                     // Set shutting_down before breaking so coordinator sees it
@@ -548,33 +597,8 @@ impl FileWorkHandler {
         )
         .await;
 
-        // Drain any remaining acks from the exporter
-        // This ensures offsets are updated before final checkpoint
-        let ack_drain_deadline = tokio::time::Instant::now() + Duration::from_millis(100);
-        loop {
-            match tokio::time::timeout_at(ack_drain_deadline, ack_rx.next()).await {
-                Ok(Some(ack)) => {
-                    let mut tracker = offset_tracker.lock().unwrap();
-                    match ack {
-                        FileAcknowledgement::Ack(file_ack) => {
-                            tracker.acknowledge_batch(file_ack.file_id, &file_ack.offsets);
-                        }
-                        FileAcknowledgement::Nack(file_nack) => {
-                            tracker.nack_batch(file_nack.file_id, &file_nack.offsets);
-                        }
-                    }
-                }
-                Ok(None) => {
-                    // Channel closed, done draining
-                    break;
-                }
-                Err(_) => {
-                    // Timeout reached
-                    debug!("Timeout draining acks during shutdown");
-                    break;
-                }
-            }
-        }
+        // Note: Ack draining is handled by FileOffsetCommitter which runs until
+        // after exporters finish, ensuring all acks are processed
 
         // Wait for coordinator thread to finish
         drop(records_rx);
@@ -902,20 +926,13 @@ struct FileCoordinator<F: FileFinder> {
     watcher: AnyWatcher,
     watched_dirs: Vec<PathBuf>,
     first_check: bool,
-    // Checkpoint batching state
-    checkpoint_config: CheckpointConfig,
-    records_since_checkpoint: u64,
-    last_checkpoint: Instant,
     // Error tracking for threshold-based exit
-    checkpoint_first_failure: Option<Instant>,
     poll_first_failure: Option<Instant>,
     watcher_first_error: Option<Instant>,
     // Channel to send work items to the async handler (Option for early drop during shutdown)
     work_tx: Option<BoundedSender<FileWorkItem>>,
     // Channel to receive offset updates from workers
     results_rx: BoundedReceiver<FileWorkResult>,
-    // Shared offset tracker for at-least-once delivery (shared with async handler)
-    offset_tracker: SharedOffsetTracker,
     // Channel to receive "workers done" signal from async handler during shutdown
     workers_done_rx: std::sync::mpsc::Receiver<()>,
     // Flag to indicate shutdown is in progress (for conditional logging)
@@ -1058,106 +1075,6 @@ impl<F: FileFinder> FileCoordinator<F> {
         }
 
         Ok(())
-    }
-
-    /// Save current file states to the persister (unconditional, always writes to disk).
-    /// We persist FileId (device + inode) to match files across restarts.
-    /// Writes v1 format with human-readable metadata (path, filename).
-    ///
-    /// For files with offset tracking, we query the shared offset_tracker to get
-    /// the persistable offset (lowest pending or high water mark if all acked).
-    fn save_state(&mut self) -> Result<()> {
-        // Get persistable offsets from the offset tracker
-        let persistable_offsets = {
-            let tracker = self.offset_tracker.lock().unwrap();
-            tracker.get_all_persistable_offsets()
-        };
-
-        let mut files = HashMap::new();
-
-        for tracked in self.tracked_files.values() {
-            // Use offset from tracker if available, otherwise use tracked.offset
-            let offset = persistable_offsets
-                .get(&tracked.file_id)
-                .copied()
-                .unwrap_or(tracked.offset);
-
-            let entry = PersistedFileEntryV1 {
-                path: tracked.path.display().to_string(),
-                filename: tracked
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string(),
-                dev: tracked.file_id.dev(),
-                ino: tracked.file_id.ino(),
-                offset,
-            };
-            let key = entry.key();
-            files.insert(key, entry);
-        }
-
-        let state = PersistedStateV1 {
-            version: PERSISTED_STATE_VERSION,
-            files,
-        };
-
-        self.persister.set_raw_json(KNOWN_FILES_KEY, &state)?;
-        self.persister.sync()?;
-
-        // Reset checkpoint tracking
-        self.records_since_checkpoint = 0;
-        self.last_checkpoint = Instant::now();
-
-        Ok(())
-    }
-
-    /// Check if we should checkpoint based on records processed and time elapsed
-    fn should_checkpoint(&self) -> bool {
-        self.records_since_checkpoint >= self.checkpoint_config.max_records
-            || self.last_checkpoint.elapsed() >= self.checkpoint_config.max_interval
-    }
-
-    /// Conditionally save state if checkpoint thresholds are met.
-    /// Tracks consecutive failures and returns Err only when failure duration threshold is breached.
-    fn maybe_checkpoint(&mut self) -> Result<()> {
-        if !self.should_checkpoint() {
-            return Ok(());
-        }
-
-        match self.save_state() {
-            Ok(()) => {
-                // Success - reset failure tracking
-                if self.checkpoint_first_failure.is_some() {
-                    debug!("Checkpoint succeeded after previous failures");
-                    self.checkpoint_first_failure = None;
-                }
-                Ok(())
-            }
-            Err(e) => {
-                // Track when failures started
-                let first_failure = *self
-                    .checkpoint_first_failure
-                    .get_or_insert_with(Instant::now);
-
-                let failure_duration = first_failure.elapsed();
-
-                if failure_duration >= self.config.max_checkpoint_failure_duration {
-                    error!(
-                        "Checkpoint failures persisted for {:?}, exiting: {}",
-                        failure_duration, e
-                    );
-                    Err(e)
-                } else {
-                    warn!(
-                        "Checkpoint failed (failures started {:?} ago): {}",
-                        failure_duration, e
-                    );
-                    Ok(())
-                }
-            }
-        }
     }
 
     /// Ensure directories are being watched
@@ -1410,10 +1327,6 @@ impl<F: FileFinder> FileCoordinator<F> {
             }
         });
 
-        // Conditionally checkpoint based on records processed and time elapsed
-        // maybe_checkpoint() only returns Err when failure duration threshold is breached
-        self.maybe_checkpoint()?;
-
         Ok(())
     }
 
@@ -1590,14 +1503,6 @@ impl<F: FileFinder> FileCoordinator<F> {
                 break;
             }
 
-            // Check if we should checkpoint
-            // save_state queries the shared offset_tracker for persistable offsets
-            if let Err(e) = self.maybe_checkpoint() {
-                error!("Checkpoint failed with fatal error: {}", e);
-                self.shutting_down.store(true, Ordering::SeqCst);
-                break;
-            }
-
             // Wait for watcher events (or timeout)
             match self.watcher.recv_timeout(poll_interval) {
                 Ok(events) => {
@@ -1695,15 +1600,8 @@ impl<F: FileFinder> FileCoordinator<F> {
         // Now drain any remaining results
         self.drain_results();
 
-        // Final state save
-        if let Err(e) = self.save_state() {
-            error!("Failed to save final state: {}", e);
-        } else {
-            debug!(
-                "Final state saved with {} tracked files",
-                self.tracked_files.len()
-            );
-        }
+        // Note: Final state persistence is handled by FileOffsetCommitter
+        // which continues running after this coordinator stops
 
         info!("File coordinator stopped");
     }
@@ -1805,8 +1703,6 @@ mod tests {
         let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
         let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-        let offset_tracker: SharedOffsetTracker =
-            Arc::new(StdMutex::new(FileOffsetTracker::new(false)));
 
         FileCoordinator {
             config,
@@ -1816,15 +1712,10 @@ mod tests {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
             results_rx,
-            offset_tracker,
             workers_done_rx,
             shutting_down: Arc::new(AtomicBool::new(false)),
         }
@@ -1947,64 +1838,6 @@ mod tests {
     }
 
     #[test]
-    fn test_checkpoint_failure_threshold() {
-        let temp_dir = TempDir::new().unwrap();
-        let mut config = test_config(&temp_dir);
-        config.max_checkpoint_failure_duration = Duration::from_millis(50);
-
-        let finder = MockFileFinder::new();
-        let watcher = AnyWatcher::Mock(MockWatcher::new());
-
-        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
-
-        // Force checkpoint to be needed
-        coordinator.records_since_checkpoint = 10000;
-
-        // Make the persister directory read-only to cause sync failures
-        let offsets_dir = temp_dir.path().join("readonly");
-        std::fs::create_dir_all(&offsets_dir).unwrap();
-        coordinator.persister = JsonFileDatabase::open(offsets_dir.join("offsets.json"))
-            .unwrap()
-            .persister("test");
-
-        // Make directory read-only (this will cause sync to fail)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o444)).unwrap();
-        }
-
-        // First checkpoint failure should not return error
-        let result = coordinator.maybe_checkpoint();
-        #[cfg(unix)]
-        assert!(
-            result.is_ok(),
-            "First checkpoint failure should return Ok (threshold not reached)"
-        );
-
-        // Wait for threshold
-        std::thread::sleep(Duration::from_millis(60));
-
-        // Force another checkpoint
-        coordinator.records_since_checkpoint = 10000;
-
-        // Next checkpoint should fail
-        let result = coordinator.maybe_checkpoint();
-        #[cfg(unix)]
-        assert!(
-            result.is_err(),
-            "Checkpoint should return Err after threshold duration"
-        );
-
-        // Cleanup - restore permissions
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-    }
-
-    #[test]
     fn test_load_state_fails_on_corrupted_state_file() {
         let temp_dir = TempDir::new().unwrap();
         let offsets_path = temp_dir.path().join("offsets.json");
@@ -2033,8 +1866,6 @@ mod tests {
         let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
         let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-        let offset_tracker: SharedOffsetTracker =
-            Arc::new(StdMutex::new(FileOffsetTracker::new(false)));
 
         let mut coordinator = FileCoordinator {
             config,
@@ -2044,15 +1875,10 @@ mod tests {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
             results_rx,
-            offset_tracker,
             workers_done_rx,
             shutting_down: Arc::new(AtomicBool::new(false)),
         };
@@ -2092,7 +1918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_v0_to_v1_migration_and_roundtrip() {
+    fn test_load_state_migrates_v0_to_v1_in_memory() {
         let temp_dir = TempDir::new().unwrap();
         let offsets_path = temp_dir.path().join("offsets.json");
 
@@ -2134,8 +1960,6 @@ mod tests {
         let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
         let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-        let offset_tracker: SharedOffsetTracker =
-            Arc::new(StdMutex::new(FileOffsetTracker::new(false)));
 
         let mut coordinator = FileCoordinator {
             config: config.clone(),
@@ -2145,15 +1969,10 @@ mod tests {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
             results_rx,
-            offset_tracker,
             workers_done_rx,
             shutting_down: Arc::new(AtomicBool::new(false)),
         };
@@ -2173,79 +1992,90 @@ mod tests {
             tracked.offset, 12345,
             "Offset should be restored from v0 state"
         );
+    }
 
-        // Save state - should write v1 format
-        let result = coordinator.save_state();
-        assert!(result.is_ok(), "save_state should succeed");
+    #[test]
+    fn test_load_state_reads_v1_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let offsets_path = temp_dir.path().join("offsets.json");
 
-        // Now read back to verify it's v1 format (by loading raw and checking for version field)
+        // Create a test file so we can get a real FileId
+        let test_file_path = temp_dir.path().join("test.log");
+        std::fs::write(&test_file_path, "line1\nline2\nline3\n").unwrap();
+
+        let test_file = File::open(&test_file_path).unwrap();
+        let file_id = FileId::from_file(&test_file).unwrap();
+        drop(test_file);
+
+        // Write v1 format state directly
         {
-            let db2 = JsonFileDatabase::open(&offsets_path).unwrap();
-            let mut persister2 = db2.persister("test");
-            persister2.load().unwrap();
+            let db = JsonFileDatabase::open(&offsets_path).unwrap();
+            let mut persister = db.persister("test");
 
-            // Try to load as v1 directly - should work if migration happened
-            // V1 is stored as raw JSON (not base64), so use get_raw_json
-            let saved_state: PersistedStateV1 = persister2.get_raw_json(KNOWN_FILES_KEY).unwrap();
-            assert_eq!(saved_state.version, 1, "Should be version 1");
-            assert_eq!(saved_state.files.len(), 1, "Should have 1 file entry");
-
-            // Get the entry (key is "dev:ino")
             let key = file_id_to_key(file_id.dev(), file_id.ino());
-            let entry = saved_state.files.get(&key).unwrap();
-            assert_eq!(entry.dev, file_id.dev());
-            assert_eq!(entry.ino, file_id.ino());
-            assert_eq!(entry.offset, 12345);
-            assert_eq!(entry.path, test_file_path.display().to_string());
-            assert_eq!(entry.filename, "test.log");
+            let mut files = HashMap::new();
+            files.insert(
+                key,
+                PersistedFileEntryV1 {
+                    path: test_file_path.display().to_string(),
+                    filename: "test.log".to_string(),
+                    dev: file_id.dev(),
+                    ino: file_id.ino(),
+                    offset: 54321,
+                },
+            );
+
+            let v1_state = PersistedStateV1 {
+                version: PERSISTED_STATE_VERSION,
+                files,
+            };
+            persister.set_raw_json(KNOWN_FILES_KEY, &v1_state).unwrap();
+            persister.sync().unwrap();
         }
 
-        // Now create a fresh coordinator and load the v1 state
-        let db3 = JsonFileDatabase::open(&offsets_path).unwrap();
-        let persister3 = db3.persister("test");
-        let finder3 = GlobFileFinder::new(config.include.clone(), config.exclude.clone()).unwrap();
-        let watcher3 = AnyWatcher::Mock(MockWatcher::new());
+        // Create config and coordinator
+        let mut config = test_config(&temp_dir);
+        config.include = vec![test_file_path.display().to_string()];
 
-        let (work_tx3, _work_rx3) = bounded_channel::bounded::<FileWorkItem>(10);
-        let (_results_tx3, results_rx3) = bounded_channel::bounded::<FileWorkResult>(10);
-        let (_workers_done_tx3, workers_done_rx3) = std::sync::mpsc::channel::<()>();
-        let offset_tracker3: SharedOffsetTracker =
-            Arc::new(StdMutex::new(FileOffsetTracker::new(false)));
+        let db = JsonFileDatabase::open(&offsets_path).unwrap();
+        let persister = db.persister("test");
 
-        let mut coordinator3 = FileCoordinator {
+        let finder = GlobFileFinder::new(config.include.clone(), config.exclude.clone()).unwrap();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
+        let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
+        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut coordinator = FileCoordinator {
             config,
-            finder: finder3,
-            persister: persister3,
+            finder,
+            persister,
             tracked_files: HashMap::new(),
-            watcher: watcher3,
+            watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
-            work_tx: Some(work_tx3),
-            results_rx: results_rx3,
-            offset_tracker: offset_tracker3,
-            workers_done_rx: workers_done_rx3,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
             shutting_down: Arc::new(AtomicBool::new(false)),
         };
 
         // Load state from v1 format
-        let result = coordinator3.load_state();
+        let result = coordinator.load_state();
         assert!(result.is_ok(), "load_state should succeed for v1 format");
 
         // Verify the file was restored correctly
         assert_eq!(
-            coordinator3.tracked_files.len(),
+            coordinator.tracked_files.len(),
             1,
             "Should have 1 tracked file"
         );
-        let tracked3 = coordinator3.tracked_files.get(&file_id).unwrap();
+        let tracked = coordinator.tracked_files.get(&file_id).unwrap();
         assert_eq!(
-            tracked3.offset, 12345,
+            tracked.offset, 54321,
             "Offset should be restored from v1 state"
         );
     }
@@ -2347,8 +2177,6 @@ mod tests {
         let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
         let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
-        let offset_tracker: SharedOffsetTracker =
-            Arc::new(StdMutex::new(FileOffsetTracker::new(false)));
 
         let mut coordinator = FileCoordinator {
             config,
@@ -2358,15 +2186,10 @@ mod tests {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
             results_rx,
-            offset_tracker,
             workers_done_rx,
             shutting_down: Arc::new(AtomicBool::new(false)),
         };
