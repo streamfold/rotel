@@ -962,25 +962,16 @@ impl Agent {
                     let receivers_cancel = receivers_cancel.clone();
                     receivers_task_set.spawn(async move {
                         loop {
-                            // Exit if all tasks have completed
-                            if fluent_task_set.is_empty() {
-                                break Ok(());
-                            }
-
                             select! {
                                 e = wait::wait_for_any_task(&mut fluent_task_set) => {
                                     match e {
                                         Ok(()) => {
-                                            // Task completed - continue loop to check if more tasks remain
-                                            if !fluent_task_set.is_empty() {
-                                                info!("Unexpected early exit of fluent receiver task.");
-                                            }
+                                            info!("Unexpected early exit of fluent receiver task.");
                                         },
                                         Err(e) => break Err(e),
                                     }
                                 },
                                 _ = receivers_cancel.cancelled() => {
-                                    // Wait up to 500 millis for fluent tasks to finish
                                     break wait::wait_for_tasks_with_timeout(&mut fluent_task_set, Duration::from_millis(500)).await;
                                 }
                             }
