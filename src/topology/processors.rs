@@ -47,8 +47,9 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
 }
 
 /// Container for Python processors
+#[derive(Debug)]
 pub struct Processors {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Only accessed in pyo3
     processor_modules: Vec<String>,
 }
 
@@ -164,5 +165,129 @@ impl Processors {
             request_context,
             payload: items,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "pyo3")]
+    use super::*;
+
+    #[cfg(feature = "pyo3")]
+    #[test]
+    fn test_initialize_processors_success() {
+        // Create a temporary Python file with a valid processor
+        let processor_code = r#"
+def process_spans(resource_spans):
+    # Simple processor that doesn't modify anything
+    pass
+
+def process_metrics(resource_metrics):
+    pass
+
+def process_logs(resource_logs):
+    pass
+"#;
+
+        let temp_file = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+        std::fs::write(temp_file.path(), processor_code).expect("Failed to write to temp file");
+
+        let proc_path = temp_file.path().to_string_lossy().to_string();
+
+        // Initialize processors - should succeed
+        let result = Processors::initialize(vec![proc_path]);
+
+        assert!(result.is_ok(), "Expected initialization to succeed");
+        let processors = result.unwrap();
+        assert_eq!(processors.processor_modules.len(), 1);
+        assert_eq!(processors.processor_modules[0], "rotel_processor_0");
+    }
+
+    #[cfg(feature = "pyo3")]
+    #[test]
+    fn test_initialize_processors_file_not_found() {
+        // Try to initialize with a non-existent file
+        let result = Processors::initialize(vec!["non_existent_processor.py".to_string()]);
+
+        assert!(result.is_err(), "Expected initialization to fail");
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("Failed to read processor script"),
+            "Expected error message about failing to read script, got: {}",
+            err_msg
+        );
+    }
+
+    #[cfg(feature = "pyo3")]
+    #[test]
+    fn test_initialize_processors_invalid_python_syntax() {
+        // Create a temporary Python file with invalid syntax
+        let invalid_code = r#"
+def process_spans(resource_spans)
+    # Missing colon - syntax error
+    pass
+"#;
+
+        let temp_file = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+        std::fs::write(temp_file.path(), invalid_code).expect("Failed to write to temp file");
+
+        let proc_path = temp_file.path().to_string_lossy().to_string();
+
+        // Initialize processors - should fail due to syntax error
+        let result = Processors::initialize(vec![proc_path]);
+
+        assert!(
+            result.is_err(),
+            "Expected initialization to fail with invalid Python syntax"
+        );
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("Failed to register processor"),
+            "Expected error message about failing to register processor, got: {}",
+            err_msg
+        );
+    }
+
+    #[cfg(feature = "pyo3")]
+    #[test]
+    fn test_initialize_multiple_processors() {
+        // Create two valid processor files
+        let processor_code1 = r#"
+def process_spans(resource_spans):
+    pass
+def process_metrics(resource_metrics):
+    pass
+def process_logs(resource_logs):
+    pass
+"#;
+
+        let processor_code2 = r#"
+def process_spans(resource_spans):
+    pass
+def process_metrics(resource_metrics):
+    pass
+def process_logs(resource_logs):
+    pass
+"#;
+
+        let temp_file1 = tempfile::NamedTempFile::new().expect("Failed to create temp file 1");
+        let temp_file2 = tempfile::NamedTempFile::new().expect("Failed to create temp file 2");
+
+        std::fs::write(temp_file1.path(), processor_code1).expect("Failed to write to temp file 1");
+        std::fs::write(temp_file2.path(), processor_code2).expect("Failed to write to temp file 2");
+
+        let proc_path1 = temp_file1.path().to_string_lossy().to_string();
+        let proc_path2 = temp_file2.path().to_string_lossy().to_string();
+
+        // Initialize processors - should succeed
+        let result = Processors::initialize(vec![proc_path1, proc_path2]);
+
+        assert!(result.is_ok(), "Expected initialization to succeed");
+        let processors = result.unwrap();
+        assert_eq!(processors.processor_modules.len(), 2);
+        assert_eq!(processors.processor_modules[0], "rotel_processor_0");
+        assert_eq!(processors.processor_modules[1], "rotel_processor_1");
     }
 }
