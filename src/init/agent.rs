@@ -35,6 +35,7 @@ use crate::topology::debug::DebugLogger;
 use crate::topology::fanout::FanoutBuilder;
 use crate::topology::flush_control::{FlushSubscriber, conditional_flush};
 use crate::topology::payload::Message;
+use crate::topology::processors::Processors;
 use crate::{telemetry, topology};
 use opentelemetry::global;
 use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
@@ -771,13 +772,16 @@ impl Agent {
                 .build()
                 .expect("Failed to build trace fanout with single consumer");
 
+            let trace_processors = Processors::initialize(config.otlp_with_trace_processor.clone())
+                .map_err(|e| format!("Failed to initialize trace processors: {}", e))?;
+
             let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
                 "traces",
                 trace_pipeline_in_rx.clone(),
                 trace_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_traces_batch_config(config.batch.clone()),
-                config.otlp_with_trace_processor.clone(),
+                trace_processors,
                 resource_attributes.clone(),
             );
 
@@ -798,13 +802,17 @@ impl Agent {
                 .build()
                 .expect("Failed to build metrics fanout with single consumer");
 
+            let metrics_processors =
+                Processors::initialize(config.otlp_with_metrics_processor.clone())
+                    .map_err(|e| format!("Failed to initialize metrics processors: {}", e))?;
+
             let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
                 "metrics",
                 metrics_pipeline_in_rx.clone(),
                 metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
-                config.otlp_with_metrics_processor.clone(),
+                metrics_processors,
                 resource_attributes.clone(),
             );
 
@@ -825,13 +833,17 @@ impl Agent {
                 .build()
                 .expect("Failed to build logs fanout with single consumer");
 
+            let logs_processors =
+                Processors::initialize(config.otlp_with_logs_processor.clone())
+                    .map_err(|e| format!("Failed to initialize logs processors: {}", e))?;
+
             let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
                 "logs",
                 logs_pipeline_in_rx.clone(),
                 logs_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_logs_batch_config(config.batch.clone()),
-                config.otlp_with_logs_processor.clone(),
+                logs_processors,
                 resource_attributes.clone(),
             );
 
@@ -858,7 +870,7 @@ impl Agent {
                 internal_metrics_fanout,
                 pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
                 build_metrics_batch_config(config.batch.clone()),
-                vec![],
+                Processors::empty(),
                 resource_attributes.clone(),
             );
 
