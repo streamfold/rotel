@@ -15,7 +15,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::bounded_channel::BoundedReceiver;
 use crate::receivers::file::error::Result;
-use crate::receivers::file::persistence::{JsonFilePersister, Persister};
+use crate::receivers::file::persistence::JsonFilePersister;
 use crate::receivers::file::receiver::SharedOffsetTracker;
 use crate::topology::payload::FileAcknowledgement;
 

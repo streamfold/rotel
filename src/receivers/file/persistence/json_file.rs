@@ -11,15 +11,12 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use super::store::Persister;
 use crate::receivers::file::error::{Error, Result};
 
 /// State stored in the JSON file
 /// Values can be either base64-encoded strings (legacy) or raw JSON objects (v1+)
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DatabaseState {
-    /// Map of scope -> (key -> value)
-    /// Values are serde_json::Value to support both string (base64) and object (raw JSON)
     scopes: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
@@ -93,10 +90,7 @@ pub struct JsonFilePersister {
     path: PathBuf,
     state: Arc<RwLock<DatabaseState>>,
     scope: String,
-    /// Cache for base64-encoded values (legacy format)
-    cache: HashMap<String, Vec<u8>>,
-    /// Cache for raw JSON values (v1+ format, human-readable)
-    raw_json_cache: HashMap<String, serde_json::Value>,
+    cache: HashMap<String, serde_json::Value>,
 }
 
 impl JsonFilePersister {
@@ -107,7 +101,6 @@ impl JsonFilePersister {
             state,
             scope,
             cache: HashMap::new(),
-            raw_json_cache: HashMap::new(),
         }
     }
 
@@ -116,16 +109,14 @@ impl JsonFilePersister {
     pub fn set_raw_json<T: serde::Serialize>(&mut self, key: &str, value: &T) -> Result<()> {
         let json_value = serde_json::to_value(value)
             .map_err(|e| Error::Persistence(format!("failed to serialize to JSON: {}", e)))?;
-        self.raw_json_cache.insert(key.to_string(), json_value);
-        // Remove from regular cache if it exists there
-        self.cache.remove(key);
+        self.cache.insert(key.to_string(), json_value);
         Ok(())
     }
 
     /// Get a raw JSON value
     /// Returns None if the key doesn't exist
     pub fn get_raw_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.raw_json_cache
+        self.cache
             .get(key)
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
@@ -137,50 +128,68 @@ impl JsonFilePersister {
         &self,
         key: &str,
     ) -> std::result::Result<Option<T>, serde_json::Error> {
-        match self.raw_json_cache.get(key) {
+        match self.cache.get(key) {
             None => Ok(None),
             Some(v) => serde_json::from_value(v.clone()).map(Some),
         }
     }
-}
 
-impl Persister for JsonFilePersister {
-    fn get(&self, key: &str) -> Option<Vec<u8>> {
-        self.cache.get(key).cloned()
+    /// Try to get a legacy v0 format value (base64 encoded in file, stored as String).
+    /// This reads directly from the underlying state without caching.
+    /// Used only for migration from v0 to v1 format.
+    /// Returns Ok(None) if key doesn't exist or is not a String (v0 format).
+    /// Returns Ok(Some(String)) with the decoded UTF-8 string if found.
+    /// Returns Err if base64 decoding or UTF-8 conversion fails.
+    pub fn try_get_legacy_v0(&self, key: &str) -> std::result::Result<Option<String>, String> {
+        let state = self
+            .state
+            .read()
+            .map_err(|e| format!("failed to read state: {}", e))?;
+
+        let scope_data = match state.scopes.get(&self.scope) {
+            Some(data) => data,
+            None => return Ok(None),
+        };
+
+        match scope_data.get(key) {
+            None => Ok(None),
+            Some(serde_json::Value::String(s)) => {
+                // V0 format: base64 encoded string
+                let decoded = base64_decode(s).map_err(|_| "invalid base64 encoding")?;
+                String::from_utf8(decoded)
+                    .map(Some)
+                    .map_err(|e| e.to_string())
+            }
+            Some(_) => {
+                // Not a string - this is v1 format, not v0
+                Ok(None)
+            }
+        }
     }
 
-    fn set(&mut self, key: &str, value: Vec<u8>) {
-        self.cache.insert(key.to_string(), value);
-        // Remove from raw_json_cache if it exists there
-        self.raw_json_cache.remove(key);
-    }
-
-    fn delete(&mut self, key: &str) {
+    /// Delete a key from the cache
+    pub fn delete(&mut self, key: &str) {
         self.cache.remove(key);
-        self.raw_json_cache.remove(key);
     }
 
-    fn load(&mut self) -> Result<()> {
+    /// Load data from the underlying storage into the cache.
+    pub fn load(&mut self) -> Result<()> {
         let state = self
             .state
             .read()
             .map_err(|e| Error::Persistence(e.to_string()))?;
 
         self.cache.clear();
-        self.raw_json_cache.clear();
 
         if let Some(scope_data) = state.scopes.get(&self.scope) {
             for (key, value) in scope_data {
                 match value {
-                    // String value = base64 encoded (legacy format)
-                    serde_json::Value::String(s) => {
-                        if let Ok(decoded) = base64_decode(s) {
-                            self.cache.insert(key.clone(), decoded);
-                        }
-                    }
+                    // String value = base64 encoded (legacy v0 format)
+                    // Don't load into cache - read on-demand via try_get_legacy_v0()
+                    serde_json::Value::String(_) => {}
                     // Object/Array value = raw JSON (v1+ format)
                     other => {
-                        self.raw_json_cache.insert(key.clone(), other.clone());
+                        self.cache.insert(key.clone(), other.clone());
                     }
                 }
             }
@@ -189,7 +198,8 @@ impl Persister for JsonFilePersister {
         Ok(())
     }
 
-    fn sync(&self) -> Result<()> {
+    /// Sync the cache to the underlying storage.
+    pub fn sync(&self) -> Result<()> {
         // Update shared state
         {
             let mut state = self
@@ -200,13 +210,8 @@ impl Persister for JsonFilePersister {
             let scope_data = state.scopes.entry(self.scope.clone()).or_default();
             scope_data.clear();
 
-            // Write base64-encoded values
+            // Write raw JSON values only (v1 format)
             for (key, value) in &self.cache {
-                scope_data.insert(key.clone(), serde_json::Value::String(base64_encode(value)));
-            }
-
-            // Write raw JSON values (these take precedence if same key exists in both)
-            for (key, value) in &self.raw_json_cache {
                 scope_data.insert(key.clone(), value.clone());
             }
         }
@@ -267,181 +272,18 @@ fn atomic_write(path: &Path, state: &DatabaseState) -> Result<()> {
     Ok(())
 }
 
-/// Base64 encode bytes for JSON storage
-fn base64_encode(data: &[u8]) -> String {
-    use std::io::Write;
-    let mut buf = Vec::new();
-    let mut encoder = Base64Encoder::new(&mut buf);
-    encoder.write_all(data).unwrap();
-    encoder.finish();
-    String::from_utf8(buf).unwrap()
-}
-
-/// Base64 decode string to bytes
-fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, ()> {
-    base64_decode_impl(s.as_bytes())
-}
-
-// Simple base64 implementation to avoid adding another dependency
-
-const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-struct Base64Encoder<'a> {
-    output: &'a mut Vec<u8>,
-    buffer: u32,
-    bits: u8,
-}
-
-impl<'a> Base64Encoder<'a> {
-    fn new(output: &'a mut Vec<u8>) -> Self {
-        Self {
-            output,
-            buffer: 0,
-            bits: 0,
-        }
-    }
-
-    fn finish(mut self) {
-        if self.bits > 0 {
-            self.buffer <<= 6 - self.bits;
-            self.output
-                .push(BASE64_CHARS[(self.buffer & 0x3F) as usize]);
-            let padding = (3 - (self.bits / 2) % 3) % 3;
-            for _ in 0..padding {
-                self.output.push(b'=');
-            }
-        }
-    }
-}
-
-impl std::io::Write for Base64Encoder<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        for &byte in buf {
-            self.buffer = (self.buffer << 8) | byte as u32;
-            self.bits += 8;
-            while self.bits >= 6 {
-                self.bits -= 6;
-                self.output
-                    .push(BASE64_CHARS[((self.buffer >> self.bits) & 0x3F) as usize]);
-            }
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-fn base64_decode_impl(input: &[u8]) -> std::result::Result<Vec<u8>, ()> {
-    let mut output = Vec::new();
-    let mut buffer: u32 = 0;
-    let mut bits: u8 = 0;
-
-    for &byte in input {
-        if byte == b'=' {
-            break;
-        }
-
-        let value = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b' ' | b'\n' | b'\r' | b'\t' => continue,
-            _ => return Err(()),
-        };
-
-        buffer = (buffer << 6) | value as u32;
-        bits += 6;
-
-        if bits >= 8 {
-            bits -= 8;
-            output.push((buffer >> bits) as u8);
-        }
-    }
-
-    Ok(output)
+/// Base64 decode string to bytes (used for reading legacy v0 format)
+fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::PersisterExt;
     use super::*;
 
     #[test]
-    fn test_json_file_persister_basic() {
-        let db = JsonFileDatabase::open_memory();
-        let mut persister = db.persister("test_operator");
-
-        // Initially empty
-        assert!(persister.get("key1").is_none());
-
-        // Set and get
-        persister.set("key1", b"value1".to_vec());
-        assert_eq!(persister.get("key1"), Some(b"value1".to_vec()));
-
-        // Delete
-        persister.delete("key1");
-        assert!(persister.get("key1").is_none());
-    }
-
-    #[test]
-    fn test_json_file_persister_sync_and_load() {
-        let db = JsonFileDatabase::open_memory();
-
-        // Set and sync
-        {
-            let mut persister = db.persister("test_operator");
-            persister.set("key1", b"value1".to_vec());
-            persister.set("key2", b"value2".to_vec());
-            persister.sync().unwrap();
-        }
-
-        // Load in a new persister
-        {
-            let mut persister = db.persister("test_operator");
-            persister.load().unwrap();
-            assert_eq!(persister.get("key1"), Some(b"value1".to_vec()));
-            assert_eq!(persister.get("key2"), Some(b"value2".to_vec()));
-        }
-    }
-
-    #[test]
-    fn test_json_file_persister_scopes_are_isolated() {
-        let db = JsonFileDatabase::open_memory();
-
-        let mut persister1 = db.persister("scope1");
-        let mut persister2 = db.persister("scope2");
-
-        persister1.set("key", b"value1".to_vec());
-        persister2.set("key", b"value2".to_vec());
-
-        assert_eq!(persister1.get("key"), Some(b"value1".to_vec()));
-        assert_eq!(persister2.get("key"), Some(b"value2".to_vec()));
-    }
-
-    #[test]
-    fn test_json_file_persister_ext_u64() {
-        let db = JsonFileDatabase::open_memory();
-        let mut persister = db.persister("test");
-
-        persister.set_u64("offset", 12345);
-        assert_eq!(persister.get_u64("offset"), Some(12345));
-    }
-
-    #[test]
-    fn test_json_file_persister_ext_string() {
-        let db = JsonFileDatabase::open_memory();
-        let mut persister = db.persister("test");
-
-        persister.set_string("cursor", "abc123");
-        assert_eq!(persister.get_string("cursor"), Some("abc123".to_string()));
-    }
-
-    #[test]
-    fn test_json_file_persister_ext_json() {
+    fn test_raw_json_basic() {
         use serde::{Deserialize, Serialize};
 
         #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -451,20 +293,129 @@ mod tests {
         }
 
         let db = JsonFileDatabase::open_memory();
-        let mut persister = db.persister("test");
+        let mut persister = db.persister("test_operator");
 
+        // Initially empty
+        assert!(persister.get_raw_json::<TestData>("key1").is_none());
+
+        // Set and get
         let data = TestData {
             offset: 100,
             path: "/var/log/test.log".to_string(),
         };
+        persister.set_raw_json("key1", &data).unwrap();
+        assert_eq!(persister.get_raw_json::<TestData>("key1"), Some(data));
 
-        persister.set_json("data", &data).unwrap();
-        let loaded: TestData = persister.get_json("data").unwrap();
-        assert_eq!(loaded, data);
+        // Delete
+        persister.delete("key1");
+        assert!(persister.get_raw_json::<TestData>("key1").is_none());
     }
 
     #[test]
-    fn test_json_file_persister_with_file() {
+    fn test_raw_json_sync_and_load() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct TestData {
+            value: String,
+        }
+
+        let db = JsonFileDatabase::open_memory();
+
+        // Set and sync
+        {
+            let mut persister = db.persister("test_operator");
+            persister
+                .set_raw_json(
+                    "key1",
+                    &TestData {
+                        value: "value1".to_string(),
+                    },
+                )
+                .unwrap();
+            persister
+                .set_raw_json(
+                    "key2",
+                    &TestData {
+                        value: "value2".to_string(),
+                    },
+                )
+                .unwrap();
+            persister.sync().unwrap();
+        }
+
+        // Load in a new persister
+        {
+            let mut persister = db.persister("test_operator");
+            persister.load().unwrap();
+            assert_eq!(
+                persister.get_raw_json::<TestData>("key1"),
+                Some(TestData {
+                    value: "value1".to_string()
+                })
+            );
+            assert_eq!(
+                persister.get_raw_json::<TestData>("key2"),
+                Some(TestData {
+                    value: "value2".to_string()
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_scopes_are_isolated() {
+        let db = JsonFileDatabase::open_memory();
+
+        let mut persister1 = db.persister("scope1");
+        let mut persister2 = db.persister("scope2");
+
+        persister1.set_raw_json("key", &"value1").unwrap();
+        persister2.set_raw_json("key", &"value2").unwrap();
+
+        assert_eq!(
+            persister1.get_raw_json::<String>("key"),
+            Some("value1".to_string())
+        );
+        assert_eq!(
+            persister2.get_raw_json::<String>("key"),
+            Some("value2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_try_get_raw_json_error_handling() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct TestData {
+            field: u64,
+        }
+
+        let db = JsonFileDatabase::open_memory();
+        let mut persister = db.persister("test");
+
+        // Store a string value
+        persister.set_raw_json("key", &"not a struct").unwrap();
+
+        // try_get_raw_json should return Err when deserialization fails
+        let result = persister.try_get_raw_json::<TestData>("key");
+        assert!(result.is_err());
+
+        // Non-existent key should return Ok(None)
+        let result = persister.try_get_raw_json::<TestData>("nonexistent");
+        assert!(matches!(result, Ok(None)));
+    }
+
+    #[test]
+    fn test_raw_json_with_file() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct TestData {
+            offset: u64,
+        }
+
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.json");
 
@@ -472,7 +423,9 @@ mod tests {
         {
             let db = JsonFileDatabase::open(&db_path).unwrap();
             let mut persister = db.persister("operator1");
-            persister.set("offset", b"12345".to_vec());
+            persister
+                .set_raw_json("data", &TestData { offset: 12345 })
+                .unwrap();
             persister.sync().unwrap();
         }
 
@@ -481,12 +434,85 @@ mod tests {
             let db = JsonFileDatabase::open(&db_path).unwrap();
             let mut persister = db.persister("operator1");
             persister.load().unwrap();
-            assert_eq!(persister.get("offset"), Some(b"12345".to_vec()));
+            assert_eq!(
+                persister.get_raw_json::<TestData>("data"),
+                Some(TestData { offset: 12345 })
+            );
         }
     }
 
     #[test]
-    fn test_base64_roundtrip() {
+    fn test_legacy_v0_read() {
+        use base64::Engine;
+
+        // Write v0 format directly to file (base64 encoded JSON string)
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.json");
+
+        // V0 format: JSON content base64 encoded
+        let v0_json_content = r#"{"files":[{"dev":1,"ino":100,"offset":500}]}"#;
+        let v0_base64 = base64::engine::general_purpose::STANDARD.encode(v0_json_content);
+
+        // Write v0 format directly to the database file
+        let v0_db_content = serde_json::json!({
+            "scopes": {
+                "test_scope": {
+                    "known_files": v0_base64
+                }
+            }
+        });
+        std::fs::write(
+            &db_path,
+            serde_json::to_string_pretty(&v0_db_content).unwrap(),
+        )
+        .unwrap();
+
+        // Open and verify we can read v0 format
+        let db = JsonFileDatabase::open(&db_path).unwrap();
+        let mut persister = db.persister("test_scope");
+        persister.load().unwrap();
+
+        // V0 data should be readable via try_get_legacy_v0
+        let v0_data = persister.try_get_legacy_v0("known_files").unwrap();
+        assert!(v0_data.is_some());
+        let v0_data = v0_data.unwrap();
+        assert!(v0_data.contains(r#""dev":1"#));
+        assert!(v0_data.contains(r#""ino":100"#));
+        assert!(v0_data.contains(r#""offset":500"#));
+
+        // V0 data should NOT be in raw_json_cache (get_raw_json returns None)
+        assert!(
+            persister
+                .get_raw_json::<serde_json::Value>("known_files")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_legacy_v0_not_found_for_v1_data() {
+        let db = JsonFileDatabase::open_memory();
+        let mut persister = db.persister("test");
+
+        // Store v1 format data (object, not string)
+        persister
+            .set_raw_json("data", &serde_json::json!({"field": 123}))
+            .unwrap();
+        persister.sync().unwrap();
+
+        // Reload
+        let mut persister2 = db.persister("test");
+        persister2.load().unwrap();
+
+        // try_get_legacy_v0 should return None for v1 data (it's not a base64 string)
+        let result = persister2.try_get_legacy_v0("data").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_base64_decode() {
+        use base64::Engine;
+
+        // Test that base64 decode works correctly
         let test_cases = vec![
             b"".to_vec(),
             b"f".to_vec(),
@@ -499,7 +525,7 @@ mod tests {
         ];
 
         for original in test_cases {
-            let encoded = base64_encode(&original);
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&original);
             let decoded = base64_decode(&encoded).unwrap();
             assert_eq!(original, decoded, "Failed for {:?}", original);
         }

@@ -1004,19 +1004,11 @@ impl Agent {
                     let receivers_cancel = receivers_cancel.clone();
                     receivers_task_set.spawn(async move {
                         loop {
-                            // Exit if all tasks have completed
-                            if file_task_set.is_empty() {
-                                break Ok(());
-                            }
-
                             select! {
                                 e = wait::wait_for_any_task(&mut file_task_set) => {
                                     match e {
                                         Ok(()) => {
-                                            // Task completed - continue loop to check if more tasks remain
-                                            if !file_task_set.is_empty() {
-                                                info!("Unexpected early exit of file receiver task.");
-                                            }
+                                            info!("Unexpected early exit of file receiver task.");
                                         },
                                         Err(e) => break Err(e),
                                     }

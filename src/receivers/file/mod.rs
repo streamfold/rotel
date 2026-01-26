@@ -26,6 +26,6 @@ pub use input::{FileFinder, FileInputConfig, FileReader, StartAt};
 pub use offset_committer::{FileOffsetCommitter, OffsetCommitterConfig, TrackedFileInfo};
 pub use offset_tracker::{FileOffsetTracker, LineOffset};
 pub use parser::{JsonParser, ParsedLog, Parser, RegexParser};
-pub use persistence::{JsonFileDatabase, JsonFilePersister, Persister, PersisterExt};
+pub use persistence::{JsonFileDatabase, JsonFilePersister};
 pub use receiver::FileReceiver;
 pub use watcher::{FileWatcher, WatchMode, WatcherConfig};

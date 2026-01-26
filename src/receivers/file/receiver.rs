@@ -15,13 +15,13 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Shared offset tracker for at-least-once delivery.
 /// Uses std::sync::Mutex since it's accessed from both async and sync contexts.
-pub type SharedOffsetTracker = Arc<StdMutex<FileOffsetTracker>>;
+pub type SharedOffsetTracker = Arc<Mutex<FileOffsetTracker>>;
 
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
@@ -51,8 +51,7 @@ use crate::receivers::file::offset_tracker::{FileOffsetTracker, LineOffset};
 use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
     JsonFileDatabase, JsonFilePersister, KNOWN_FILES_KEY, PERSISTED_STATE_VERSION,
-    PersistedFileEntryV1, PersistedStateV0, PersistedStateV1, Persister, PersisterExt,
-    file_id_to_key,
+    PersistedFileEntryV1, PersistedStateV0, PersistedStateV1, file_id_to_key,
 };
 use crate::receivers::file::watcher::{
     AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig, create_watcher,
@@ -202,7 +201,7 @@ impl FileReceiver {
         let (file_info_tx, file_info_rx) = bounded_channel::bounded::<TrackedFileInfo>(100);
 
         // Create shared offset tracker
-        let offset_tracker: SharedOffsetTracker = Arc::new(StdMutex::new(FileOffsetTracker::new(
+        let offset_tracker: SharedOffsetTracker = Arc::new(Mutex::new(FileOffsetTracker::new(
             config.finite_retry_enabled,
         )));
 
@@ -494,7 +493,11 @@ impl FileWorkHandler {
                         "Spawning worker for file"
                     );
 
-                    // Send file info to offset committer for persistence metadata
+                    // Send file info to offset committer for persistence metadata.
+                    // This is defensive - the coordinator already knows about files and could
+                    // send this info once when files are discovered. Sending here on every work
+                    // dispatch ensures the info eventually gets through even if earlier sends
+                    // failed. TODO: Consider moving this to FileCoordinator::add_file() instead.
                     let file_info = TrackedFileInfo {
                         file_id: work.file_id,
                         path: work.path.display().to_string(),
@@ -962,7 +965,7 @@ impl<F: FileFinder> FileCoordinator<F> {
             }
             Ok(None) => {
                 // No v1 format - check for v0 (legacy base64)
-                let raw_json = match self.persister.try_get_raw(KNOWN_FILES_KEY) {
+                let raw_json = match self.persister.try_get_legacy_v0(KNOWN_FILES_KEY) {
                     Ok(Some(raw)) => raw,
                     Ok(None) => {
                         debug!("No persisted state found, starting fresh");
@@ -1930,10 +1933,9 @@ mod tests {
         let file_id = FileId::from_file(&test_file).unwrap();
         drop(test_file);
 
-        // Write v0 format state using the persister (which handles base64 encoding)
+        // Write v0 format state directly to the file (base64 encoded JSON)
         {
-            let db = JsonFileDatabase::open(&offsets_path).unwrap();
-            let mut persister = db.persister("test");
+            use base64::Engine;
 
             // Create a v0 format state (legacy format without version field)
             let v0_state = PersistedStateV0 {
@@ -1943,8 +1945,23 @@ mod tests {
                     offset: 12345,
                 }],
             };
-            persister.set_json(KNOWN_FILES_KEY, &v0_state).unwrap();
-            persister.sync().unwrap();
+
+            // V0 format: JSON serialized, then base64 encoded, stored as string in scopes
+            let v0_json = serde_json::to_string(&v0_state).unwrap();
+            let v0_base64 = base64::engine::general_purpose::STANDARD.encode(v0_json.as_bytes());
+
+            let db_content = serde_json::json!({
+                "scopes": {
+                    "test": {
+                        "knownFiles": v0_base64
+                    }
+                }
+            });
+            std::fs::write(
+                &offsets_path,
+                serde_json::to_string_pretty(&db_content).unwrap(),
+            )
+            .unwrap();
         }
 
         // Create config and coordinator

@@ -15,4 +15,3 @@ pub use schema::{
 };
 #[cfg(test)]
 pub use store::MockPersister;
-pub use store::{Persister, PersisterExt};

@@ -121,7 +121,7 @@ prost-build = "0.13.4"
 [features]
 default = ["rdkafka", "aws_iam", "file_receiver"]
 fluent_receiver = ["dep:rmpv", "dep:rmp-serde"]
-file_receiver = ["dep:glob", "dep:notify", "dep:notify-debouncer-mini"]
+file_receiver = ["dep:glob", "dep:notify", "dep:notify-debouncer-mini", "dep:base64"]
 pprof = ["dep:pprof"]
 pyo3 = ["dep:pyo3", "dep:rotel_python_processor_sdk"]
 rdkafka = ["dep:rdkafka"]
