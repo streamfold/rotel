@@ -5,6 +5,9 @@ use crate::topology::batch::{BatchConfig, BatchSizer, BatchSplittable, NestedBat
 use crate::topology::fanout::{Fanout, FanoutFuture};
 use crate::topology::flush_control::{FlushReceiver, conditional_flush};
 use crate::topology::payload::{Ack, Message};
+use crate::topology::processors::Processors;
+#[cfg(not(feature = "pyo3"))]
+use crate::topology::processors::PythonProcessable;
 use opentelemetry::KeyValue as InstKeyValue;
 use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -14,20 +17,12 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 #[cfg(feature = "pyo3")]
-use rotel_sdk::model::{PythonProcessable, register_processor};
-#[cfg(feature = "pyo3")]
-use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
-#[cfg(feature = "pyo3")]
-use std::env;
+use rotel_sdk::model::PythonProcessable;
 use std::error::Error;
-#[cfg(feature = "pyo3")]
-use std::path::Path;
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-#[cfg(feature = "pyo3")]
-use tower::BoxError;
 use tracing::{Level, debug, error, warn};
 
 //#[derive(Clone)]
@@ -37,7 +32,7 @@ pub struct Pipeline<T> {
     receiver: BoundedReceiver<Message<T>>,
     fanout: Fanout<Vec<Message<T>>>,
     batch_config: BatchConfig,
-    processors: Vec<String>,
+    processors: Processors,
     flush_listener: Option<FlushReceiver>,
     resource_attributes: Vec<KeyValue>,
 }
@@ -111,35 +106,6 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: &[KeyValue]) 
         .collect()
 }
 
-#[cfg(not(feature = "pyo3"))]
-pub trait PythonProcessable {
-    fn process(self, processor: &str) -> Self;
-}
-
-#[cfg(not(feature = "pyo3"))]
-impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
-    fn process(self, _processor: &str) -> Self {
-        // Noop
-        self
-    }
-}
-
-#[cfg(not(feature = "pyo3"))]
-impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
-    fn process(self, _processor: &str) -> Self {
-        // Noop
-        self
-    }
-}
-
-#[cfg(not(feature = "pyo3"))]
-impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
-    fn process(self, _processor: &str) -> Self {
-        // Noop
-        self
-    }
-}
-
 impl<T> Pipeline<T>
 where
     T: BatchSizer + BatchSplittable + PythonProcessable + ResourceContainer + Clone + 'static,
@@ -151,7 +117,7 @@ where
         fanout: Fanout<Vec<Message<T>>>,
         flush_listener: Option<FlushReceiver>,
         batch_config: BatchConfig,
-        processors: Vec<String>,
+        processors: Processors,
         attributes: Vec<(String, String)>,
     ) -> Self {
         let resource_attributes = attributes
@@ -200,107 +166,6 @@ where
         Ok(())
     }
 
-    #[cfg(not(feature = "pyo3"))]
-    fn run_processors(
-        &self,
-        message: Message<T>,
-        _: usize,
-        _: &[String],
-        inspector: &impl Inspect<T>,
-    ) -> Message<T> {
-        inspector.inspect(&message.payload);
-        message
-    }
-
-    #[cfg(feature = "pyo3")]
-    fn run_processors(
-        &self,
-        message: Message<T>,
-        len_processor_modules: usize,
-        processor_modules: &[String],
-        inspector: &impl Inspect<T>,
-    ) -> Message<T> {
-        let mut items = message.payload;
-        let request_context = message.request_context.clone();
-        let mut py_request_context: Option<PyRequestContext> = None;
-        match message.request_context {
-            None => {}
-            Some(ctx) => py_request_context = Some(ctx.into()),
-        }
-        // invoke current middleware layer
-        // todo: expand support for observability or transforms
-        if len_processor_modules > 0 {
-            inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
-        } else {
-            inspector.inspect(&items);
-        }
-        for p in processor_modules {
-            let mut new_items = Vec::new();
-            // Extract headers from request_context if available
-
-            while !items.is_empty() {
-                let item = items.pop();
-                if let Some(item) = item {
-                    let result = item.process(p, py_request_context.clone());
-                    new_items.push(result);
-                }
-            }
-            items = new_items;
-        }
-
-        if len_processor_modules > 0 {
-            inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
-        }
-
-        // Wrap the processed items back into a Message
-        Message {
-            metadata: message.metadata,
-            request_context,
-            payload: items,
-        }
-    }
-
-    #[cfg(feature = "pyo3")]
-    fn initialize_processors(&mut self) -> Result<Vec<String>, BoxError> {
-        let mut processor_modules = vec![];
-        let current_dir = env::current_dir()?;
-
-        for (processor_idx, file) in self.processors.iter().enumerate() {
-            let file_path = Path::new(file);
-
-            // Use absolute path if provided, otherwise make relative to current directory
-            let script_path = if file_path.is_absolute() {
-                file_path.to_path_buf()
-            } else {
-                current_dir.join(file_path)
-            };
-
-            let code = match std::fs::read_to_string(&script_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    return Err(format!(
-                        "Failed to read processor script {}: {}",
-                        script_path.display(),
-                        e
-                    )
-                    .into());
-                }
-            };
-
-            let module = format!("rotel_processor_{}", processor_idx);
-
-            match register_processor(code, file.clone(), module.clone()) {
-                Ok(_) => {
-                    processor_modules.push(module);
-                }
-                Err(e) => {
-                    return Err(format!("Failed to register processor {}: {}", file, e).into());
-                }
-            }
-        }
-        Ok(processor_modules)
-    }
-
     async fn run(
         &mut self,
         inspector: impl Inspect<T>,
@@ -321,18 +186,6 @@ where
         let mut batch_timer = tokio::time::interval(batch_timeout);
         batch_timer.tick().await; // consume the immediate tick
 
-        #[cfg(feature = "pyo3")]
-        let processor_modules = match self.initialize_processors() {
-            Ok(modules) => modules,
-            Err(e) => {
-                error!(error = ?e, "Failed to initialize processors");
-                vec![]
-            }
-        };
-        #[cfg(not(feature = "pyo3"))]
-        let processor_modules: Vec<String> = vec![];
-
-        let len_processor_modules = processor_modules.len();
         let mut flush_listener = self.flush_listener.take();
 
         let mut send_fut: Option<FanoutFuture<Vec<Message<T>>>> = None;
@@ -390,7 +243,7 @@ where
                         }
                     }
 
-                    message = self.run_processors(message, len_processor_modules, &processor_modules, &inspector);
+                    message = self.processors.run(message, &inspector);
 
                     // If we ended up deleting all items, then simply ack and drop here
                     if message.size_of() == 0 {
@@ -626,7 +479,7 @@ mod tests {
             fanout,
             None, // no flush listener
             batch_config,
-            vec![], // no processors
+            Processors::empty(), // no processors
             attributes.clone(),
         );
 
@@ -764,6 +617,10 @@ def process_spans(resource_spans):
 
         let proc_path = temp_file.path().to_string_lossy().to_string();
 
+        // Initialize processors
+        let processors =
+            Processors::initialize(vec![proc_path]).expect("Failed to initialize processors");
+
         // Create pipeline
         let mut pipeline: Pipeline<ResourceSpans> = Pipeline::new(
             "traces",
@@ -771,7 +628,7 @@ def process_spans(resource_spans):
             fanout,
             None,
             batch_config,
-            vec![proc_path],
+            processors,
             vec![], // no resource attributes
         );
 
