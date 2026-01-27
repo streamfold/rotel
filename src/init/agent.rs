@@ -221,6 +221,21 @@ impl Agent {
             exp_config.set_indefinite_retry();
         }
 
+        // Check if file receiver with offset tracking is enabled (indefinite retry not disabled)
+        #[cfg(feature = "file_receiver")]
+        let file_offset_tracking_enabled = rec_config
+            .iter()
+            .any(|(_, cfg)| matches!(cfg, ReceiverConfig::File(f) if !f.finite_retry_enabled));
+
+        // If file receiver offset tracking is enabled, modify retry configs to be indefinite
+        #[cfg(feature = "file_receiver")]
+        if file_offset_tracking_enabled {
+            info!(
+                "File receiver offset tracking enabled - setting exporters to retry indefinitely to ensure no data loss. To disable this behavior, use --file-receiver-disable-exporter-indefinite-retry"
+            );
+            exp_config.set_indefinite_retry();
+        }
+
         let activation =
             TelemetryActivation::from_config(&rec_config, &exp_config, self.logs_rx.is_some());
 

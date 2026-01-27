@@ -274,6 +274,17 @@ pub struct FileReceiverArgs {
         default_value = "100"
     )]
     pub file_receiver_max_batch_size: usize,
+
+    /// Disable indefinite retry for exporters.
+    /// By default, exporters will retry indefinitely to ensure no data loss.
+    /// Setting this flag will revert to the normal retry behavior with timeout,
+    /// but may result in data loss if the exporter fails after exhausting retries.
+    #[arg(
+        long,
+        env = "ROTEL_FILE_RECEIVER_DISABLE_EXPORTER_INDEFINITE_RETRY",
+        default_value = "false"
+    )]
+    pub file_receiver_disable_exporter_indefinite_retry: bool,
 }
 
 impl Default for FileReceiverArgs {
@@ -300,6 +311,7 @@ impl Default for FileReceiverArgs {
             file_receiver_max_poll_failure_duration_ms: 60000,
             file_receiver_max_watcher_error_duration_ms: 60000,
             file_receiver_max_batch_size: 100,
+            file_receiver_disable_exporter_indefinite_retry: false,
         }
     }
 }
@@ -339,7 +351,10 @@ impl FileReceiverArgs {
                 self.file_receiver_max_watcher_error_duration_ms,
             ),
             max_batch_size: self.file_receiver_max_batch_size,
-            finite_retry_enabled: false, // Always use indefinite retry for file receiver
+            // finite_retry_enabled is the opposite of indefinite retry:
+            // - false (default) = indefinite retry enabled (safer, no data loss)
+            // - true = finite retry enabled (may lose data if retries exhausted)
+            finite_retry_enabled: self.file_receiver_disable_exporter_indefinite_retry,
         }
     }
 }
