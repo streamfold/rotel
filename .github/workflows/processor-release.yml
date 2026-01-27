@@ -12,7 +12,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             os: ubuntu
@@ -29,6 +28,10 @@ jobs:
             runner: ubuntu-22.04
             os: ubuntu
             python-version: 3.13
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            os: ubuntu
+            python-version: 3.14
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             os: ubuntu
@@ -45,6 +48,10 @@ jobs:
             runner: ubuntu-22.04-arm
             os: ubuntu
             python-version: 3.13
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            os: ubuntu
+            python-version: 3.14
           - target: aarch64-apple-darwin
             runner: macos-14
             os: macos
@@ -61,6 +68,10 @@ jobs:
             runner: macos-14
             os: macos
             python-version: 3.13
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+            python-version: 3.14
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -74,26 +85,10 @@ jobs:
       - name: install protoc macos
         if: matrix.os == 'macos'
         run: brew install protobuf
-      - name: update python 3.10
-        if: matrix.python-version == '3.10'
+      - name: update python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-      - name: update python 3.11
-        if: matrix.python-version == '3.11'
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
-      - name: update python 3.12
-        if: matrix.python-version == '3.12'
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.12
-      - name: update python 3.13
-        if: matrix.python-version == '3.13'
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.13
+          python-version: ${{ matrix.python-version }}
       - name: Set build env
         run: echo "BUILD_SHORT_SHA=$(echo -n $GITHUB_SHA | cut -c 1-7)" >> $GITHUB_ENV
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -112,7 +107,7 @@ jobs:
           command: build
           args: --release --features pyo3 --locked --target ${{ matrix.target }}
       - name: upload build
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
           name: rotel-processor-build-${{ matrix.target }}
