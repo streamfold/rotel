@@ -614,6 +614,7 @@ start_rotel() {
             --file-receiver-watch-mode "$WATCH_MODE" \
             --file-receiver-debounce-interval-ms "$DEBOUNCE_MS" \
             --file-receiver-offsets-path /tmp/benchmark-rotel-offsets.json \
+            --batch-max-size 1024 \
             --exporter otlp \
             --otlp-exporter-endpoint "localhost:$sink_port" \
             --otlp-exporter-protocol "$PROTOCOL" \
@@ -628,6 +629,7 @@ start_rotel() {
             --file-receiver-watch-mode "$WATCH_MODE" \
             --file-receiver-debounce-interval-ms "$DEBOUNCE_MS" \
             --file-receiver-offsets-path /tmp/benchmark-rotel-offsets.json \
+            --batch-max-size 1024 \
             --exporter blackhole \
             > "$OUTPUT_DIR/rotel.log" 2>&1 &
     fi
