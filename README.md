@@ -792,6 +792,7 @@ To enable the File Receiver, specify it with `--receiver file` and provide at le
 | --file-receiver-max-poll-failure-duration-ms       | 60000                            | Max duration in ms of consecutive poll failures before exiting               |
 | --file-receiver-max-watcher-error-duration-ms      | 60000                            | Max duration in ms of consecutive watcher errors before falling back to poll |
 | --file-receiver-max-batch-size                     | 100                              | Maximum number of log records to batch before sending to pipeline            |
+| --file-receiver-disable-exporter-indefinite-retry  | false                            | Disable indefinite retry for exporters (may result in data loss)             |
 
 #### Watch Modes
 

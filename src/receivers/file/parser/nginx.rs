@@ -28,7 +28,7 @@
 //! 2025/12/17 10:15:32 [error] 1234#5678: *9 open() "/var/www/missing.html" failed (2: No such file or directory)
 //! ```
 //!
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDateTime};
 use opentelemetry_proto::tonic::common::v1::{AnyValue, any_value};
 
 use super::json::JsonParser;
@@ -141,6 +141,16 @@ impl Parser for NginxErrorParser {
     }
 }
 
+/// Common alternative timestamp formats for nginx time_local field.
+/// These are tried in order if the standard format fails.
+const ALTERNATIVE_TIME_FORMATS: &[&str] = &[
+    "%Y-%m-%d %H:%M:%S",    // ISO-ish without timezone: 2019-02-13 20:58:22
+    "%Y-%m-%dT%H:%M:%S",    // ISO 8601 without timezone: 2019-02-13T20:58:22
+    "%Y-%m-%dT%H:%M:%S%z",  // ISO 8601 with timezone: 2019-02-13T20:58:22+0000
+    "%Y-%m-%d %H:%M:%S %z", // With timezone: 2019-02-13 20:58:22 +0000
+    "%d/%b/%Y %H:%M:%S",    // Without colon: 13/Feb/2019 20:58:22
+];
+
 /// Parse nginx time_local field from attributes and set timestamp on ParsedLog.
 fn parse_time_local_timestamp(parsed: &mut ParsedLog) {
     let time_local = parsed.attributes.iter().find_map(|kv| {
@@ -156,12 +166,38 @@ fn parse_time_local_timestamp(parsed: &mut ParsedLog) {
     });
 
     if let Some(ts) = time_local {
+        // Try the standard nginx format first (has timezone)
         if let Some(nanos) = DateTime::parse_from_str(ts, NGINX_TIME_LOCAL_FORMAT)
             .ok()
             .and_then(|dt| dt.timestamp_nanos_opt())
             .map(|n| n as u64)
         {
             parsed.timestamp = Some(nanos);
+            return;
+        }
+
+        // Try alternative formats with timezone
+        for format in ALTERNATIVE_TIME_FORMATS {
+            // Try with timezone first
+            if let Some(nanos) = DateTime::parse_from_str(ts, format)
+                .ok()
+                .and_then(|dt| dt.timestamp_nanos_opt())
+                .map(|n| n as u64)
+            {
+                parsed.timestamp = Some(nanos);
+                return;
+            }
+
+            // Try as naive datetime (no timezone) and assume UTC
+            if let Some(nanos) = NaiveDateTime::parse_from_str(ts, format)
+                .ok()
+                .map(|dt| dt.and_utc())
+                .and_then(|dt| dt.timestamp_nanos_opt())
+                .map(|n| n as u64)
+            {
+                parsed.timestamp = Some(nanos);
+                return;
+            }
         }
     }
 }

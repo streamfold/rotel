@@ -25,7 +25,10 @@ impl<Resource> BlackholeExporter<Resource> {
                             for message in messages {
                                 if let Some(metadata) = message.metadata {
                                     if let Err(e) = metadata.ack().await {
-                                        tracing::warn!("Failed to acknowledge blackhole message: {:?}", e);
+                                        // Only warn if not shutting down - disconnected channels are expected during shutdown
+                                        if !cancel_token.is_cancelled() {
+                                            tracing::warn!("Failed to acknowledge blackhole message: {:?}", e);
+                                        }
                                     }
                                 }
                                 // Discard the message payload (blackhole behavior)

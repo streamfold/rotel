@@ -15,8 +15,13 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+/// Shared offset tracker for at-least-once delivery.
+/// Uses std::sync::Mutex since it's accessed from both async and sync contexts.
+pub type SharedOffsetTracker = Arc<Mutex<FileOffsetTracker>>;
 
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
@@ -39,18 +44,21 @@ use crate::receivers::file::error::{Error, Result};
 use crate::receivers::file::input::{
     FileFinder, FileId, FileReader, GlobFileFinder, StartAt, get_path_from_file,
 };
+use crate::receivers::file::offset_committer::{
+    FileOffsetCommitter, OffsetCommitterConfig, TrackedFileInfo,
+};
+use crate::receivers::file::offset_tracker::{FileOffsetTracker, LineOffset};
 use crate::receivers::file::parser::{JsonParser, Parser, RegexParser, nginx};
 use crate::receivers::file::persistence::{
-    JsonFileDatabase, JsonFilePersister, Persister, PersisterExt,
+    JsonFileDatabase, JsonFilePersister, KNOWN_FILES_KEY, PERSISTED_STATE_VERSION,
+    PersistedFileEntryV1, PersistedStateV0, PersistedStateV1, file_id_to_key,
 };
 use crate::receivers::file::watcher::{
     AnyWatcher, FileEventKind, FileWatcher, PollWatcher, WatcherConfig, create_watcher,
 };
 use crate::receivers::get_meter;
 use crate::receivers::otlp_output::OTLPOutput;
-use crate::topology::payload;
-
-const KNOWN_FILES_KEY: &str = "knownFiles";
+use crate::topology::payload::{self, FileAcknowledgement, FileMetadata, MessageMetadata};
 
 /// Error type for send operations with cancellation support.
 #[derive(Debug)]
@@ -61,44 +69,16 @@ enum SendError {
     ChannelClosed,
 }
 
-/// Persisted state for all known files
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-struct PersistedState {
-    files: Vec<PersistedFileState>,
-}
-
-/// Persisted state for a single file
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct PersistedFileState {
-    /// Device ID (Unix) or volume serial (Windows)
-    dev: u64,
-    /// Inode number (Unix) or file index (Windows)
-    ino: u64,
-    /// Current read offset
-    offset: u64,
-}
-
-/// Checkpoint configuration for batching persistence writes
-struct CheckpointConfig {
-    /// Maximum records before forcing a checkpoint
-    max_records: u64,
-    /// Maximum time between checkpoints
-    max_interval: Duration,
-}
-
-impl Default for CheckpointConfig {
-    fn default() -> Self {
-        Self {
-            max_records: 1000,
-            max_interval: Duration::from_secs(1),
-        }
-    }
-}
-
 /// Message sent from workers to the async task
 struct LogRecordBatch {
+    /// The log records to export
     log_records: Vec<LogRecord>,
+    /// Number of log records in this batch
     count: u64,
+    /// File ID for this batch (for offset tracking)
+    file_id: FileId,
+    /// Line offsets (begin offset + length) for each log record (for at-least-once delivery)
+    offsets: Vec<LineOffset>,
 }
 
 /// Work item sent from coordinator to workers
@@ -142,6 +122,8 @@ struct WorkerContext {
     results_tx: BoundedSender<FileWorkResult>,
     /// Maximum number of log records to accumulate before sending a batch
     max_batch_size: usize,
+    /// Flag to indicate shutdown is in progress - workers should exit early
+    shutting_down: Arc<AtomicBool>,
 }
 
 /// State of a tracked file with respect to rotation
@@ -186,6 +168,14 @@ const ATTR_LOG_FILE_PATH: &str = "log.file.path";
 pub struct FileReceiver {
     config: FileReceiverConfig,
     logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+    /// Offset committer for handling acks and persistence (extracted before start)
+    offset_committer: Option<FileOffsetCommitter>,
+    /// Sender for acks from the pipeline (passed to handler)
+    ack_tx: BoundedSender<FileAcknowledgement>,
+    /// Sender for file info updates to the committer
+    file_info_tx: BoundedSender<TrackedFileInfo>,
+    /// Shared offset tracker
+    offset_tracker: SharedOffsetTracker,
 }
 
 impl FileReceiver {
@@ -196,10 +186,53 @@ impl FileReceiver {
     ) -> std::result::Result<Self, BoxError> {
         config.validate().map_err(|e| -> BoxError { e.into() })?;
 
+        // Open or create the persistence database
+        let db = JsonFileDatabase::open(&config.offsets_path).map_err(|e| -> BoxError {
+            format!(
+                "Failed to open persistence database at {:?}: {}",
+                config.offsets_path, e
+            )
+            .into()
+        })?;
+        let persister = db.persister("file_receiver");
+
+        // Create channels for acks and file info
+        let (ack_tx, ack_rx) = bounded_channel::bounded::<FileAcknowledgement>(100);
+        let (file_info_tx, file_info_rx) = bounded_channel::bounded::<TrackedFileInfo>(100);
+
+        // Create shared offset tracker
+        let offset_tracker: SharedOffsetTracker = Arc::new(Mutex::new(FileOffsetTracker::new(
+            config.finite_retry_enabled,
+        )));
+
+        // Create the offset committer
+        let committer_config = OffsetCommitterConfig {
+            max_checkpoint_failure_duration: config.max_checkpoint_failure_duration,
+            ..Default::default()
+        };
+        let offset_committer = FileOffsetCommitter::new(
+            ack_rx,
+            offset_tracker.clone(),
+            persister,
+            committer_config,
+            file_info_rx,
+        );
+
         Ok(Self {
             config,
             logs_output,
+            offset_committer: Some(offset_committer),
+            ack_tx,
+            file_info_tx,
+            offset_tracker,
         })
+    }
+
+    /// Extract the offset committer for running in a separate task.
+    /// Must be called before start() - the committer handles ack processing
+    /// and state persistence, and should outlive the main receiver loop.
+    pub fn take_offset_committer(&mut self) -> Option<FileOffsetCommitter> {
+        self.offset_committer.take()
     }
 
     /// Build the parser based on config
@@ -254,9 +287,13 @@ impl FileReceiver {
         let config = self.config.clone();
         let logs_output = self.logs_output.clone();
         let cancel = receivers_cancel.clone();
+        let ack_tx = self.ack_tx.clone();
+        let file_info_tx = self.file_info_tx.clone();
+        let offset_tracker = self.offset_tracker.clone();
 
         task_set.spawn(async move {
-            let mut handler = FileWorkHandler::new(config, logs_output)?;
+            let mut handler =
+                FileWorkHandler::new(config, logs_output, ack_tx, file_info_tx, offset_tracker)?;
             handler.run(cancel).await
         });
 
@@ -273,12 +310,21 @@ struct FileWorkHandler {
     accepted_counter: Counter<u64>,
     refused_counter: Counter<u64>,
     tags: [KeyValue; 1],
+    /// Sender for acks to the offset committer
+    ack_tx: BoundedSender<FileAcknowledgement>,
+    /// Sender for file info updates to the offset committer
+    file_info_tx: BoundedSender<TrackedFileInfo>,
+    /// Shared offset tracker
+    offset_tracker: SharedOffsetTracker,
 }
 
 impl FileWorkHandler {
     fn new(
         config: FileReceiverConfig,
         logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>>,
+        ack_tx: BoundedSender<FileAcknowledgement>,
+        file_info_tx: BoundedSender<TrackedFileInfo>,
+        offset_tracker: SharedOffsetTracker,
     ) -> std::result::Result<Self, BoxError> {
         let accepted_counter = get_meter()
             .u64_counter("rotel_receiver_accepted_log_records")
@@ -298,6 +344,9 @@ impl FileWorkHandler {
             accepted_counter,
             refused_counter,
             tags: [KeyValue::new("receiver", "file")],
+            ack_tx,
+            file_info_tx,
+            offset_tracker,
         })
     }
 
@@ -316,7 +365,8 @@ impl FileWorkHandler {
                 }
             };
 
-        // Open or create the persistence database
+        // Open persistence database for coordinator (read-only for loading state)
+        // The FileOffsetCommitter handles all writes
         let db = match JsonFileDatabase::open(&self.config.offsets_path) {
             Ok(db) => db,
             Err(e) => {
@@ -362,12 +412,25 @@ impl FileWorkHandler {
         //
         // - work_tx/rx: coordinator -> async handler (work items to process)
         // - records_tx/rx: workers -> async handler (log records for export)
-        // - results_tx/rx: workers -> coordinator (offset updates)
+        // - results_tx/rx: workers -> coordinator (offset updates for EOF tracking)
         // - workers_done_tx/rx: async handler -> coordinator (shutdown signal)
+        //
+        // Note: ack channel and offset_tracker are created in FileReceiver::new()
+        // and shared with the FileOffsetCommitter
         let (work_tx, mut work_rx) = bounded_channel::bounded::<FileWorkItem>(max_concurrent_files);
         let (records_tx, mut records_rx) = bounded_channel::bounded::<LogRecordBatch>(10);
         let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
         let (workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        // Use shared offset tracker from FileReceiver
+        let offset_tracker = self.offset_tracker.clone();
+        let ack_tx = self.ack_tx.clone();
+        let file_info_tx = self.file_info_tx.clone();
+
+        // Create shutdown flag (shared between coordinator, async handler, and workers)
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let shutting_down_async = shutting_down.clone();
+        let shutting_down_workers = shutting_down.clone();
 
         // Create worker context (shared by all workers)
         let worker_ctx = WorkerContext {
@@ -377,12 +440,11 @@ impl FileWorkHandler {
             records_tx,
             results_tx,
             max_batch_size: self.config.max_batch_size,
+            shutting_down: shutting_down_workers,
         };
 
         // Create the coordinator
         let finder = GlobFileFinder::new(self.config.include.clone(), self.config.exclude.clone())?;
-        let shutting_down = Arc::new(AtomicBool::new(false));
-        let shutting_down_async = shutting_down.clone();
         let coordinator = FileCoordinator {
             config: self.config.clone(),
             finder,
@@ -391,10 +453,6 @@ impl FileWorkHandler {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
@@ -434,6 +492,23 @@ impl FileWorkHandler {
                         max_workers = max_concurrent_files,
                         "Spawning worker for file"
                     );
+
+                    // Send file info to offset committer for persistence metadata.
+                    // This is defensive - the coordinator already knows about files and could
+                    // send this info once when files are discovered. Sending here on every work
+                    // dispatch ensures the info eventually gets through even if earlier sends
+                    // failed. TODO: Consider moving this to FileCoordinator::add_file() instead.
+                    let file_info = TrackedFileInfo {
+                        file_id: work.file_id,
+                        path: work.path.display().to_string(),
+                        filename: work.path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    };
+                    // Best effort - don't block if channel is full
+                    let _ = file_info_tx.try_send(file_info);
+
                     let ctx = worker_ctx.clone();
                     let handle = tokio::task::spawn_blocking(move || {
                         process_file_work(work, ctx);
@@ -444,6 +519,12 @@ impl FileWorkHandler {
                 // Receive log records from workers and send to exporters
                 Some(batch) = records_rx.next() => {
                     if !batch.log_records.is_empty() {
+                        // Track offsets for at-least-once delivery
+                        {
+                            let mut tracker = offset_tracker.lock().unwrap();
+                            tracker.track_batch(batch.file_id, &batch.offsets);
+                        }
+
                         if let Some(ref logs_output) = self.logs_output {
                             // Build ResourceLogs directly from LogRecords
                             let scope_logs = ScopeLogs {
@@ -467,7 +548,15 @@ impl FileWorkHandler {
                                 schema_url: String::new(),
                             };
 
-                            let payload_msg = payload::Message::new(None, vec![resource_logs], None);
+                            // Create metadata for at-least-once delivery
+                            let file_metadata = FileMetadata::new(
+                                batch.file_id,
+                                batch.offsets.clone(),
+                                Some(ack_tx.clone()),
+                            );
+                            let metadata = MessageMetadata::file(file_metadata);
+
+                            let payload_msg = payload::Message::new(Some(metadata), vec![resource_logs], None);
 
                             match send_with_cancellation(logs_output, payload_msg, &cancel).await {
                                 Ok(_) => {
@@ -490,10 +579,12 @@ impl FileWorkHandler {
                     }
                 }
 
+                // Note: Ack processing is handled by FileOffsetCommitter
+
                 _ = cancel.cancelled() => {
                     // Set shutting_down before breaking so coordinator sees it
                     shutting_down_async.store(true, Ordering::SeqCst);
-                    debug!("File receiver cancelled, stopping");
+                    info!("File receiver cancelled, starting shutdown sequence");
                     break;
                 }
             }
@@ -508,6 +599,9 @@ impl FileWorkHandler {
             worker_ctx,
         )
         .await;
+
+        // Note: Ack draining is handled by FileOffsetCommitter which runs until
+        // after exporters finish, ensuring all acks are processed
 
         // Wait for coordinator thread to finish
         drop(records_rx);
@@ -693,10 +787,18 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
     // Read lines and build LogRecords, sending in small batches
     let max_batch_size = ctx.max_batch_size;
     let mut log_records = Vec::with_capacity(max_batch_size);
+    let mut line_offsets: Vec<LineOffset> = Vec::with_capacity(max_batch_size);
+    let file_id = work.file_id;
 
     let records_tx = &ctx.records_tx;
 
-    let parse_result = reader.read_lines_into(|line| {
+    let parse_result = reader.read_lines_into(|line, begin_offset, len| {
+        // Check if we're shutting down - exit early to allow worker to finish
+        if ctx.shutting_down.load(Ordering::Relaxed) {
+            debug!("Worker detected shutdown, stopping file read");
+            return false;
+        }
+
         // Get timestamp for each line individually
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -718,7 +820,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                     ),
                     Err(e) => {
                         debug!("Parse error: {}", e);
-                        return; // Skip unparseable entries
+                        return true; // Skip unparseable entries but continue reading
                     }
                 }
             } else {
@@ -749,6 +851,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         };
 
         log_records.push(log_record);
+        line_offsets.push(LineOffset::new(begin_offset, len));
 
         // Send batch when we reach max size
         if log_records.len() >= max_batch_size {
@@ -758,12 +861,17 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                     &mut log_records,
                     Vec::with_capacity(max_batch_size),
                 ),
+                file_id,
+                offsets: std::mem::replace(&mut line_offsets, Vec::with_capacity(max_batch_size)),
             };
             if records_tx.send_blocking(batch).is_err() {
                 // Channel closed - we're shutting down, remaining lines will be discarded
                 debug!("Records channel closed during batch send, discarding remaining lines");
+                return false; // Stop reading
             }
         }
+
+        true // Continue reading
     });
 
     if let Err(e) = parse_result {
@@ -777,6 +885,8 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
         let batch = LogRecordBatch {
             count: log_records.len() as u64,
             log_records,
+            file_id,
+            offsets: line_offsets,
         };
         if ctx.records_tx.send_blocking(batch).is_err() {
             // Channel closed - we're shutting down, final batch discarded
@@ -819,12 +929,7 @@ struct FileCoordinator<F: FileFinder> {
     watcher: AnyWatcher,
     watched_dirs: Vec<PathBuf>,
     first_check: bool,
-    // Checkpoint batching state
-    checkpoint_config: CheckpointConfig,
-    records_since_checkpoint: u64,
-    last_checkpoint: Instant,
     // Error tracking for threshold-based exit
-    checkpoint_first_failure: Option<Instant>,
     poll_first_failure: Option<Instant>,
     watcher_first_error: Option<Instant>,
     // Channel to send work items to the async handler (Option for early drop during shutdown)
@@ -841,32 +946,91 @@ impl<F: FileFinder> FileCoordinator<F> {
     /// Load previously saved file states from the persister.
     /// We use FileId (device + inode) to match persisted state to current files.
     /// Returns an error if the persisted state exists but is corrupted (to prevent data loss/duplicates).
+    ///
+    /// Supports both v0 (legacy) and v1 (versioned) schema formats:
+    /// - v0: `{files: [{dev, ino, offset}]}`
+    /// - v1: `{version: 1, files: {key: {path, filename, dev, ino, offset}}}`
     fn load_state(&mut self) -> Result<()> {
         self.persister.load()?;
 
-        // Use try_get_json to distinguish "key doesn't exist" from "key exists but corrupted"
-        let state = match self
+        // Try to load v1 format first (raw JSON in raw_json_cache)
+        // Then fall back to v0 format (base64 in cache)
+        let state_v1: PersistedStateV1 = match self
             .persister
-            .try_get_json::<PersistedState>(KNOWN_FILES_KEY)
+            .try_get_raw_json::<PersistedStateV1>(KNOWN_FILES_KEY)
         {
-            Ok(Some(state)) => state,
+            Ok(Some(state)) => {
+                // V1 format found - use directly
+                state
+            }
             Ok(None) => {
-                debug!("No persisted state found, starting fresh");
-                return Ok(());
+                // No v1 format - check for v0 (legacy base64)
+                let raw_json = match self.persister.try_get_legacy_v0(KNOWN_FILES_KEY) {
+                    Ok(Some(raw)) => raw,
+                    Ok(None) => {
+                        debug!("No persisted state found, starting fresh");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        return Err(Error::Persistence(format!(
+                            "failed to read persisted state: {}",
+                            e
+                        )));
+                    }
+                };
+
+                // V0 format (legacy) - migrate to v1
+                let state_v0: PersistedStateV0 = match serde_json::from_str(&raw_json) {
+                    Ok(state) => state,
+                    Err(e) => {
+                        return Err(Error::Persistence(format!(
+                            "persisted state is corrupted and cannot be loaded: {}. \
+                                 To start fresh, delete the offsets file and restart.",
+                            e
+                        )));
+                    }
+                };
+
+                info!(
+                    "Migrating {} file entries from v0 to v1 schema",
+                    state_v0.files.len()
+                );
+
+                // Convert v0 to v1 (path/filename will be empty until first sync)
+                let mut files = HashMap::new();
+                for entry in state_v0.files {
+                    let key = file_id_to_key(entry.dev, entry.ino);
+                    files.insert(
+                        key,
+                        PersistedFileEntryV1 {
+                            path: String::new(),     // Will be populated on first save
+                            filename: String::new(), // Will be populated on first save
+                            dev: entry.dev,
+                            ino: entry.ino,
+                            offset: entry.offset,
+                        },
+                    );
+                }
+
+                PersistedStateV1 {
+                    version: PERSISTED_STATE_VERSION,
+                    files,
+                }
             }
             Err(e) => {
-                // State file exists but is corrupted - this is a fatal error
-                // Continuing would risk data loss (skipping already-processed logs)
-                // or duplicates (reprocessing logs we already sent)
                 return Err(Error::Persistence(format!(
                     "persisted state is corrupted and cannot be loaded: {}. \
-                     To start fresh, delete the offsets file and restart.",
+                         To start fresh, delete the offsets file and restart.",
                     e
                 )));
             }
         };
 
-        debug!("Loaded {} known files from persister", state.files.len());
+        debug!(
+            "Loaded {} known files from persister (v{})",
+            state_v1.files.len(),
+            state_v1.version
+        );
 
         // Find current files and try to match them to persisted state
         let paths = self.finder.find_files().unwrap_or_else(|e| {
@@ -892,25 +1056,19 @@ impl<F: FileFinder> FileCoordinator<F> {
                 }
             };
 
-            // Try to find matching persisted state by FileId
-            let matched_offset = state.files.iter().find_map(|persisted| {
-                let persisted_id = FileId::new(persisted.dev, persisted.ino);
-                if file_id == persisted_id {
-                    Some(persisted.offset)
-                } else {
-                    None
-                }
-            });
+            // Generate key for lookup
+            let key = file_id_to_key(file_id.dev(), file_id.ino());
 
-            if let Some(offset) = matched_offset {
-                debug!("Restored file {:?} at offset {}", path, offset);
+            // Try to find matching persisted state by key
+            if let Some(entry) = state_v1.files.get(&key) {
+                debug!("Restored file {:?} at offset {}", path, entry.offset);
                 self.tracked_files.insert(
                     file_id,
                     TrackedFile {
                         file_id,
                         file,
                         path: path.clone(),
-                        offset,
+                        offset: entry.offset,
                         state: FileState::Active,
                         generation: 0,
                         in_flight: false,
@@ -920,78 +1078,6 @@ impl<F: FileFinder> FileCoordinator<F> {
         }
 
         Ok(())
-    }
-
-    /// Save current file states to the persister (unconditional, always writes to disk).
-    /// We persist FileId (device + inode) to match files across restarts.
-    fn save_state(&mut self) -> Result<()> {
-        let state = PersistedState {
-            files: self
-                .tracked_files
-                .values()
-                .map(|t| PersistedFileState {
-                    dev: t.file_id.dev(),
-                    ino: t.file_id.ino(),
-                    offset: t.offset,
-                })
-                .collect(),
-        };
-
-        self.persister.set_json(KNOWN_FILES_KEY, &state)?;
-        self.persister.sync()?;
-
-        // Reset checkpoint tracking
-        self.records_since_checkpoint = 0;
-        self.last_checkpoint = Instant::now();
-
-        Ok(())
-    }
-
-    /// Check if we should checkpoint based on records processed and time elapsed
-    fn should_checkpoint(&self) -> bool {
-        self.records_since_checkpoint >= self.checkpoint_config.max_records
-            || self.last_checkpoint.elapsed() >= self.checkpoint_config.max_interval
-    }
-
-    /// Conditionally save state if checkpoint thresholds are met.
-    /// Tracks consecutive failures and returns Err only when failure duration threshold is breached.
-    fn maybe_checkpoint(&mut self) -> Result<()> {
-        if !self.should_checkpoint() {
-            return Ok(());
-        }
-
-        match self.save_state() {
-            Ok(()) => {
-                // Success - reset failure tracking
-                if self.checkpoint_first_failure.is_some() {
-                    debug!("Checkpoint succeeded after previous failures");
-                    self.checkpoint_first_failure = None;
-                }
-                Ok(())
-            }
-            Err(e) => {
-                // Track when failures started
-                let first_failure = *self
-                    .checkpoint_first_failure
-                    .get_or_insert_with(Instant::now);
-
-                let failure_duration = first_failure.elapsed();
-
-                if failure_duration >= self.config.max_checkpoint_failure_duration {
-                    error!(
-                        "Checkpoint failures persisted for {:?}, exiting: {}",
-                        failure_duration, e
-                    );
-                    Err(e)
-                } else {
-                    warn!(
-                        "Checkpoint failed (failures started {:?} ago): {}",
-                        failure_duration, e
-                    );
-                    Ok(())
-                }
-            }
-        }
     }
 
     /// Ensure directories are being watched
@@ -1055,7 +1141,7 @@ impl<F: FileFinder> FileCoordinator<F> {
         Ok(())
     }
 
-    /// Process any pending results from workers (offset updates and EOF handling)
+    /// Process any pending results from workers (EOF handling and in_flight tracking)
     fn process_results(&mut self) {
         let rotate_wait = self.config.rotate_wait;
 
@@ -1070,9 +1156,13 @@ impl<F: FileFinder> FileCoordinator<F> {
                     reached_eof = result.reached_eof,
                     "Worker completed, clearing in_flight"
                 );
+                // Update tracked.offset to the position where reading stopped.
+                // This is used for dispatching the next work item (where to resume reading).
+                // Note: For persistence/crash recovery, we use get_persistable_offset() from
+                // the offset tracker, which returns the lowest pending offset (or hwm.end_offset()
+                // if all acked) to ensure at-least-once delivery semantics.
                 tracked.offset = result.new_offset;
                 tracked.in_flight = false; // Work completed, allow new dispatches
-                self.records_since_checkpoint += 1;
 
                 // Handle EOF for rotated files
                 if result.reached_eof {
@@ -1239,10 +1329,6 @@ impl<F: FileFinder> FileCoordinator<F> {
                 FileState::Rotated => true, // Keep draining
             }
         });
-
-        // Conditionally checkpoint based on records processed and time elapsed
-        // maybe_checkpoint() only returns Err when failure duration threshold is breached
-        self.maybe_checkpoint()?;
 
         Ok(())
     }
@@ -1517,15 +1603,8 @@ impl<F: FileFinder> FileCoordinator<F> {
         // Now drain any remaining results
         self.drain_results();
 
-        // Final state save
-        if let Err(e) = self.save_state() {
-            error!("Failed to save final state: {}", e);
-        } else {
-            debug!(
-                "Final state saved with {} tracked files",
-                self.tracked_files.len()
-            );
-        }
+        // Note: Final state persistence is handled by FileOffsetCommitter
+        // which continues running after this coordinator stops
 
         info!("File coordinator stopped");
     }
@@ -1556,9 +1635,7 @@ impl<F: FileFinder> FileCoordinator<F> {
             match self.results_rx.recv_timeout(Duration::from_millis(100)) {
                 Some(result) => {
                     if let Some(tracked) = self.tracked_files.get_mut(&result.file_id) {
-                        tracked.offset = result.new_offset;
                         tracked.in_flight = false;
-                        self.records_since_checkpoint += 1;
                     }
                 }
                 None => {
@@ -1597,6 +1674,7 @@ async fn send_with_cancellation(
 mod tests {
     use super::*;
     use crate::receivers::file::input::MockFileFinder;
+    use crate::receivers::file::persistence::PersistedFileStateV0;
     use crate::receivers::file::watcher::MockWatcher;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -1637,10 +1715,6 @@ mod tests {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
@@ -1767,64 +1841,6 @@ mod tests {
     }
 
     #[test]
-    fn test_checkpoint_failure_threshold() {
-        let temp_dir = TempDir::new().unwrap();
-        let mut config = test_config(&temp_dir);
-        config.max_checkpoint_failure_duration = Duration::from_millis(50);
-
-        let finder = MockFileFinder::new();
-        let watcher = AnyWatcher::Mock(MockWatcher::new());
-
-        let mut coordinator = create_test_coordinator(config, finder, watcher, &temp_dir);
-
-        // Force checkpoint to be needed
-        coordinator.records_since_checkpoint = 10000;
-
-        // Make the persister directory read-only to cause sync failures
-        let offsets_dir = temp_dir.path().join("readonly");
-        std::fs::create_dir_all(&offsets_dir).unwrap();
-        coordinator.persister = JsonFileDatabase::open(offsets_dir.join("offsets.json"))
-            .unwrap()
-            .persister("test");
-
-        // Make directory read-only (this will cause sync to fail)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o444)).unwrap();
-        }
-
-        // First checkpoint failure should not return error
-        let result = coordinator.maybe_checkpoint();
-        #[cfg(unix)]
-        assert!(
-            result.is_ok(),
-            "First checkpoint failure should return Ok (threshold not reached)"
-        );
-
-        // Wait for threshold
-        std::thread::sleep(Duration::from_millis(60));
-
-        // Force another checkpoint
-        coordinator.records_since_checkpoint = 10000;
-
-        // Next checkpoint should fail
-        let result = coordinator.maybe_checkpoint();
-        #[cfg(unix)]
-        assert!(
-            result.is_err(),
-            "Checkpoint should return Err after threshold duration"
-        );
-
-        // Cleanup - restore permissions
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&offsets_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-    }
-
-    #[test]
     fn test_load_state_fails_on_corrupted_state_file() {
         let temp_dir = TempDir::new().unwrap();
         let offsets_path = temp_dir.path().join("offsets.json");
@@ -1862,10 +1878,6 @@ mod tests {
             watcher,
             watched_dirs: Vec::new(),
             first_check: true,
-            checkpoint_config: CheckpointConfig::default(),
-            records_since_checkpoint: 0,
-            last_checkpoint: Instant::now(),
-            checkpoint_first_failure: None,
             poll_first_failure: None,
             watcher_first_error: None,
             work_tx: Some(work_tx),
@@ -1905,6 +1917,183 @@ mod tests {
         assert!(
             result.is_ok(),
             "load_state should succeed when no state file exists"
+        );
+    }
+
+    #[test]
+    fn test_load_state_migrates_v0_to_v1_in_memory() {
+        let temp_dir = TempDir::new().unwrap();
+        let offsets_path = temp_dir.path().join("offsets.json");
+
+        // Create a test file so we can get a real FileId
+        let test_file_path = temp_dir.path().join("test.log");
+        std::fs::write(&test_file_path, "line1\nline2\nline3\n").unwrap();
+
+        let test_file = File::open(&test_file_path).unwrap();
+        let file_id = FileId::from_file(&test_file).unwrap();
+        drop(test_file);
+
+        // Write v0 format state directly to the file (base64 encoded JSON)
+        {
+            use base64::Engine;
+
+            // Create a v0 format state (legacy format without version field)
+            let v0_state = PersistedStateV0 {
+                files: vec![PersistedFileStateV0 {
+                    dev: file_id.dev(),
+                    ino: file_id.ino(),
+                    offset: 12345,
+                }],
+            };
+
+            // V0 format: JSON serialized, then base64 encoded, stored as string in scopes
+            let v0_json = serde_json::to_string(&v0_state).unwrap();
+            let v0_base64 = base64::engine::general_purpose::STANDARD.encode(v0_json.as_bytes());
+
+            let db_content = serde_json::json!({
+                "scopes": {
+                    "test": {
+                        "knownFiles": v0_base64
+                    }
+                }
+            });
+            std::fs::write(
+                &offsets_path,
+                serde_json::to_string_pretty(&db_content).unwrap(),
+            )
+            .unwrap();
+        }
+
+        // Create config and coordinator
+        let mut config = test_config(&temp_dir);
+        config.include = vec![test_file_path.display().to_string()];
+
+        let db = JsonFileDatabase::open(&offsets_path).unwrap();
+        let persister = db.persister("test");
+
+        let finder = GlobFileFinder::new(config.include.clone(), config.exclude.clone()).unwrap();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
+        let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
+        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut coordinator = FileCoordinator {
+            config: config.clone(),
+            finder,
+            persister,
+            tracked_files: HashMap::new(),
+            watcher,
+            watched_dirs: Vec::new(),
+            first_check: true,
+            poll_first_failure: None,
+            watcher_first_error: None,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
+            shutting_down: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Load state - should migrate v0 to v1 in memory
+        let result = coordinator.load_state();
+        assert!(result.is_ok(), "load_state should succeed for v0 format");
+
+        // Verify the file was restored with correct offset
+        assert_eq!(
+            coordinator.tracked_files.len(),
+            1,
+            "Should have 1 tracked file"
+        );
+        let tracked = coordinator.tracked_files.get(&file_id).unwrap();
+        assert_eq!(
+            tracked.offset, 12345,
+            "Offset should be restored from v0 state"
+        );
+    }
+
+    #[test]
+    fn test_load_state_reads_v1_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let offsets_path = temp_dir.path().join("offsets.json");
+
+        // Create a test file so we can get a real FileId
+        let test_file_path = temp_dir.path().join("test.log");
+        std::fs::write(&test_file_path, "line1\nline2\nline3\n").unwrap();
+
+        let test_file = File::open(&test_file_path).unwrap();
+        let file_id = FileId::from_file(&test_file).unwrap();
+        drop(test_file);
+
+        // Write v1 format state directly
+        {
+            let db = JsonFileDatabase::open(&offsets_path).unwrap();
+            let mut persister = db.persister("test");
+
+            let key = file_id_to_key(file_id.dev(), file_id.ino());
+            let mut files = HashMap::new();
+            files.insert(
+                key,
+                PersistedFileEntryV1 {
+                    path: test_file_path.display().to_string(),
+                    filename: "test.log".to_string(),
+                    dev: file_id.dev(),
+                    ino: file_id.ino(),
+                    offset: 54321,
+                },
+            );
+
+            let v1_state = PersistedStateV1 {
+                version: PERSISTED_STATE_VERSION,
+                files,
+            };
+            persister.set_raw_json(KNOWN_FILES_KEY, &v1_state).unwrap();
+            persister.sync().unwrap();
+        }
+
+        // Create config and coordinator
+        let mut config = test_config(&temp_dir);
+        config.include = vec![test_file_path.display().to_string()];
+
+        let db = JsonFileDatabase::open(&offsets_path).unwrap();
+        let persister = db.persister("test");
+
+        let finder = GlobFileFinder::new(config.include.clone(), config.exclude.clone()).unwrap();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
+        let (_results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
+        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut coordinator = FileCoordinator {
+            config,
+            finder,
+            persister,
+            tracked_files: HashMap::new(),
+            watcher,
+            watched_dirs: Vec::new(),
+            first_check: true,
+            poll_first_failure: None,
+            watcher_first_error: None,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
+            shutting_down: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Load state from v1 format
+        let result = coordinator.load_state();
+        assert!(result.is_ok(), "load_state should succeed for v1 format");
+
+        // Verify the file was restored correctly
+        assert_eq!(
+            coordinator.tracked_files.len(),
+            1,
+            "Should have 1 tracked file"
+        );
+        let tracked = coordinator.tracked_files.get(&file_id).unwrap();
+        assert_eq!(
+            tracked.offset, 54321,
+            "Offset should be restored from v1 state"
         );
     }
 
@@ -1989,6 +2178,75 @@ mod tests {
         assert_eq!(
             log_record.time_unix_nano,
             log_record.observed_time_unix_nano
+        );
+    }
+
+    #[test]
+    fn test_process_results_updates_offset() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = test_config(&temp_dir);
+        let finder = MockFileFinder::new();
+        let watcher = AnyWatcher::Mock(MockWatcher::new());
+
+        let db = JsonFileDatabase::open(temp_dir.path().join("offsets.json")).unwrap();
+        let persister = db.persister("test");
+
+        let (work_tx, _work_rx) = bounded_channel::bounded::<FileWorkItem>(10);
+        let (results_tx, results_rx) = bounded_channel::bounded::<FileWorkResult>(10);
+        let (_workers_done_tx, workers_done_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut coordinator = FileCoordinator {
+            config,
+            finder,
+            persister,
+            tracked_files: HashMap::new(),
+            watcher,
+            watched_dirs: Vec::new(),
+            first_check: true,
+            poll_first_failure: None,
+            watcher_first_error: None,
+            work_tx: Some(work_tx),
+            results_rx,
+            workers_done_rx,
+            shutting_down: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Add a tracked file with in_flight = true - need a real file for the File handle
+        let test_file_path = temp_dir.path().join("test.log");
+        std::fs::write(&test_file_path, "test content").unwrap();
+        let file = File::open(&test_file_path).unwrap();
+        let file_id = FileId::new(1, 100);
+        coordinator.tracked_files.insert(
+            file_id,
+            TrackedFile {
+                file_id,
+                file,
+                path: test_file_path,
+                offset: 0,
+                state: FileState::Active,
+                generation: 1,
+                in_flight: true, // Work is in flight
+            },
+        );
+
+        // Send a FileWorkResult (simulating worker completion)
+        let result = FileWorkResult {
+            file_id,
+            new_offset: 5000, // Worker read up to 5000
+            reached_eof: false,
+        };
+        results_tx.send_blocking(result).unwrap();
+
+        // Process results
+        coordinator.process_results();
+
+        // Verify in_flight is cleared and offset IS updated to new_offset
+        // (tracked.offset is used for dispatching next work item, not for persistence)
+        let tracked = coordinator.tracked_files.get(&file_id).unwrap();
+        assert!(!tracked.in_flight, "in_flight should be cleared");
+        assert_eq!(
+            tracked.offset, 5000,
+            "Offset should be updated to new_offset so next dispatch starts from correct position"
         );
     }
 }

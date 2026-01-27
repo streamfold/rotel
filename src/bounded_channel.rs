@@ -21,6 +21,23 @@ impl fmt::Display for SendError {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum TrySendError<T> {
+    /// The channel is full.
+    Full(T),
+    /// The channel is disconnected.
+    Disconnected(T),
+}
+
+impl<T> fmt::Display for TrySendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TrySendError::Full(_) => write!(f, "channel full"),
+            TrySendError::Disconnected(_) => write!(f, "channel disconnected"),
+        }
+    }
+}
+
 impl<T> BoundedSender<T> {
     pub async fn send(&self, item: T) -> Result<(), SendError> {
         match self.tx.send_async(item).await {
@@ -40,6 +57,16 @@ impl<T> BoundedSender<T> {
 
     pub fn send_async(&self, item: T) -> SendFut<'_, T> {
         self.tx.send_async(item)
+    }
+
+    /// Non-blocking send - returns immediately.
+    /// Returns Ok if the item was sent, Err if the channel is full or disconnected.
+    pub fn try_send(&self, item: T) -> Result<(), TrySendError<T>> {
+        match self.tx.try_send(item) {
+            Ok(()) => Ok(()),
+            Err(flume::TrySendError::Full(item)) => Err(TrySendError::Full(item)),
+            Err(flume::TrySendError::Disconnected(item)) => Err(TrySendError::Disconnected(item)),
+        }
     }
 
     pub fn len(&self) -> usize {

@@ -20,6 +20,8 @@ use crate::init::pprof;
 use crate::init::wait;
 use crate::listener::Listener;
 #[cfg(feature = "file_receiver")]
+use crate::receivers::file::offset_committer::FileOffsetCommitter;
+#[cfg(feature = "file_receiver")]
 use crate::receivers::file::receiver::FileReceiver;
 #[cfg(feature = "fluent_receiver")]
 use crate::receivers::fluent::receiver::FluentReceiver;
@@ -147,11 +149,15 @@ impl Agent {
         let mut exporters_task_set = JoinSet::new();
         #[cfg(feature = "rdkafka")]
         let mut kafka_offset_committer: Option<KafkaOffsetCommitter> = None;
+        #[cfg(feature = "file_receiver")]
+        let mut file_offset_committer: Option<FileOffsetCommitter> = None;
 
         let receivers_cancel = CancellationToken::new();
         let pipeline_cancel = CancellationToken::new();
         let exporters_cancel = CancellationToken::new();
         let kafka_offset_committer_cancel = CancellationToken::new();
+        #[cfg(feature = "file_receiver")]
+        let file_offset_committer_cancel = CancellationToken::new();
 
         let (trace_pipeline_in_tx, trace_pipeline_in_rx) =
             bounded::<Message<ResourceSpans>>(max(4, num_cpus));
@@ -212,6 +218,21 @@ impl Agent {
         if kafka_offset_tracking_enabled {
             info!(
                 "Kafka offset tracking enabled - setting exporters to retry indefinitely to ensure no data loss. To disable this behavior, use --kafka-receiver-disable-exporter-indefinite-retry"
+            );
+            exp_config.set_indefinite_retry();
+        }
+
+        // Check if file receiver with offset tracking is enabled (indefinite retry not disabled)
+        #[cfg(feature = "file_receiver")]
+        let file_offset_tracking_enabled = rec_config
+            .iter()
+            .any(|(_, cfg)| matches!(cfg, ReceiverConfig::File(f) if !f.finite_retry_enabled));
+
+        // If file receiver offset tracking is enabled, modify retry configs to be indefinite
+        #[cfg(feature = "file_receiver")]
+        if file_offset_tracking_enabled {
+            info!(
+                "File receiver offset tracking enabled - setting exporters to retry indefinitely to ensure no data loss. To disable this behavior, use --file-receiver-disable-exporter-indefinite-retry"
             );
             exp_config.set_indefinite_retry();
         }
@@ -973,12 +994,11 @@ impl Agent {
                                     match e {
                                         Ok(()) => {
                                             info!("Unexpected early exit of fluent receiver task.");
-                                            },
+                                        },
                                         Err(e) => break Err(e),
                                     }
                                 },
                                 _ = receivers_cancel.cancelled() => {
-                                    // Wait up to 500 millis for fluent tasks to finish
                                     break wait::wait_for_tasks_with_timeout(&mut fluent_task_set, Duration::from_millis(500)).await;
                                 }
                             }
@@ -987,8 +1007,12 @@ impl Agent {
                 }
                 #[cfg(feature = "file_receiver")]
                 ReceiverConfig::File(config) => {
-                    let file_receiver =
+                    let mut file_receiver =
                         FileReceiver::new(config.clone(), logs_output.clone()).await?;
+
+                    // Extract offset committer before starting receiver
+                    // It will run separately and outlive the receiver to handle acks
+                    file_offset_committer = file_receiver.take_offset_committer();
 
                     let mut file_task_set = JoinSet::new();
                     file_receiver
@@ -1025,6 +1049,19 @@ impl Agent {
             kafka_offset_committer_task_set.spawn(async move {
                 if let Err(e) = committer.run(cancel_token).await {
                     warn!("Kafka offset committer error: {:?}", e);
+                }
+                Ok(())
+            });
+        }
+
+        // Start the File offset committer if we have one
+        let mut file_offset_committer_task_set = JoinSet::new();
+        #[cfg(feature = "file_receiver")]
+        if let Some(mut committer) = file_offset_committer {
+            let cancel_token = file_offset_committer_cancel.clone();
+            file_offset_committer_task_set.spawn(async move {
+                if let Err(e) = committer.run(cancel_token).await {
+                    warn!("File offset committer error: {:?}", e);
                 }
                 Ok(())
             });
@@ -1137,6 +1174,12 @@ impl Agent {
                     Err(e) => result = Err(e),
                 }
             }
+            e = wait::wait_for_any_task(&mut file_offset_committer_task_set), if !file_offset_committer_task_set.is_empty() => {
+                match e {
+                    Ok(()) => warn!("Unexpected early exit of File offset committer."),
+                    Err(e) => result = Err(e),
+                }
+            }
         }
         result?;
 
@@ -1232,6 +1275,34 @@ impl Agent {
                 warn!("Kafka offset committer did not exit within timeout: {}", e);
             } else {
                 debug!("Kafka offset committer shut down successfully");
+            }
+        }
+
+        // Now that exporters are done, cancel the File offset committer
+        if !file_offset_committer_task_set.is_empty() {
+            let res = wait::wait_for_tasks_with_timeout(
+                &mut file_offset_committer_task_set,
+                Duration::from_secs(2),
+            )
+            .await;
+            if res.is_err() {
+                warn!("File offset committer did not exit on channel close, cancelling.");
+            }
+
+            debug!("Cancelling File offset committer after exporters shutdown");
+            #[cfg(feature = "file_receiver")]
+            file_offset_committer_cancel.cancel();
+
+            let res = wait::wait_for_tasks_with_timeout(
+                &mut file_offset_committer_task_set,
+                Duration::from_secs(3),
+            )
+            .await;
+
+            if let Err(e) = res {
+                warn!("File offset committer did not exit within timeout: {}", e);
+            } else {
+                debug!("File offset committer shut down successfully");
             }
         }
 

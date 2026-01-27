@@ -82,6 +82,10 @@ pub struct FileReceiverConfig {
     pub max_watcher_error_duration: Duration,
     /// Maximum number of log records to accumulate before sending a batch
     pub max_batch_size: usize,
+    /// Whether finite retry is enabled for the exporter.
+    /// When false (default), nacks cause a panic to prevent data loss.
+    /// When true, nacks are treated as acks to allow processing to continue.
+    pub finite_retry_enabled: bool,
 }
 
 impl Default for FileReceiverConfig {
@@ -108,6 +112,7 @@ impl Default for FileReceiverConfig {
             max_poll_failure_duration: Duration::from_secs(60),
             max_watcher_error_duration: Duration::from_secs(60),
             max_batch_size: 100,
+            finite_retry_enabled: false, // Default to indefinite retry (safer)
         }
     }
 }
