@@ -1,6 +1,6 @@
 use crate::py::common::*;
 use opentelemetry_proto::tonic::common::v1::KeyValue;
-use pyo3::{IntoPyObjectExt, PyObject, PyResult, Python};
+use pyo3::{IntoPyObjectExt, Py, PyAny, PyResult, Python};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub struct RArrayValue {
 }
 
 impl RArrayValue {
-    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
+    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<Py<PyAny>> {
         Ok(ArrayValue(self.values.clone()).into_py_any(py)?)
     }
 }
@@ -37,7 +37,7 @@ pub struct RKeyValueList {
 }
 
 impl RKeyValueList {
-    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<PyObject> {
+    pub(crate) fn convert_to_py(&self, py: Python) -> PyResult<Py<PyAny>> {
         Ok(KeyValueList(self.values.clone()).into_py_any(py)?)
     }
 }
