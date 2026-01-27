@@ -8,8 +8,9 @@ use crate::model::otel_transform::convert_attributes;
 use crate::py::{handle_poison_error, AttributesList};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::{PyAnyMethods, PyBool, PyBytes, PyFloat, PyInt, PyString};
-#[allow(deprecated)]
-use pyo3::{pyclass, pymethods, IntoPy, Py, PyErr, PyObject, PyRef, PyRefMut, PyResult, Python};
+use pyo3::{
+    pyclass, pymethods, IntoPyObjectExt, Py, PyErr, PyObject, PyRef, PyRefMut, PyResult, Python,
+};
 use std::sync::{Arc, Mutex};
 
 // Wrapper for AnyValue that can be exposed to Python
@@ -92,17 +93,16 @@ impl AnyValue {
         }
     }
     #[getter]
-    #[allow(deprecated)]
     fn value<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.clone().unwrap().value.clone();
         let bind_lock = binding.lock();
         let x = match bind_lock.unwrap().clone() {
-            Some(StringValue(s)) => Ok(s.into_py(py)),
-            Some(BoolValue(b)) => Ok(b.into_py(py)),
-            Some(IntValue(i)) => Ok(i.into_py(py)),
-            Some(DoubleValue(d)) => Ok(d.into_py(py)),
-            Some(BytesValue(b)) => Ok(b.into_py(py)),
+            Some(StringValue(s)) => Ok(s.into_py_any(py)?),
+            Some(BoolValue(b)) => Ok(b.into_py_any(py)?),
+            Some(IntValue(i)) => Ok(i.into_py_any(py)?),
+            Some(DoubleValue(d)) => Ok(d.into_py_any(py)?),
+            Some(BytesValue(b)) => Ok(b.into_py_any(py)?),
             Some(RVArrayValue(a)) => Ok(a.convert_to_py(py)?),
             Some(KvListValue(k)) => Ok(k.convert_to_py(py)?),
             None => Ok(py.None()),
@@ -489,12 +489,11 @@ impl KeyValue {
         })
     }
     #[getter]
-    #[allow(deprecated)]
     fn key(&self, py: Python) -> PyResult<PyObject> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.key.clone();
         let bind_lock = binding.lock();
-        let x = Ok(bind_lock.unwrap().clone().into_py(py));
+        let x = Ok(bind_lock.unwrap().clone().into_py_any(py)?);
         x
     }
     #[setter]
