@@ -1162,6 +1162,12 @@ impl Agent {
                     Err(e) => result = Err(e),
                 }
             }
+            e = wait::wait_for_any_task(&mut file_offset_committer_task_set), if !file_offset_committer_task_set.is_empty() => {
+                match e {
+                    Ok(()) => warn!("Unexpected early exit of File offset committer."),
+                    Err(e) => result = Err(e),
+                }
+            }
         }
         result?;
 
