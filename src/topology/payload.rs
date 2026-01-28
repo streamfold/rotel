@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_channel::{BoundedSender, SendError};
+#[cfg(feature = "file_receiver")]
 use crate::receivers::file::offset_tracker::LineOffset;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
@@ -57,6 +58,7 @@ pub enum RequestContext {
 pub enum MessageMetadataInner {
     Kafka(KafkaMetadata),
     Forwarder(ForwarderMetadata),
+    #[cfg(feature = "file_receiver")]
     File(FileMetadata),
 }
 
@@ -96,6 +98,7 @@ impl MessageMetadata {
     }
 
     /// Create new MessageMetadata with File variant, starting with ref_count = 1
+    #[cfg(feature = "file_receiver")]
     pub fn file(metadata: FileMetadata) -> Self {
         Self {
             data: MessageMetadataInner::File(metadata),
@@ -309,6 +312,7 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
+                #[cfg(feature = "file_receiver")]
                 MessageMetadataInner::File(fm) => {
                     if let Some(ack_chan) = &fm.ack_chan {
                         ack_chan
@@ -353,6 +357,7 @@ impl Ack for MessageMetadata {
                             .await?;
                     }
                 }
+                #[cfg(feature = "file_receiver")]
                 MessageMetadataInner::File(fm) => {
                     if let Some(ack_chan) = &fm.ack_chan {
                         ack_chan
@@ -389,6 +394,7 @@ pub struct KafkaNack {
 }
 
 /// Metadata for file receiver messages
+#[cfg(feature = "file_receiver")]
 #[derive(Clone)]
 pub struct FileMetadata {
     /// The unique file identity
@@ -399,6 +405,7 @@ pub struct FileMetadata {
     pub ack_chan: Option<BoundedSender<FileAcknowledgement>>,
 }
 
+#[cfg(feature = "file_receiver")]
 impl FileMetadata {
     /// Create new FileMetadata
     pub fn new(
@@ -415,6 +422,7 @@ impl FileMetadata {
 }
 
 // Manual Debug for FileMetadata since BoundedSender doesn't implement Debug
+#[cfg(feature = "file_receiver")]
 impl std::fmt::Debug for FileMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileMetadata")
@@ -426,6 +434,7 @@ impl std::fmt::Debug for FileMetadata {
 }
 
 // Manual PartialEq for FileMetadata since BoundedSender can't be compared
+#[cfg(feature = "file_receiver")]
 impl PartialEq for FileMetadata {
     fn eq(&self, other: &Self) -> bool {
         self.file_id == other.file_id && self.offsets == other.offsets
@@ -434,18 +443,21 @@ impl PartialEq for FileMetadata {
 }
 
 /// Acknowledgement message from exporter back to file receiver
+#[cfg(feature = "file_receiver")]
 pub enum FileAcknowledgement {
     Ack(FileAck),
     Nack(FileNack),
 }
 
 /// Successful acknowledgement of a file batch
+#[cfg(feature = "file_receiver")]
 pub struct FileAck {
     pub file_id: crate::receivers::file::input::FileId,
     pub offsets: Vec<LineOffset>,
 }
 
 /// Failed acknowledgement of a file batch
+#[cfg(feature = "file_receiver")]
 pub struct FileNack {
     pub file_id: crate::receivers::file::input::FileId,
     pub offsets: Vec<LineOffset>,
