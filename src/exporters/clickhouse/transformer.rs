@@ -111,7 +111,10 @@ impl Transformer {
                         } else {
                             Cow::Owned(format!("{}.{}", prefix, kv.key))
                         };
-                        result.insert(key, anyvalue_to_jsontype(any_value, self.nested_kv_max_depth));
+                        result.insert(
+                            key,
+                            anyvalue_to_jsontype(any_value, self.nested_kv_max_depth),
+                        );
                     }
                     None => {}
                 }
@@ -155,7 +158,10 @@ impl Transformer {
                         self.flatten_keyvalues_owned(&kvlist.values, full_key, result);
                     }
                     Some(_) => {
-                        result.insert(full_key, anyvalue_to_jsontype_owned(any_value.clone(), self.nested_kv_max_depth));
+                        result.insert(
+                            full_key,
+                            anyvalue_to_jsontype_owned(any_value.clone(), self.nested_kv_max_depth),
+                        );
                     }
                     None => {}
                 }
