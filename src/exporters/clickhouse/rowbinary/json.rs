@@ -6,9 +6,6 @@ use opentelemetry_proto::tonic::common::v1::AnyValue;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use serde_json::json;
 
-/// Default maximum recursion depth for nested structures to prevent stack overflow
-pub const DEFAULT_NESTED_KV_MAX_DEPTH: usize = 10;
-
 /// JSON type representation for ClickHouse rowbinary format.
 /// Uses `Cow` for strings and object keys to efficiently handle both
 /// borrowed and owned data with a single type.
