@@ -10,6 +10,10 @@ use std::collections::HashMap;
 pub struct Transformer {
     pub(crate) compression: Compression,
     use_json: bool,
+    /// Maximum depth for nested KV list conversion.
+    /// - `None` or `Some(0)`: flat mode (backwards compatible, nested KV serialized as JSON strings)
+    /// - `Some(n)` where n > 0: recursive conversion up to depth n
+    nested_kv_max_depth: Option<usize>,
 }
 
 impl Transformer {
@@ -17,7 +21,13 @@ impl Transformer {
         Self {
             compression,
             use_json,
+            nested_kv_max_depth: None, // Default: backwards compatible flat mode
         }
+    }
+
+    pub fn with_nested_kv_max_depth(mut self, max_depth: Option<usize>) -> Self {
+        self.nested_kv_max_depth = max_depth;
+        self
     }
 }
 
@@ -80,6 +90,7 @@ impl Transformer {
         prefix: String,
         result: &mut HashMap<Cow<'a, str>, JsonType<'a>>,
     ) {
+        use crate::exporters::clickhouse::rowbinary::json::anyvalue_to_jsontype;
         use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
         for kv in attrs {
@@ -100,7 +111,7 @@ impl Transformer {
                         } else {
                             Cow::Owned(format!("{}.{}", prefix, kv.key))
                         };
-                        result.insert(key, any_value.into());
+                        result.insert(key, anyvalue_to_jsontype(any_value, self.nested_kv_max_depth));
                     }
                     None => {}
                 }
@@ -127,6 +138,7 @@ impl Transformer {
         prefix: String,
         result: &mut HashMap<String, JsonType<'static>>,
     ) {
+        use crate::exporters::clickhouse::rowbinary::json::anyvalue_to_jsontype_owned;
         use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
         for kv in attrs {
@@ -143,7 +155,7 @@ impl Transformer {
                         self.flatten_keyvalues_owned(&kvlist.values, full_key, result);
                     }
                     Some(_) => {
-                        result.insert(full_key, any_value.clone().into());
+                        result.insert(full_key, anyvalue_to_jsontype_owned(any_value.clone(), self.nested_kv_max_depth));
                     }
                     None => {}
                 }
@@ -324,8 +336,8 @@ mod tests {
 
                 // Verify the values are correct and owned
                 match &map["service.name"] {
-                    JsonType::StrOwned(s) => assert_eq!(s, "test-service"),
-                    _ => panic!("Expected StrOwned variant"),
+                    JsonType::Str(s) => assert_eq!(s.as_ref(), "test-service"),
+                    _ => panic!("Expected Str variant"),
                 }
                 match &map["http.status_code"] {
                     JsonType::Int(i) => assert_eq!(*i, 200),
