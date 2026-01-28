@@ -1,9 +1,9 @@
-# Multi-stage build for rotel with Python processor support
+# Multi-stage build for rotel with Python 3.13 processor support
 FROM rust:1.83-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install build dependencies including Python
+# Install build dependencies including Python 3 for pyo3 build
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -21,14 +21,16 @@ COPY . .
 # Build release binary with Python processor support
 RUN cargo build --release --features pyo3
 
-# Runtime stage - minimal image with Python
-FROM debian:bookworm-slim
+# Runtime stage - Ubuntu 24.10 for Python 3.13
+FROM ubuntu:24.10
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    python3 \
-    libpython3.11 \
-    && rm -rf /var/lib/apt/lists/*
+    python3.13 \
+    python3.13-venv \
+    libpython3.13 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.13 /usr/bin/python3
 
 COPY --from=builder /app/target/release/rotel /rotel
 RUN chmod 0755 /rotel
