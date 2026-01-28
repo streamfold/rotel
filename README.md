@@ -1235,16 +1235,19 @@ When running an image, map the OTLP receiver ports to their local values with th
 
 ### Building locally
 
-To build a Docker image locally for development or testing, use the multi-stage `Dockerfile.build` which compiles
-the Rust code inside Docker (no cross-compilation toolchain required):
+To build a Docker image locally for development or testing, use the multi-stage `Dockerfile.build-python` which
+compiles the Rust code inside Docker with Python processor support (no cross-compilation toolchain required):
 
 ```shell
 # Build for your current platform (e.g., ARM64 on Apple Silicon)
-docker build -f Dockerfile.build -t rotel:latest .
+docker build -f Dockerfile.build-python -t rotel:latest .
 
 # Or explicitly specify the platform
-docker build --platform linux/arm64 -f Dockerfile.build -t rotel:latest .
+docker build --platform linux/arm64 -f Dockerfile.build-python -t rotel:latest .
 ```
+
+This builds rotel with the `pyo3` feature enabled for Python processor support. The build includes all necessary
+dependencies (Rust toolchain, clang, protobuf, Python) and produces a minimal runtime image.
 
 This is useful for testing local changes before creating a release.
 

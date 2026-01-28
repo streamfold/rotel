@@ -1,10 +1,9 @@
-# Multi-stage build for rotel
-# Uses rust:slim for faster downloads
+# Multi-stage build for rotel with Python processor support
 FROM rust:1.83-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies including Python
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -13,18 +12,23 @@ RUN apt-get update && apt-get install -y \
     clang \
     libclang-dev \
     protobuf-compiler \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source
 COPY . .
 
-# Build release binary
-RUN cargo build --release
+# Build release binary with Python processor support
+RUN cargo build --release --features pyo3
 
-# Runtime stage - minimal image
+# Runtime stage - minimal image with Python
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    python3 \
+    libpython3.11 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/rotel /rotel
 RUN chmod 0755 /rotel
