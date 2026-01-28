@@ -63,7 +63,10 @@ impl From<ConvertedAttrValue> for JsonType<'static> {
 /// Flat mode is the hot path - it handles nested complex types by serializing to JSON strings.
 /// Nested mode recursively converts KvlistValue to Object and preserves ArrayValue structure.
 #[inline]
-pub fn anyvalue_to_jsontype<'a>(value: &'a AnyValue, nested_kv_max_depth: Option<usize>) -> JsonType<'a> {
+pub fn anyvalue_to_jsontype<'a>(
+    value: &'a AnyValue,
+    nested_kv_max_depth: Option<usize>,
+) -> JsonType<'a> {
     match nested_kv_max_depth {
         // Fast path: flat mode (backwards compatible)
         None | Some(0) => anyvalue_to_jsontype_flat(value),
@@ -82,7 +85,9 @@ fn anyvalue_to_jsontype_flat<'a>(value: &'a AnyValue) -> JsonType<'a> {
         Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
         Some(Value::BoolValue(b)) => JsonType::Bool(*b),
         Some(Value::ArrayValue(a)) => {
-            let values = a.values.iter()
+            let values = a
+                .values
+                .iter()
                 .map(|v| match &v.value {
                     Some(Value::IntValue(i)) => JsonType::Int(*i),
                     Some(Value::DoubleValue(d)) => JsonType::Double(*d),
@@ -104,7 +109,11 @@ fn anyvalue_to_jsontype_flat<'a>(value: &'a AnyValue) -> JsonType<'a> {
 }
 
 /// Nested mode: recursively convert with depth tracking.
-fn anyvalue_to_jsontype_nested<'a>(value: &'a AnyValue, depth: usize, max_depth: usize) -> JsonType<'a> {
+fn anyvalue_to_jsontype_nested<'a>(
+    value: &'a AnyValue,
+    depth: usize,
+    max_depth: usize,
+) -> JsonType<'a> {
     if depth > max_depth {
         return JsonType::str_owned(json!(value).to_string());
     }
@@ -115,18 +124,24 @@ fn anyvalue_to_jsontype_nested<'a>(value: &'a AnyValue, depth: usize, max_depth:
         Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
         Some(Value::BoolValue(b)) => JsonType::Bool(*b),
         Some(Value::ArrayValue(a)) => {
-            let values = a.values.iter()
+            let values = a
+                .values
+                .iter()
                 .map(|v| anyvalue_to_jsontype_nested(v, depth + 1, max_depth))
                 .collect();
             JsonType::Array(values)
         }
         Some(Value::KvlistValue(kv)) => {
-            let entries = kv.values.iter()
+            let entries = kv
+                .values
+                .iter()
                 .filter_map(|entry| {
-                    entry.value.as_ref().map(|v| (
-                        Cow::Borrowed(entry.key.as_str()),
-                        anyvalue_to_jsontype_nested(v, depth + 1, max_depth),
-                    ))
+                    entry.value.as_ref().map(|v| {
+                        (
+                            Cow::Borrowed(entry.key.as_str()),
+                            anyvalue_to_jsontype_nested(v, depth + 1, max_depth),
+                        )
+                    })
                 })
                 .collect();
             JsonType::Object(entries)
@@ -138,7 +153,10 @@ fn anyvalue_to_jsontype_nested<'a>(value: &'a AnyValue, depth: usize, max_depth:
 
 /// Convert owned AnyValue to JsonType with configurable nesting behavior.
 #[inline]
-pub fn anyvalue_to_jsontype_owned(value: AnyValue, nested_kv_max_depth: Option<usize>) -> JsonType<'static> {
+pub fn anyvalue_to_jsontype_owned(
+    value: AnyValue,
+    nested_kv_max_depth: Option<usize>,
+) -> JsonType<'static> {
     match nested_kv_max_depth {
         None | Some(0) => anyvalue_to_jsontype_flat_owned(value),
         Some(max_depth) => anyvalue_to_jsontype_nested_owned(value, 0, max_depth),
@@ -154,7 +172,9 @@ fn anyvalue_to_jsontype_flat_owned(value: AnyValue) -> JsonType<'static> {
         Some(Value::StringValue(s)) => JsonType::str_owned(s),
         Some(Value::BoolValue(b)) => JsonType::Bool(b),
         Some(Value::ArrayValue(a)) => {
-            let values = a.values.into_iter()
+            let values = a
+                .values
+                .into_iter()
                 .map(|v| match v.value {
                     Some(Value::IntValue(i)) => JsonType::Int(i),
                     Some(Value::DoubleValue(d)) => JsonType::Double(d),
@@ -175,7 +195,11 @@ fn anyvalue_to_jsontype_flat_owned(value: AnyValue) -> JsonType<'static> {
 }
 
 /// Nested mode (owned): recursively convert with depth tracking.
-fn anyvalue_to_jsontype_nested_owned(value: AnyValue, depth: usize, max_depth: usize) -> JsonType<'static> {
+fn anyvalue_to_jsontype_nested_owned(
+    value: AnyValue,
+    depth: usize,
+    max_depth: usize,
+) -> JsonType<'static> {
     if depth > max_depth {
         return JsonType::str_owned(json!(value).to_string());
     }
@@ -186,18 +210,24 @@ fn anyvalue_to_jsontype_nested_owned(value: AnyValue, depth: usize, max_depth: u
         Some(Value::StringValue(s)) => JsonType::str_owned(s),
         Some(Value::BoolValue(b)) => JsonType::Bool(b),
         Some(Value::ArrayValue(a)) => {
-            let values = a.values.into_iter()
+            let values = a
+                .values
+                .into_iter()
                 .map(|v| anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth))
                 .collect();
             JsonType::Array(values)
         }
         Some(Value::KvlistValue(kv)) => {
-            let entries = kv.values.into_iter()
+            let entries = kv
+                .values
+                .into_iter()
                 .filter_map(|entry| {
-                    entry.value.map(|v| (
-                        Cow::Owned(entry.key),
-                        anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth),
-                    ))
+                    entry.value.map(|v| {
+                        (
+                            Cow::Owned(entry.key),
+                            anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth),
+                        )
+                    })
                 })
                 .collect();
             JsonType::Object(entries)
@@ -574,16 +604,28 @@ mod tests {
 
         let array_value = ArrayValue {
             values: vec![
-                AnyValue { value: Some(Value::IntValue(42)) },
-                AnyValue { value: Some(Value::StringValue("test_string".to_string())) },
-                AnyValue { value: Some(Value::KvlistValue(kv_list)) },
-                AnyValue { value: Some(Value::ArrayValue(ArrayValue {
-                    values: vec![AnyValue { value: Some(Value::IntValue(100)) }],
-                })) },
+                AnyValue {
+                    value: Some(Value::IntValue(42)),
+                },
+                AnyValue {
+                    value: Some(Value::StringValue("test_string".to_string())),
+                },
+                AnyValue {
+                    value: Some(Value::KvlistValue(kv_list)),
+                },
+                AnyValue {
+                    value: Some(Value::ArrayValue(ArrayValue {
+                        values: vec![AnyValue {
+                            value: Some(Value::IntValue(100)),
+                        }],
+                    })),
+                },
             ],
         };
 
-        let any_value = AnyValue { value: Some(Value::ArrayValue(array_value)) };
+        let any_value = AnyValue {
+            value: Some(Value::ArrayValue(array_value)),
+        };
 
         // Default From uses flat mode (None)
         let json_type: JsonType = (&any_value).into();
@@ -608,7 +650,10 @@ mod tests {
                         assert!(s.as_ref().contains("nested_key"));
                         assert!(s.as_ref().contains("nested_value"));
                     }
-                    _ => panic!("Expected Str (JSON string) at index 2 in flat mode, got {:?}", &values[2]),
+                    _ => panic!(
+                        "Expected Str (JSON string) at index 2 in flat mode, got {:?}",
+                        &values[2]
+                    ),
                 }
 
                 // Nested ArrayValue becomes a JSON string in flat mode
@@ -616,7 +661,10 @@ mod tests {
                     JsonType::Str(s) => {
                         assert!(s.as_ref().contains("100"));
                     }
-                    _ => panic!("Expected Str (JSON string) at index 3 in flat mode, got {:?}", &values[3]),
+                    _ => panic!(
+                        "Expected Str (JSON string) at index 3 in flat mode, got {:?}",
+                        &values[3]
+                    ),
                 }
             }
             _ => panic!("Expected JsonType::Array"),
@@ -638,19 +686,37 @@ mod tests {
 
         let array_value = ArrayValue {
             values: vec![
-                AnyValue { value: Some(Value::IntValue(42)) },
-                AnyValue { value: Some(Value::StringValue("test_string".to_string())) },
-                AnyValue { value: Some(Value::DoubleValue(3.14)) },
-                AnyValue { value: Some(Value::BoolValue(true)) },
-                AnyValue { value: Some(Value::KvlistValue(kv_list)) },
-                AnyValue { value: Some(Value::BytesValue(vec![0x48, 0x65, 0x6c, 0x6c, 0x6f])) },
-                AnyValue { value: Some(Value::ArrayValue(ArrayValue {
-                    values: vec![AnyValue { value: Some(Value::IntValue(100)) }],
-                })) },
+                AnyValue {
+                    value: Some(Value::IntValue(42)),
+                },
+                AnyValue {
+                    value: Some(Value::StringValue("test_string".to_string())),
+                },
+                AnyValue {
+                    value: Some(Value::DoubleValue(3.14)),
+                },
+                AnyValue {
+                    value: Some(Value::BoolValue(true)),
+                },
+                AnyValue {
+                    value: Some(Value::KvlistValue(kv_list)),
+                },
+                AnyValue {
+                    value: Some(Value::BytesValue(vec![0x48, 0x65, 0x6c, 0x6c, 0x6f])),
+                },
+                AnyValue {
+                    value: Some(Value::ArrayValue(ArrayValue {
+                        values: vec![AnyValue {
+                            value: Some(Value::IntValue(100)),
+                        }],
+                    })),
+                },
             ],
         };
 
-        let any_value = AnyValue { value: Some(Value::ArrayValue(array_value)) };
+        let any_value = AnyValue {
+            value: Some(Value::ArrayValue(array_value)),
+        };
 
         // Use nested mode with max depth 10
         let json_type = anyvalue_to_jsontype(&any_value, Some(10));
@@ -686,7 +752,10 @@ mod tests {
                             _ => panic!("Expected nested_key to have Str value"),
                         }
                     }
-                    _ => panic!("Expected Object at index 4 in nested mode, got {:?}", &values[4]),
+                    _ => panic!(
+                        "Expected Object at index 4 in nested mode, got {:?}",
+                        &values[4]
+                    ),
                 }
 
                 match &values[5] {
@@ -703,7 +772,10 @@ mod tests {
                             _ => panic!("Expected Int(100) in nested array"),
                         }
                     }
-                    _ => panic!("Expected Array at index 6 in nested mode, got {:?}", &values[6]),
+                    _ => panic!(
+                        "Expected Array at index 6 in nested mode, got {:?}",
+                        &values[6]
+                    ),
                 }
             }
             _ => panic!("Expected JsonType::Array"),
