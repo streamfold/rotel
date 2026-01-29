@@ -1,0 +1,103 @@
+# Verify non-standard feature flag combinations to ensure
+# we don't have drift in build/test compatability. Only runs
+# on push to main, since running on every PR seems overkill
+# for now
+name: Features Test
+
+on:
+  push:
+    branches:
+      - main
+      - features-test
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-all-features:
+    name: test all features - ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            os: ubuntu
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            os: ubuntu
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        if: matrix.os == 'macos'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: update apt cache on linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get update
+      - name: install protoc linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get install -y protobuf-compiler
+      - name: install protoc macos
+        if: matrix.os == 'macos'
+        run: brew install protobuf
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+      - uses: taiki-e/install-action@nextest
+      - name: run tests with all features
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --target ${{ matrix.target }} --all-features --verbose
+
+  test-no-dflt-features:
+    name: test no default features - ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            os: ubuntu
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            os: ubuntu
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        if: matrix.os == 'macos'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: update apt cache on linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get update
+      - name: install protoc linux
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get install -y protobuf-compiler
+      - name: install protoc macos
+        if: matrix.os == 'macos'
+        run: brew install protobuf
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+      - uses: taiki-e/install-action@nextest
+      - name: run tests with no default features
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --target ${{ matrix.target }} --no-default-features --verbose
