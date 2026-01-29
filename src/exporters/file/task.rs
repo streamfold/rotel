@@ -226,10 +226,11 @@ mod tests {
         });
 
         // Send a message with metadata
-        let message = Message {
-            metadata: Some(metadata),
-            payload: vec![ResourceSpans::default()], // Empty spans
-        };
+        let message = Message::new(
+            Some(metadata),
+            vec![ResourceSpans::default()], // Empty spans
+            None,
+        );
         trace_btx.send(vec![message]).await.unwrap();
 
         // Wait for acknowledgment
