@@ -129,9 +129,6 @@ file_exporter = ["dep:parquet", "dep:arrow", "dep:base64"]
 aws_iam = ["dep:aws-config", "dep:aws-credential-types"]
 prometheus = ["dep:opentelemetry-prometheus-text-exporter"]
 
-integration-tests = []
-
-
 [[bench]]
 name = "flume_bench"
 harness = false
