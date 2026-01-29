@@ -156,7 +156,6 @@ mod tests {
     use hyper_util::client::legacy::Client;
     use hyper_util::client::legacy::connect::HttpConnector;
     use hyper_util::rt::TokioTimer;
-    use opentelemetry::global;
     use opentelemetry::metrics::MeterProvider;
     use opentelemetry_sdk::metrics::SdkMeterProvider;
     use std::time::Duration;
