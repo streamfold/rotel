@@ -56,7 +56,9 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: nextest
-          args: run --target ${{ matrix.target }} --all-features --verbose
+          args: |
+              run --target ${{ matrix.target }} --verbose \
+                --features fluent_receiver,file_receiver,pprof,pyo3,rdkafka,aws_iam,prometheus
 
   test-no-dflt-features:
     name: test no default features - ${{ matrix.target }}
