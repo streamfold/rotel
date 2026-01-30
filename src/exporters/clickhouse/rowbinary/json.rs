@@ -64,55 +64,27 @@ pub fn anyvalue_to_jsontype<'a>(
     value: &'a AnyValue,
     nested_kv_max_depth: Option<usize>,
 ) -> JsonType<'a> {
-    match nested_kv_max_depth {
-        // Fast path: flat mode (backwards compatible)
-        None | Some(0) => anyvalue_to_jsontype_flat(value),
-        // Nested mode: recursive conversion
-        Some(max_depth) => anyvalue_to_jsontype_nested(value, 0, max_depth),
-    }
-}
-
-/// Fast path: convert without recursing into nested structures.
-/// Arrays containing KvlistValue or nested ArrayValue are serialized as JSON strings.
-#[inline]
-fn anyvalue_to_jsontype_flat<'a>(value: &'a AnyValue) -> JsonType<'a> {
-    match &value.value {
-        Some(Value::IntValue(i)) => JsonType::Int(*i),
-        Some(Value::DoubleValue(d)) => JsonType::Double(*d),
-        Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
-        Some(Value::BoolValue(b)) => JsonType::Bool(*b),
-        Some(Value::ArrayValue(a)) => {
-            let values = a
-                .values
-                .iter()
-                .map(|v| match &v.value {
-                    Some(Value::IntValue(i)) => JsonType::Int(*i),
-                    Some(Value::DoubleValue(d)) => JsonType::Double(*d),
-                    Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
-                    Some(Value::BoolValue(b)) => JsonType::Bool(*b),
-                    // Complex nested types become JSON strings
-                    Some(Value::ArrayValue(arr)) => JsonType::str_owned(json!(arr).to_string()),
-                    Some(Value::KvlistValue(kv)) => JsonType::str_owned(json!(kv).to_string()),
-                    Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
-                    None => JsonType::str_borrowed(""),
-                })
-                .collect();
-            JsonType::Array(values)
-        }
-        Some(Value::KvlistValue(_)) => JsonType::str_borrowed(""),
-        Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
-        None => JsonType::str_borrowed(""),
-    }
+    anyvalue_to_jsontype_nested(value, 0, nested_kv_max_depth)
 }
 
 /// Nested mode: recursively convert with depth tracking.
 fn anyvalue_to_jsontype_nested<'a>(
     value: &'a AnyValue,
     depth: usize,
-    max_depth: usize,
+    max_depth: Option<usize>,
 ) -> JsonType<'a> {
-    if depth > max_depth {
-        return JsonType::str_owned(json!(value).to_string());
+    if max_depth.is_none() || depth > max_depth.unwrap() {
+        return match &value.value {
+            Some(Value::IntValue(i)) => JsonType::Int(*i),
+            Some(Value::DoubleValue(d)) => JsonType::Double(*d),
+            Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
+            Some(Value::BoolValue(b)) => JsonType::Bool(*b),
+            // Complex nested types become JSON strings
+            Some(Value::ArrayValue(arr)) => JsonType::str_owned(json!(arr).to_string()),
+            Some(Value::KvlistValue(kv)) => JsonType::str_owned(json!(kv).to_string()),
+            Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
+            None => JsonType::str_borrowed(""),
+        };
     }
 
     match &value.value {
@@ -154,51 +126,26 @@ pub fn anyvalue_to_jsontype_owned(
     value: AnyValue,
     nested_kv_max_depth: Option<usize>,
 ) -> JsonType<'static> {
-    match nested_kv_max_depth {
-        None | Some(0) => anyvalue_to_jsontype_flat_owned(value),
-        Some(max_depth) => anyvalue_to_jsontype_nested_owned(value, 0, max_depth),
-    }
-}
-
-/// Fast path (owned): convert without recursing into nested structures.
-#[inline]
-fn anyvalue_to_jsontype_flat_owned(value: AnyValue) -> JsonType<'static> {
-    match value.value {
-        Some(Value::IntValue(i)) => JsonType::Int(i),
-        Some(Value::DoubleValue(d)) => JsonType::Double(d),
-        Some(Value::StringValue(s)) => JsonType::str_owned(s),
-        Some(Value::BoolValue(b)) => JsonType::Bool(b),
-        Some(Value::ArrayValue(a)) => {
-            let values = a
-                .values
-                .into_iter()
-                .map(|v| match v.value {
-                    Some(Value::IntValue(i)) => JsonType::Int(i),
-                    Some(Value::DoubleValue(d)) => JsonType::Double(d),
-                    Some(Value::StringValue(s)) => JsonType::str_owned(s),
-                    Some(Value::BoolValue(b)) => JsonType::Bool(b),
-                    Some(Value::ArrayValue(arr)) => JsonType::str_owned(json!(arr).to_string()),
-                    Some(Value::KvlistValue(kv)) => JsonType::str_owned(json!(kv).to_string()),
-                    Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
-                    None => JsonType::str_owned(String::new()),
-                })
-                .collect();
-            JsonType::Array(values)
-        }
-        Some(Value::KvlistValue(_)) => JsonType::str_owned(String::new()),
-        Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
-        None => JsonType::str_owned(String::new()),
-    }
+    anyvalue_to_jsontype_nested_owned(value, 0, nested_kv_max_depth)
 }
 
 /// Nested mode (owned): recursively convert with depth tracking.
 fn anyvalue_to_jsontype_nested_owned(
     value: AnyValue,
     depth: usize,
-    max_depth: usize,
+    max_depth: Option<usize>,
 ) -> JsonType<'static> {
-    if depth > max_depth {
-        return JsonType::str_owned(json!(value).to_string());
+    if max_depth.is_none() || depth > max_depth.unwrap() {
+        return match value.value {
+            Some(Value::IntValue(i)) => JsonType::Int(i),
+            Some(Value::DoubleValue(d)) => JsonType::Double(d),
+            Some(Value::StringValue(s)) => JsonType::str_owned(s),
+            Some(Value::BoolValue(b)) => JsonType::Bool(b),
+            Some(Value::ArrayValue(arr)) => JsonType::str_owned(json!(arr).to_string()),
+            Some(Value::KvlistValue(kv)) => JsonType::str_owned(json!(kv).to_string()),
+            Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
+            None => JsonType::str_owned(String::new()),
+        };
     }
 
     match value.value {
