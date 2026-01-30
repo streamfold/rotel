@@ -58,7 +58,7 @@ jobs:
           command: nextest
           args: |
               run --target ${{ matrix.target }} --verbose
-                --features fluent_receiver,file_receiver,pprof,pyo3,rdkafka,aws_iam,prometheus
+                --features fluent_receiver,file_receiver,pyo3,rdkafka,aws_iam,prometheus
 
   test-no-dflt-features:
     name: test no default features - ${{ matrix.target }}
