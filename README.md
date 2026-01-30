@@ -232,6 +232,7 @@ and traces.
 | --clickhouse-exporter-async-insert           | true                           | true, false |
 | --clickhouse-exporter-request-timeout        | 5s                             |             |
 | --clickhouse-exporter-enable-json            |                                |             |
+| --clickhouse-exporter-nested-kv-max-depth    |                                |             |
 | --clickhouse-exporter-json-underscore        |                                |             |
 | --clickhouse-exporter-user                   |                                |             |
 | --clickhouse-exporter-password               |                                |             |
@@ -262,6 +263,18 @@ when creating tables with `clickhouse-ddl`. By default, any JSON key inserted wi
 a nested JSON object. You can replace periods in JSON keys with underscores by passing the option
 `--clickhouse-exporter-json-underscore` which will keep the JSON keys flat. For example, the resource attribute
 `service.name` will be inserted as `service_name`.
+
+When exporting OpenTelemetry attributes that contain nested `KeyValueList` structures (such as GenAI message
+attributes like `gen_ai.input.messages`), use `--clickhouse-exporter-nested-kv-max-depth` to convert them to
+proper JSON objects. Without this option, nested structures are serialized as JSON strings (the protobuf
+representation) for backwards compatibility. Set to a value like `10` to enable nested conversion:
+
+```shell
+rotel start --exporter clickhouse \
+  --clickhouse-exporter-endpoint "http://localhost:8123" \
+  --clickhouse-exporter-enable-json \
+  --clickhouse-exporter-nested-kv-max-depth 10
+```
 
 _The ClickHouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse)
 crate._
@@ -1219,6 +1232,24 @@ tags:
 - `streamfold/rotel:sha-<sha>`
 
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
+
+### Building locally
+
+To build a Docker image locally for development or testing, use the multi-stage `Dockerfile.build-python` which
+compiles the Rust code inside Docker with Python processor support (no cross-compilation toolchain required):
+
+```shell
+# Build for your current platform (e.g., ARM64 on Apple Silicon)
+docker build -f Dockerfile.build-python -t rotel:latest .
+
+# Or explicitly specify the platform
+docker build --platform linux/arm64 -f Dockerfile.build-python -t rotel:latest .
+```
+
+This builds rotel with the `pyo3` feature enabled for Python processor support. The build includes all necessary
+dependencies (Rust toolchain, clang, protobuf, Python) and produces a minimal runtime image.
+
+This is useful for testing local changes before creating a release.
 
 Rotel releases with built-in Python Processor support and Python 3.13 are also available
 on [Dockerhub](https://hub.docker.com/repository/docker/streamfold/rotel-python-processors/general)

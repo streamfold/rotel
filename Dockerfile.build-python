@@ -1,0 +1,41 @@
+# Multi-stage build for rotel with Python 3.13 processor support
+FROM rust:1.83-slim-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies including Python 3 for pyo3 build
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    build-essential \
+    clang \
+    libclang-dev \
+    protobuf-compiler \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source
+COPY . .
+
+# Build release binary with Python processor support
+RUN cargo build --release --features pyo3
+
+# Runtime stage - Ubuntu 24.10 for Python 3.13
+FROM ubuntu:24.10
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    python3.13 \
+    python3.13-venv \
+    libpython3.13 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.13 /usr/bin/python3
+
+COPY --from=builder /app/target/release/rotel /rotel
+RUN chmod 0755 /rotel
+
+EXPOSE 4317
+EXPOSE 4318
+
+ENTRYPOINT ["/rotel", "start", "--otlp-grpc-endpoint", "0.0.0.0:4317", "--otlp-http-endpoint", "0.0.0.0:4318"]
