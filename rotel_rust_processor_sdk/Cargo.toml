@@ -1,0 +1,13 @@
+[package]
+name = "rotel_rust_processor_sdk"
+version = "0.1.0"
+edition = "2021"
+description = "SDK for building Rust-based processors for Rotel"
+license = "Apache-2.0"
+
+[dependencies]
+abi_stable = "0.11"
+opentelemetry-proto = { version = "0.30.0" }
+
+[lib]
+crate-type = ["rlib"]
