@@ -64,6 +64,8 @@ libc = "0.2.170"
 pin-project = "1.1.10"
 futures-util = "0.3.31"
 rotel_python_processor_sdk = { path = "rotel_python_processor_sdk", optional = true }
+rotel_rust_processor_sdk = { path = "rotel_rust_processor_sdk", optional = true }
+abi_stable = { version = "0.11", optional = true }
 pyo3 = { version = "0.24.1", optional = true }
 chrono = { version = "0.4.40", features = ["serde"] }
 serde = { version = "1.0.217", features = ["derive"] }
@@ -124,6 +126,7 @@ fluent_receiver = ["dep:rmpv", "dep:rmp-serde"]
 file_receiver = ["dep:glob", "dep:notify", "dep:notify-debouncer-mini", "dep:base64"]
 pprof = ["dep:pprof"]
 pyo3 = ["dep:pyo3", "dep:rotel_python_processor_sdk"]
+rust_processor = ["dep:rotel_rust_processor_sdk", "dep:abi_stable"]
 rdkafka = ["dep:rdkafka"]
 file_exporter = ["dep:parquet", "dep:arrow", "dep:base64"]
 aws_iam = ["dep:aws-config", "dep:aws-credential-types"]

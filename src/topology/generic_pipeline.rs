@@ -8,6 +8,7 @@ use crate::topology::payload::{Ack, Message};
 use crate::topology::processors::Processors;
 #[cfg(not(feature = "pyo3"))]
 use crate::topology::processors::PythonProcessable;
+use crate::topology::processors::RustProcessable;
 use opentelemetry::KeyValue as InstKeyValue;
 use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -108,7 +109,13 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: &[KeyValue]) 
 
 impl<T> Pipeline<T>
 where
-    T: BatchSizer + BatchSplittable + PythonProcessable + ResourceContainer + Clone + 'static,
+    T: BatchSizer
+        + BatchSplittable
+        + PythonProcessable
+        + RustProcessable
+        + ResourceContainer
+        + Clone
+        + 'static,
     Vec<T>: Send,
 {
     pub fn new(

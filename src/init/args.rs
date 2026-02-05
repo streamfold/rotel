@@ -93,6 +93,18 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_OTLP_WITH_METRICS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
     pub otlp_with_metrics_processor: Vec<String>,
 
+    /// Path to Rust trace processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_RUST_TRACE_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub rust_trace_processor: Vec<String>,
+
+    /// Path to Rust logs processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_RUST_LOGS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub rust_logs_processor: Vec<String>,
+
+    /// Path to Rust metrics processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_RUST_METRICS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub rust_metrics_processor: Vec<String>,
+
     /// Comma-separated, key=value pairs of resource attributes to set
     #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES")]
     pub otel_resource_attributes: Option<String>,
@@ -177,6 +189,9 @@ impl Default for AgentRun {
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
+            rust_trace_processor: Vec::new(),
+            rust_logs_processor: Vec::new(),
+            rust_metrics_processor: Vec::new(),
             otel_resource_attributes: None,
             enable_internal_telemetry: false,
             batch: BatchArgs::default(),

@@ -16,6 +16,19 @@ use crate::topology::payload::Message;
 #[cfg(feature = "pyo3")]
 use rotel_sdk::model::PythonProcessable;
 
+// Rust processor imports
+#[cfg(feature = "rust_processor")]
+use abi_stable::library::lib_header_from_path;
+#[cfg(feature = "rust_processor")]
+use rotel_rust_processor_sdk::{
+    ProcessorModuleRef, ROption, RotelProcessor_TO,
+    types::{RRequestContext, RResourceLogs, RResourceMetrics, RResourceSpans},
+};
+#[cfg(feature = "rust_processor")]
+use std::path::Path as StdPath;
+#[cfg(feature = "rust_processor")]
+use tracing::info;
+
 /// Trait for types that can be processed by Python processors
 #[cfg(not(feature = "pyo3"))]
 pub trait PythonProcessable {
@@ -46,11 +59,159 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
     }
 }
 
-/// Container for Python processors
+/// Trait for types that can be processed by Rust processors
+#[cfg(feature = "rust_processor")]
+pub trait RustProcessable: Sized {
+    type RType;
+
+    fn to_ffi(self) -> Self::RType;
+    fn from_ffi(r: Self::RType) -> Self;
+
+    fn process_with_rust(
+        self,
+        processor: &RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
+        context: &ROption<RRequestContext>,
+    ) -> Self;
+}
+
+#[cfg(feature = "rust_processor")]
+impl RustProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {
+    type RType = RResourceSpans;
+
+    fn to_ffi(self) -> Self::RType {
+        self.into()
+    }
+
+    fn from_ffi(r: Self::RType) -> Self {
+        r.into()
+    }
+
+    fn process_with_rust(
+        self,
+        processor: &RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
+        context: &ROption<RRequestContext>,
+    ) -> Self {
+        let mut r_spans = self.to_ffi();
+        processor.process_spans(&mut r_spans, context);
+        Self::from_ffi(r_spans)
+    }
+}
+
+#[cfg(feature = "rust_processor")]
+impl RustProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {
+    type RType = RResourceMetrics;
+
+    fn to_ffi(self) -> Self::RType {
+        self.into()
+    }
+
+    fn from_ffi(r: Self::RType) -> Self {
+        r.into()
+    }
+
+    fn process_with_rust(
+        self,
+        processor: &RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
+        context: &ROption<RRequestContext>,
+    ) -> Self {
+        let mut r_metrics = self.to_ffi();
+        processor.process_metrics(&mut r_metrics, context);
+        Self::from_ffi(r_metrics)
+    }
+}
+
+#[cfg(feature = "rust_processor")]
+impl RustProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
+    type RType = RResourceLogs;
+
+    fn to_ffi(self) -> Self::RType {
+        self.into()
+    }
+
+    fn from_ffi(r: Self::RType) -> Self {
+        r.into()
+    }
+
+    fn process_with_rust(
+        self,
+        processor: &RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
+        context: &ROption<RRequestContext>,
+    ) -> Self {
+        let mut r_logs = self.to_ffi();
+        processor.process_logs(&mut r_logs, context);
+        Self::from_ffi(r_logs)
+    }
+}
+
+/// Noop trait when rust_processor feature is disabled
+#[cfg(not(feature = "rust_processor"))]
+pub trait RustProcessable {}
+
+#[cfg(not(feature = "rust_processor"))]
+impl RustProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans {}
+#[cfg(not(feature = "rust_processor"))]
+impl RustProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetrics {}
+#[cfg(not(feature = "rust_processor"))]
+impl RustProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {}
+
+/// A loaded Rust processor
+#[cfg(feature = "rust_processor")]
+pub struct RustProcessor {
+    name: String,
+    processor: RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
+}
+
+#[cfg(feature = "rust_processor")]
+impl RustProcessor {
+    /// Load a Rust processor from a dynamic library path
+    pub fn load(path: &StdPath) -> Result<Self, BoxError> {
+        let header = lib_header_from_path(path).map_err(|e| {
+            format!(
+                "Failed to load processor library from {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+
+        let module: ProcessorModuleRef = header.init_root_module().map_err(|e| {
+            format!(
+                "Failed to initialize processor module from {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+
+        let processor = (module.new_processor())();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        Ok(Self { name, processor })
+    }
+
+    /// Get the processor name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[cfg(feature = "rust_processor")]
+impl std::fmt::Debug for RustProcessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RustProcessor")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+/// Container for Python and Rust processors
 #[derive(Debug)]
 pub struct Processors {
     #[allow(dead_code)] // Only accessed in pyo3
     processor_modules: Vec<String>,
+    #[cfg(feature = "rust_processor")]
+    rust_processors: Vec<RustProcessor>,
 }
 
 impl Processors {
@@ -58,6 +219,8 @@ impl Processors {
     pub fn empty() -> Self {
         Self {
             processor_modules: Vec::new(),
+            #[cfg(feature = "rust_processor")]
+            rust_processors: Vec::new(),
         }
     }
 
@@ -101,7 +264,11 @@ impl Processors {
             }
         }
 
-        Ok(Self { processor_modules })
+        Ok(Self {
+            processor_modules,
+            #[cfg(feature = "rust_processor")]
+            rust_processors: Vec::new(),
+        })
     }
 
     /// Initialize processors from a list of processor file paths (noop when pyo3 is disabled)
@@ -110,38 +277,81 @@ impl Processors {
         Ok(Self::empty())
     }
 
+    /// Initialize Rust processors from a list of shared library paths
+    #[cfg(feature = "rust_processor")]
+    pub fn initialize_rust(mut self, rust_processor_files: Vec<String>) -> Result<Self, BoxError> {
+        for file in rust_processor_files {
+            let path = StdPath::new(&file);
+            let processor = RustProcessor::load(path)?;
+            info!("Loaded Rust processor: {} from {}", processor.name(), file);
+            self.rust_processors.push(processor);
+        }
+        Ok(self)
+    }
+
+    /// Initialize Rust processors (noop when rust_processor is disabled)
+    #[cfg(not(feature = "rust_processor"))]
+    pub fn initialize_rust(self, _rust_processor_files: Vec<String>) -> Result<Self, BoxError> {
+        Ok(self)
+    }
+
+    /// Check if there are any Rust processors loaded
+    #[cfg(feature = "rust_processor")]
+    pub fn has_rust_processors(&self) -> bool {
+        !self.rust_processors.is_empty()
+    }
+
+    /// Check if there are any Rust processors loaded (noop when disabled)
+    #[cfg(not(feature = "rust_processor"))]
+    pub fn has_rust_processors(&self) -> bool {
+        false
+    }
+
     /// Run the processors on a message
     #[cfg(not(feature = "pyo3"))]
     pub fn run<T>(&self, message: Message<T>, inspector: &impl Inspect<T>) -> Message<T>
     where
-        T: PythonProcessable,
+        T: PythonProcessable + RustProcessable + Clone,
     {
-        inspector.inspect(&message.payload);
-        message
+        #[cfg(feature = "rust_processor")]
+        {
+            self.run_with_rust(message, inspector)
+        }
+        #[cfg(not(feature = "rust_processor"))]
+        {
+            inspector.inspect(&message.payload);
+            message
+        }
     }
 
     /// Run the processors on a message
     #[cfg(feature = "pyo3")]
     pub fn run<T>(&self, message: Message<T>, inspector: &impl Inspect<T>) -> Message<T>
     where
-        T: PythonProcessable,
+        T: PythonProcessable + RustProcessable + Clone,
     {
         let mut items = message.payload;
         let request_context = message.request_context.clone();
         let mut py_request_context: Option<PyRequestContext> = None;
-        match message.request_context {
+        match message.request_context.clone() {
             None => {}
             Some(ctx) => py_request_context = Some(ctx.into()),
         }
 
         // Invoke current middleware layer
         let len_processor_modules = self.processor_modules.len();
-        if len_processor_modules > 0 {
+        #[cfg(feature = "rust_processor")]
+        let has_rust = self.has_rust_processors();
+        #[cfg(not(feature = "rust_processor"))]
+        let has_rust = false;
+
+        if len_processor_modules > 0 || has_rust {
             inspector.inspect_with_prefix(Some("OTLP payload before processing".into()), &items);
         } else {
             inspector.inspect(&items);
         }
 
+        // Run Python processors
         for p in &self.processor_modules {
             let mut new_items = Vec::new();
 
@@ -155,7 +365,13 @@ impl Processors {
             items = new_items;
         }
 
-        if len_processor_modules > 0 {
+        // Run Rust processors
+        #[cfg(feature = "rust_processor")]
+        {
+            items = self.run_rust_processors(items, &request_context);
+        }
+
+        if len_processor_modules > 0 || has_rust {
             inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
         }
 
@@ -164,6 +380,90 @@ impl Processors {
             metadata: message.metadata,
             request_context,
             payload: items,
+        }
+    }
+
+    /// Run Rust processors on a list of items
+    #[cfg(feature = "rust_processor")]
+    fn run_rust_processors<T>(
+        &self,
+        mut items: Vec<T>,
+        request_context: &Option<crate::topology::payload::RequestContext>,
+    ) -> Vec<T>
+    where
+        T: RustProcessable + Clone,
+    {
+        // Convert context once, reuse for all items
+        let context: ROption<RRequestContext> = request_context
+            .as_ref()
+            .map(|ctx| ctx.clone().into())
+            .into();
+
+        for rust_proc in &self.rust_processors {
+            let mut new_items = Vec::with_capacity(items.len());
+            for item in items {
+                let result = item.process_with_rust(&rust_proc.processor, &context);
+                new_items.push(result);
+            }
+            items = new_items;
+        }
+        items
+    }
+
+    /// Run with Rust processors only (when pyo3 is disabled)
+    #[cfg(all(feature = "rust_processor", not(feature = "pyo3")))]
+    fn run_with_rust<T>(&self, message: Message<T>, inspector: &impl Inspect<T>) -> Message<T>
+    where
+        T: RustProcessable + Clone,
+    {
+        let has_rust = self.has_rust_processors();
+
+        if has_rust {
+            inspector.inspect_with_prefix(
+                Some("OTLP payload before processing".into()),
+                &message.payload,
+            );
+        } else {
+            inspector.inspect(&message.payload);
+        }
+
+        let request_context = message.request_context.clone();
+        let items = self.run_rust_processors(message.payload, &request_context);
+
+        if has_rust {
+            inspector.inspect_with_prefix(Some("OTLP payload after processing".into()), &items);
+        }
+
+        Message {
+            metadata: message.metadata,
+            request_context,
+            payload: items,
+        }
+    }
+}
+
+// Conversion from RequestContext to RRequestContext
+#[cfg(feature = "rust_processor")]
+impl From<crate::topology::payload::RequestContext> for RRequestContext {
+    fn from(ctx: crate::topology::payload::RequestContext) -> Self {
+        use abi_stable::std_types::RHashMap;
+        use rotel_rust_processor_sdk::types::{RGrpcContext, RHttpContext};
+
+        match ctx {
+            crate::topology::payload::RequestContext::Http(headers_map) => {
+                let mut headers = RHashMap::new();
+                for (k, v) in headers_map {
+                    headers.insert(k.into(), v.into());
+                }
+                RRequestContext::Http(RHttpContext { headers })
+            }
+            crate::topology::payload::RequestContext::Grpc(metadata_map) => {
+                let mut metadata = RHashMap::new();
+                for (k, v) in metadata_map {
+                    metadata.insert(k.into(), v.into());
+                }
+                RRequestContext::Grpc(RGrpcContext { metadata })
+            }
         }
     }
 }
