@@ -1,0 +1,53 @@
+# Rust build artifacts (exclude most, but keep arch-specific binaries for Docker)
+target/
+!target/arm64/
+!target/amd64/
+utilities/target/
+rotel_python_processor_sdk/target/
+
+# Python build artifacts and caches
+rotel_python_processor_sdk/dist/
+rotel_python_processor_sdk/.env/
+rotel_python_processor_sdk/rotel_sdk/*.so
+rotel_python_processor_sdk/processors/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+.dockerignore
+
+# Documentation (not needed for build)
+*.md
+LICENSE
+
+# Test files (not needed for runtime)
+test/
+tests/
+rotel_python_processor_sdk/python_tests/
+
+# Profiling artifacts
+flamegraph.svg
+perf.data
+perf.data.old
+
+# Temporary and generated files
+tmp/
+trace.pb
+CLAUDE.md
+
+# Docker files (avoid recursion/confusion)
+docker-compose*.yml
+Dockerfile.*
+
+# Examples (not needed for build)
+examples/
