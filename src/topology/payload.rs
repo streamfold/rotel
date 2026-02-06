@@ -9,7 +9,8 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tracing::warn;
 
 #[cfg(feature = "pyo3")]
@@ -44,21 +45,8 @@ impl<T> Message<T> {
 
 pub struct MessageMetadata {
     data: MessageMetadataInner,
-    inner: Arc<Mutex<Inner>>,
-}
-
-struct Inner {
-    ref_count: u32,
-    resp_sent: bool,
-}
-
-impl Inner {
-    fn new() -> Self {
-        Self {
-            ref_count: 1,
-            resp_sent: false,
-        }
-    }
+    ref_count: Arc<AtomicU32>,
+    response_claimed: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,14 +86,16 @@ impl MessageMetadata {
     pub fn kafka(metadata: KafkaMetadata) -> Self {
         Self {
             data: MessageMetadataInner::Kafka(metadata),
-            inner: Arc::new(Mutex::new(Inner::new())),
+            ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn forwarder(metadata: ForwarderMetadata) -> Self {
         Self {
             data: MessageMetadataInner::Forwarder(metadata),
-            inner: Arc::new(Mutex::new(Inner::new())),
+            ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -113,7 +103,8 @@ impl MessageMetadata {
     pub fn file(metadata: FileMetadata) -> Self {
         Self {
             data: MessageMetadataInner::File(metadata),
-            inner: Arc::new(Mutex::new(Inner::new())),
+            ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -124,8 +115,7 @@ impl MessageMetadata {
 
     /// Get reference count for debugging/testing
     pub fn ref_count(&self) -> u32 {
-        let inner = self.inner.lock().unwrap();
-        inner.ref_count
+        self.ref_count.load(Ordering::Acquire)
     }
 
     /// Helper method to get Kafka metadata if available
@@ -142,21 +132,19 @@ impl MessageMetadata {
     pub fn shallow_clone(&self) -> Self {
         Self {
             data: self.data.clone(),
-            inner: self.inner.clone(), // Share the same Arc, no increment
+            ref_count: self.ref_count.clone(),
+            response_claimed: self.response_claimed.clone(),
         }
     }
 }
 
 impl Clone for MessageMetadata {
     fn clone(&self) -> Self {
-        // Increment the reference count atomically
-        let mut inner = self.inner.lock().unwrap();
-        inner.ref_count += 1;
-        drop(inner);
-
+        self.ref_count.fetch_add(1, Ordering::AcqRel);
         Self {
             data: self.data.clone(),
-            inner: self.inner.clone(),
+            ref_count: self.ref_count.clone(),
+            response_claimed: self.response_claimed.clone(),
         }
     }
 }
@@ -298,31 +286,31 @@ pub trait Ack {
     async fn nack(&self, reason: ExporterError) -> Result<(), SendError>;
 }
 
-impl Ack for MessageMetadata {
-    async fn ack(&self) -> Result<(), SendError> {
-        let send_ack = {
-            let mut inner = self.inner.lock().unwrap();
-
-            // Check for underflow
-            if inner.ref_count == 0 {
-                warn!("attempt to ack payload already at ref_count=0")
-            } else {
-                inner.ref_count -= 1;
+impl MessageMetadata {
+    /// Decrement ref_count by 1, returning the previous value.
+    /// Returns None if already at 0 (underflow).
+    fn decrement_ref_count(&self, op: &str) -> Option<u32> {
+        match self
+            .ref_count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                if v == 0 { None } else { Some(v - 1) }
+            }) {
+            Ok(prev) => Some(prev),
+            Err(_) => {
+                warn!("attempt to {} payload already at ref_count=0", op);
+                None
             }
-
-            if inner.ref_count == 0 && !inner.resp_sent {
-                inner.resp_sent = true;
-                true
-            } else {
-                false
-            }
-        };
-
-        if !send_ack {
-            return Ok(());
         }
+    }
 
-        // Only send acknowledgment when count reaches 0 and no response has been sent
+    /// Try to claim the response slot. Returns true if this caller won.
+    fn claim_response(&self) -> bool {
+        self.response_claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    async fn send_ack(&self) -> Result<(), SendError> {
         match &self.data {
             MessageMetadataInner::Kafka(km) => {
                 if let Some(ack_chan) = &km.ack_chan {
@@ -339,7 +327,6 @@ impl Ack for MessageMetadata {
                 if let Some(ack_chan) = &fm.ack_chan {
                     ack_chan
                         .send(ForwarderAcknowledgement::Ack(ForwarderPayloadDetails {
-                            // TODO: consume data to remove clone
                             request_id: fm.request_id.clone(),
                         }))
                         .await?;
@@ -359,30 +346,7 @@ impl Ack for MessageMetadata {
         Ok(())
     }
 
-    async fn nack(&self, reason: ExporterError) -> Result<(), SendError> {
-        let send_nack = {
-            let mut inner = self.inner.lock().unwrap();
-            // In theory we don't need to decrement this, but it could help in
-            // debugging
-            if inner.ref_count == 0 {
-                warn!("attempt to nack payload already at ref_count=0")
-            } else {
-                inner.ref_count -= 1;
-            }
-
-            // Always send nack immediately, unless a nack has been sent already
-            if !inner.resp_sent {
-                inner.resp_sent = true;
-                true
-            } else {
-                false
-            }
-        };
-
-        if !send_nack {
-            return Ok(());
-        }
-
+    async fn send_nack(&self, reason: ExporterError) -> Result<(), SendError> {
         match &self.data {
             MessageMetadataInner::Kafka(km) => {
                 if let Some(ack_chan) = &km.ack_chan {
@@ -400,7 +364,6 @@ impl Ack for MessageMetadata {
                 if let Some(ack_chan) = &fm.ack_chan {
                     ack_chan
                         .send(ForwarderAcknowledgement::Nack(ForwarderPayloadDetails {
-                            // TODO: consume data to remove clone
                             request_id: fm.request_id.clone(),
                         }))
                         .await?;
@@ -417,6 +380,35 @@ impl Ack for MessageMetadata {
                         .await?;
                 }
             }
+        }
+        Ok(())
+    }
+}
+
+impl Ack for MessageMetadata {
+    async fn ack(&self) -> Result<(), SendError> {
+        // Decrement ref count first — ack only fires when all refs are resolved
+        let prev_count = match self.decrement_ref_count("ack") {
+            Some(prev) => prev,
+            None => return Ok(()),
+        };
+
+        // Only try to claim if this was the last reference
+        if prev_count == 1 && self.claim_response() {
+            self.send_ack().await?;
+        }
+        Ok(())
+    }
+
+    async fn nack(&self, reason: ExporterError) -> Result<(), SendError> {
+        // Claim response slot FIRST — nack has priority over concurrent acks
+        let claimed = self.claim_response();
+
+        // Decrement ref count for bookkeeping
+        self.decrement_ref_count("nack");
+
+        if claimed {
+            self.send_nack(reason).await?;
         }
         Ok(())
     }
