@@ -4190,6 +4190,7 @@ dependencies = [
  "opentelemetry_sdk 0.31.0",
  "parquet",
  "pin-project",
+ "portable-atomic",
  "pprof",
  "prost 0.14.3",
  "prost-build 0.14.3",

@@ -232,7 +232,7 @@ impl JsonFilePersister {
 
 /// Write state to file atomically (write to temp, then rename)
 fn atomic_write(path: &Path, state: &DatabaseState) -> Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use portable_atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     // Ensure parent directory exists

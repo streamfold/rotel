@@ -57,6 +57,35 @@ jobs:
           command: nextest
           args: run --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
 
+  # Build check for 32-bit ARM targets (cross-compilation, no tests)
+  build-arm32:
+    name: build - ${{ matrix.target }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: armv5te-unknown-linux-gnueabi
+          - target: armv7-unknown-linux-gnueabihf
+    steps:
+      - uses: actions/checkout@v4
+      - name: update apt cache
+        run: sudo apt-get update
+      - name: install protoc
+        run: sudo apt-get install -y protobuf-compiler
+      - name: install cross-compilation toolchain
+        run: |
+          sudo apt-get install -y gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+      - name: build (no default features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --target ${{ matrix.target }} --no-default-features --features file_receiver
+
   # Check formatting with rustfmt
   formatting:
     name: cargo fmt
