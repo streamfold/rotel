@@ -230,9 +230,14 @@ impl JsonFilePersister {
     }
 }
 
+// Use portable-atomic on platforms without native 64-bit atomics (e.g., 32-bit ARM)
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::{AtomicU64, Ordering};
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 /// Write state to file atomically (write to temp, then rename)
 fn atomic_write(path: &Path, state: &DatabaseState) -> Result<()> {
-    use portable_atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     // Ensure parent directory exists

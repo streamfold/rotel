@@ -73,7 +73,6 @@ lz4_flex = { version = "0.11.3", default-features = false, features = ["std"] }
 cityhash-rs = "1.0.1"
 bstr = "1.12.0"
 indexmap = "2.9.0"
-portable-atomic = { version = "1", default-features = false, features = ["fallback"] }
 hmac = "0.12"
 sha2 = "0.10"
 regex = "1.11.1"
@@ -119,6 +118,10 @@ tonic = { version = "0.14", features = [
 
 [build-dependencies]
 prost-build = "0.14"
+
+# portable-atomic provides AtomicU64 on 32-bit platforms lacking native 64-bit atomics
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { version = "1", default-features = false, features = ["fallback"] }
 
 [features]
 default = ["rdkafka", "aws_iam", "file_receiver"]
