@@ -17,16 +17,17 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing-log = "0.2.0"
 tracing-bunyan-formatter = "0.3.10"
 tracing-appender = "0.2.3"
-tonic = { version = "0.13.1", features = ["gzip"] }
-opentelemetry = "0.30.0"
-opentelemetry_sdk = { version = "0.30.0" }
-opentelemetry-proto = { version = "0.30.0" }
+tonic = { version = "0.14", features = ["gzip"] }
+# Using git revision that includes 32-bit ARM AtomicU64 fix (commit 0948c61)
+opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "0948c61" }
+opentelemetry_sdk = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "0948c61" }
+opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "0948c61" }
 flume = { version = "0.11.1", features = ["async"] }
 http-body-util = "0.1.2"
 http = "1.2.0"
 hyper-util = { version = "0.1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
-prost = "0.13.4"
+prost = "0.14"
 flate2 = { version = "1.0", features = ["zlib-ng"], default-features = false }
 futures = "0.3.31"
 daemonize = { git = "https://github.com/mheffner/daemonize", branch = "passy-pr54" }
@@ -110,13 +111,13 @@ rdkafka = { version = "0.38", features = [
     "zstd",
     "cmake-build",
 ] }
-tonic = { version = "0.13.1", features = [
+tonic = { version = "0.14", features = [
     "gzip",
     "tls-aws-lc",
 ] } # TLS used to test exporter TLS
 
 [build-dependencies]
-prost-build = "0.13.4"
+prost-build = "0.14"
 
 [features]
 default = ["rdkafka", "aws_iam", "file_receiver"]

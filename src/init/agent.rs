@@ -1330,9 +1330,9 @@ fn start_otlp_exporter<Resource, Request, Response>(
     cancel_token: CancellationToken,
 ) where
     Request: prost::Message + topology::payload::OTLPFrom<Vec<Resource>> + Clone,
-    Resource: prost::Message + Clone,
+    Resource: prost::Message + std::fmt::Debug + Clone,
     [Resource]: BatchSizer,
-    Response: prost::Message + Default + Clone,
+    Response: prost::Message + std::fmt::Debug + Default + Clone,
 {
     let mut exporter = exporter;
 
