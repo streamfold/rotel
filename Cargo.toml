@@ -119,6 +119,10 @@ tonic = { version = "0.14", features = [
 [build-dependencies]
 prost-build = "0.14"
 
+# portable-atomic provides AtomicU64 on 32-bit platforms lacking native 64-bit atomics
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { version = "1", default-features = false, features = ["fallback"] }
+
 [features]
 default = ["rdkafka", "aws_iam", "file_receiver"]
 fluent_receiver = ["dep:rmpv", "dep:rmp-serde"]
