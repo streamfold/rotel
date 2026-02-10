@@ -1,7 +1,7 @@
 use crate::exporters::http::client::{DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST};
 use crate::exporters::otlp;
 use crate::exporters::otlp::config::OTLPExporterConfig;
-use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
+use crate::exporters::otlp::{Authenticator, CompressionEncoding, Endpoint, Protocol};
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
 use crate::init::parse;
 use crate::init::retry::GlobalExporterRetryArgs;
@@ -65,6 +65,20 @@ pub struct OTLPExporterBaseArgs {
         env = "ROTEL_OTLP_EXPORTER_AUTHENTICATOR"
     )]
     pub authenticator: Option<OTLPExporterAuthenticator>,
+
+    /// OTLP Exporter Basic Auth Username
+    #[arg(
+        long("otlp-exporter-basic-auth-username"),
+        env = "ROTEL_OTLP_EXPORTER_BASIC_AUTH_USERNAME"
+    )]
+    pub basic_auth_username: Option<String>,
+
+    /// OTLP Exporter Basic Auth Password
+    #[arg(
+        long("otlp-exporter-basic-auth-password"),
+        env = "ROTEL_OTLP_EXPORTER_BASIC_AUTH_PASSWORD"
+    )]
+    pub basic_auth_password: Option<String>,
 
     /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
     #[arg(
@@ -145,6 +159,8 @@ impl Default for OTLPExporterBaseArgs {
             logs_endpoint: None,
             protocol: OTLPExporterProtocol::Grpc,
             authenticator: None,
+            basic_auth_username: None,
+            basic_auth_password: None,
             custom_headers: None,
             compression: CompressionEncoding::Gzip,
             cert_group: CertGroup {
@@ -642,13 +658,28 @@ impl OTLPExporterBaseArgs {
             None => Vec::new(),
         };
 
+        // Convert authenticator, handling Basic auth which needs username/password
+        let authenticator = match self.authenticator {
+            Some(OTLPExporterAuthenticator::Sigv4auth) => Some(Authenticator::Sigv4auth),
+            Some(OTLPExporterAuthenticator::Basic) => {
+                let username = self.basic_auth_username.ok_or(
+                    "basic auth requires --otlp-exporter-basic-auth-username or ROTEL_OTLP_EXPORTER_BASIC_AUTH_USERNAME"
+                )?;
+                let password = self.basic_auth_password.ok_or(
+                    "basic auth requires --otlp-exporter-basic-auth-password or ROTEL_OTLP_EXPORTER_BASIC_AUTH_PASSWORD"
+                )?;
+                Some(Authenticator::Basic { username, password })
+            }
+            None => None,
+        };
+
         let mut builder = otlp::config_builder(
             type_name,
             endpoint,
             self.protocol.into(),
             self.retry.build_retry_config(global_retry),
         )
-        .with_authenticator(self.authenticator.map(|a| a.into()))
+        .with_authenticator(authenticator)
         .with_tls_skip_verify(self.tls_skip_verify)
         .with_headers(custom_headers.as_slice())
         .with_request_timeout(self.request_timeout.into())

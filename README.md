@@ -135,26 +135,26 @@ See the section for [Multiple Exporters](#multiple-exporters) for how to configu
 
 The OTLP exporter is the default, or can be explicitly selected with `--exporter otlp`.
 
-| Option                                 | Default                        | Options    |
-|----------------------------------------|--------------------------------|------------|
-| --otlp-exporter-endpoint               |                                |            |
-| --otlp-exporter-protocol               | grpc                           | grpc, http |
-| --otlp-exporter-custom-headers         |                                |            |
-| --otlp-exporter-compression            | gzip                           | gzip, none |
-| --otlp-exporter-authenticator          |                                | sigv4auth  |
-| --otlp-exporter-tls-cert-file          |                                |            |
-| --otlp-exporter-tls-cert-pem           |                                |            |
-| --otlp-exporter-tls-key-file           |                                |            |
-| --otlp-exporter-tls-key-pem            |                                |            |
-| --otlp-exporter-tls-ca-file            |                                |            |
-| --otlp-exporter-tls-ca-pem             |                                |            |
-| --otlp-exporter-tls-skip-verify        |                                |            |
-| --otlp-exporter-request-timeout        | 5s                             |            |
-| --otlp-exporter-pool-idle-timeout      | 30s                            |            |
-| --otlp-exporter-pool-max-idle-per-host | 100                            |            |
-| --otlp-exporter-retry-initial-backoff  | (uses global exporter default) |            |
-| --otlp-exporter-retry-max-backoff      | (uses global exporter default) |            |
-| --otlp-exporter-retry-max-elapsed-time | (uses global exporter default) |            |
+| Option                                 | Default                        | Options          |
+|----------------------------------------|--------------------------------|------------------|
+| --otlp-exporter-endpoint               |                                |                  |
+| --otlp-exporter-protocol               | grpc                           | grpc, http       |
+| --otlp-exporter-custom-headers         |                                |                  |
+| --otlp-exporter-compression            | gzip                           | gzip, none       |
+| --otlp-exporter-authenticator          |                                | sigv4auth, basic |
+| --otlp-exporter-tls-cert-file          |                                |                  |
+| --otlp-exporter-tls-cert-pem           |                                |                  |
+| --otlp-exporter-tls-key-file           |                                |                  |
+| --otlp-exporter-tls-key-pem            |                                |                  |
+| --otlp-exporter-tls-ca-file            |                                |                  |
+| --otlp-exporter-tls-ca-pem             |                                |                  |
+| --otlp-exporter-tls-skip-verify        |                                |                  |
+| --otlp-exporter-request-timeout        | 5s                             |                  |
+| --otlp-exporter-pool-idle-timeout      | 30s                            |                  |
+| --otlp-exporter-pool-max-idle-per-host | 100                            |                  |
+| --otlp-exporter-retry-initial-backoff  | (uses global exporter default) |                  |
+| --otlp-exporter-retry-max-backoff      | (uses global exporter default) |                  |
+| --otlp-exporter-retry-max-elapsed-time | (uses global exporter default) |                  |
 
 Any of the options that start with `--otlp-exporter*` can be set per telemetry type: metrics, traces or logs. For
 example, to set a custom endpoint to export traces to, set: `--otlp-exporter-traces-endpoint`. For other telemetry
@@ -201,6 +201,24 @@ ROTEL_EXPORTER_LOGS_ENDPOINT=https://logs.<region code>.amazonaws.com
 ROTEL_EXPORTER_LOGS_CUSTOM_HEADERS="x-aws-log-group=<log group>,x-aws-log-stream=<log stream>"
 ROTEL_EXPORTER_LOGS_AUTHENTICATOR=sigv4auth
 ROTEL_EXPORTERS_LOGS=logs
+```
+
+#### Basic Authentication
+
+For OTLP endpoints that require HTTP Basic Authentication, you can use the `basic` authenticator:
+
+| Option                              | Default | Options |
+|-------------------------------------|---------|---------|
+| --otlp-exporter-basic-auth-username |         |         |
+| --otlp-exporter-basic-auth-password |         |         |
+
+Example configuration:
+
+```shell
+ROTEL_OTLP_EXPORTER_ENDPOINT=https://collector.example.com:443
+ROTEL_OTLP_EXPORTER_AUTHENTICATOR=basic
+ROTEL_OTLP_EXPORTER_BASIC_AUTH_USERNAME=myuser
+ROTEL_OTLP_EXPORTER_BASIC_AUTH_PASSWORD=mypassword
 ```
 
 ### Datadog exporter configuration
