@@ -127,6 +127,7 @@ pprof = ["dep:pprof"]
 pyo3 = ["dep:pyo3", "dep:rotel_python_processor_sdk"]
 rdkafka = ["dep:rdkafka"]
 file_exporter = ["dep:parquet", "dep:arrow", "dep:base64"]
+basic_auth = ["dep:base64"]
 aws_iam = ["dep:aws-config", "dep:aws-credential-types"]
 prometheus = ["dep:opentelemetry-prometheus-text-exporter"]
 

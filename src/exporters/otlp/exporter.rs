@@ -104,6 +104,8 @@ pub fn build_traces_exporter(
             &req_builder,
             creds_provider.expect("requires credentials provider"),
         )?,
+        #[cfg(feature = "basic_auth")]
+        Some(Authenticator::Basic { .. }) => AwsSigningServiceBuilder::disabled(),
         None => AwsSigningServiceBuilder::disabled(),
     };
 
@@ -214,6 +216,8 @@ pub fn build_logs_exporter(
             &req_builder,
             creds_provider.expect("requires credentials provider"),
         )?,
+        #[cfg(feature = "basic_auth")]
+        Some(Authenticator::Basic { .. }) => AwsSigningServiceBuilder::disabled(),
         None => AwsSigningServiceBuilder::disabled(),
     };
 
@@ -296,6 +300,8 @@ fn _build_metrics_exporter(
             &req_builder,
             creds_provider.expect("requires credentials provider"),
         )?,
+        #[cfg(feature = "basic_auth")]
+        Some(Authenticator::Basic { .. }) => AwsSigningServiceBuilder::disabled(),
         None => AwsSigningServiceBuilder::disabled(),
     };
 
