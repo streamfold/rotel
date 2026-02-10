@@ -22,10 +22,10 @@ static PROCESSOR_INIT: Once = Once::new();
 pub fn register_processor(code: String, script: String, module: String) -> Result<(), BoxError> {
     PROCESSOR_INIT.call_once(|| {
         pyo3::append_to_inittab!(rotel_sdk);
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
     });
 
-    let res = Python::with_gil(|py| -> PyResult<()> {
+    let res = Python::attach(|py| -> PyResult<()> {
         PyModule::from_code(
             py,
             CString::new(code)?.as_c_str(),
@@ -48,7 +48,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpans 
     fn process(self, processor: &str, request_context: Option<RequestContext>) -> Self {
         let inner = otel_transform::transform_resource_spans(self);
         // Build the PyObject
-        let res = Python::with_gil(|py| -> PyResult<()> {
+        let res = Python::attach(|py| -> PyResult<()> {
             let spans = ResourceSpans {
                 resource: inner.resource.clone(),
                 scope_spans: inner.scope_spans.clone(),
@@ -101,7 +101,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetr
     fn process(self, processor: &str, request_context: Option<RequestContext>) -> Self {
         let inner = otel_transform::transform_resource_metrics(self);
         // Build the PyObject
-        let res = Python::with_gil(|py| -> PyResult<()> {
+        let res = Python::attach(|py| -> PyResult<()> {
             let spans = ResourceMetrics {
                 resource: inner.resource.clone(),
                 scope_metrics: inner.scope_metrics.clone(),
@@ -142,7 +142,7 @@ impl PythonProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {
     fn process(self, processor: &str, request_context: Option<RequestContext>) -> Self {
         let inner = otel_transform::transform_resource_logs(self);
         // Build the PyObject
-        let res = Python::with_gil(|py| -> PyResult<()> {
+        let res = Python::attach(|py| -> PyResult<()> {
             let spans = ResourceLogs {
                 resource: inner.resource.clone(),
                 scope_logs: inner.scope_logs.clone(),

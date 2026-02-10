@@ -8,8 +8,9 @@ use crate::model::otel_transform::convert_attributes;
 use crate::py::{handle_poison_error, AttributesList};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::{PyAnyMethods, PyBool, PyBytes, PyFloat, PyInt, PyString};
-#[allow(deprecated)]
-use pyo3::{pyclass, pymethods, IntoPy, Py, PyErr, PyObject, PyRef, PyRefMut, PyResult, Python};
+use pyo3::{
+    pyclass, pymethods, IntoPyObjectExt, Py, PyAny, PyErr, PyRef, PyRefMut, PyResult, Python,
+};
 use std::sync::{Arc, Mutex};
 
 // Wrapper for AnyValue that can be exposed to Python
@@ -22,10 +23,10 @@ pub struct AnyValue {
 impl AnyValue {
     #[new]
     #[pyo3(signature = (optional_value=None))]
-    fn new(py: Python, optional_value: Option<PyObject>) -> PyResult<Self> {
+    fn new(py: Python, optional_value: Option<Py<PyAny>>) -> PyResult<Self> {
         if let Some(v) = optional_value {
             let bound_obj = v.bind(py);
-            if let Ok(s) = bound_obj.downcast::<PyString>() {
+            if let Ok(s) = bound_obj.cast::<PyString>() {
                 let value: String = s.extract()?; // Extract the i64 value
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
@@ -34,35 +35,35 @@ impl AnyValue {
                 })
                 // VERY IMPORTANT! The ordering of checking downcast, with PyBool first and PyInt
                 // second is critical. This ensures we don't downcast a python value of True to an i64
-            } else if let Ok(b) = bound_obj.downcast_exact::<PyBool>() {
+            } else if let Ok(b) = bound_obj.cast_exact::<PyBool>() {
                 let value: bool = b.extract()?;
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
                         value: Arc::new(Mutex::new(Some(BoolValue(value)))),
                     }))),
                 })
-            } else if let Ok(i) = bound_obj.downcast::<PyInt>() {
+            } else if let Ok(i) = bound_obj.cast::<PyInt>() {
                 let value: i64 = i.extract()?;
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
                         value: Arc::new(Mutex::new(Some(IntValue(value)))),
                     }))),
                 })
-            } else if let Ok(f) = bound_obj.downcast::<PyFloat>() {
+            } else if let Ok(f) = bound_obj.cast::<PyFloat>() {
                 let value: f64 = f.extract()?; // Extract the i64 value
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
                         value: Arc::new(Mutex::new(Some(DoubleValue(value)))),
                     }))),
                 })
-            } else if let Ok(b) = bound_obj.downcast::<PyBytes>() {
+            } else if let Ok(b) = bound_obj.cast::<PyBytes>() {
                 let value: Vec<u8> = b.extract()?;
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
                         value: Arc::new(Mutex::new(Some(BytesValue(value)))),
                     }))),
                 })
-            } else if let Ok(v) = bound_obj.downcast::<KeyValueList>() {
+            } else if let Ok(v) = bound_obj.cast::<KeyValueList>() {
                 let value: KeyValueList = v.extract()?;
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
@@ -71,7 +72,7 @@ impl AnyValue {
                         })))),
                     }))),
                 })
-            } else if let Ok(v) = bound_obj.downcast::<ArrayValue>() {
+            } else if let Ok(v) = bound_obj.cast::<ArrayValue>() {
                 let value: ArrayValue = v.extract()?;
                 Ok(AnyValue {
                     inner: Arc::new(Mutex::new(Some(RAnyValue {
@@ -92,17 +93,16 @@ impl AnyValue {
         }
     }
     #[getter]
-    #[allow(deprecated)]
-    fn value<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn value<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.clone().unwrap().value.clone();
         let bind_lock = binding.lock();
         let x = match bind_lock.unwrap().clone() {
-            Some(StringValue(s)) => Ok(s.into_py(py)),
-            Some(BoolValue(b)) => Ok(b.into_py(py)),
-            Some(IntValue(i)) => Ok(i.into_py(py)),
-            Some(DoubleValue(d)) => Ok(d.into_py(py)),
-            Some(BytesValue(b)) => Ok(b.into_py(py)),
+            Some(StringValue(s)) => Ok(s.into_py_any(py)?),
+            Some(BoolValue(b)) => Ok(b.into_py_any(py)?),
+            Some(IntValue(i)) => Ok(i.into_py_any(py)?),
+            Some(DoubleValue(d)) => Ok(d.into_py_any(py)?),
+            Some(BytesValue(b)) => Ok(b.into_py_any(py)?),
             Some(RVArrayValue(a)) => Ok(a.convert_to_py(py)?),
             Some(KvListValue(k)) => Ok(k.convert_to_py(py)?),
             None => Ok(py.None()),
@@ -410,7 +410,7 @@ impl KeyValue {
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_bool_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
+    fn new_bool_value(key: &str, py: Python, value: Py<PyAny>) -> PyResult<KeyValue> {
         let b = value.extract::<bool>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = RAnyValue {
@@ -423,7 +423,7 @@ impl KeyValue {
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_int_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
+    fn new_int_value(key: &str, py: Python, value: Py<PyAny>) -> PyResult<KeyValue> {
         let i = value.extract::<i64>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = RAnyValue {
@@ -436,7 +436,7 @@ impl KeyValue {
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_double_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
+    fn new_double_value(key: &str, py: Python, value: Py<PyAny>) -> PyResult<KeyValue> {
         let f = value.extract::<f64>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = RAnyValue {
@@ -449,7 +449,7 @@ impl KeyValue {
     }
     // Helper methods for class
     #[staticmethod]
-    fn new_bytes_value(key: &str, py: Python, value: PyObject) -> PyResult<KeyValue> {
+    fn new_bytes_value(key: &str, py: Python, value: Py<PyAny>) -> PyResult<KeyValue> {
         let f = value.extract::<Vec<u8>>(py)?;
         let key = Arc::new(Mutex::new(key.to_string()));
         let value = RAnyValue {
@@ -489,12 +489,11 @@ impl KeyValue {
         })
     }
     #[getter]
-    #[allow(deprecated)]
-    fn key(&self, py: Python) -> PyResult<PyObject> {
+    fn key(&self, py: Python) -> PyResult<Py<PyAny>> {
         let v = self.inner.lock().map_err(handle_poison_error)?;
         let binding = v.key.clone();
         let bind_lock = binding.lock();
-        let x = Ok(bind_lock.unwrap().clone().into_py(py));
+        let x = Ok(bind_lock.unwrap().clone().into_py_any(py)?);
         x
     }
     #[setter]
