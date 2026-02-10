@@ -11,7 +11,8 @@ use opentelemetry_proto::tonic::metrics::v1::ResourceMetrics;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use tracing::warn;
 
 #[cfg(feature = "pyo3")]
 use rotel_sdk::py::request_context::RequestContext as PyRequestContext;
@@ -46,6 +47,7 @@ impl<T> Message<T> {
 pub struct MessageMetadata {
     data: MessageMetadataInner,
     ref_count: Arc<AtomicU32>,
+    response_claimed: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,6 +89,7 @@ impl MessageMetadata {
         Self {
             data: MessageMetadataInner::Kafka(metadata),
             ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -94,6 +97,7 @@ impl MessageMetadata {
         Self {
             data: MessageMetadataInner::Forwarder(metadata),
             ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -103,6 +107,7 @@ impl MessageMetadata {
         Self {
             data: MessageMetadataInner::File(metadata),
             ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -130,18 +135,19 @@ impl MessageMetadata {
     pub fn shallow_clone(&self) -> Self {
         Self {
             data: self.data.clone(),
-            ref_count: self.ref_count.clone(), // Share the same Arc, no increment
+            ref_count: self.ref_count.clone(),
+            response_claimed: self.response_claimed.clone(),
         }
     }
 }
 
 impl Clone for MessageMetadata {
     fn clone(&self) -> Self {
-        // Increment the reference count atomically
         self.ref_count.fetch_add(1, Ordering::AcqRel);
         Self {
             data: self.data.clone(),
             ref_count: self.ref_count.clone(),
+            response_claimed: self.response_claimed.clone(),
         }
     }
 }
@@ -151,7 +157,7 @@ impl std::fmt::Debug for MessageMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MessageMetadata")
             .field("data", &self.data)
-            .field("ref_count", &self.ref_count.load(Ordering::Acquire))
+            .field("ref_count", &self.ref_count())
             .finish()
     }
 }
@@ -283,93 +289,131 @@ pub trait Ack {
     async fn nack(&self, reason: ExporterError) -> Result<(), SendError>;
 }
 
-impl Ack for MessageMetadata {
-    async fn ack(&self) -> Result<(), SendError> {
-        // Decrement reference count atomically
-        let prev_count = self.ref_count.fetch_sub(1, Ordering::AcqRel);
+impl MessageMetadata {
+    /// Decrement ref_count by 1, returning the previous value.
+    /// Returns None if already at 0 (underflow).
+    fn decrement_ref_count(&self, op: &str) -> Option<u32> {
+        match self
+            .ref_count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                if v == 0 { None } else { Some(v - 1) }
+            }) {
+            Ok(prev) => Some(prev),
+            Err(_) => {
+                warn!("attempt to {} payload already at ref_count=0", op);
+                None
+            }
+        }
+    }
 
-        // Only send acknowledgment when count reaches 0
-        if prev_count == 1 {
-            match &self.data {
-                MessageMetadataInner::Kafka(km) => {
-                    if let Some(ack_chan) = &km.ack_chan {
-                        ack_chan
-                            .send(KafkaAcknowledgement::Ack(KafkaAck {
-                                offset: km.offset,
-                                partition: km.partition,
-                                topic_id: km.topic_id,
-                            }))
-                            .await?;
-                    }
+    /// Try to claim the response slot. Returns true if this caller won.
+    fn claim_response(&self) -> bool {
+        self.response_claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    async fn send_ack(&self) -> Result<(), SendError> {
+        match &self.data {
+            MessageMetadataInner::Kafka(km) => {
+                if let Some(ack_chan) = &km.ack_chan {
+                    ack_chan
+                        .send(KafkaAcknowledgement::Ack(KafkaAck {
+                            offset: km.offset,
+                            partition: km.partition,
+                            topic_id: km.topic_id,
+                        }))
+                        .await?;
                 }
-                MessageMetadataInner::Forwarder(fm) => {
-                    if let Some(ack_chan) = &fm.ack_chan {
-                        ack_chan
-                            .send(ForwarderAcknowledgement::Ack(ForwarderPayloadDetails {
-                                // TODO: consume data to remove clone
-                                request_id: fm.request_id.clone(),
-                            }))
-                            .await?;
-                    }
+            }
+            MessageMetadataInner::Forwarder(fm) => {
+                if let Some(ack_chan) = &fm.ack_chan {
+                    ack_chan
+                        .send(ForwarderAcknowledgement::Ack(ForwarderPayloadDetails {
+                            request_id: fm.request_id.clone(),
+                        }))
+                        .await?;
                 }
-                #[cfg(feature = "file_receiver")]
-                MessageMetadataInner::File(fm) => {
-                    if let Some(ack_chan) = &fm.ack_chan {
-                        ack_chan
-                            .send(FileAcknowledgement::Ack(FileAck {
-                                file_id: fm.file_id,
-                                offsets: fm.offsets.clone(),
-                            }))
-                            .await?;
-                    }
+            }
+            #[cfg(feature = "file_receiver")]
+            MessageMetadataInner::File(fm) => {
+                if let Some(ack_chan) = &fm.ack_chan {
+                    ack_chan
+                        .send(FileAcknowledgement::Ack(FileAck {
+                            file_id: fm.file_id,
+                            offsets: fm.offsets.clone(),
+                        }))
+                        .await?;
                 }
             }
         }
         Ok(())
     }
 
-    async fn nack(&self, reason: ExporterError) -> Result<(), SendError> {
-        // Decrement reference count atomically
-        let prev_count = self.ref_count.fetch_sub(1, Ordering::AcqRel);
-
-        // Only send nack when count reaches 0
-        if prev_count == 1 {
-            match &self.data {
-                MessageMetadataInner::Kafka(km) => {
-                    if let Some(ack_chan) = &km.ack_chan {
-                        ack_chan
-                            .send(KafkaAcknowledgement::Nack(KafkaNack {
-                                offset: km.offset,
-                                partition: km.partition,
-                                topic_id: km.topic_id,
-                                reason,
-                            }))
-                            .await?;
-                    }
-                }
-                MessageMetadataInner::Forwarder(fm) => {
-                    if let Some(ack_chan) = &fm.ack_chan {
-                        ack_chan
-                            .send(ForwarderAcknowledgement::Nack(ForwarderPayloadDetails {
-                                // TODO: consume data to remove clone
-                                request_id: fm.request_id.clone(),
-                            }))
-                            .await?;
-                    }
-                }
-                #[cfg(feature = "file_receiver")]
-                MessageMetadataInner::File(fm) => {
-                    if let Some(ack_chan) = &fm.ack_chan {
-                        ack_chan
-                            .send(FileAcknowledgement::Nack(FileNack {
-                                file_id: fm.file_id,
-                                offsets: fm.offsets.clone(),
-                                reason,
-                            }))
-                            .await?;
-                    }
+    async fn send_nack(&self, reason: ExporterError) -> Result<(), SendError> {
+        match &self.data {
+            MessageMetadataInner::Kafka(km) => {
+                if let Some(ack_chan) = &km.ack_chan {
+                    ack_chan
+                        .send(KafkaAcknowledgement::Nack(KafkaNack {
+                            offset: km.offset,
+                            partition: km.partition,
+                            topic_id: km.topic_id,
+                            reason,
+                        }))
+                        .await?;
                 }
             }
+            MessageMetadataInner::Forwarder(fm) => {
+                if let Some(ack_chan) = &fm.ack_chan {
+                    ack_chan
+                        .send(ForwarderAcknowledgement::Nack(ForwarderPayloadDetails {
+                            request_id: fm.request_id.clone(),
+                        }))
+                        .await?;
+                }
+            }
+            #[cfg(feature = "file_receiver")]
+            MessageMetadataInner::File(fm) => {
+                if let Some(ack_chan) = &fm.ack_chan {
+                    ack_chan
+                        .send(FileAcknowledgement::Nack(FileNack {
+                            file_id: fm.file_id,
+                            offsets: fm.offsets.clone(),
+                            reason,
+                        }))
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Ack for MessageMetadata {
+    async fn ack(&self) -> Result<(), SendError> {
+        // Decrement ref count first — ack only fires when all refs are resolved
+        let prev_count = match self.decrement_ref_count("ack") {
+            Some(prev) => prev,
+            None => return Ok(()),
+        };
+
+        // Only try to claim if this was the last reference
+        if prev_count == 1 && self.claim_response() {
+            self.send_ack().await?;
+        }
+        Ok(())
+    }
+
+    async fn nack(&self, reason: ExporterError) -> Result<(), SendError> {
+        // Claim response slot FIRST — nack has priority over concurrent acks
+        let claimed = self.claim_response();
+
+        // Decrement ref count for bookkeeping
+        self.decrement_ref_count("nack");
+
+        if claimed {
+            self.send_nack(reason).await?;
         }
         Ok(())
     }
@@ -676,6 +720,10 @@ impl TryFrom<OTLPPayload> for ExportLogsServiceRequest {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio::time::timeout;
+
     use super::*;
 
     #[tokio::test]
@@ -772,11 +820,89 @@ mod tests {
 
         // Second ack() on shallow clone should not send another acknowledgment
         // (since the first ack already sent it when count reached 0)
+        // This will log a warning about underflow
         metadata2.ack().await.unwrap();
 
         // Should not receive another acknowledgment
         let result =
             tokio::time::timeout(std::time::Duration::from_millis(100), ack_rx.next()).await;
         assert!(result.is_err(), "Should not receive second ack");
+    }
+
+    #[tokio::test]
+    async fn test_nack_on_clone_sends_immediately() {
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(2);
+
+        let forwarder_metadata =
+            ForwarderMetadata::new("test-request-123".to_string(), Some(ack_tx));
+
+        let metadata1 = MessageMetadata::forwarder(forwarder_metadata);
+        assert_eq!(metadata1.ref_count(), 1);
+
+        // Clone should increment ref count
+        let metadata2 = metadata1.clone();
+        assert_eq!(metadata1.ref_count(), 2);
+        assert_eq!(metadata2.ref_count(), 2);
+
+        // Call nack() on one clone - should send Nack immediately regardless of ref count
+        let error = ExporterError::ExportFailed {
+            error_code: 500,
+            error_message: "Test error message".to_string(),
+        };
+        metadata1.nack(error).await.unwrap();
+
+        // Should immediately receive the Nack acknowledgment
+        let ack = timeout(Duration::from_millis(100), ack_rx.next())
+            .await
+            .unwrap()
+            .unwrap();
+        match ack {
+            ForwarderAcknowledgement::Nack(details) => {
+                assert_eq!(details.request_id, "test-request-123");
+            }
+            _ => panic!("Expected Nack"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_nack_then_ack_on_clones() {
+        let (ack_tx, mut ack_rx) = crate::bounded_channel::bounded(2);
+
+        let forwarder_metadata =
+            ForwarderMetadata::new("test-request-456".to_string(), Some(ack_tx));
+
+        let metadata1 = MessageMetadata::forwarder(forwarder_metadata);
+        assert_eq!(metadata1.ref_count(), 1);
+
+        // Clone should increment ref count
+        let metadata2 = metadata1.clone();
+        assert_eq!(metadata1.ref_count(), 2);
+        assert_eq!(metadata2.ref_count(), 2);
+
+        // Step 1: Call nack() on one clone
+        let error = ExporterError::Cancelled;
+        metadata1.nack(error).await.unwrap();
+
+        // Step 2: Should immediately receive the Nack acknowledgment
+        let ack = timeout(Duration::from_millis(100), ack_rx.next())
+            .await
+            .unwrap()
+            .unwrap();
+        match ack {
+            ForwarderAcknowledgement::Nack(details) => {
+                assert_eq!(details.request_id, "test-request-456");
+            }
+            _ => panic!("Expected Nack"),
+        }
+
+        // Step 3: Call ack() on the other clone
+        metadata2.ack().await.unwrap();
+
+        // Step 4: No Ack message should be sent (because nack was already called)
+        let result = timeout(Duration::from_millis(100), ack_rx.next()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive Ack after Nack was sent"
+        );
     }
 }
