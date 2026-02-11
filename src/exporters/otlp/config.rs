@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::http::client::{DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST};
 use crate::exporters::http::retry::RetryConfig;
 use crate::exporters::http::tls::{Config, ConfigBuilder};
 use crate::exporters::otlp::{
@@ -25,6 +26,8 @@ pub struct OTLPExporterConfig {
     pub(crate) encode_drain_max_time: Duration,
     pub(crate) export_drain_max_time: Duration,
     pub(crate) tls_cfg_builder: ConfigBuilder,
+    pub(crate) pool_idle_timeout: Duration,
+    pub(crate) pool_max_idle_per_host: usize,
 }
 
 impl OTLPExporterConfig {
@@ -46,6 +49,8 @@ impl OTLPExporterConfig {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             encode_drain_max_time: Duration::from_secs(2),
             export_drain_max_time: Duration::from_secs(3),
+            pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
+            pool_max_idle_per_host: DEFAULT_POOL_MAX_IDLE_PER_HOST,
         }
     }
 
@@ -120,6 +125,16 @@ impl OTLPExporterConfig {
 
     pub fn with_export_drain_max_time(mut self, max_time: Duration) -> Self {
         self.export_drain_max_time = max_time;
+        self
+    }
+
+    pub fn with_pool_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.pool_idle_timeout = timeout;
+        self
+    }
+
+    pub fn with_pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
+        self.pool_max_idle_per_host = max_idle;
         self
     }
 }

@@ -1,3 +1,4 @@
+use crate::exporters::http::client::{DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST};
 use crate::exporters::otlp;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
@@ -112,6 +113,24 @@ pub struct OTLPExporterBaseArgs {
     #[serde(with = "humantime_serde")]
     pub request_timeout: std::time::Duration,
 
+    /// Connection pool idle timeout - How long idle connections remain in the pool before being closed.
+    #[arg(
+        long("otlp-exporter-pool-idle-timeout"),
+        env = "ROTEL_OTLP_EXPORTER_POOL_IDLE_TIMEOUT",
+        default_value = "30s",
+        value_parser = humantime::parse_duration,
+    )]
+    #[serde(with = "humantime_serde")]
+    pub pool_idle_timeout: Duration,
+
+    /// Maximum idle connections per host - Controls connection reuse for keep-alive.
+    #[arg(
+        long("otlp-exporter-pool-max-idle-per-host"),
+        env = "ROTEL_OTLP_EXPORTER_POOL_MAX_IDLE_PER_HOST",
+        default_value = "100"
+    )]
+    pub pool_max_idle_per_host: usize,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub retry: OtlpRetryArgs,
@@ -142,6 +161,8 @@ impl Default for OTLPExporterBaseArgs {
             },
             tls_skip_verify: false,
             request_timeout: Duration::from_secs(5),
+            pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
+            pool_max_idle_per_host: DEFAULT_POOL_MAX_IDLE_PER_HOST,
             retry: Default::default(),
         }
     }
@@ -631,7 +652,9 @@ impl OTLPExporterBaseArgs {
         .with_tls_skip_verify(self.tls_skip_verify)
         .with_headers(custom_headers.as_slice())
         .with_request_timeout(self.request_timeout.into())
-        .with_compression_encoding(self.compression.into());
+        .with_compression_encoding(self.compression.into())
+        .with_pool_idle_timeout(self.pool_idle_timeout)
+        .with_pool_max_idle_per_host(self.pool_max_idle_per_host);
 
         if let Some(tls_cert_file) = self.cert_group.tls_cert_file {
             builder = builder.with_cert_file(tls_cert_file.as_str());

@@ -30,6 +30,10 @@ use tonic::Status;
 use tower::{BoxError, Service};
 use tracing::warn;
 
+// Default connection pool settings
+pub const DEFAULT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 100;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Protocol {
     Grpc,
@@ -78,6 +82,8 @@ pub trait ResponseDecode<T> {
 pub(crate) fn build_hyper_client<ReqBody>(
     tls_config: Config,
     http2_only: bool,
+    pool_idle_timeout: Duration,
+    pool_max_idle_per_host: usize,
 ) -> Result<HyperClient<HttpsConnector<HttpConnector>, ReqBody>, BoxError>
 where
     ReqBody: Body + Send,
@@ -92,9 +98,8 @@ where
         .build();
 
     let client = hyper_util::client::legacy::Client::builder(TokioExecutor::new())
-        // todo: make configurable
-        .pool_idle_timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(pool_idle_timeout)
+        .pool_max_idle_per_host(pool_max_idle_per_host)
         .http2_only(http2_only)
         .timer(TokioTimer::new())
         .build::<_, ReqBody>(https);
@@ -107,8 +112,19 @@ where
     ReqBody: Body + Send,
     <ReqBody as Body>::Data: Send,
 {
-    pub fn build(tls_config: Config, protocol: Protocol, decoder: Dec) -> Result<Self, BoxError> {
-        let inner = build_hyper_client(tls_config, protocol == Protocol::Grpc)?;
+    pub fn build(
+        tls_config: Config,
+        protocol: Protocol,
+        decoder: Dec,
+        pool_idle_timeout: Duration,
+        pool_max_idle_per_host: usize,
+    ) -> Result<Self, BoxError> {
+        let inner = build_hyper_client(
+            tls_config,
+            protocol == Protocol::Grpc,
+            pool_idle_timeout,
+            pool_max_idle_per_host,
+        )?;
 
         Ok(Self {
             inner,

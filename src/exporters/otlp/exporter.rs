@@ -113,6 +113,8 @@ pub fn build_traces_exporter(
         sent,
         send_failed.clone(),
         aws_signing,
+        traces_config.pool_idle_timeout,
+        traces_config.pool_max_idle_per_host,
     )?;
 
     let retry_policy = RetryPolicy::new(
@@ -223,6 +225,8 @@ pub fn build_logs_exporter(
         sent,
         send_failed.clone(),
         aws_signing,
+        logs_config.pool_idle_timeout,
+        logs_config.pool_max_idle_per_host,
     )?;
 
     let retry_policy = RetryPolicy::new(
@@ -305,6 +309,8 @@ fn _build_metrics_exporter(
         sent,
         send_failed.clone(),
         aws_signing,
+        metrics_config.pool_idle_timeout,
+        metrics_config.pool_max_idle_per_host,
     )?;
 
     let retry_policy = RetryPolicy::new(

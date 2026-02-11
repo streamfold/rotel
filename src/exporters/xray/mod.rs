@@ -103,7 +103,16 @@ impl XRayExporterBuilder {
         environment: String,
         creds_provider: AwsCredsProvider,
     ) -> Result<ExporterType<'a, ResourceSpans>, BoxError> {
-        let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
+        use crate::exporters::http::client::{
+            DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST,
+        };
+        let client = Client::build(
+            tls::Config::default(),
+            Protocol::Http,
+            Default::default(),
+            DEFAULT_POOL_IDLE_TIMEOUT,
+            DEFAULT_POOL_MAX_IDLE_PER_HOST,
+        )?;
         let transformer = Transformer::new(environment);
 
         let req_builder =

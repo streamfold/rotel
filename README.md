@@ -150,6 +150,8 @@ The OTLP exporter is the default, or can be explicitly selected with `--exporter
 | --otlp-exporter-tls-ca-pem             |                                |            |
 | --otlp-exporter-tls-skip-verify        |                                |            |
 | --otlp-exporter-request-timeout        | 5s                             |            |
+| --otlp-exporter-pool-idle-timeout      | 30s                            |            |
+| --otlp-exporter-pool-max-idle-per-host | 100                            |            |
 | --otlp-exporter-retry-initial-backoff  | (uses global exporter default) |            |
 | --otlp-exporter-retry-max-backoff      | (uses global exporter default) |            |
 | --otlp-exporter-retry-max-elapsed-time | (uses global exporter default) |            |
