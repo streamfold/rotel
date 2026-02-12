@@ -74,7 +74,9 @@ pub fn __extract_panic_message(err: &Box<dyn std::any::Any + Send>) -> String {
 
 /// Prelude module for convenient imports
 pub mod prelude {
-    pub use crate::processor::{AsyncProcessor, AsyncRotelProcessor, ProcessorInfo, RotelProcessor};
+    pub use crate::processor::{
+        AsyncProcessor, AsyncRotelProcessor, ProcessorInfo, RotelProcessor,
+    };
     pub use crate::types::*;
     pub use crate::{export_async_processor, export_processor, ROption, RString, RVec};
 }
