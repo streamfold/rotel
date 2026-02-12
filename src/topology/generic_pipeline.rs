@@ -8,7 +8,7 @@ use crate::topology::payload::{Ack, Message};
 use crate::topology::processors::Processors;
 #[cfg(not(feature = "pyo3"))]
 use crate::topology::processors::PythonProcessable;
-use crate::topology::processors::RustProcessable;
+use crate::topology::processors::{AsyncRustProcessable, RustProcessable};
 use opentelemetry::KeyValue as InstKeyValue;
 use opentelemetry::global::{self};
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
@@ -113,8 +113,10 @@ where
         + BatchSplittable
         + PythonProcessable
         + RustProcessable
+        + AsyncRustProcessable
         + ResourceContainer
         + Clone
+        + Send
         + 'static,
     Vec<T>: Send,
 {
@@ -228,6 +230,8 @@ where
                     if item.is_none() {
                         debug!("Pipeline receiver has closed, flushing batch and exiting");
 
+                        self.processors.shutdown();
+
                         let remain_messages = batch.take_batch();
                         if remain_messages.is_empty() {
                             return Ok(());
@@ -250,7 +254,7 @@ where
                         }
                     }
 
-                    message = self.processors.run(message, &inspector);
+                    message = self.processors.run(message, &inspector).await;
 
                     // If we ended up deleting all items, then simply ack and drop here
                     if message.size_of() == 0 {
@@ -317,6 +321,7 @@ where
                 _ = pipeline_token.cancelled() => {
                     debug!("Pipeline received shutdown signal, exiting main pipeline loop");
 
+                    self.processors.shutdown();
                     return Ok(())
                 }
             }
