@@ -2,7 +2,6 @@ mod ddl;
 mod ddl_logs;
 mod ddl_metrics;
 mod ddl_traces;
-
 use crate::ddl_logs::get_logs_ddl;
 use crate::ddl_metrics::get_metrics_ddl;
 use crate::ddl_traces::get_traces_ddl;
@@ -71,6 +70,14 @@ pub struct CreateDDLArgs {
     /// Enable JSON column type
     #[arg(long, default_value = "false")]
     pub enable_json: bool,
+
+    /// Materialize GenAI fields from SpanAttributes (for traces)
+    #[arg(long, default_value = "false")]
+    pub materialize_genai_fields: bool,
+
+    /// Partition by ServiceName for multi-tenant optimization (for traces)
+    #[arg(long, default_value = "false")]
+    pub partition_by_service_name: bool,
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, ValueEnum)]
@@ -162,6 +169,8 @@ async fn main() -> ExitCode {
                     ddl.engine,
                     &ttl,
                     ddl.enable_json,
+                    ddl.materialize_genai_fields,
+                    ddl.partition_by_service_name,
                 );
 
                 for q in sql {
