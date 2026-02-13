@@ -725,9 +725,6 @@ impl From<crate::topology::payload::RequestContext> for RRequestContext {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "pyo3")]
-    use super::*;
-    #[cfg(feature = "rust_processor")]
     use super::*;
 
     #[cfg(feature = "pyo3")]
