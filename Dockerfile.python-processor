@@ -15,13 +15,13 @@ ENV PYTHONUNBUFFERED 1
 RUN add-apt-repository ppa:deadsnakes/ppa && \
     apt update
 
-# Install Python 3.14 and pip
-RUN apt install -y python3.14 python3.14-venv python3.14-dev && \
+# Install Python 3.13 and pip
+RUN apt install -y python3.13 python3.13-venv python3.13-dev && \
     apt clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.14 as the default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.14 1
+# Set Python 3.13 as the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
 
 COPY target/${TARGETARCH}/rotel /rotel
 RUN chmod 0755 /rotel

@@ -70,6 +70,7 @@ pub struct ClickhouseExporterConfigBuilder {
     auth_password: Option<String>,
     async_insert: bool,
     use_json: bool,
+    nested_kv_max_depth: Option<usize>,
     request_timeout: Duration,
 }
 
@@ -112,6 +113,7 @@ impl ClickhouseExporterConfigBuilder {
             request_timeout: Duration::from_secs(5),
             compression: Default::default(),
             use_json: false,
+            nested_kv_max_depth: None,
             async_insert: false,
         }
     }
@@ -123,6 +125,11 @@ impl ClickhouseExporterConfigBuilder {
 
     pub fn with_json(mut self, json: bool) -> Self {
         self.use_json = json;
+        self
+    }
+
+    pub fn with_nested_kv_max_depth(mut self, max_depth: Option<usize>) -> Self {
+        self.nested_kv_max_depth = max_depth;
         self
     }
 
@@ -173,6 +180,7 @@ impl ClickhouseExporterConfigBuilder {
             request_mapper: mapper,
             retry_config: self.retry_config,
             request_timeout: self.request_timeout,
+            nested_kv_max_depth: self.nested_kv_max_depth,
         })
     }
 }
@@ -182,6 +190,7 @@ pub struct ClickhouseExporterBuilder {
     retry_config: RetryConfig,
     request_mapper: Arc<RequestMapper>,
     request_timeout: Duration,
+    nested_kv_max_depth: Option<usize>,
 }
 
 impl ClickhouseExporterBuilder {
@@ -221,7 +230,8 @@ impl ClickhouseExporterBuilder {
     {
         let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
 
-        let transformer = Transformer::new(self.config.compression.clone(), self.config.use_json);
+        let transformer = Transformer::new(self.config.compression.clone(), self.config.use_json)
+            .with_nested_kv_max_depth(self.nested_kv_max_depth);
 
         let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 
