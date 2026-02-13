@@ -73,7 +73,8 @@ fn anyvalue_to_jsontype_nested<'a>(
     depth: usize,
     max_depth: Option<usize>,
 ) -> JsonType<'a> {
-    if max_depth.is_none() || depth > max_depth.unwrap() {
+    let effective_max = max_depth.unwrap_or(0);
+    if depth > effective_max {
         return match &value.value {
             Some(Value::IntValue(i)) => JsonType::Int(*i),
             Some(Value::DoubleValue(d)) => JsonType::Double(*d),
@@ -135,7 +136,8 @@ fn anyvalue_to_jsontype_nested_owned(
     depth: usize,
     max_depth: Option<usize>,
 ) -> JsonType<'static> {
-    if max_depth.is_none() || depth > max_depth.unwrap() {
+    let effective_max = max_depth.unwrap_or(0);
+    if depth > effective_max {
         return match value.value {
             Some(Value::IntValue(i)) => JsonType::Int(i),
             Some(Value::DoubleValue(d)) => JsonType::Double(d),
