@@ -20,6 +20,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tonic::codegen::Service;
 use tower::BoxError;
 
@@ -189,16 +190,30 @@ where
         sent: RotelCounter<u64>,
         send_failed: RotelCounter<u64>,
         signing_builder: AwsSigningServiceBuilder,
+        pool_idle_timeout: Duration,
+        pool_max_idle_per_host: usize,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = match protocol {
             Protocol::Grpc => {
                 let decoder: GrpcDecoder<T> = GrpcDecoder::new(send_failed.clone());
-                let http_client = Client::build(tls_config, HttpProtocol::Grpc, decoder)?;
+                let http_client = Client::build(
+                    tls_config,
+                    HttpProtocol::Grpc,
+                    decoder,
+                    pool_idle_timeout,
+                    pool_max_idle_per_host,
+                )?;
                 UnifiedClientType::Grpc(signing_builder.build(http_client))
             }
             Protocol::Http => {
                 let decoder: HttpDecoder<T> = HttpDecoder::new(send_failed.clone());
-                let http_client = Client::build(tls_config, HttpProtocol::Http, decoder)?;
+                let http_client = Client::build(
+                    tls_config,
+                    HttpProtocol::Http,
+                    decoder,
+                    pool_idle_timeout,
+                    pool_max_idle_per_host,
+                )?;
                 UnifiedClientType::Http(signing_builder.build(http_client))
             }
         };
