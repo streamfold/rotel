@@ -15,9 +15,9 @@ use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;
 #[cfg(feature = "prometheus")]
 use crate::init::parse;
+use crate::init::retry::GlobalExporterRetryArgs;
 use crate::init::xray_exporter::XRayExporterArgs;
 use crate::topology::debug::DebugVerbosity;
-use crate::{exporters::otlp::Authenticator, init::retry::GlobalExporterRetryArgs};
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
 #[cfg(feature = "prometheus")]
@@ -225,14 +225,7 @@ pub enum OTLPExporterProtocol {
 #[serde(rename_all = "lowercase")]
 pub enum OTLPExporterAuthenticator {
     Sigv4auth,
-}
-
-impl From<OTLPExporterAuthenticator> for Authenticator {
-    fn from(value: OTLPExporterAuthenticator) -> Self {
-        match value {
-            OTLPExporterAuthenticator::Sigv4auth => Authenticator::Sigv4auth,
-        }
-    }
+    Basic,
 }
 
 #[derive(Debug, clap::Args)]
