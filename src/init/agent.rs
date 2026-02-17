@@ -29,6 +29,8 @@ use crate::receivers::fluent::receiver::FluentReceiver;
 use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 #[cfg(feature = "rdkafka")]
 use crate::receivers::kafka::receiver::KafkaReceiver;
+#[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+use crate::receivers::kmsg::receiver::KmsgReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -1033,6 +1035,32 @@ impl Agent {
                                 },
                                 _ = receivers_cancel.cancelled() => {
                                     break wait::wait_for_tasks_with_timeout(&mut file_task_set, Duration::from_millis(500)).await;
+                                }
+                            }
+                        }
+                    });
+                }
+                #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+                ReceiverConfig::Kmsg(config) => {
+                    let kmsg = KmsgReceiver::new(config.clone(), logs_output.clone()).await?;
+
+                    let mut kmsg_task_set = JoinSet::new();
+                    kmsg.start(&mut kmsg_task_set, &receivers_cancel).await?;
+
+                    let receivers_cancel = receivers_cancel.clone();
+                    receivers_task_set.spawn(async move {
+                        loop {
+                            select! {
+                                e = wait::wait_for_any_task(&mut kmsg_task_set) => {
+                                    match e {
+                                        Ok(()) => {
+                                            info!("Unexpected early exit of kmsg receiver task.");
+                                        },
+                                        Err(e) => break Err(e),
+                                    }
+                                },
+                                _ = receivers_cancel.cancelled() => {
+                                    break wait::wait_for_tasks_with_timeout(&mut kmsg_task_set, Duration::from_millis(500)).await;
                                 }
                             }
                         }
