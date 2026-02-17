@@ -70,7 +70,6 @@ impl PushMetricExporter for InternalOTLPMetricsExporter {
 mod tests {
     use crate::bounded_channel::bounded;
     use crate::telemetry;
-    use opentelemetry::global;
     use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
     use opentelemetry_proto::tonic::metrics::v1::number_data_point::Value;
@@ -79,6 +78,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_otlp_metrics_exporter() {
+        use opentelemetry::metrics::MeterProvider;
+
         let (tx, mut rx) = bounded(1);
         let metrics_output = telemetry::internal_exporter::OTLPOutput::new(tx.clone());
 
@@ -92,9 +93,10 @@ mod tests {
             .with_periodic_exporter(internal_metrics_exporter)
             .with_resource(Resource::builder().with_service_name("rotel").build())
             .build();
-        global::set_meter_provider(meter_provider.clone());
 
-        let test_counter = global::meter("rotel_internal_metrics_test_counter")
+        // Use local meter_provider directly instead of global to avoid test pollution
+        let test_counter = meter_provider
+            .meter("rotel_internal_metrics_test_counter")
             .u64_counter("rotel_test_counter")
             .with_description("This is a test")
             .with_unit("test")
