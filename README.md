@@ -252,6 +252,7 @@ and traces.
 | --clickhouse-exporter-async-insert           | true                           | true, false |
 | --clickhouse-exporter-request-timeout        | 5s                             |             |
 | --clickhouse-exporter-enable-json            |                                |             |
+| --clickhouse-exporter-nested-kv-max-depth    |                                |             |
 | --clickhouse-exporter-json-underscore        |                                |             |
 | --clickhouse-exporter-user                   |                                |             |
 | --clickhouse-exporter-password               |                                |             |
@@ -282,6 +283,18 @@ when creating tables with `clickhouse-ddl`. By default, any JSON key inserted wi
 a nested JSON object. You can replace periods in JSON keys with underscores by passing the option
 `--clickhouse-exporter-json-underscore` which will keep the JSON keys flat. For example, the resource attribute
 `service.name` will be inserted as `service_name`.
+
+When exporting OpenTelemetry attributes that contain nested `KeyValueList` structures (such as GenAI message
+attributes like `gen_ai.input.messages`), use `--clickhouse-exporter-nested-kv-max-depth` to convert them to
+proper JSON objects. Without this option, nested structures are serialized as JSON strings (the protobuf
+representation) for backwards compatibility. Set to a value like `10` to enable nested conversion:
+
+```shell
+rotel start --exporter clickhouse \
+  --clickhouse-exporter-endpoint "http://localhost:8123" \
+  --clickhouse-exporter-enable-json \
+  --clickhouse-exporter-nested-kv-max-depth 10
+```
 
 _The ClickHouse exporter is built using code from the official Rust [clickhouse-rs](https://crates.io/crates/clickhouse)
 crate._

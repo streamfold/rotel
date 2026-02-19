@@ -78,6 +78,16 @@ pub struct ClickhouseExporterArgs {
     )]
     pub enable_json: bool,
 
+    /// Clickhouse Exporter nested KV max depth for JSON columns.
+    /// When set to a value > 0, nested KeyValueList structures are converted to JSON objects
+    /// up to the specified depth. When unset or 0, nested KV is flattened (backwards compatible).
+    /// Recommended value: 10 for GenAI attributes.
+    #[arg(
+        long("clickhouse-exporter-nested-kv-max-depth"),
+        env = "ROTEL_CLICKHOUSE_EXPORTER_NESTED_KV_MAX_DEPTH"
+    )]
+    pub nested_kv_max_depth: Option<usize>,
+
     /// Clickhouse Exporter request timeout
     #[arg(
         id("CLICKHOUSE_EXPORTER_REQUEST_TIMEOUT"),
@@ -106,6 +116,7 @@ impl Default for ClickhouseExporterArgs {
             password: None,
             async_insert: "true".to_string(),
             enable_json: false,
+            nested_kv_max_depth: None,
             request_timeout: std::time::Duration::from_secs(5),
             retry: Default::default(),
         }
