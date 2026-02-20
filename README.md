@@ -30,7 +30,10 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - Additional
   exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration),
   and [Kafka](#kafka-exporter-configuration)
-- Additional receivers: [File](#file-receiver-configuration), [Fluent](#fluent-receiver-configuration), [Kafka](#kafka-receiver-configuration), and [Ksmsg](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
+- Additional
+  receivers: [File](#file-receiver-configuration), [Fluent](#fluent-receiver-configuration), [Kafka](#kafka-receiver-configuration),
+  [Kmsg](#kmsg-receiver-configuration-linux-only) (Linux kernel messages), and
+  [Node Metrics](#node-metrics-receiver-configuration) (host CPU, memory, disk, network; Linux-oriented)
 - [Python](#python-processor-sdk) and [Rust](#rust-processor-sdk) processor SDKs
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
@@ -120,9 +123,13 @@ curl -X POST http://localhost:4318/v1/traces \
   - [Parsers](#parsers)
   - [Offset Persistence](#offset-persistence)
   - [Example Usage](#example-usage-1)
+- [Node Metrics Receiver](#node-metrics-receiver-configuration)
+  - [Available Metrics](#available-metrics)
+  - [Example Usage](#example-usage-2)
+  - [Testing the Node Metrics Receiver](#testing-the-node-metrics-receiver)
 - [Kmsg Receiver (Linux-only)](#kmsg-receiver-configuration-linux-only)
   - [Priority Levels](#priority-levels)
-  - [Example Usage](#example-usage-2)
+  - [Example Usage](#example-usage-3)
   - [Testing the Kmsg Receiver](#testing-the-kmsg-receiver)
   - [Log Record Format](#log-record-format)
 - [Batch configuration](#batch-configuration)
@@ -963,6 +970,480 @@ rotel start \
   --otlp-exporter-endpoint "localhost:4317"
 ```
 
+### Node Metrics Receiver configuration
+
+**NOTE**: The Node Metrics Receiver is currently only included when built with the opt-in feature
+`--features node_metrics_receiver`.
+
+The Node Metrics Receiver periodically scrapes system metrics from the host machine and converts them to OpenTelemetry
+metrics format. It reads directly from Linux kernel interfaces (`/proc`, `/sys`, syscalls), emitting raw counter values
+compatible with Prometheus node_exporter conventions.
+
+**NOTE**: This receiver targets Linux and requires access to the `/proc` and `/sys` filesystems. Elsewhere only the
+`uname`, `time` and `textfile` collectors return data — the collectors that read `/proc` or `/sys` yield nothing — and a
+warning is logged at startup.
+
+Metric names, help strings and the default filesystem-type exclusion list follow Prometheus
+[node_exporter](https://github.com/prometheus/node_exporter) (Apache-2.0), so existing dashboards and alerting rules
+largely carry over. The collector split differs in one place: `node_boot_time_seconds` is produced by the `time`
+collector here, while node_exporter exposes it from its `stat` collector.
+
+Select the Node Metrics receiver with the option `--receiver node_metrics`.
+
+| Option                                           | Default      | Description                                                                              |
+|--------------------------------------------------|--------------|------------------------------------------------------------------------------------------|
+| --node-metrics-receiver-scrape-interval          | 60s          | Scrape interval as a string time duration (minimum 1 second)                             |
+| --node-metrics-receiver-cpu                      | true         | Enable CPU metrics collection                                                            |
+| --node-metrics-receiver-loadavg                  | true         | Enable load average metrics collection                                                   |
+| --node-metrics-receiver-memory                   | true         | Enable memory metrics collection                                                         |
+| --node-metrics-receiver-network                  | true         | Enable network metrics collection                                                        |
+| --node-metrics-receiver-filesystem               | true         | Enable filesystem metrics collection                                                     |
+| --node-metrics-receiver-uname                    | true         | Enable system info metrics (kernel, hostname)                                            |
+| --node-metrics-receiver-stat                     | true         | Enable kernel stat counters (forks, context switches, interrupts, procs running/blocked) |
+| --node-metrics-receiver-processes                | true         | Enable process metrics (kernel limits: threads-max, pid_max)                             |
+| --node-metrics-receiver-diskstats                | true         | Enable disk I/O statistics (Linux only, /proc/diskstats)                                 |
+| --node-metrics-receiver-vmstat                   | true         | Enable virtual memory statistics (/proc/vmstat)                                          |
+| --node-metrics-receiver-netstat                  | true         | Enable network statistics (/proc/net/netstat and /proc/net/snmp)                         |
+| --node-metrics-receiver-sockstat                 | true         | Enable socket statistics (/proc/net/sockstat and /proc/net/sockstat6)                    |
+| --node-metrics-receiver-filefd                   | true         | Enable file descriptor statistics (/proc/sys/fs/file-nr)                                 |
+| --node-metrics-receiver-cpufreq                  | true         | Enable CPU frequency metrics (/sys/devices/system/cpu/cpu*/cpufreq/)                     |
+| --node-metrics-receiver-thermal-zone             | true         | Enable thermal zone and cooling device metrics (/sys/class/thermal/)                     |
+| --node-metrics-receiver-nvme                     | true         | Enable NVMe device info metrics (/sys/class/nvme/)                                       |
+| --node-metrics-receiver-hwmon                    | true         | Enable hardware monitoring sensor metrics (/sys/class/hwmon/)                            |
+| --node-metrics-receiver-time                     | true         | Enable time metrics (node_time_seconds, node_boot_time_seconds)                          |
+| --node-metrics-receiver-textfile                 | false        | Enable textfile collector for custom Prometheus metrics                                  |
+| --node-metrics-receiver-textfile-directory       |              | Directory of Prometheus-format textfiles (*.prom), or a single .prom file                |
+| --node-metrics-receiver-filesystem-mount-exclude |              | Regex pattern to exclude filesystem mount points, in addition to the built-in excludes   |
+| --node-metrics-receiver-include-filter           |              | Regex pattern to include only matching metric names                                      |
+| --node-metrics-receiver-exclude-filter           |              | Regex pattern to exclude matching metric names                                           |
+| --node-metrics-receiver-rootfs-path              | /            | Prefix under which the host root is mounted (for containerized monitoring)               |
+| --node-metrics-receiver-procfs-path              | /proc        | Path to procfs mount point (for containerized monitoring)                                |
+| --node-metrics-receiver-sysfs-path               | /sys         | Path to sysfs mount point (for containerized monitoring)                                 |
+| --node-metrics-receiver-service-name             | node_metrics | Service name for the OTLP Resource attribute                                             |
+
+The collector toggles are booleans that take an explicit value, for example `--node-metrics-receiver-cpu false` or
+`--node-metrics-receiver-cpu=true`. Passing one of them without a value is an error. The same applies to the
+environment variable form, `ROTEL_NODE_METRICS_RECEIVER_CPU=false`.
+
+`--node-metrics-receiver-rootfs-path` is prefixed onto the procfs and sysfs paths, so `/host` alone yields
+`/host/proc` and `/host/sys`. A procfs or sysfs path that is already *under* the rootfs prefix is rejected at startup
+with an error naming both flags, rather than silently producing `/host/host/proc` — so pass either the rootfs path or
+the already-prefixed individual paths, not both. The comparison is path-component aware, so only a genuine prefix is
+rejected: `/host` with `/host/proc` is an error, while `/host` with `/hostile/proc` or `/proc-alt` is accepted and
+composes normally into `/host/hostile/proc` and `/host/proc-alt`. The rootfs path applies to the procfs and sysfs paths
+only, so `--node-metrics-receiver-textfile-directory` is always used exactly as given.
+
+A few more startup and runtime behaviours:
+
+- The scrape interval is a string time duration, so `30s`, `90s` or `2m`, with a 1 second minimum enforced at startup.
+- The first scrape runs immediately at startup rather than after one interval. Ticks stay aligned to the original
+  schedule, so a tick missed while a slow scrape was in progress is skipped rather than delayed or fired back-to-back
+  as a catch-up burst.
+- A scrape that runs longer than the scrape interval, or 30 seconds if the interval is shorter than that, is timed out,
+  logged, and skipped. (The floor matters: with a 1 second interval, a merely slow host would otherwise time out on
+  every cycle and the receiver would report nothing at all.) Because a blocking read cannot be aborted, scraping resumes
+  only once the timed-out scrape actually finishes; each interval until then is skipped and counted as a scrape failure.
+  An unresponsive filesystem is the usual cause — exclude it with
+  `--node-metrics-receiver-filesystem-mount-exclude`.
+- A collector that panics does not take the receiver down: the panic is logged, counted as a scrape failure, and
+  scraping continues on the next tick.
+- A slow or full pipeline does not block scraping. If the pipeline has not accepted a batch within 10 seconds (or the
+  scrape interval, whichever is shorter), the batch is abandoned with a warning and counted as refused, and the next
+  tick scrapes as usual. The warning notes that the batch "may still be delivered", because the hand-off can complete
+  after the timeout has fired. Without this bound a backed-up exporter would park the receiver indefinitely.
+- If no configured exporter accepts metrics, the receiver logs a warning and stays idle without scraping.
+- Enabling `--node-metrics-receiver-textfile` without `--node-metrics-receiver-textfile-directory` is a startup error.
+  Setting the directory without enabling the collector only logs a warning.
+- Duplicate entries in the collector list are removed, keeping the first occurrence. This matters only when the config
+  is built programmatically; the CLI toggles cannot name a collector twice.
+- Within one metric, data points that repeat an already seen label set are dropped with a warning and the first
+  occurrence is kept, since duplicates would break the OTLP single-writer principle.
+- Every batch carries the resource attributes `service.name` (from `--node-metrics-receiver-service-name`) and, on
+  Linux, `os.type`. `host.name` (the local hostname) is added too, and is what keeps otherwise identical series from
+  different hosts distinct at the backend — it is omitted only if the hostname is not valid UTF-8.
+- On shutdown, a batch already in flight is given a short grace window to reach the pipeline; if the window expires, or
+  the pipeline has already closed, the batch is reported as refused. A scrape still running when cancellation arrives is
+  discarded without being sent.
+- With [internal telemetry](#internal-telemetry) enabled, the receiver reports
+  `rotel_receiver_accepted_metric_points`, `rotel_receiver_refused_metric_points`, `rotel_receiver_scrape_failures` and
+  `rotel_receiver_empty_scrapes`, all tagged `receiver="node_metrics"`. Refused metric points are the points of a batch
+  that could not be handed to the pipeline: the pipeline was closed, the shutdown grace window expired, or the send
+  timed out. A scrape failure is counted when a scrape exceeds the interval and is timed out, when a collector panics,
+  and for every cycle skipped while a previous scrape is still running. A scrape that collects nothing at all
+  increments `rotel_receiver_empty_scrapes` and is logged as a warning; it is not counted as a scrape failure, since an
+  empty result is a configuration problem rather than a failed scrape.
+
+#### Available Metrics
+
+The receiver collects the following metrics (names follow Prometheus node_exporter conventions):
+
+**CPU** (when `--node-metrics-receiver-cpu=true`):
+- `node_cpu_seconds_total` - Seconds the CPUs spent in each mode (with `cpu` and `mode` labels: user, nice, system, idle, iowait, irq, softirq, steal)
+- `node_cpu_guest_seconds_total` - Seconds the CPUs spent in guest mode (with `cpu` and `mode` labels: user, nice)
+
+**NOTE**: Only per-core lines from `/proc/stat` are reported. The aggregate `cpu` line is deliberately skipped, as
+Prometheus node_exporter does, so there is no all-core total metric; sum across the `cpu` label instead.
+
+**Load Average** (when `--node-metrics-receiver-loadavg=true`):
+- `node_load1` - 1-minute load average
+- `node_load5` - 5-minute load average
+- `node_load15` - 15-minute load average
+
+**Memory** (when `--node-metrics-receiver-memory=true`):
+All fields from `/proc/meminfo` are exposed dynamically, including:
+- `node_memory_MemTotal_bytes` - Total memory in bytes
+- `node_memory_MemFree_bytes` - Free memory in bytes
+- `node_memory_MemAvailable_bytes` - Available memory in bytes
+- `node_memory_Buffers_bytes` - Buffer memory in bytes
+- `node_memory_Cached_bytes` - Cached memory in bytes
+- `node_memory_SwapTotal_bytes` - Total swap in bytes
+- `node_memory_SwapFree_bytes` - Free swap in bytes
+- ... and 30+ additional memory metrics
+
+**NOTE**: Only fields carrying the `kB` suffix are converted to bytes; those get the `_bytes` name suffix and the unit
+`By`. Unitless fields keep their kernel name and carry no unit, for example `HugePages_Total` is exposed as
+`node_memory_HugePages_Total`. Parenthesised field names are normalised, so `Active(anon)` becomes
+`node_memory_Active_anon_bytes`.
+
+**Network** (when `--node-metrics-receiver-network=true`, per interface with `device` label):
+- `node_network_receive_bytes_total` - Bytes received
+- `node_network_receive_packets_total` - Packets received
+- `node_network_receive_errs_total` - Receive errors
+- `node_network_receive_drop_total` - Receive drops
+- `node_network_receive_fifo_total` - Receive FIFO errors
+- `node_network_receive_frame_total` - Receive frame errors
+- `node_network_receive_compressed_total` - Compressed packets received
+- `node_network_receive_multicast_total` - Multicast packets received
+- `node_network_transmit_bytes_total` - Bytes transmitted
+- `node_network_transmit_packets_total` - Packets transmitted
+- `node_network_transmit_errs_total` - Transmit errors
+- `node_network_transmit_drop_total` - Transmit drops
+- `node_network_transmit_fifo_total` - Transmit FIFO errors
+- `node_network_transmit_colls_total` - Transmit collisions
+- `node_network_transmit_carrier_total` - Transmit carrier errors
+- `node_network_transmit_compressed_total` - Compressed packets transmitted
+
+**Filesystem** (when `--node-metrics-receiver-filesystem=true`, per mount with `device`, `fstype`, `mountpoint` labels):
+- `node_filesystem_size_bytes` - Total filesystem size
+- `node_filesystem_free_bytes` - Free space (total free blocks)
+- `node_filesystem_avail_bytes` - Available space (free blocks for non-root users)
+- `node_filesystem_files` - Total file nodes (inodes)
+- `node_filesystem_files_free` - Free file nodes
+- `node_filesystem_readonly` - Whether the filesystem is mounted read-only (1 = readonly)
+
+**NOTE**:
+- Virtual filesystems are automatically filtered out. Besides the obvious ones (proc, sysfs, cgroup, overlay), the list
+  also covers `squashfs`, `iso9660` and `autofs` — so snap and other squashfs-backed mounts, and CD/DVD images, are not
+  reported.
+- Network filesystem types are also excluded by default, because a `statfs` call on an unreachable server can block or
+  hang. Examples include NFS, SMB/CIFS, Ceph, GlusterFS, Lustre, BeeGFS, GPFS, 9p, AFS, NCP, WebDAV, and remote FUSE
+  mounts such as sshfs and s3fs; the authoritative list is `collect_filesystem` in
+  `src/receivers/node_metrics/collector/procfs.rs`. Local FUSE filesystems, such as mergerfs or gocryptfs, are reported
+  normally. This list of excluded types is not currently overridable:
+  `--node-metrics-receiver-filesystem-mount-exclude` can only remove further mount points, it cannot bring an excluded
+  type back.
+- Mount points are excluded by prefix, with the match respecting path boundaries, so `/dev` does not exclude
+  `/developer`. `/proc`, `/sys` and `/dev` are excluded including the mount point itself. `/run/credentials`,
+  `/run/user`, `/var/lib/docker` and `/var/lib/containers` are excluded only *below* the path: a filesystem mounted
+  exactly at one of them is a real volume and is reported, which matters most for a dedicated `/var/lib/docker` disk.
+- Duplicate mounts (same device + mountpoint) are deduplicated.
+- Mount paths containing octal escapes (e.g. `\040` for spaces) are decoded automatically.
+
+**System/Uname** (when `--node-metrics-receiver-uname=true`):
+- `node_uname_info` - System info gauge (labels: sysname, release, version, nodename, machine, domainname [Linux only])
+
+**Time** (when `--node-metrics-receiver-time=true`):
+- `node_boot_time_seconds` - System boot time in seconds since epoch (from the `btime` line of `/proc/stat`, read at
+  startup and re-read on every scrape that reads `/proc/stat` — that is, whenever the `cpu`, `stat` or `time` collector
+  is enabled; the metric is omitted, rather than reported as zero, while the boot time is unknown, and a value that is
+  not plausible — zero, negative, or in the future — is rejected rather than published)
+- `node_time_seconds` - Current system time in seconds since epoch
+
+**NOTE**: The boot time is not latched, because the kernel's `btime` moves whenever the wall clock is stepped — a device
+with no RTC boots near the epoch and then jumps once NTP syncs. `node_boot_time_seconds` therefore tracks the current
+kernel value, while the start time stamped on cumulative counters stays latched at the first known value, so a clock
+step is not reported downstream as a counter reset.
+
+**Stat** (when `--node-metrics-receiver-stat=true`):
+- `node_forks_total` - Total number of forks since boot
+- `node_context_switches_total` - Total number of context switches
+- `node_intr_total` - Total number of interrupts serviced (unit `{interrupts}`)
+- `node_procs_running` - Number of processes in runnable state
+- `node_procs_blocked` - Number of processes blocked waiting for I/O
+
+**Processes** (when `--node-metrics-receiver-processes=true`):
+- `node_processes_max_threads` - Kernel thread limit (`/proc/sys/kernel/threads-max`)
+- `node_processes_max_processes` - Kernel PID limit (`/proc/sys/kernel/pid_max`)
+
+**Disk I/O** (when `--node-metrics-receiver-diskstats=true`, per device with `device` label):
+- `node_disk_reads_completed_total` - Total number of reads completed
+- `node_disk_reads_merged_total` - Total number of reads merged
+- `node_disk_read_bytes_total` - Total bytes read
+- `node_disk_read_time_seconds_total` - Total time spent reading
+- `node_disk_writes_completed_total` - Total number of writes completed
+- `node_disk_writes_merged_total` - Total number of writes merged
+- `node_disk_written_bytes_total` - Total bytes written
+- `node_disk_write_time_seconds_total` - Total time spent writing
+- `node_disk_io_now` - Number of I/Os currently in progress
+- `node_disk_io_time_seconds_total` - Total time spent doing I/Os
+- `node_disk_io_time_weighted_seconds_total` - Weighted time spent doing I/Os
+- `node_disk_discards_completed_total` - Total discards completed (kernel 4.18+)
+- `node_disk_discards_merged_total` - Total discards merged (kernel 4.18+)
+- `node_disk_discarded_sectors_total` - Total sectors discarded (kernel 4.18+)
+- `node_disk_discard_time_seconds_total` - Total time spent discarding (kernel 4.18+)
+- `node_disk_flush_requests_total` - Total flush requests completed (kernel 5.5+)
+- `node_disk_flush_requests_time_seconds_total` - Total time spent flushing (kernel 5.5+)
+
+**NOTE**: Virtual devices (ram, zram, loop, fd) and partitions are automatically filtered out.
+
+**Vmstat** (when `--node-metrics-receiver-vmstat=true`):
+All fields from `/proc/vmstat` are exposed dynamically as `node_vmstat_{field}`, including:
+- `node_vmstat_pgfault` - Page faults
+- `node_vmstat_pgmajfault` - Major page faults
+- `node_vmstat_pgpgin` - Pages paged in
+- `node_vmstat_pgpgout` - Pages paged out
+- `node_vmstat_pswpin` - Pages swapped in
+- `node_vmstat_pswpout` - Pages swapped out
+- ... and 100+ additional vmstat metrics
+
+**NOTE**: The vmstat collector emits all fields from `/proc/vmstat`, which can be 100+ metrics on modern kernels.
+To reduce cardinality, either disable the collector entirely (`--node-metrics-receiver-vmstat false`)
+or use an include filter that lists all desired metric prefixes across all collectors, e.g.:
+`--node-metrics-receiver-include-filter "^node_(vmstat_(oom_kill|pgpg|pswp|pg.*fault)|load|memory_|cpu_)"`
+
+**Netstat** (when `--node-metrics-receiver-netstat=true`):
+TCP/IP statistics from `/proc/net/netstat` and `/proc/net/snmp` as `node_netstat_{Protocol}_{Field}`:
+- `node_netstat_TcpExt_TCPTimeouts` - TCP timeouts
+- `node_netstat_TcpExt_TCPRetransFail` - TCP retransmit failures
+- `node_netstat_TcpExt_SyncookiesSent` - SYN cookies sent
+- `node_netstat_IpExt_InOctets` - IP octets received
+- `node_netstat_IpExt_OutOctets` - IP octets sent
+- `node_netstat_Tcp_CurrEstab` - TCP connections currently established (from /proc/net/snmp)
+- ... and many more TCP/IP statistics
+
+**NOTE**: Like vmstat, the netstat collector emits every field of both files, which is 200+ metrics — considerably more
+than node_exporter, which whitelists a subset by default. On a backend billed per series, either disable the collector
+or narrow it with an include filter such as
+`--node-metrics-receiver-include-filter "^node_netstat_(Tcp|Udp)_"`.
+
+**Sockstat** (when `--node-metrics-receiver-sockstat=true`):
+Socket allocation statistics from `/proc/net/sockstat` and `/proc/net/sockstat6`:
+- `node_sockstat_sockets_used` - Total sockets in use
+- `node_sockstat_TCP_inuse` - TCP sockets in use
+- `node_sockstat_TCP_orphan` - TCP orphaned sockets
+- `node_sockstat_TCP_tw` - TCP TIME_WAIT sockets
+- `node_sockstat_TCP_alloc` - TCP sockets allocated
+- `node_sockstat_TCP_mem` - TCP memory pages
+- `node_sockstat_TCP_mem_bytes` - TCP memory in bytes
+- `node_sockstat_UDP_inuse` - UDP sockets in use
+- `node_sockstat_UDP_mem` - UDP memory pages
+- `node_sockstat_UDP_mem_bytes` - UDP memory in bytes
+- `node_sockstat_RAW_inuse` - RAW sockets in use
+- `node_sockstat_TCP6_inuse` - TCP6 sockets in use (from sockstat6)
+- ... and additional IPv6 socket statistics
+
+**Filefd** (when `--node-metrics-receiver-filefd=true`):
+- `node_filefd_allocated` - Number of allocated file descriptors (unit `{file_descriptors}`)
+- `node_filefd_maximum` - Maximum number of file descriptors allowed (unit `{file_descriptors}`)
+
+**CPU Frequency** (when `--node-metrics-receiver-cpufreq=true`, read from
+`/sys/devices/system/cpu/cpu*/cpufreq/`, per CPU with `cpu` label):
+- `node_cpu_scaling_frequency_hertz` - Current CPU scaling frequency
+- `node_cpu_scaling_frequency_min_hertz` - Minimum CPU scaling frequency
+- `node_cpu_scaling_frequency_max_hertz` - Maximum CPU scaling frequency
+- `node_cpu_frequency_hertz` - Current CPU frequency (from cpuinfo)
+- `node_cpu_frequency_min_hertz` - Minimum CPU frequency (from cpuinfo)
+- `node_cpu_frequency_max_hertz` - Maximum CPU frequency (from cpuinfo)
+
+**NOTE**: Only directories named `cpu` followed by digits (`cpu0`, `cpu1`, ...) are scanned, so entries such as
+`cpuidle` and `cpufreq` under the same parent are ignored.
+
+**Thermal Zone** (when `--node-metrics-receiver-thermal-zone=true`):
+- `node_thermal_zone_temp` - Thermal zone temperature in Celsius (with `zone` and `type` labels)
+- `node_cooling_device_cur_state` - Current cooling device state (with `name` and `type` labels)
+- `node_cooling_device_max_state` - Maximum cooling device state (with `name` and `type` labels)
+
+**NVMe** (when `--node-metrics-receiver-nvme=true`):
+- `node_nvme_info` - NVMe device info gauge (with `device`, `firmware_revision`, `model`, `serial`, `state` labels)
+
+**NOTE**: Only entries named `nvme` followed by digits (`nvme0`, `nvme1`, ...) are scanned, so any other entry under
+`/sys/class/nvme` is ignored.
+
+**Hwmon** (when `--node-metrics-receiver-hwmon=true`, sensor readings carry `chip` and `sensor` labels):
+- `node_hwmon_temp_celsius` - Temperature sensor reading
+- `node_hwmon_temp_max_celsius` - Temperature max threshold
+- `node_hwmon_temp_crit_celsius` - Temperature critical threshold
+- `node_hwmon_in_volts` - Voltage sensor reading
+- `node_hwmon_fan_rpm` - Fan speed, in revolutions per minute (unit `{rev}/min`)
+- `node_hwmon_power_watts` - Power consumption in watts
+- `node_hwmon_curr_amps` - Current in amps (converted from milliamps)
+- `node_hwmon_chip_names` - Annotation gauge carrying the human-readable chip model (with `chip` and `chip_name` labels)
+- `node_hwmon_sensor_label` - Annotation gauge carrying the human-readable sensor label, when the chip provides one (with `chip`, `sensor` and `label` labels)
+
+**NOTE**: The `sensor` label is the raw sysfs name (`temp1`, `in0`), matching Prometheus node_exporter — it is unique
+within a chip, so two sensors can never collapse onto one series, and it does not move when a driver gains or changes a
+label file. Where the chip provides human-readable text, that is published separately by `node_hwmon_sensor_label` and
+can be joined on `chip` and `sensor`.
+
+**NOTE**: The `chip` label is derived from the backing device of the hwmon instance, so two chips reporting the same
+model name (for example two NVMe drives, both named `nvme`) do not collapse onto the same label set. The model name
+itself is published separately by `node_hwmon_chip_names`, which can be joined on `chip`. When an hwmon instance has no
+backing `device`, the identity falls back to the chip model name combined with the `hwmonN` directory, which is still
+unique within a host but is not stable across reboots, since the hwmon index depends on module load order.
+
+**NOTE**: The `sensor` label uses the human-readable name from the sysfs `*_label` file when available
+(e.g., "Core 0", "Package id 0"), falling back to the raw sensor name (e.g., "temp1").
+
+**NOTE**: Only the temperature, voltage, fan, power and current sensor kinds are read. Any other kind exposed by a chip
+is skipped with a debug log.
+
+**Textfile** (when `--node-metrics-receiver-textfile=true`):
+Custom metrics from Prometheus-format text files. `--node-metrics-receiver-textfile-directory` accepts either a
+directory, in which case every `*.prom` file in it is read in sorted filename order, or the path of a single `.prom`
+file. The directory scan is not recursive, so subdirectories are never descended into, and an entry that is itself a
+directory named `something.prom` is skipped silently. Symlinks are followed, so a symlinked `.prom` file is collected
+like any other.
+The `--node-metrics-receiver-include-filter` and `--node-metrics-receiver-exclude-filter` patterns apply to textfile
+metrics just as they do to the built-in ones. Accepted input:
+- Metric lines: `metric_name{label="value"} 42.5`
+- TYPE comments: `# TYPE metric_name counter|gauge` (used to set the metric type)
+- HELP comments: `# HELP metric_name Description` (propagated as the OTLP metric description)
+
+Support for the exposition format is deliberately partial:
+- Only the `counter` and `gauge` types are supported. `histogram`, `summary` and `untyped` are treated as gauges, as is
+  any metric with no `# TYPE` line.
+- Trailing per-sample timestamps are accepted but ignored; every data point is stamped with the scrape time.
+- `# TYPE` and `# HELP` are scoped to the file they appear in, so the same metric name can be declared differently in
+  two files. Conflicting `# TYPE` declarations produce two separate OTLP metrics sharing that name, one gauge and one
+  sum, because metrics are grouped by name *and* type. Within each of those groups the unit and description of the first
+  sample seen win.
+- A textfile larger than 10 MiB is skipped, guarding against a runaway writer script, and its
+  `node_textfile_scrape_error` is set to 1. The limit is enforced while reading, not from the file's reported size, so a
+  file that grows between the two cannot slip past it. Its `node_textfile_mtime_seconds` is still emitted even though the
+  file itself is skipped, so a writer that has stalled stays observable.
+- At most 100,000 samples are taken from the textfile directory per scrape. Beyond that the remainder of the file is
+  dropped, a warning names how many samples were kept, and no further files are read — a bound on memory that the
+  per-file size limit alone does not give, since a small file can expand into a great many samples.
+- Files that are not regular files are skipped silently: a FIFO named `*.prom` would otherwise block the scrape
+  indefinitely when opened. A symlink to a regular file is followed and collected; a `.prom` entry that cannot be read
+  at all, such as a dangling symlink, sets `node_textfile_scrape_error` to 1.
+- A line with a malformed label — an invalid or empty label name, or a value that is not `key="value"` — is rejected in
+  full and counted as a malformed line, rather than being emitted without that label. Dropping a label would change the
+  series identity and silently merge samples that are meant to be distinct. A label name repeated within one line keeps
+  its first value.
+
+Additionally emits:
+- `node_textfile_scrape_error` - Per-file error indicator (0 = success, 1 = the file could not be read, exceeded the
+  10 MiB size limit, or contained a malformed line; with `filename` label). A textfile directory that is missing or
+  cannot be read yields a single error point whose `filename` label holds the configured path rather than a basename.
+- `node_textfile_mtime_seconds` - Modification time of the file in seconds since epoch (with `filename` label), useful for spotting a writer script that has stopped updating
+
+Example textfile (`/var/lib/node_exporter/textfile/custom.prom`):
+```
+# HELP my_app_version Application version info
+# TYPE my_app_version gauge
+my_app_version{version="1.2.3"} 1
+# TYPE my_app_requests_total counter
+my_app_requests_total{endpoint="/api"} 12345
+```
+
+#### Example Usage
+
+Basic usage collecting all metrics and exporting to OTLP:
+
+```shell
+rotel start \
+  --receiver node_metrics \
+  --node-metrics-receiver-scrape-interval 30s \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Collecting only CPU and memory metrics:
+
+```shell
+rotel start \
+  --receiver node_metrics \
+  --node-metrics-receiver-loadavg false \
+  --node-metrics-receiver-network false \
+  --node-metrics-receiver-filesystem false \
+  --node-metrics-receiver-uname false \
+  --node-metrics-receiver-stat false \
+  --node-metrics-receiver-processes false \
+  --node-metrics-receiver-diskstats false \
+  --node-metrics-receiver-vmstat false \
+  --node-metrics-receiver-netstat false \
+  --node-metrics-receiver-sockstat false \
+  --node-metrics-receiver-filefd false \
+  --node-metrics-receiver-cpufreq false \
+  --node-metrics-receiver-thermal-zone false \
+  --node-metrics-receiver-nvme false \
+  --node-metrics-receiver-hwmon false \
+  --node-metrics-receiver-time false \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Using filters to only collect memory-related metrics:
+
+```shell
+rotel start \
+  --receiver node_metrics \
+  --node-metrics-receiver-include-filter "^node_memory_" \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Monitoring the host system from inside a container. Mount the host root, and point the receiver at it with a single
+rootfs path:
+
+```shell
+# docker run -v /:/host:ro,rslave ...
+rotel start \
+  --receiver node_metrics \
+  --node-metrics-receiver-rootfs-path /host \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+**NOTE**: mounting only `/proc` and `/sys` is enough for every collector *except* `filesystem`. Filesystem metrics need
+the host root as well, because the mount table names host paths that `statfs` has to be able to resolve — the rootfs
+path is what makes that work. Without it the receiver would report the container's own mounts labelled as though they
+were the host's, so prefer the form above over setting `--node-metrics-receiver-procfs-path` and
+`--node-metrics-receiver-sysfs-path` individually. The mount table is read from PID 1 (`/proc/1/mounts`) rather than
+`/proc/self/mounts` for the same reason: the latter is always the reading process's own mount namespace, whatever
+procfs it is read from.
+
+**NOTE**: The same reasoning applies to a hardened systemd unit on the host. With `PrivateMounts=`, `PrivateTmp=` or
+`ProtectSystem=`, rotel's mount namespace differs from PID 1's: the mount table names the host's paths while `statfs`
+resolves inside the unit's namespace, so a metric labelled `mountpoint="/tmp"` would describe the unit's private tmpfs.
+Prometheus `node_exporter` behaves the same way. Run the receiver without mount-namespace isolation if filesystem
+metrics matter.
+
+Using the textfile collector for custom Prometheus metrics:
+
+```shell
+rotel start \
+  --receiver node_metrics \
+  --node-metrics-receiver-textfile true \
+  --node-metrics-receiver-textfile-directory /var/lib/node_exporter/textfile \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+#### Testing the Node Metrics Receiver
+
+To run integration tests that read the real `/proc` and `/sys` of a Linux host:
+
+```shell
+NODE_METRICS_INTEGRATION_TESTS=true cargo test --test node_metrics_integration_tests --features node_metrics_receiver
+```
+
+The tests are skipped unless `NODE_METRICS_INTEGRATION_TESTS=true` is set and the `node_metrics_receiver` feature is
+enabled. Collectors for optional hardware (thermal zones, hwmon sensors, NVMe devices, cpufreq, diskstats) are absent in
+many containers and virtual machines, so the tests for those accept an empty result and require only that any value
+produced is finite — asserting a particular piece of hardware is present would make them flaky by design.
+
 ### Kmsg Receiver configuration (Linux-only)
 
 **NOTE**: The Kmsg Receiver is Linux-only and must be enabled with the feature flag `--features kmsg_receiver`.
@@ -1153,10 +1634,10 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 
 The following configuration parameters enable multiple receivers:
 
-| Option      | Default | Options                                     |
-|-------------|---------|---------------------------------------------|
-| --receiver  | otlp    | otlp, kafka, fluent, file, kmsg             |
-| --receivers |         | comma-separated list (otlp,kafka,file,kmsg) |
+| Option      | Default | Options                                                  |
+|-------------|---------|----------------------------------------------------------|
+| --receiver  | otlp    | otlp, kafka, fluent, file, kmsg, node_metrics            |
+| --receivers |         | comma-separated list (otlp,kafka,file,kmsg,node_metrics) |
 
 **Important Notes:**
 

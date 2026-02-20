@@ -14,6 +14,9 @@ pub mod file;
 #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
 pub mod kmsg;
 
+#[cfg(feature = "node_metrics_receiver")]
+pub mod node_metrics;
+
 use opentelemetry::global;
 use opentelemetry::metrics::Meter;
 

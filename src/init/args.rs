@@ -13,6 +13,8 @@ use crate::init::kafka_exporter::KafkaExporterArgs;
 use crate::init::kafka_receiver::KafkaReceiverArgs;
 #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
 use crate::init::kmsg_receiver::KmsgReceiverArgs;
+#[cfg(feature = "node_metrics_receiver")]
+use crate::init::node_metrics_receiver::NodeMetricsReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;
 #[cfg(feature = "prometheus")]
@@ -81,6 +83,10 @@ pub struct AgentRun {
     #[command(flatten)]
     #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
     pub kmsg_receiver: KmsgReceiverArgs,
+
+    #[command(flatten)]
+    #[cfg(feature = "node_metrics_receiver")]
+    pub node_metrics_receiver: NodeMetricsReceiverArgs,
 
     /// Single receiver (type)
     #[arg(value_enum, long, env = "ROTEL_RECEIVER")]
@@ -214,6 +220,8 @@ impl Default for AgentRun {
             file_receiver: FileReceiverArgs::default(),
             #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
             kmsg_receiver: KmsgReceiverArgs::default(),
+            #[cfg(feature = "node_metrics_receiver")]
+            node_metrics_receiver: NodeMetricsReceiverArgs::default(),
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
@@ -317,6 +325,9 @@ pub enum Receiver {
     File,
     #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
     Kmsg,
+    #[cfg(feature = "node_metrics_receiver")]
+    #[clap(name = "node_metrics")]
+    NodeMetrics,
 }
 
 impl FromStr for Receiver {
@@ -332,6 +343,8 @@ impl FromStr for Receiver {
             "file" => Ok(Receiver::File),
             #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
             "kmsg" => Ok(Receiver::Kmsg),
+            #[cfg(feature = "node_metrics_receiver")]
+            "node_metrics" => Ok(Receiver::NodeMetrics),
             _ => Err("Unknown receiver"),
         }
     }
