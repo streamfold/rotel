@@ -11,6 +11,9 @@ pub mod fluent;
 #[cfg(feature = "file_receiver")]
 pub mod file;
 
+#[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+pub mod kmsg;
+
 use opentelemetry::global;
 use opentelemetry::metrics::Meter;
 

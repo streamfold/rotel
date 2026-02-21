@@ -31,6 +31,7 @@ Rotel is ideal for resource-constrained environments and applications where mini
   exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration),
   and [Kafka](#kafka-exporter-configuration)
 - [Kafka Receiver](#kafka-receiver-configuration)
+- [Kmsg Receiver](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
 and a compact binary size, simplifying deployment without the need for a sidecar container.
@@ -901,6 +902,95 @@ rotel start \
   --otlp-exporter-endpoint "localhost:4317"
 ```
 
+### Kmsg Receiver configuration (Linux-only)
+
+**NOTE**: The Kmsg Receiver is Linux-only and must be enabled with the feature flag `--features kmsg_receiver`.
+
+The Kmsg Receiver reads kernel log messages from `/dev/kmsg` and converts them to OpenTelemetry logs. This receiver is
+ideal for IoT devices, embedded systems, and any Linux environment where kernel-level logging is important.
+
+To enable the Kmsg receiver, specify it with `--receiver kmsg`.
+
+| Option                           | Default | Description                                                                                               |
+|----------------------------------|---------|-----------------------------------------------------------------------------------------------------------|
+| --kmsg-receiver-priority-level   | 6       | Maximum priority level to include (0-7, lower = more severe). Messages with priority <= this are included |
+| --kmsg-receiver-read-existing    | false   | Read existing messages from the kernel ring buffer on startup                                             |
+| --kmsg-receiver-batch-size       | 100     | Maximum number of log records to batch before sending                                                     |
+| --kmsg-receiver-batch-timeout-ms | 250     | Maximum time to wait before flushing a batch (milliseconds)                                               |
+
+#### Priority Levels
+
+The kmsg receiver uses standard syslog priority levels (lower number = more severe):
+
+| Level | Name      | Description                          |
+|-------|-----------|--------------------------------------|
+| 0     | Emergency | System is unusable                   |
+| 1     | Alert     | Action must be taken immediately     |
+| 2     | Critical  | Critical conditions                  |
+| 3     | Error     | Error conditions                     |
+| 4     | Warning   | Warning conditions                   |
+| 5     | Notice    | Normal but significant condition     |
+| 6     | Info      | Informational (default filter level) |
+| 7     | Debug     | Debug-level messages                 |
+
+The default level of 6 (Info) excludes debug messages, which is typically appropriate for production. Set to 7 to include all messages.
+
+#### Example Usage
+
+Basic example reading kernel logs and exporting to OTLP:
+
+```shell
+rotel start \
+  --receiver kmsg \
+  --kmsg-receiver-priority-level 4 \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Reading all messages including existing buffer:
+
+```shell
+rotel start \
+  --receiver kmsg \
+  --kmsg-receiver-read-existing \
+  --kmsg-receiver-priority-level 7 \
+  --exporter clickhouse \
+  --clickhouse-exporter-endpoint "http://localhost:8123"
+```
+
+#### Testing the Kmsg Receiver
+
+To run integration tests that verify actual `/dev/kmsg` functionality:
+
+```shell
+# On Linux with appropriate permissions (root or CAP_SYSLOG)
+cargo test --test kmsg_integration_tests --features "integration-tests,kmsg_receiver"
+
+# In Docker (works on Linux, macOS, and Windows with Docker Desktop)
+./scripts/kmsg-test-env.sh build   # One-time setup
+./scripts/kmsg-test-env.sh test    # Run tests
+./scripts/kmsg-test-env.sh help    # See all commands
+```
+
+Note: On macOS/Windows, Docker Desktop runs containers in a Linux VM, so the tests will
+read kernel messages from that VM's kernel (not your host OS). This is sufficient for
+verifying the receiver works correctly.
+
+#### Log Record Format
+
+Each kernel message is converted to an OTLP LogRecord with:
+
+- **Body**: The kernel log message content
+- **Timestamp**: Converted from kernel timestamp (microseconds since boot) to absolute time
+- **Severity**: Mapped from syslog priority to OpenTelemetry severity levels
+- **Attributes**:
+  - `kmsg.priority`: Priority level (0-7)
+  - `kmsg.priority_name`: Human-readable priority name (e.g., "INFO", "ERROR")
+  - `kmsg.facility`: Syslog facility code (0-23)
+  - `kmsg.facility_name`: Human-readable facility name (e.g., "kern", "user", "daemon")
+  - `kmsg.sequence`: Kernel message sequence number
+  - `kmsg.continuation`: Boolean flag if this is a continuation message
+
 ### Batch configuration
 
 You can configure the properties of the batch processor, controlling both the size limit of the batch and how long the
@@ -968,10 +1058,10 @@ to receive data via OTLP and consume from Kafka topics at the same time.
 
 The following configuration parameters enable multiple receivers:
 
-| Option      | Default | Options                                |
-|-------------|---------|----------------------------------------|
-| --receiver  | otlp    | otlp, kafka, fluent, file              |
-| --receivers |         | comma-separated list (otlp,kafka,file) |
+| Option      | Default | Options                                     |
+|-------------|---------|---------------------------------------------|
+| --receiver  | otlp    | otlp, kafka, fluent, file, kmsg             |
+| --receivers |         | comma-separated list (otlp,kafka,file,kmsg) |
 
 **Important Notes:**
 
