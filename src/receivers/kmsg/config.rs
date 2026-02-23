@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Path to the kernel message device
 pub const KMSG_DEVICE_PATH: &str = "/dev/kmsg";
@@ -25,6 +26,9 @@ pub const DEFAULT_CHECKPOINT_INTERVAL_MS: u64 = 5000;
 
 /// Minimum allowed checkpoint interval (milliseconds).
 pub const MIN_CHECKPOINT_INTERVAL_MS: u64 = 100;
+
+/// Default maximum duration to tolerate consecutive read errors before exiting.
+pub const DEFAULT_MAX_READ_ERROR_DURATION_SECS: u64 = 60;
 
 /// Configuration for the kmsg receiver
 #[derive(Debug, Clone)]
@@ -54,6 +58,12 @@ pub struct KmsgReceiverConfig {
     /// How often to checkpoint the current offset to disk (milliseconds).
     /// Only used when `offsets_path` is `Some`.
     pub checkpoint_interval_ms: u64,
+
+    /// Maximum duration to tolerate consecutive read errors before exiting.
+    /// If reads from /dev/kmsg fail continuously for this duration, the receiver
+    /// will exit with an error. This prevents silent infinite retries when the
+    /// device becomes inaccessible (e.g., permission changes, container issues).
+    pub max_read_error_duration: Duration,
 }
 
 impl Default for KmsgReceiverConfig {
@@ -65,6 +75,7 @@ impl Default for KmsgReceiverConfig {
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
             offsets_path: Some(PathBuf::from(DEFAULT_OFFSETS_PATH)),
             checkpoint_interval_ms: DEFAULT_CHECKPOINT_INTERVAL_MS,
+            max_read_error_duration: Duration::from_secs(DEFAULT_MAX_READ_ERROR_DURATION_SECS),
         }
     }
 }
@@ -80,6 +91,7 @@ impl KmsgReceiverConfig {
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
             offsets_path: Some(PathBuf::from(DEFAULT_OFFSETS_PATH)),
             checkpoint_interval_ms: DEFAULT_CHECKPOINT_INTERVAL_MS,
+            max_read_error_duration: Duration::from_secs(DEFAULT_MAX_READ_ERROR_DURATION_SECS),
         }
     }
 
@@ -136,6 +148,12 @@ impl KmsgReceiverConfig {
     /// Minimum value is 100ms.
     pub fn with_checkpoint_interval_ms(mut self, checkpoint_interval_ms: u64) -> Self {
         self.checkpoint_interval_ms = checkpoint_interval_ms;
+        self
+    }
+
+    /// Set maximum duration to tolerate consecutive read errors before exiting.
+    pub fn with_max_read_error_duration(mut self, duration: Duration) -> Self {
+        self.max_read_error_duration = duration;
         self
     }
 }

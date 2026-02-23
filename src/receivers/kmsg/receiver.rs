@@ -19,6 +19,7 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
+use std::time::Instant;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::select;
@@ -469,9 +470,14 @@ async fn run_kmsg_reader(
     let mut max_sequence: Option<u64> = None;
     let mut last_checkpointed_sequence: Option<u64> = None;
     let mut checkpoint_failures: u32 = 0;
+    let mut read_first_failure: Option<Instant> = None;
+    let mut fatal_read_error = false;
     let mut read_buf = [0u8; READ_BUF_SIZE];
 
     loop {
+        if fatal_read_error {
+            break;
+        }
         select! {
             biased;
 
@@ -529,6 +535,11 @@ async fn run_kmsg_reader(
                 loop {
                     match read_one_record(fd, &mut read_buf, config.priority_level) {
                         ReadResult::Record(record) => {
+                            // Successful read - reset failure tracking
+                            if read_first_failure.take().is_some() {
+                                debug!("Read succeeded after previous failures");
+                            }
+
                             // Always track max sequence, even for skipped records,
                             // so we don't lose the offset if stopped before new messages arrive
                             update_max_sequence(&mut max_sequence, record.sequence);
@@ -562,6 +573,11 @@ async fn run_kmsg_reader(
                             batch_sender.try_send_batch(false);
                         }
                         ReadResult::Filtered(seq) => {
+                            // Successful read - reset failure tracking
+                            if read_first_failure.take().is_some() {
+                                debug!("Read succeeded after previous failures");
+                            }
+
                             update_max_sequence(&mut max_sequence, seq);
                             if skip_until_sequence.is_some() {
                                 // During resume, count filtered records as skipped
@@ -600,9 +616,49 @@ async fn run_kmsg_reader(
                             continue;
                         }
                         ReadResult::Error(e) => {
-                            error!("Error reading from kmsg: {}", e);
                             guard.clear_ready();
-                            break;
+
+                            // Check for fatal errors that should exit immediately
+                            match e.kind() {
+                                std::io::ErrorKind::PermissionDenied => {
+                                    error!(
+                                        "Permission denied reading from {}. \
+                                         Ensure the process has CAP_SYSLOG capability or is running as root.",
+                                        KMSG_DEVICE_PATH
+                                    );
+                                    fatal_read_error = true;
+                                    break;
+                                }
+                                std::io::ErrorKind::NotFound => {
+                                    error!(
+                                        "Device {} not found. \
+                                         This may occur in containers or chroot environments without /dev/kmsg access.",
+                                        KMSG_DEVICE_PATH
+                                    );
+                                    fatal_read_error = true;
+                                    break;
+                                }
+                                _ => {
+                                    // Track when failures started
+                                    let first_failure = *read_first_failure.get_or_insert_with(Instant::now);
+                                    let failure_duration = first_failure.elapsed();
+
+                                    if failure_duration >= config.max_read_error_duration {
+                                        error!(
+                                            "Read errors persisted for {:?}, exiting: {}",
+                                            failure_duration, e
+                                        );
+                                        fatal_read_error = true;
+                                        break;
+                                    }
+
+                                    warn!(
+                                        "Error reading from kmsg (failures started {:?} ago): {}",
+                                        failure_duration, e
+                                    );
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
