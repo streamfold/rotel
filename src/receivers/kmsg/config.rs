@@ -255,10 +255,7 @@ mod tests {
     fn test_builder_offsets_path() {
         let config = KmsgReceiverConfig::new(6, false)
             .with_offsets_path(Some(PathBuf::from("/tmp/test.json")));
-        assert_eq!(
-            config.offsets_path,
-            Some(PathBuf::from("/tmp/test.json"))
-        );
+        assert_eq!(config.offsets_path, Some(PathBuf::from("/tmp/test.json")));
     }
 
     #[test]

@@ -77,7 +77,12 @@ impl KmsgReceiver {
             read_existing = config.read_existing,
             batch_size = config.batch_size,
             batch_timeout_ms = config.batch_timeout_ms,
-            offsets_path = config.offsets_path.as_ref().map(|p| p.display().to_string()).as_deref().unwrap_or("disabled"),
+            offsets_path = config
+                .offsets_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .as_deref()
+                .unwrap_or("disabled"),
             checkpoint_interval_ms = config.checkpoint_interval_ms,
             "Kmsg receiver initialized"
         );
@@ -736,14 +741,12 @@ fn maybe_checkpoint(
         if new_failures >= CHECKPOINT_FAILURE_ESCALATION_THRESHOLD {
             error!(
                 consecutive_failures = new_failures,
-                "Checkpoint failure (persisted): {}. Offsets may be lost on restart.",
-                e
+                "Checkpoint failure (persisted): {}. Offsets may be lost on restart.", e
             );
         } else {
             warn!(
                 consecutive_failures = new_failures,
-                "Failed to checkpoint kmsg offset: {}",
-                e
+                "Failed to checkpoint kmsg offset: {}", e
             );
         }
         return (last_checkpointed, new_failures);

@@ -492,7 +492,7 @@ async fn test_kmsg_receiver_resumes_from_persisted_offset() {
 
     use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
     use rotel::bounded_channel::bounded;
-    use rotel::receivers::kmsg::persistence::{save_state, PersistedKmsgState};
+    use rotel::receivers::kmsg::persistence::{PersistedKmsgState, save_state};
     use rotel::receivers::kmsg::receiver::read_boot_id;
     use rotel::receivers::otlp_output::OTLPOutput;
     use rotel::topology::payload::Message;
@@ -605,7 +605,9 @@ async fn test_kmsg_receiver_resumes_from_persisted_offset() {
             if count == 0 {
                 // No messages received - this is the expected case when no new kernel messages
                 // were generated during the test window
-                eprintln!("Resume test passed: no messages received (expected - no new kernel activity)");
+                eprintln!(
+                    "Resume test passed: no messages received (expected - no new kernel activity)"
+                );
             } else {
                 // We received messages - this is acceptable only if new messages arrived during
                 // the test window. Since the kernel can generate messages at any time, we can't
@@ -619,7 +621,9 @@ async fn test_kmsg_receiver_resumes_from_persisted_offset() {
                      expected few/none if resume worked correctly. \
                      This may indicate the offset persistence resume logic is not skipping \
                      already-processed messages.",
-                    count, threshold, initial_message_count
+                    count,
+                    threshold,
+                    initial_message_count
                 );
                 eprintln!(
                     "Received {} new messages after resume (likely new messages arrived during test)",
@@ -629,7 +633,9 @@ async fn test_kmsg_receiver_resumes_from_persisted_offset() {
         }
         Err(_) => {
             // Timeout waiting for messages - also expected when no new messages arrive
-            eprintln!("Resume test passed: timeout with no messages (expected - no new kernel activity)");
+            eprintln!(
+                "Resume test passed: timeout with no messages (expected - no new kernel activity)"
+            );
         }
     }
 }

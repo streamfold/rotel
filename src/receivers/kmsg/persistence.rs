@@ -49,11 +49,7 @@ pub fn load_state(path: &Path) -> Option<PersistedKmsgState> {
             return None;
         }
         Err(e) => {
-            warn!(
-                "Failed to read kmsg offset file {}: {}",
-                path.display(),
-                e
-            );
+            warn!("Failed to read kmsg offset file {}: {}", path.display(), e);
             return None;
         }
     };
@@ -74,11 +70,7 @@ pub fn load_state(path: &Path) -> Option<PersistedKmsgState> {
             Some(state)
         }
         Err(e) => {
-            warn!(
-                "Failed to parse kmsg offset file {}: {}",
-                path.display(),
-                e
-            );
+            warn!("Failed to parse kmsg offset file {}: {}", path.display(), e);
             None
         }
     }
@@ -93,13 +85,23 @@ pub fn load_state(path: &Path) -> Option<PersistedKmsgState> {
 /// When `sync_dir` is true, fsyncs the parent directory to ensure rename
 /// durability. Set to false for periodic checkpoints to reduce flash wear on
 /// embedded devices; use true for the final shutdown checkpoint.
-pub fn save_state(path: &Path, state: &PersistedKmsgState, sync_dir: bool) -> Result<(), std::io::Error> {
+pub fn save_state(
+    path: &Path,
+    state: &PersistedKmsgState,
+    sync_dir: bool,
+) -> Result<(), std::io::Error> {
     // Ensure parent directory exists
     let parent = path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent directory")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path has no parent directory",
+        )
     })?;
     if !parent.as_os_str().is_empty() && !parent.exists() {
-        info!("Creating directory for kmsg offset persistence: {}", parent.display());
+        info!(
+            "Creating directory for kmsg offset persistence: {}",
+            parent.display()
+        );
         fs::create_dir_all(parent)?;
     }
 
@@ -122,7 +124,11 @@ pub fn save_state(path: &Path, state: &PersistedKmsgState, sync_dir: bool) -> Re
     if sync_dir {
         match fs::File::open(parent).and_then(|dir| dir.sync_all()) {
             Ok(()) => {}
-            Err(e) => warn!("Failed to fsync parent directory {}: {}", parent.display(), e),
+            Err(e) => warn!(
+                "Failed to fsync parent directory {}: {}",
+                parent.display(),
+                e
+            ),
         }
     }
 
@@ -220,7 +226,11 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.path() != path)
             .collect();
-        assert!(tmp_files.is_empty(), "Unexpected temp files: {:?}", tmp_files);
+        assert!(
+            tmp_files.is_empty(),
+            "Unexpected temp files: {:?}",
+            tmp_files
+        );
     }
 
     #[test]
@@ -249,19 +259,14 @@ mod tests {
 
     #[test]
     fn test_persisted_state_serialization() {
-        let state = PersistedKmsgState::new(
-            "a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(),
-            123456,
-        );
+        let state =
+            PersistedKmsgState::new("a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(), 123456);
 
         let json = serde_json::to_string(&state).unwrap();
         let deserialized: PersistedKmsgState = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.version, 1);
-        assert_eq!(
-            deserialized.boot_id,
-            "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        );
+        assert_eq!(deserialized.boot_id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
         assert_eq!(deserialized.sequence, 123456);
     }
 
@@ -273,10 +278,7 @@ mod tests {
         let state = PersistedKmsgState::new("test-boot-id".to_string(), 999);
         save_state(&path, &state, true).unwrap();
 
-        assert_eq!(
-            determine_start_sequence(&path, "test-boot-id"),
-            Some(999)
-        );
+        assert_eq!(determine_start_sequence(&path, "test-boot-id"), Some(999));
     }
 
     #[test]

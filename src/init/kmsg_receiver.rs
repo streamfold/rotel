@@ -84,8 +84,7 @@ impl KmsgReceiverArgs {
         if self.kmsg_receiver_no_offsets_persistence {
             config = config.with_offsets_path(None);
         } else {
-            config =
-                config.with_offsets_path(Some(self.kmsg_receiver_offsets_path.clone()));
+            config = config.with_offsets_path(Some(self.kmsg_receiver_offsets_path.clone()));
         }
 
         if let Some(checkpoint_interval_ms) = self.kmsg_receiver_offsets_checkpoint_interval_ms {
