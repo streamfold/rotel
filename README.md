@@ -911,12 +911,20 @@ ideal for IoT devices, embedded systems, and any Linux environment where kernel-
 
 To enable the Kmsg receiver, specify it with `--receiver kmsg`.
 
-| Option                           | Default | Description                                                                                               |
-|----------------------------------|---------|-----------------------------------------------------------------------------------------------------------|
-| --kmsg-receiver-priority-level   | 6       | Maximum priority level to include (0-7, lower = more severe). Messages with priority <= this are included |
-| --kmsg-receiver-read-existing    | false   | Read existing messages from the kernel ring buffer on startup                                             |
-| --kmsg-receiver-batch-size       | 100     | Maximum number of log records to batch before sending                                                     |
-| --kmsg-receiver-batch-timeout-ms | 250     | Maximum time to wait before flushing a batch (milliseconds)                                               |
+| Option                                            | Default                            | Description                                                                                               |
+|---------------------------------------------------|------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| --kmsg-receiver-priority-level                    | 6                                  | Maximum priority level to include (0-7, lower = more severe). Messages with priority <= this are included |
+| --kmsg-receiver-read-existing                     | false                              | Read existing messages from the kernel ring buffer on startup                                             |
+| --kmsg-receiver-batch-size                        | 100                                | Maximum number of log records to batch before sending                                                     |
+| --kmsg-receiver-batch-timeout-ms                  | 250                                | Maximum time to wait before flushing a batch (milliseconds)                                               |
+| --kmsg-receiver-offsets-path                      | /var/lib/rotel/kmsg_offsets.json   | Path to persist read offset for resume across restarts                                                    |
+| --kmsg-receiver-no-offsets-persistence            | false                              | Disable offset persistence (no resume across restarts)                                                    |
+| --kmsg-receiver-offsets-checkpoint-interval-ms    | 5000                               | How often to checkpoint the current offset to disk (milliseconds, minimum 100)                            |
+
+**Note:** When offset persistence is enabled and a valid checkpoint exists with a matching boot ID, the receiver
+automatically reads from the beginning of the ring buffer and skips already-processed messages to resume where it
+left off. This effectively overrides `--kmsg-receiver-read-existing` on subsequent restarts. After a system reboot,
+the checkpoint is ignored since kernel message sequences reset.
 
 #### Priority Levels
 
@@ -956,6 +964,27 @@ rotel start \
   --kmsg-receiver-priority-level 7 \
   --exporter clickhouse \
   --clickhouse-exporter-endpoint "http://localhost:8123"
+```
+
+Custom offset persistence path and checkpoint interval (useful for embedded devices with specific storage requirements):
+
+```shell
+rotel start \
+  --receiver kmsg \
+  --kmsg-receiver-offsets-path /data/rotel/kmsg_state.json \
+  --kmsg-receiver-offsets-checkpoint-interval-ms 10000 \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
+```
+
+Disable offset persistence (always start fresh, no resume):
+
+```shell
+rotel start \
+  --receiver kmsg \
+  --kmsg-receiver-no-offsets-persistence \
+  --exporter otlp \
+  --otlp-exporter-endpoint "localhost:4317"
 ```
 
 #### Testing the Kmsg Receiver

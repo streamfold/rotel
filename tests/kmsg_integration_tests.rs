@@ -427,3 +427,209 @@ async fn test_kmsg_receiver_reads_messages() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn test_kmsg_receiver_persistence_creates_offset_file() {
+    skip_if_no_kmsg!();
+
+    use rotel::receivers::kmsg::persistence::load_state;
+    use rotel::receivers::kmsg::receiver::read_boot_id;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Should create temp dir");
+    let offsets_path = temp_dir.path().join("kmsg_offsets.json");
+
+    // Get current boot_id for verification
+    let boot_id = read_boot_id().expect("Should read boot_id");
+
+    let config = KmsgReceiverConfig::new(7, true) // Read existing to ensure we process messages
+        .with_offsets_path(Some(offsets_path.clone()))
+        .with_checkpoint_interval_ms(500); // Checkpoint quickly for test
+
+    let receiver = KmsgReceiver::new(config, None)
+        .await
+        .expect("Should create receiver");
+
+    let mut task_set = JoinSet::new();
+    let cancel = CancellationToken::new();
+
+    receiver
+        .start(&mut task_set, &cancel)
+        .await
+        .expect("Should start receiver");
+
+    // Let it run long enough to read messages and checkpoint
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Cancel and wait for shutdown (final checkpoint happens here)
+    cancel.cancel();
+    let _ = timeout(TEST_TIMEOUT, async {
+        while (task_set.join_next().await).is_some() {}
+    })
+    .await;
+
+    // Verify the offset file was created
+    assert!(
+        offsets_path.exists(),
+        "Offset file should be created at {:?}",
+        offsets_path
+    );
+
+    // Verify the content is valid
+    let state = load_state(&offsets_path).expect("Should load persisted state");
+    assert_eq!(state.boot_id, boot_id, "Boot ID should match");
+    assert!(state.sequence > 0, "Should have recorded a sequence number");
+
+    eprintln!(
+        "Persistence test: saved sequence {} for boot {}",
+        state.sequence, state.boot_id
+    );
+}
+
+#[tokio::test]
+async fn test_kmsg_receiver_resumes_from_persisted_offset() {
+    skip_if_no_kmsg!();
+
+    use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+    use rotel::bounded_channel::bounded;
+    use rotel::receivers::kmsg::persistence::{save_state, PersistedKmsgState};
+    use rotel::receivers::kmsg::receiver::read_boot_id;
+    use rotel::receivers::otlp_output::OTLPOutput;
+    use rotel::topology::payload::Message;
+    use tempfile::TempDir;
+
+    // First, read some messages to find the current sequence range.
+    // Use raw reads like the receiver does - BufReader::lines() doesn't work
+    // correctly with non-blocking FDs since it expects EOF termination.
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open("/dev/kmsg")
+        .expect("Should open /dev/kmsg");
+
+    let fd = file.as_raw_fd();
+    let mut buf = [0u8; 4096];
+    let mut max_sequence: u64 = 0;
+    let mut initial_message_count: usize = 0;
+
+    loop {
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::WouldBlock {
+                break;
+            }
+            // Other errors (EINTR, EPIPE) - just stop reading
+            break;
+        }
+        if n == 0 {
+            break;
+        }
+        if let Ok(line) = std::str::from_utf8(&buf[..n as usize]) {
+            if let Ok(record) = parse_kmsg_line(line.trim_end()) {
+                max_sequence = max_sequence.max(record.sequence);
+                initial_message_count += 1;
+            }
+        }
+    }
+
+    if max_sequence == 0 {
+        eprintln!("No kmsg messages available, skipping resume test");
+        return;
+    }
+
+    eprintln!(
+        "Current max sequence: {}, initial message count: {}",
+        max_sequence, initial_message_count
+    );
+
+    // Create a persisted state that says we've already processed all current messages
+    let temp_dir = TempDir::new().expect("Should create temp dir");
+    let offsets_path = temp_dir.path().join("kmsg_offsets.json");
+    let boot_id = read_boot_id().expect("Should read boot_id");
+
+    let state = PersistedKmsgState::new(boot_id.clone(), max_sequence);
+    save_state(&offsets_path, &state, true).expect("Should save state");
+
+    // Create a channel to receive logs
+    let (tx, mut rx) = bounded::<Message<ResourceLogs>>(100);
+    let logs_output = OTLPOutput::new(tx);
+
+    // Start receiver with persistence - it should skip all existing messages
+    let config = KmsgReceiverConfig::new(7, false) // read_existing=false, but persistence will override
+        .with_offsets_path(Some(offsets_path.clone()));
+
+    let receiver = KmsgReceiver::new(config, Some(logs_output))
+        .await
+        .expect("Should create receiver");
+
+    let mut task_set = JoinSet::new();
+    let cancel = CancellationToken::new();
+
+    receiver
+        .start(&mut task_set, &cancel)
+        .await
+        .expect("Should start receiver");
+
+    // Wait briefly - we should NOT receive any messages since we've "already processed" them all.
+    // If we DO receive messages, they must be NEW messages (sequence > max_sequence),
+    // not duplicates of already-processed messages.
+    let received = timeout(Duration::from_millis(500), async {
+        let mut count = 0;
+        while let Some(msg) = rx.next().await {
+            for resource_logs in &msg.payload {
+                for scope_logs in &resource_logs.scope_logs {
+                    count += scope_logs.log_records.len();
+                }
+            }
+            if count > 0 {
+                return count;
+            }
+        }
+        count
+    })
+    .await;
+
+    cancel.cancel();
+    let _ = timeout(TEST_TIMEOUT, async {
+        while (task_set.join_next().await).is_some() {}
+    })
+    .await;
+
+    // Verify behavior based on what we received
+    match received {
+        Ok(count) => {
+            if count == 0 {
+                // No messages received - this is the expected case when no new kernel messages
+                // were generated during the test window
+                eprintln!("Resume test passed: no messages received (expected - no new kernel activity)");
+            } else {
+                // We received messages - this is acceptable only if new messages arrived during
+                // the test window. Since the kernel can generate messages at any time, we can't
+                // fail this case. However, the key assertion is that we didn't receive ALL
+                // messages from the beginning (which would indicate resume didn't work).
+                // If we receive more than 10% of the initial buffer size, resume likely failed.
+                let threshold = (initial_message_count / 10).max(10);
+                assert!(
+                    count < threshold,
+                    "Received {} messages after resume (threshold: {}, initial: {}) - \
+                     expected few/none if resume worked correctly. \
+                     This may indicate the offset persistence resume logic is not skipping \
+                     already-processed messages.",
+                    count, threshold, initial_message_count
+                );
+                eprintln!(
+                    "Received {} new messages after resume (likely new messages arrived during test)",
+                    count
+                );
+            }
+        }
+        Err(_) => {
+            // Timeout waiting for messages - also expected when no new messages arrive
+            eprintln!("Resume test passed: timeout with no messages (expected - no new kernel activity)");
+        }
+    }
+}

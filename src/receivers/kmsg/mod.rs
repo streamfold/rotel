@@ -12,6 +12,7 @@ pub mod config;
 pub mod convert;
 pub mod error;
 pub mod parser;
+pub mod persistence;
 pub mod receiver;
 
 pub use config::KmsgReceiverConfig;

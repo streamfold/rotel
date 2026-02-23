@@ -51,7 +51,7 @@ pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>) -> ResourceLogs {
 
     let log_records: Vec<LogRecord> = records
         .into_iter()
-        .map(|r| convert_ksmg_record_to_otlp_log_record(r, boot_time_ns))
+        .map(|r| convert_kmsg_record_to_otlp_log_record(r, boot_time_ns))
         .collect();
 
     let scope_logs = ScopeLogs {
@@ -114,7 +114,7 @@ pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>) -> ResourceLogs {
 ///
 /// `boot_time_ns` is used to convert the kernel's monotonic timestamp to absolute time.
 /// If `None`, observed_time is used as a fallback for the event timestamp.
-fn convert_ksmg_record_to_otlp_log_record(
+fn convert_kmsg_record_to_otlp_log_record(
     record: KmsgRecord,
     boot_time_ns: Option<u64>,
 ) -> LogRecord {
@@ -240,7 +240,7 @@ mod tests {
             false,
         );
 
-        let log_record = convert_record_to_log_record(record, Some(boot_time_ns));
+        let log_record = convert_kmsg_record_to_otlp_log_record(record, Some(boot_time_ns));
 
         // Expected: boot_time + (timestamp_us * 1000)
         let expected_time_ns = boot_time_ns + (timestamp_us * 1000);
@@ -275,7 +275,7 @@ mod tests {
             false,
         );
 
-        let log_record = convert_record_to_log_record(record, None);
+        let log_record = convert_kmsg_record_to_otlp_log_record(record, None);
 
         // When boot_time is None, time_unix_nano should equal observed_time_unix_nano
         assert_eq!(
@@ -296,7 +296,7 @@ mod tests {
             true,
         );
 
-        let log_record = convert_record_to_log_record(record, Some(1000000000000));
+        let log_record = convert_kmsg_record_to_otlp_log_record(record, Some(1000000000000));
 
         // Check that continuation attribute is present
         let continuation_attr = log_record
@@ -320,9 +320,9 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_multiple_records_same_boot_time() {
-        // When converting a batch, all records use the same boot_time
-        let boot_time_ns: u64 = 1000000000000;
+    fn test_convert_multiple_records_batch() {
+        // Verifies that multiple records are correctly batched into a single
+        // ResourceLogs with preserved severity and timestamp ordering.
         let records = vec![
             make_test_record(
                 3,
@@ -375,7 +375,7 @@ mod tests {
             false,
         );
 
-        let log_record = convert_record_to_log_record(record, Some(1000000000000));
+        let log_record = convert_kmsg_record_to_otlp_log_record(record, Some(1000000000000));
 
         // Check facility attribute
         let facility_attr = log_record

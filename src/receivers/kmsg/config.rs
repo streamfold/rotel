@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::path::PathBuf;
+
 /// Path to the kernel message device
 pub const KMSG_DEVICE_PATH: &str = "/dev/kmsg";
 
@@ -14,6 +16,15 @@ pub const DEFAULT_BATCH_SIZE: usize = 100;
 
 /// Default maximum time to wait before flushing a batch (milliseconds)
 pub const DEFAULT_BATCH_TIMEOUT_MS: u64 = 250;
+
+/// Default path for persisting kmsg read offset
+pub const DEFAULT_OFFSETS_PATH: &str = "/var/lib/rotel/kmsg_offsets.json";
+
+/// Default checkpoint interval for persisting offset to disk (milliseconds)
+pub const DEFAULT_CHECKPOINT_INTERVAL_MS: u64 = 5000;
+
+/// Minimum allowed checkpoint interval (milliseconds).
+pub const MIN_CHECKPOINT_INTERVAL_MS: u64 = 100;
 
 /// Configuration for the kmsg receiver
 #[derive(Debug, Clone)]
@@ -32,6 +43,17 @@ pub struct KmsgReceiverConfig {
 
     /// Maximum time to wait before flushing a batch (milliseconds)
     pub batch_timeout_ms: u64,
+
+    /// Path to persist kmsg read offset for resume across restarts.
+    /// The receiver saves the last-read sequence number to this file so it can
+    /// skip already-processed messages on restart. Uses boot_id to detect device
+    /// reboots and invalidate stale state.
+    /// Set to `None` to disable offset persistence entirely.
+    pub offsets_path: Option<PathBuf>,
+
+    /// How often to checkpoint the current offset to disk (milliseconds).
+    /// Only used when `offsets_path` is `Some`.
+    pub checkpoint_interval_ms: u64,
 }
 
 impl Default for KmsgReceiverConfig {
@@ -41,12 +63,14 @@ impl Default for KmsgReceiverConfig {
             read_existing: false,
             batch_size: DEFAULT_BATCH_SIZE,
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
+            offsets_path: Some(PathBuf::from(DEFAULT_OFFSETS_PATH)),
+            checkpoint_interval_ms: DEFAULT_CHECKPOINT_INTERVAL_MS,
         }
     }
 }
 
 impl KmsgReceiverConfig {
-    /// Create a new config with default batch settings
+    /// Create a new config with default batch and persistence settings
     pub fn new(priority_level: u8, read_existing: bool) -> Self {
         Self {
             // Clamp priority level to valid range 0-7
@@ -54,6 +78,8 @@ impl KmsgReceiverConfig {
             read_existing,
             batch_size: DEFAULT_BATCH_SIZE,
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
+            offsets_path: Some(PathBuf::from(DEFAULT_OFFSETS_PATH)),
+            checkpoint_interval_ms: DEFAULT_CHECKPOINT_INTERVAL_MS,
         }
     }
 
@@ -77,6 +103,13 @@ impl KmsgReceiverConfig {
             ));
         }
 
+        if self.offsets_path.is_some() && self.checkpoint_interval_ms < MIN_CHECKPOINT_INTERVAL_MS {
+            return Err(format!(
+                "Checkpoint interval must be at least {}ms, got {}ms",
+                MIN_CHECKPOINT_INTERVAL_MS, self.checkpoint_interval_ms
+            ));
+        }
+
         Ok(())
     }
 
@@ -89,6 +122,20 @@ impl KmsgReceiverConfig {
     /// Set custom batch timeout in milliseconds
     pub fn with_batch_timeout_ms(mut self, batch_timeout_ms: u64) -> Self {
         self.batch_timeout_ms = batch_timeout_ms;
+        self
+    }
+
+    /// Set custom offsets path for persistence, or `None` to disable
+    pub fn with_offsets_path(mut self, offsets_path: Option<PathBuf>) -> Self {
+        self.offsets_path = offsets_path;
+        self
+    }
+
+    /// Set a custom checkpoint interval in milliseconds.
+    ///
+    /// Minimum value is 100ms.
+    pub fn with_checkpoint_interval_ms(mut self, checkpoint_interval_ms: u64) -> Self {
+        self.checkpoint_interval_ms = checkpoint_interval_ms;
         self
     }
 }
@@ -166,5 +213,49 @@ mod tests {
         let config = KmsgReceiverConfig::new(255, false);
         assert_eq!(config.priority_level, 7); // Clamped
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_invalid_checkpoint_interval() {
+        let config = KmsgReceiverConfig::new(6, false).with_checkpoint_interval_ms(50);
+        let result = config.validate();
+        assert_eq!(
+            result,
+            Err("Checkpoint interval must be at least 100ms, got 50ms".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_checkpoint_interval_skipped_when_persistence_disabled() {
+        let config = KmsgReceiverConfig::new(6, false)
+            .with_offsets_path(None)
+            .with_checkpoint_interval_ms(1);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_builder_offsets_path() {
+        let config = KmsgReceiverConfig::new(6, false)
+            .with_offsets_path(Some(PathBuf::from("/tmp/test.json")));
+        assert_eq!(
+            config.offsets_path,
+            Some(PathBuf::from("/tmp/test.json"))
+        );
+    }
+
+    #[test]
+    fn test_builder_offsets_path_disabled() {
+        let config = KmsgReceiverConfig::new(6, false).with_offsets_path(None);
+        assert_eq!(config.offsets_path, None);
+    }
+
+    #[test]
+    fn test_default_offsets_path() {
+        let config = KmsgReceiverConfig::default();
+        assert_eq!(
+            config.offsets_path,
+            Some(PathBuf::from("/var/lib/rotel/kmsg_offsets.json"))
+        );
+        assert_eq!(config.checkpoint_interval_ms, 5000);
     }
 }

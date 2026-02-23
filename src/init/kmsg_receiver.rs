@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::receivers::kmsg::config::{DEFAULT_PRIORITY_LEVEL, KmsgReceiverConfig};
+use crate::receivers::kmsg::config::{
+    DEFAULT_OFFSETS_PATH, DEFAULT_PRIORITY_LEVEL, KmsgReceiverConfig,
+};
 use clap::Args;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Args, Clone, Deserialize)]
 #[serde(default)]
@@ -27,6 +30,26 @@ pub struct KmsgReceiverArgs {
     /// Maximum time to wait before flushing a batch in milliseconds (default: 250)
     #[arg(long, env = "ROTEL_KMSG_RECEIVER_BATCH_TIMEOUT_MS")]
     pub kmsg_receiver_batch_timeout_ms: Option<u64>,
+
+    /// Path to persist kmsg read offset for resume across restarts
+    #[arg(
+        long,
+        env = "ROTEL_KMSG_RECEIVER_OFFSETS_PATH",
+        default_value = DEFAULT_OFFSETS_PATH
+    )]
+    pub kmsg_receiver_offsets_path: PathBuf,
+
+    /// Disable offset persistence (no resume across restarts)
+    #[arg(
+        long,
+        env = "ROTEL_KMSG_RECEIVER_NO_OFFSETS_PERSISTENCE",
+        default_value = "false"
+    )]
+    pub kmsg_receiver_no_offsets_persistence: bool,
+
+    /// How often to checkpoint the current offset to disk in milliseconds (default: 5000)
+    #[arg(long, env = "ROTEL_KMSG_RECEIVER_OFFSETS_CHECKPOINT_INTERVAL_MS")]
+    pub kmsg_receiver_offsets_checkpoint_interval_ms: Option<u64>,
 }
 
 impl Default for KmsgReceiverArgs {
@@ -36,6 +59,9 @@ impl Default for KmsgReceiverArgs {
             kmsg_receiver_read_existing: false,
             kmsg_receiver_batch_size: None,
             kmsg_receiver_batch_timeout_ms: None,
+            kmsg_receiver_offsets_path: PathBuf::from(DEFAULT_OFFSETS_PATH),
+            kmsg_receiver_no_offsets_persistence: false,
+            kmsg_receiver_offsets_checkpoint_interval_ms: None,
         }
     }
 }
@@ -53,6 +79,17 @@ impl KmsgReceiverArgs {
         }
         if let Some(batch_timeout_ms) = self.kmsg_receiver_batch_timeout_ms {
             config = config.with_batch_timeout_ms(batch_timeout_ms);
+        }
+
+        if self.kmsg_receiver_no_offsets_persistence {
+            config = config.with_offsets_path(None);
+        } else {
+            config =
+                config.with_offsets_path(Some(self.kmsg_receiver_offsets_path.clone()));
+        }
+
+        if let Some(checkpoint_interval_ms) = self.kmsg_receiver_offsets_checkpoint_interval_ms {
+            config = config.with_checkpoint_interval_ms(checkpoint_interval_ms);
         }
 
         config
