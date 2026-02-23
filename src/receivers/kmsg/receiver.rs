@@ -151,9 +151,9 @@ impl<'a> BatchSender<'a> {
     }
 
     /// Clear pending send state after awaiting completes.
-    /// Note: The future itself is already cleared by `conditional_wait` using `.take()`.
+    /// Must be called after `poll_pending` returns to remove the completed future.
     fn clear_pending(&mut self) {
-        self.pending_send = None; // Redundant but defensive
+        self.pending_send = None;
         self.pending_send_count = 0;
     }
 
@@ -482,7 +482,7 @@ async fn run_kmsg_reader(
             biased;
 
             // Handle pending send completion
-            Some(send_result) = conditional_wait(batch_sender.pending_send_mut()),
+            send_result = poll_pending(batch_sender.pending_send_mut()),
                 if batch_sender.has_pending_send() =>
             {
                 let count = batch_sender.pending_count();
@@ -753,17 +753,19 @@ fn maybe_checkpoint(
     (max_sequence, 0) // Reset failure count on success
 }
 
-/// Helper for conditional future waiting.
-/// Takes the future out of the Option (leaving None) before awaiting,
-/// ensuring the Option is automatically cleared after the await completes.
-async fn conditional_wait<F>(fut_opt: &mut Option<F>) -> Option<F::Output>
+/// Poll an Option<Future> in place without taking ownership.
+///
+/// The future stays in the Option; the caller must set it to None in the handler
+/// after completion. This ensures the future isn't dropped if another select!
+/// branch wins the race (e.g., cancellation), allowing shutdown code to
+/// complete the pending operation.
+async fn poll_pending<F>(fut_opt: &mut Option<F>) -> F::Output
 where
     F: std::future::Future + Unpin,
 {
-    match fut_opt.take() {
-        None => None,
-        Some(fut) => Some(fut.await),
-    }
+    use std::pin::Pin;
+    let fut = fut_opt.as_mut().expect("guarded by has_pending_send()");
+    Pin::new(fut).await
 }
 
 #[cfg(test)]
@@ -974,5 +976,95 @@ mod tests {
         );
         assert_eq!(seq, Some(100));
         assert_eq!(failures, 0); // Reset to 0 on success
+    }
+
+    #[tokio::test]
+    async fn test_pending_send_not_dropped_on_shutdown() {
+        use crate::bounded_channel::bounded;
+        use crate::receivers::kmsg::parser::{Facility, Priority};
+        use crate::receivers::otlp_output::OTLPOutput;
+
+        // Create a channel for the output
+        let (tx, rx) = bounded::<payload::Message<ResourceLogs>>(10);
+        let logs_output = Some(OTLPOutput::new(tx));
+
+        let mut batch_sender = BatchSender::new(&logs_output, 2); // Small batch size
+
+        // Create test records
+        let record = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 1,
+            timestamp_us: 1000000,
+            message: "test message".to_string(),
+            is_continuation: false,
+        };
+
+        // Push enough records to trigger a batch send
+        batch_sender.push(record.clone());
+        batch_sender.push(record.clone());
+
+        // This should initiate a send (batch size reached)
+        let sent = batch_sender.try_send_batch(false);
+        assert!(sent, "Batch should have been sent");
+        assert!(
+            batch_sender.has_pending_send(),
+            "Should have a pending send"
+        );
+        assert_eq!(batch_sender.pending_count(), 2);
+
+        // Simulate shutdown: complete the pending send
+        let (accepted, refused) = batch_sender.complete_pending_send().await;
+        assert_eq!(accepted, 2, "Both records should be accepted");
+        assert_eq!(refused, 0, "No records should be refused");
+
+        // Verify the records actually arrived at the receiver
+        let received = rx.try_recv();
+        assert!(received.is_some(), "Should have received the batch");
+    }
+
+    #[tokio::test]
+    async fn test_poll_pending_keeps_future_in_option_until_cleared() {
+        use crate::bounded_channel::bounded;
+        use crate::receivers::kmsg::parser::{Facility, Priority};
+        use crate::receivers::otlp_output::OTLPOutput;
+
+        let (tx, rx) = bounded::<payload::Message<ResourceLogs>>(10);
+        let logs_output = Some(OTLPOutput::new(tx));
+
+        let mut batch_sender = BatchSender::new(&logs_output, 1);
+
+        let record = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 1,
+            timestamp_us: 1000000,
+            message: "test".to_string(),
+            is_continuation: false,
+        };
+
+        batch_sender.push(record);
+        batch_sender.try_send_batch(false);
+
+        assert!(batch_sender.has_pending_send());
+
+        // Poll the pending send to completion
+        let result = poll_pending(batch_sender.pending_send_mut()).await;
+        assert!(result.is_ok());
+
+        // poll_pending does not remove the future from the Option.
+        // We must call clear_pending() to remove it.
+        assert!(
+            batch_sender.pending_send.is_some(),
+            "Future should remain in Option until clear_pending is called"
+        );
+
+        batch_sender.clear_pending();
+        assert!(!batch_sender.has_pending_send());
+
+        // Verify record arrived
+        assert!(rx.try_recv().is_some());
     }
 }
