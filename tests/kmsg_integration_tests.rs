@@ -211,8 +211,8 @@ fn test_convert_real_kmsg_to_otlp() {
     }
 
     let record_count = records.len();
-    // convert_to_otlp_logs now calculates boot_time internally
-    let resource_logs = convert_to_otlp_logs(records);
+    let boot_time_ns = get_boot_time_ns().ok();
+    let resource_logs = convert_to_otlp_logs(records, boot_time_ns);
 
     // Validate the OTLP structure
     assert!(resource_logs.resource.is_some(), "Should have resource");

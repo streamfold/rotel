@@ -8,7 +8,7 @@ use crate::receivers::get_meter;
 use crate::receivers::kmsg::config::{KMSG_DEVICE_PATH, KmsgReceiverConfig};
 use crate::receivers::kmsg::convert::convert_to_otlp_logs;
 use crate::receivers::kmsg::error::{KmsgReceiverError, Result};
-use crate::receivers::kmsg::parser::{KmsgRecord, parse_kmsg_line};
+use crate::receivers::kmsg::parser::{KmsgRecord, get_boot_time_ns, parse_kmsg_line};
 use crate::receivers::kmsg::persistence::{self, PersistedKmsgState};
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::payload;
@@ -123,6 +123,9 @@ struct BatchSender<'a> {
     pending_send: Option<SendFut<'a, payload::Message<ResourceLogs>>>,
     pending_send_count: u64,
     batch_size: usize,
+    /// Cached boot time (ns since epoch) for timestamp conversion.
+    /// Computed once at receiver start to avoid syscall overhead later.
+    boot_time_ns: Option<u64>,
 }
 
 impl<'a> BatchSender<'a> {
@@ -130,12 +133,27 @@ impl<'a> BatchSender<'a> {
         logs_output: &'a Option<OTLPOutput<payload::Message<ResourceLogs>>>,
         batch_size: usize,
     ) -> Self {
+        // Compute boot time once at the start for timestamp conversion.
+        // If this fails, convert_to_otlp_logs will fall back to observed_time.
+        let boot_time_ns = match get_boot_time_ns() {
+            Ok(t) => Some(t),
+            Err(e) => {
+                warn!(
+                    "Failed to get boot time for timestamp conversion: {}. \
+                     Using observed time as fallback.",
+                    e
+                );
+                None
+            }
+        };
+
         Self {
             records: Vec::with_capacity(batch_size),
             logs_output,
             pending_send: None,
             pending_send_count: 0,
             batch_size,
+            boot_time_ns,
         }
     }
 
@@ -179,7 +197,7 @@ impl<'a> BatchSender<'a> {
         if let Some(logs_output) = self.logs_output {
             let records = std::mem::take(&mut self.records);
             let count = records.len() as u64;
-            let resource_logs = convert_to_otlp_logs(records);
+            let resource_logs = convert_to_otlp_logs(records, self.boot_time_ns);
             let payload_msg = payload::Message::new(None, vec![resource_logs], None);
             self.pending_send = Some(logs_output.send_async(payload_msg));
             self.pending_send_count = count;
@@ -217,7 +235,7 @@ impl<'a> BatchSender<'a> {
             if let Some(logs_output) = self.logs_output {
                 let records = std::mem::take(&mut self.records);
                 let count = records.len() as u64;
-                let resource_logs = convert_to_otlp_logs(records);
+                let resource_logs = convert_to_otlp_logs(records, self.boot_time_ns);
                 let payload_msg = payload::Message::new(None, vec![resource_logs], None);
                 match logs_output.send(payload_msg).await {
                     Ok(_) => accepted = count,

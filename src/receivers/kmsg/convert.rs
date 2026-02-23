@@ -3,16 +3,15 @@
 //! Convert kmsg records to OTLP log records
 //!
 //! Timestamp conversion from kernel monotonic time (microseconds since boot) to
-//! absolute wall-clock time is performed here at send time, not at parse time.
-//! This ensures correct timestamps even if NTP adjusts the system clock after boot.
+//! absolute wall-clock time. Boot time is computed once at receiver start and
+//! passed in to avoid syscall overhead later.
 
-use crate::receivers::kmsg::parser::{KmsgRecord, get_boot_time_ns};
+use crate::receivers::kmsg::parser::KmsgRecord;
 use gethostname::gethostname;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::warn;
 
 // Log record attributes
 const KMSG_PRIORITY_KEY: &str = "kmsg.priority";
@@ -33,22 +32,9 @@ const SERVICE_NAME_VALUE: &str = "kernel";
 
 /// Convert a batch of KmsgRecords to OTLP ResourceLogs
 ///
-/// Boot time is calculated once per batch to convert kernel timestamps
-/// (microseconds since boot) to absolute wall-clock timestamps.
-pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>) -> ResourceLogs {
-    // Calculate boot time once per batch for timestamp conversion.
-    // If this fails, we'll fall back to using observed_time for event timestamps.
-    let boot_time_ns = match get_boot_time_ns() {
-        Ok(t) => Some(t),
-        Err(e) => {
-            warn!(
-                "Failed to get boot time for timestamp conversion: {}. Using observed time as fallback.",
-                e
-            );
-            None
-        }
-    };
-
+/// `boot_time_ns` is used to convert kernel timestamps (microseconds since boot)
+/// to absolute wall-clock timestamps. If `None`, observed_time is used as fallback.
+pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>, boot_time_ns: Option<u64>) -> ResourceLogs {
     let log_records: Vec<LogRecord> = records
         .into_iter()
         .map(|r| convert_kmsg_record_to_otlp_log_record(r, boot_time_ns))
@@ -344,7 +330,7 @@ mod tests {
             ),
         ];
 
-        let resource_logs = convert_to_otlp_logs(records);
+        let resource_logs = convert_to_otlp_logs(records, Some(1000000000000));
 
         assert_eq!(resource_logs.scope_logs[0].log_records.len(), 2);
         assert_eq!(
