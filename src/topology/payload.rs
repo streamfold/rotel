@@ -62,6 +62,8 @@ pub enum MessageMetadataInner {
     Forwarder(ForwarderMetadata),
     #[cfg(feature = "file_receiver")]
     File(FileMetadata),
+    #[cfg(feature = "kmsg_receiver")]
+    Kmsg(KmsgMetadata),
 }
 
 #[allow(clippy::from_over_into)]
@@ -106,6 +108,16 @@ impl MessageMetadata {
     pub fn file(metadata: FileMetadata) -> Self {
         Self {
             data: MessageMetadataInner::File(metadata),
+            ref_count: Arc::new(AtomicU32::new(1)),
+            response_claimed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Create a new MessageMetadata with Kmsg variant, starting with ref_count = 1
+    #[cfg(feature = "kmsg_receiver")]
+    pub fn kmsg(metadata: KmsgMetadata) -> Self {
+        Self {
+            data: MessageMetadataInner::Kmsg(metadata),
             ref_count: Arc::new(AtomicU32::new(1)),
             response_claimed: Arc::new(AtomicBool::new(false)),
         }
@@ -346,6 +358,16 @@ impl MessageMetadata {
                         .await?;
                 }
             }
+            #[cfg(feature = "kmsg_receiver")]
+            MessageMetadataInner::Kmsg(km) => {
+                if let Some(ack_chan) = &km.ack_chan {
+                    ack_chan
+                        .send(KmsgAcknowledgement::Ack(KmsgAck {
+                            sequences: km.sequences.clone(),
+                        }))
+                        .await?;
+                }
+            }
         }
         Ok(())
     }
@@ -380,6 +402,17 @@ impl MessageMetadata {
                         .send(FileAcknowledgement::Nack(FileNack {
                             file_id: fm.file_id,
                             offsets: fm.offsets.clone(),
+                            reason,
+                        }))
+                        .await?;
+                }
+            }
+            #[cfg(feature = "kmsg_receiver")]
+            MessageMetadataInner::Kmsg(km) => {
+                if let Some(ack_chan) = &km.ack_chan {
+                    ack_chan
+                        .send(KmsgAcknowledgement::Nack(KmsgNack {
+                            sequences: km.sequences.clone(),
                             reason,
                         }))
                         .await?;
@@ -505,6 +538,67 @@ pub struct FileAck {
 pub struct FileNack {
     pub file_id: crate::receivers::file::input::FileId,
     pub offsets: Vec<LineOffset>,
+    pub reason: ExporterError,
+}
+
+/// Metadata for kmsg receiver messages
+#[cfg(feature = "kmsg_receiver")]
+#[derive(Clone)]
+pub struct KmsgMetadata {
+    /// Sequence numbers of kernel messages in this batch
+    pub sequences: Vec<u64>,
+    /// Channel to send acknowledgements back to the kmsg receiver
+    pub ack_chan: Option<BoundedSender<KmsgAcknowledgement>>,
+}
+
+#[cfg(feature = "kmsg_receiver")]
+impl KmsgMetadata {
+    /// Creata e new KmsgMetadata
+    pub fn new(sequences: Vec<u64>, ack_chan: Option<BoundedSender<KmsgAcknowledgement>>) -> Self {
+        Self {
+            sequences,
+            ack_chan,
+        }
+    }
+}
+
+// Manual Debug for KmsgMetadata since BoundedSender doesn't implement Debug
+#[cfg(feature = "kmsg_receiver")]
+impl std::fmt::Debug for KmsgMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KmsgMetadata")
+            .field("sequences", &self.sequences)
+            .field("ack_chan", &self.ack_chan.is_some())
+            .finish()
+    }
+}
+
+// Manual PartialEq for KmsgMetadata since BoundedSender can't be compared
+#[cfg(feature = "kmsg_receiver")]
+impl PartialEq for KmsgMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.sequences == other.sequences
+        // We don't compare ack_chan as it's not meaningful for equality
+    }
+}
+
+/// Acknowledgement message from exporter back to kmsg receiver
+#[cfg(feature = "kmsg_receiver")]
+pub enum KmsgAcknowledgement {
+    Ack(KmsgAck),
+    Nack(KmsgNack),
+}
+
+/// Successful acknowledgement of a kmsg batch
+#[cfg(feature = "kmsg_receiver")]
+pub struct KmsgAck {
+    pub sequences: Vec<u64>,
+}
+
+/// Failed acknowledgement of a kmsg batch
+#[cfg(feature = "kmsg_receiver")]
+pub struct KmsgNack {
+    pub sequences: Vec<u64>,
     pub reason: ExporterError,
 }
 

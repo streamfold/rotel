@@ -921,10 +921,15 @@ To enable the Kmsg receiver, specify it with `--receiver kmsg`.
 | --kmsg-receiver-no-offsets-persistence            | false                              | Disable offset persistence (no resume across restarts)                                                    |
 | --kmsg-receiver-offsets-checkpoint-interval-ms    | 5000                               | How often to checkpoint the current offset to disk (milliseconds, minimum 100)                            |
 
-**Note:** When offset persistence is enabled and a valid checkpoint exists with a matching boot ID, the receiver
-automatically reads from the beginning of the ring buffer and skips already-processed messages to resume where it
-left off. This effectively overrides `--kmsg-receiver-read-existing` on subsequent restarts. After a system reboot,
-the checkpoint is ignored since kernel message sequences reset.
+**Note:** When offset persistence is enabled, the receiver implements **at-least-once delivery** semantics. Offsets
+are only persisted after messages have been successfully exported by downstream exporters, ensuring no messages are
+lost on crash or restart. This may result in some messages being reprocessed after a crash (duplicates are possible,
+but data loss is not).
+
+When a valid checkpoint exists with a matching boot ID, the receiver automatically reads from the beginning of the
+ring buffer and skips already-processed messages to resume where it left off. This effectively overrides
+`--kmsg-receiver-read-existing` on subsequent restarts. After a system reboot, the checkpoint is ignored since
+kernel message sequences reset.
 
 #### Priority Levels
 

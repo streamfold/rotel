@@ -3,15 +3,22 @@
 //! Kmsg receiver implementation
 //!
 //! Reads kernel log messages from /dev/kmsg and sends them to the OTLP pipeline.
+//! Implements at-least-once delivery by tracking message acknowledgements from
+//! exporters and only persisting offsets after messages are successfully exported.
 
+use crate::bounded_channel::{BoundedReceiver, BoundedSender, bounded};
 use crate::receivers::get_meter;
 use crate::receivers::kmsg::config::{KMSG_DEVICE_PATH, KmsgReceiverConfig};
 use crate::receivers::kmsg::convert::convert_to_otlp_logs;
 use crate::receivers::kmsg::error::{KmsgReceiverError, Result};
+use crate::receivers::kmsg::offset_committer::{
+    KmsgOffsetCommitter, OffsetCommitterConfig, SharedOffsetTracker,
+};
+use crate::receivers::kmsg::offset_tracker::KmsgOffsetTracker;
 use crate::receivers::kmsg::parser::{KmsgRecord, get_boot_time_ns, parse_kmsg_line};
-use crate::receivers::kmsg::persistence::{self, PersistedKmsgState};
+use crate::receivers::kmsg::persistence;
 use crate::receivers::otlp_output::OTLPOutput;
-use crate::topology::payload;
+use crate::topology::payload::{self, KmsgAcknowledgement, KmsgMetadata, MessageMetadata};
 use flume::r#async::SendFut;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
@@ -19,7 +26,8 @@ use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::select;
@@ -116,9 +124,11 @@ impl KmsgReceiver {
     }
 }
 
-/// Struct to hold batch state and handle sending
+/// Struct to hold batch state and handle sending with at-least-once delivery
 struct BatchSender<'a> {
     records: Vec<KmsgRecord>,
+    /// Sequence numbers of records in the current batch (for offset tracking)
+    sequences: Vec<u64>,
     logs_output: &'a Option<OTLPOutput<payload::Message<ResourceLogs>>>,
     pending_send: Option<SendFut<'a, payload::Message<ResourceLogs>>>,
     pending_send_count: u64,
@@ -126,12 +136,18 @@ struct BatchSender<'a> {
     /// Cached boot time (ns since epoch) for timestamp conversion.
     /// Computed once at receiver start to avoid syscall overhead later.
     boot_time_ns: Option<u64>,
+    /// Channel to send acknowledgements back to the offset committer
+    ack_tx: Option<BoundedSender<KmsgAcknowledgement>>,
+    /// Shared offset tracker for at-least-once delivery
+    offset_tracker: Option<SharedOffsetTracker>,
 }
 
 impl<'a> BatchSender<'a> {
     fn new(
         logs_output: &'a Option<OTLPOutput<payload::Message<ResourceLogs>>>,
         batch_size: usize,
+        ack_tx: Option<BoundedSender<KmsgAcknowledgement>>,
+        offset_tracker: Option<SharedOffsetTracker>,
     ) -> Self {
         // Compute boot time once at the start for timestamp conversion.
         // If this fails, convert_to_otlp_logs will fall back to observed_time.
@@ -149,16 +165,27 @@ impl<'a> BatchSender<'a> {
 
         Self {
             records: Vec::with_capacity(batch_size),
+            sequences: Vec::with_capacity(batch_size),
             logs_output,
             pending_send: None,
             pending_send_count: 0,
             batch_size,
             boot_time_ns,
+            ack_tx,
+            offset_tracker,
         }
     }
 
     fn push(&mut self, record: KmsgRecord) {
+        self.sequences.push(record.sequence);
         self.records.push(record);
+    }
+
+    /// Clear buffered records without sending.
+    /// Used on ring buffer overflow when buffered records reference lost messages.
+    fn clear_buffer(&mut self) {
+        self.records.clear();
+        self.sequences.clear();
     }
 
     fn has_pending_send(&self) -> bool {
@@ -180,6 +207,38 @@ impl<'a> BatchSender<'a> {
         self.pending_send_count = 0;
     }
 
+    /// Create a payload message from the current batch of records.
+    /// Tracks sequences in the offset tracker before creating the message.
+    /// Returns the message and the record count, or None if the buffer is empty.
+    fn create_payload_message(&mut self) -> Option<(payload::Message<ResourceLogs>, u64)> {
+        if self.records.is_empty() {
+            return None;
+        }
+
+        let records = std::mem::take(&mut self.records);
+        let sequences = std::mem::take(&mut self.sequences);
+        let count = records.len() as u64;
+
+        // Track sequences in offset tracker before sending (at-least-once)
+        if let Some(tracker) = &self.offset_tracker {
+            let mut tracker = tracker
+                .lock()
+                .expect("offset tracker mutex poisoned - this is a bug");
+            tracker.track_batch(&sequences);
+        }
+
+        let resource_logs = convert_to_otlp_logs(records, self.boot_time_ns);
+
+        // Create a message with metadata for acknowledgement tracking
+        let metadata = self.ack_tx.as_ref().map(|ack_tx| {
+            let kmsg_metadata = KmsgMetadata::new(sequences, Some(ack_tx.clone()));
+            MessageMetadata::kmsg(kmsg_metadata)
+        });
+
+        let payload_msg = payload::Message::new(metadata, vec![resource_logs], None);
+        Some((payload_msg, count))
+    }
+
     /// Try to send the current batch if conditions are met.
     /// Sends when batch is full or when `force` is true (e.g., timer tick or shutdown).
     /// Returns true if a send was initiated.
@@ -195,18 +254,17 @@ impl<'a> BatchSender<'a> {
         }
 
         if let Some(logs_output) = self.logs_output {
-            let records = std::mem::take(&mut self.records);
-            let count = records.len() as u64;
-            let resource_logs = convert_to_otlp_logs(records, self.boot_time_ns);
-            let payload_msg = payload::Message::new(None, vec![resource_logs], None);
-            self.pending_send = Some(logs_output.send_async(payload_msg));
-            self.pending_send_count = count;
-            true
+            if let Some((payload_msg, count)) = self.create_payload_message() {
+                self.pending_send = Some(logs_output.send_async(payload_msg));
+                self.pending_send_count = count;
+                return true;
+            }
         } else {
             // No output configured, just discard
             self.records.clear();
-            false
+            self.sequences.clear();
         }
+        false
     }
 
     /// Wait for any in-flight pending send to complete (for shutdown)
@@ -228,26 +286,18 @@ impl<'a> BatchSender<'a> {
 
     /// Send remaining records synchronously (for shutdown)
     async fn flush(&mut self) -> (u64, u64) {
-        let mut accepted = 0u64;
-        let mut refused = 0u64;
-
-        if !self.records.is_empty() {
-            if let Some(logs_output) = self.logs_output {
-                let records = std::mem::take(&mut self.records);
-                let count = records.len() as u64;
-                let resource_logs = convert_to_otlp_logs(records, self.boot_time_ns);
-                let payload_msg = payload::Message::new(None, vec![resource_logs], None);
-                match logs_output.send(payload_msg).await {
-                    Ok(_) => accepted = count,
+        if let Some(logs_output) = self.logs_output {
+            if let Some((payload_msg, count)) = self.create_payload_message() {
+                return match logs_output.send(payload_msg).await {
+                    Ok(_) => (count, 0),
                     Err(e) => {
-                        refused = count;
                         warn!("Failed to send final batch: {}", e);
+                        (0, count)
                     }
-                }
+                };
             }
         }
-
-        (accepted, refused)
+        (0, 0)
     }
 }
 
@@ -470,29 +520,55 @@ async fn run_kmsg_reader(
 
     debug!("Kmsg reader started with event-based I/O");
 
-    let mut batch_sender = BatchSender::new(&logs_output, config.batch_size);
+    // Set up at-least-once delivery infrastructure when persistence is enabled
+    let (ack_tx, offset_tracker, committer_handle) =
+        if let (Some(boot_id), Some(offsets_path)) = (&current_boot_id, &config.offsets_path) {
+            let (tx, rx): (
+                BoundedSender<KmsgAcknowledgement>,
+                BoundedReceiver<KmsgAcknowledgement>,
+            ) = bounded(1024);
+            let tracker: SharedOffsetTracker = Arc::new(Mutex::new(KmsgOffsetTracker::new(false)));
+
+            // Spawn offset committer task
+            let committer_config = OffsetCommitterConfig {
+                checkpoint_interval: Duration::from_millis(config.checkpoint_interval_ms),
+                drain_timeout: Duration::from_secs(2),
+                max_checkpoint_failure_duration: Duration::from_secs(60),
+            };
+
+            let mut committer = KmsgOffsetCommitter::new(
+                rx,
+                tracker.clone(),
+                offsets_path.clone(),
+                boot_id.clone(),
+                committer_config,
+            );
+
+            let committer_cancel = cancel.clone();
+            let handle = tokio::spawn(async move {
+                if let Err(e) = committer.run(committer_cancel).await {
+                    error!("Kmsg offset committer error: {}", e);
+                }
+            });
+
+            (Some(tx), Some(tracker), Some(handle))
+        } else {
+            (None, None, None)
+        };
+
+    // Keep a reference to offset_tracker for use outside BatchSender
+    // (overflow clearing, filtered record acknowledgement)
+    let offset_tracker_ref = offset_tracker.clone();
+
+    let mut batch_sender =
+        BatchSender::new(&logs_output, config.batch_size, ack_tx, offset_tracker);
     let mut batch_timer =
         tokio::time::interval(tokio::time::Duration::from_millis(config.batch_timeout_ms));
     batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     batch_timer.tick().await; // Skip the first immediate tick
 
-    // Only create a checkpoint timer when persistence is enabled (boot_id available)
-    let mut checkpoint_timer = if current_boot_id.is_some() {
-        let mut timer = tokio::time::interval(tokio::time::Duration::from_millis(
-            config.checkpoint_interval_ms,
-        ));
-        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        timer.tick().await; // Skip the first immediate tick
-        Some(timer)
-    } else {
-        None
-    };
-
     let mut filtered_count: u64 = 0;
     let mut skip_count: u64 = 0;
-    let mut max_sequence: Option<u64> = None;
-    let mut last_checkpointed_sequence: Option<u64> = None;
-    let mut checkpoint_failures: u32 = 0;
     let mut read_first_failure: Option<Instant> = None;
     let mut fatal_read_error = false;
     let mut read_buf = [0u8; READ_BUF_SIZE];
@@ -527,26 +603,6 @@ async fn run_kmsg_reader(
                 filtered_count = 0;
             }
 
-            // Checkpoint timer tick - persist current offset to disk.
-            // When checkpoint_timer is None (persistence disabled), pending() never
-            // resolves, effectively disabling this select branch.
-            _ = async {
-                if let Some(timer) = checkpoint_timer.as_mut() {
-                    timer.tick().await;
-                } else {
-                    std::future::pending::<()>().await;
-                }
-            } => {
-                (last_checkpointed_sequence, checkpoint_failures) = maybe_checkpoint(
-                    &current_boot_id,
-                    &config.offsets_path,
-                    max_sequence,
-                    last_checkpointed_sequence,
-                    checkpoint_failures,
-                    false,
-                );
-            }
-
             // Wait for data to be available
             ready_result = async_fd.readable() => {
                 let Ok(mut guard) = ready_result else {
@@ -563,20 +619,18 @@ async fn run_kmsg_reader(
                                 debug!("Read succeeded after previous failures");
                             }
 
-                            // Always track max sequence, even for skipped records,
-                            // so we don't lose the offset if stopped before new messages arrive
-                            update_max_sequence(&mut max_sequence, record.sequence);
-
                             // Skip records we've already processed (resuming from checkpoint)
-                            if let Some(skip_seq) = skip_until_sequence {
-                                if record.sequence <= skip_seq {
+                            // The persisted sequence is the one we want to resume FROM,
+                            // so we skip sequences strictly less than it.
+                            if let Some(resume_from) = skip_until_sequence {
+                                if record.sequence < resume_from {
                                     skip_count += 1;
                                     // Log progress and yield periodically to avoid starving other tasks
                                     if skip_count % 1000 == 0 {
                                         debug!(
                                             skipped = skip_count,
                                             current_sequence = record.sequence,
-                                            target_sequence = skip_seq,
+                                            target_sequence = resume_from,
                                             "Skipping previously processed messages"
                                         );
                                         tokio::task::yield_now().await;
@@ -601,19 +655,58 @@ async fn run_kmsg_reader(
                                 debug!("Read succeeded after previous failures");
                             }
 
-                            update_max_sequence(&mut max_sequence, seq);
-                            if skip_until_sequence.is_some() {
-                                // During resume, count filtered records as skipped
-                                // (they were already counted as filtered in the previous run)
-                                skip_count += 1;
-                            } else {
-                                filtered_count += 1;
+                            // For filtered records during resume, skip if before resume point
+                            if let Some(resume_from) = skip_until_sequence {
+                                if seq < resume_from {
+                                    skip_count += 1;
+                                    continue;
+                                }
+                                // Caught up via filtered record - clear skip state
+                                skip_until_sequence = None;
+                                info!(
+                                    sequence = seq,
+                                    skipped = skip_count,
+                                    "Caught up to persisted offset (via filtered record), processing new messages"
+                                );
                             }
+
+                            // Track a filtered record as acknowledged (it won't go through a pipeline)
+                            // This keeps hwm accurate and ensures checkpoint reflects all seen messages
+                            if let Some(tracker) = &offset_tracker_ref {
+                                let mut tracker = tracker
+                                    .lock()
+                                    .expect("offset tracker mutex poisoned - this is a bug");
+                                tracker.acknowledge(seq);
+                            }
+
+                            filtered_count += 1;
                         }
                         ReadResult::Interrupted => continue,
                         ReadResult::Skipped(seq) => {
+                            // Parse error - handle resume skip and acknowledge if we have a sequence
                             if let Some(s) = seq {
-                                update_max_sequence(&mut max_sequence, s);
+                                // During resume, skip if before resume point
+                                if let Some(resume_from) = skip_until_sequence {
+                                    if s < resume_from {
+                                        skip_count += 1;
+                                        continue;
+                                    }
+                                    // Caught up via skipped record - clear skip state
+                                    skip_until_sequence = None;
+                                    info!(
+                                        sequence = s,
+                                        skipped = skip_count,
+                                        "Caught up to persisted offset (via malformed record), processing new messages"
+                                    );
+                                }
+
+                                // Acknowledge to keep hwm accurate
+                                if let Some(tracker) = &offset_tracker_ref {
+                                    let mut tracker = tracker
+                                        .lock()
+                                        .expect("offset tracker mutex poisoned - this is a bug");
+                                    tracker.acknowledge(s);
+                                }
                             }
                             continue;
                         }
@@ -632,10 +725,21 @@ async fn run_kmsg_reader(
                                      some messages may be re-processed or lost"
                                 );
                             }
-                            // Clear stale offset to avoid checkpointing a sequence that
-                            // may have been evicted. Continue reading to restore tracking
-                            // from the next available message (or WouldBlock if none).
-                            max_sequence = None;
+                            // Clear buffered records - they reference lost messages
+                            batch_sender.clear_buffer();
+                            // Clear offset tracker state - pending sequences may reference
+                            // evicted messages, and hwm may point to a lost sequence.
+                            // Note: In-flight batches (already sent to pipeline) may still
+                            // ack back after this clear, updating hwm. This is acceptable
+                            // for at-least-once: those messages were exported successfully,
+                            // and we'll resume from the new hwm or next tracked sequence.
+                            if let Some(tracker) = &offset_tracker_ref {
+                                let mut tracker = tracker
+                                    .lock()
+                                    .expect("offset tracker mutex poisoned - this is a bug");
+                                tracker.clear();
+                                debug!("Cleared offset tracker state due to ring buffer overflow");
+                            }
                             continue;
                         }
                         ReadResult::Error(e) => {
@@ -695,8 +799,7 @@ async fn run_kmsg_reader(
     }
 
     // Shutdown: complete pending send and flush remaining records.
-    // We reach here on cancellation, channel error, or read error. In all cases,
-    // we checkpoint below to preserve progress and avoid reprocessing on restart.
+    // The offset committer will handle final checkpointing after draining acks.
     let (pending_accepted, pending_refused) = batch_sender.complete_pending_send().await;
     metrics.add_accepted(pending_accepted);
     metrics.add_refused(pending_refused);
@@ -707,71 +810,19 @@ async fn run_kmsg_reader(
 
     metrics.add_filtered(filtered_count);
 
-    // Final checkpoint before stopping (sync_dir=true for durability)
-    let _ = maybe_checkpoint(
-        &current_boot_id,
-        &config.offsets_path,
-        max_sequence,
-        last_checkpointed_sequence,
-        checkpoint_failures,
-        true,
-    );
+    // Drop the batch_sender to close the ack channel, signaling the committer to drain
+    drop(batch_sender);
+
+    // Wait for the offset committer to finish draining acks and checkpointing
+    if let Some(handle) = committer_handle {
+        debug!("Waiting for offset committer to complete");
+        if let Err(e) = handle.await {
+            warn!("Offset committer task failed: {}", e);
+        }
+    }
 
     info!("Kmsg receiver stopped");
     Ok(())
-}
-
-/// Track the highest sequence number seen so far.
-fn update_max_sequence(current: &mut Option<u64>, new_val: u64) {
-    *current = Some(current.map_or(new_val, |s| s.max(new_val)));
-}
-
-/// Number of consecutive checkpoint failures before escalating to error level logging.
-const CHECKPOINT_FAILURE_ESCALATION_THRESHOLD: u32 = 3;
-
-/// Try to checkpoint the offset if persistence is enabled and the sequence has advanced.
-///
-/// Returns a tuple of (updated last_checkpointed_sequence, updated consecutive_failures).
-#[must_use]
-fn maybe_checkpoint(
-    boot_id: &Option<String>,
-    offsets_path: &Option<std::path::PathBuf>,
-    max_sequence: Option<u64>,
-    last_checkpointed: Option<u64>,
-    consecutive_failures: u32,
-    sync_dir: bool,
-) -> (Option<u64>, u32) {
-    let (Some(boot_id), Some(path)) = (boot_id.as_deref(), offsets_path.as_ref()) else {
-        return (last_checkpointed, 0);
-    };
-
-    let Some(seq) = max_sequence else {
-        return (last_checkpointed, consecutive_failures);
-    };
-
-    if Some(seq) == last_checkpointed {
-        return (last_checkpointed, consecutive_failures);
-    }
-
-    let state = PersistedKmsgState::new(boot_id.to_owned(), seq);
-    if let Err(e) = persistence::save_state(path, &state, sync_dir) {
-        let new_failures = consecutive_failures.saturating_add(1);
-        if new_failures >= CHECKPOINT_FAILURE_ESCALATION_THRESHOLD {
-            error!(
-                consecutive_failures = new_failures,
-                "Checkpoint failure (persisted): {}. Offsets may be lost on restart.", e
-            );
-        } else {
-            warn!(
-                consecutive_failures = new_failures,
-                "Failed to checkpoint kmsg offset: {}", e
-            );
-        }
-        return (last_checkpointed, new_failures);
-    }
-
-    debug!(sequence = seq, "Checkpointed kmsg offset");
-    (max_sequence, 0) // Reset failure count on success
 }
 
 /// Poll an Option<Future> in place without taking ownership.
@@ -798,7 +849,7 @@ mod tests {
         use crate::receivers::kmsg::parser::{Facility, Priority};
 
         let logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>> = None;
-        let mut batch_sender = BatchSender::new(&logs_output, 100);
+        let mut batch_sender = BatchSender::new(&logs_output, 100, None, None);
 
         assert!(!batch_sender.has_pending_send());
 
@@ -819,189 +870,46 @@ mod tests {
         let sent = batch_sender.try_send_batch(true);
         assert!(!sent); // Returns false when no output configured
         assert!(batch_sender.records.is_empty()); // Records should be cleared
+        assert!(batch_sender.sequences.is_empty()); // Sequences should also be cleared
     }
 
     #[test]
-    fn test_update_max_sequence_from_none() {
-        let mut max_seq: Option<u64> = None;
-        update_max_sequence(&mut max_seq, 100);
-        assert_eq!(max_seq, Some(100));
-    }
+    fn test_batch_sender_tracks_sequences() {
+        use crate::receivers::kmsg::parser::{Facility, Priority};
 
-    #[test]
-    fn test_update_max_sequence_increases() {
-        let mut max_seq: Option<u64> = Some(50);
-        update_max_sequence(&mut max_seq, 100);
-        assert_eq!(max_seq, Some(100));
-    }
+        let logs_output: Option<OTLPOutput<payload::Message<ResourceLogs>>> = None;
+        let mut batch_sender = BatchSender::new(&logs_output, 100, None, None);
 
-    #[test]
-    fn test_update_max_sequence_does_not_decrease() {
-        let mut max_seq: Option<u64> = Some(100);
-        update_max_sequence(&mut max_seq, 50);
-        assert_eq!(max_seq, Some(100));
-    }
+        let record1 = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 100,
+            timestamp_us: 1000000,
+            message: "test1".to_string(),
+            is_continuation: false,
+        };
 
-    #[test]
-    fn test_maybe_checkpoint_skips_when_persistence_disabled() {
-        // With None for boot_id or path, should return last_checkpointed unchanged
-        let (seq, failures) = maybe_checkpoint(&None, &None, Some(100), None, 0, false);
-        assert_eq!(seq, None);
-        assert_eq!(failures, 0);
+        let record2 = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 101,
+            timestamp_us: 2000000,
+            message: "test2".to_string(),
+            is_continuation: false,
+        };
 
-        let (seq, failures) = maybe_checkpoint(
-            &Some("boot-id".to_string()),
-            &None,
-            Some(100),
-            Some(50),
-            0,
-            false,
-        );
-        assert_eq!(seq, Some(50));
-        assert_eq!(failures, 0);
-    }
+        batch_sender.push(record1);
+        batch_sender.push(record2);
 
-    #[test]
-    fn test_maybe_checkpoint_skips_when_no_sequence() {
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(std::path::PathBuf::from("/nonexistent/path")),
-            None,
-            None,
-            0,
-            false,
-        );
-        assert_eq!(seq, None);
-        assert_eq!(failures, 0);
-    }
-
-    #[test]
-    fn test_maybe_checkpoint_skips_when_unchanged() {
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(std::path::PathBuf::from("/nonexistent/path")),
-            Some(100),
-            Some(100),
-            0,
-            false,
-        );
-        assert_eq!(seq, Some(100));
-        assert_eq!(failures, 0);
-    }
-
-    #[test]
-    fn test_maybe_checkpoint_writes_when_advanced() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("offsets.json");
-
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(path.clone()),
-            Some(100),
-            None,
-            0,
-            true,
-        );
-        assert_eq!(seq, Some(100));
-        assert_eq!(failures, 0); // Success resets failure count
-        assert!(path.exists());
-
-        // Verify the content
-        let state = persistence::load_state(&path).unwrap();
-        assert_eq!(state.boot_id, "test-boot-id");
-        assert_eq!(state.sequence, 100);
-    }
-
-    #[test]
-    fn test_maybe_checkpoint_successive_checkpoints() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("offsets.json");
-        let boot_id = Some("test-boot-id".to_string());
-        let offsets_path = Some(path.clone());
-
-        // First checkpoint without sync_dir
-        let (last, failures) = maybe_checkpoint(&boot_id, &offsets_path, Some(100), None, 0, false);
-        assert_eq!(last, Some(100));
-        assert_eq!(failures, 0);
-
-        // Second checkpoint with sync_dir (simulating shutdown)
-        let (last, failures) =
-            maybe_checkpoint(&boot_id, &offsets_path, Some(200), last, failures, true);
-        assert_eq!(last, Some(200));
-        assert_eq!(failures, 0);
-
-        let state = persistence::load_state(&path).unwrap();
-        assert_eq!(state.sequence, 200);
-    }
-
-    #[test]
-    fn test_maybe_checkpoint_tracks_consecutive_failures() {
-        // Create a file, then try to use it as a directory - this will reliably fail
-        let dir = tempfile::TempDir::new().unwrap();
-        let blocker_file = dir.path().join("blocker");
-        std::fs::write(&blocker_file, "I am a file, not a directory").unwrap();
-
-        // Try to write to a path where the parent "directory" is actually a file
-        let invalid_path = blocker_file.join("offsets.json");
-
-        // First failure
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(invalid_path.clone()),
-            Some(100),
-            None,
-            0,
-            false,
-        );
-        assert_eq!(seq, None); // Unchanged due to failure
-        assert_eq!(failures, 1);
-
-        // Second failure
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(invalid_path.clone()),
-            Some(100),
-            seq,
-            failures,
-            false,
-        );
-        assert_eq!(seq, None);
-        assert_eq!(failures, 2);
-
-        // Third failure - should hit escalation threshold
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(invalid_path),
-            Some(100),
-            seq,
-            failures,
-            false,
-        );
-        assert_eq!(seq, None);
-        assert_eq!(failures, 3);
-    }
-
-    #[test]
-    fn test_maybe_checkpoint_resets_failures_on_success() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("offsets.json");
-
-        // Simulate having had previous failures, then success
-        let (seq, failures) = maybe_checkpoint(
-            &Some("test-boot-id".to_string()),
-            &Some(path),
-            Some(100),
-            None,
-            5, // Had 5 previous failures
-            false,
-        );
-        assert_eq!(seq, Some(100));
-        assert_eq!(failures, 0); // Reset to 0 on success
+        assert_eq!(batch_sender.sequences.len(), 2);
+        assert_eq!(batch_sender.sequences[0], 100);
+        assert_eq!(batch_sender.sequences[1], 101);
     }
 
     #[tokio::test]
     async fn test_pending_send_not_dropped_on_shutdown() {
-        use crate::bounded_channel::bounded;
         use crate::receivers::kmsg::parser::{Facility, Priority};
         use crate::receivers::otlp_output::OTLPOutput;
 
@@ -1009,7 +917,7 @@ mod tests {
         let (tx, rx) = bounded::<payload::Message<ResourceLogs>>(10);
         let logs_output = Some(OTLPOutput::new(tx));
 
-        let mut batch_sender = BatchSender::new(&logs_output, 2); // Small batch size
+        let mut batch_sender = BatchSender::new(&logs_output, 2, None, None); // Small batch size
 
         // Create test records
         let record = KmsgRecord {
@@ -1024,7 +932,10 @@ mod tests {
 
         // Push enough records to trigger a batch send
         batch_sender.push(record.clone());
-        batch_sender.push(record.clone());
+        batch_sender.push(KmsgRecord {
+            sequence: 2,
+            ..record.clone()
+        });
 
         // This should initiate a send (batch size reached)
         let sent = batch_sender.try_send_batch(false);
@@ -1047,14 +958,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_pending_keeps_future_in_option_until_cleared() {
-        use crate::bounded_channel::bounded;
         use crate::receivers::kmsg::parser::{Facility, Priority};
         use crate::receivers::otlp_output::OTLPOutput;
 
         let (tx, rx) = bounded::<payload::Message<ResourceLogs>>(10);
         let logs_output = Some(OTLPOutput::new(tx));
 
-        let mut batch_sender = BatchSender::new(&logs_output, 1);
+        let mut batch_sender = BatchSender::new(&logs_output, 1, None, None);
 
         let record = KmsgRecord {
             priority_raw: 6,
@@ -1087,5 +997,197 @@ mod tests {
 
         // Verify record arrived
         assert!(rx.try_recv().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_batch_sender_tracks_sequences_in_offset_tracker() {
+        use crate::receivers::kmsg::parser::{Facility, Priority};
+        use crate::receivers::otlp_output::OTLPOutput;
+
+        let (tx, _rx) = bounded::<payload::Message<ResourceLogs>>(10);
+        let logs_output = Some(OTLPOutput::new(tx));
+
+        // Create offset tracker
+        let offset_tracker: SharedOffsetTracker =
+            Arc::new(Mutex::new(KmsgOffsetTracker::new(false)));
+
+        let mut batch_sender =
+            BatchSender::new(&logs_output, 2, None, Some(offset_tracker.clone()));
+
+        let record1 = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 100,
+            timestamp_us: 1000000,
+            message: "test1".to_string(),
+            is_continuation: false,
+        };
+
+        let record2 = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 101,
+            timestamp_us: 2000000,
+            message: "test2".to_string(),
+            is_continuation: false,
+        };
+
+        batch_sender.push(record1);
+        batch_sender.push(record2);
+
+        // Send the batch
+        batch_sender.try_send_batch(true);
+
+        // Verify sequences are tracked in offset tracker
+        {
+            let tracker = offset_tracker.lock().expect("test mutex");
+            assert_eq!(tracker.pending_count(), 2);
+            assert_eq!(tracker.lowest_pending(), Some(100));
+        }
+    }
+
+    /// Test that KmsgMetadata is correctly attached to messages with sequences and ack channel
+    #[tokio::test]
+    async fn test_batch_sender_attaches_kmsg_metadata_to_messages() {
+        use crate::receivers::kmsg::parser::{Facility, Priority};
+        use crate::receivers::otlp_output::OTLPOutput;
+        use crate::topology::payload::KmsgAcknowledgement;
+
+        let (tx, mut rx) = bounded::<payload::Message<ResourceLogs>>(10);
+        let logs_output = Some(OTLPOutput::new(tx));
+
+        // Create ack channel
+        let (ack_tx, _ack_rx) = bounded::<KmsgAcknowledgement>(10);
+
+        let mut batch_sender = BatchSender::new(&logs_output, 2, Some(ack_tx), None);
+
+        let record1 = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 100,
+            timestamp_us: 1000000,
+            message: "test1".to_string(),
+            is_continuation: false,
+        };
+
+        let record2 = KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 101,
+            timestamp_us: 2000000,
+            message: "test2".to_string(),
+            is_continuation: false,
+        };
+
+        batch_sender.push(record1);
+        batch_sender.push(record2);
+
+        // Send the batch
+        batch_sender.try_send_batch(true);
+
+        // Complete the send
+        let (accepted, _) = batch_sender.complete_pending_send().await;
+        assert_eq!(accepted, 2);
+
+        // Receive the message and verify metadata
+        let msg = rx.try_recv().expect("Should receive message");
+
+        // Verify metadata is present
+        assert!(msg.metadata.is_some(), "Message should have metadata");
+
+        let metadata = msg.metadata.unwrap();
+
+        // Verify it's Kmsg metadata with correct sequences
+        if let payload::MessageMetadataInner::Kmsg(kmsg_meta) = metadata.inner() {
+            assert_eq!(kmsg_meta.sequences, vec![100, 101]);
+            assert!(
+                kmsg_meta.ack_chan.is_some(),
+                "Should have ack channel attached"
+            );
+        } else {
+            panic!("Expected Kmsg metadata variant");
+        }
+    }
+
+    /// Test the full acknowledgement flow: send message → receive → ack → verify tracker updated
+    #[tokio::test]
+    async fn test_full_ack_flow_updates_offset_tracker() {
+        use crate::receivers::kmsg::parser::{Facility, Priority};
+        use crate::receivers::otlp_output::OTLPOutput;
+        use crate::topology::payload::{Ack, KmsgAcknowledgement};
+
+        let (tx, mut rx) = bounded::<payload::Message<ResourceLogs>>(10);
+        let logs_output = Some(OTLPOutput::new(tx));
+
+        // Create ack channel and offset tracker
+        let (ack_tx, mut ack_rx) = bounded::<KmsgAcknowledgement>(10);
+        let offset_tracker: SharedOffsetTracker =
+            Arc::new(Mutex::new(KmsgOffsetTracker::new(false)));
+
+        let mut batch_sender =
+            BatchSender::new(&logs_output, 2, Some(ack_tx), Some(offset_tracker.clone()));
+
+        // Push records
+        batch_sender.push(KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 100,
+            timestamp_us: 1000000,
+            message: "test1".to_string(),
+            is_continuation: false,
+        });
+        batch_sender.push(KmsgRecord {
+            priority_raw: 6,
+            priority: Priority::Info,
+            facility: Facility::Kern,
+            sequence: 101,
+            timestamp_us: 2000000,
+            message: "test2".to_string(),
+            is_continuation: false,
+        });
+
+        // Send the batch
+        batch_sender.try_send_batch(true);
+        let (accepted, _) = batch_sender.complete_pending_send().await;
+        assert_eq!(accepted, 2);
+
+        // Verify sequences are pending in tracker
+        {
+            let tracker = offset_tracker.lock().expect("test mutex");
+            assert_eq!(tracker.pending_count(), 2);
+            assert_eq!(tracker.get_persistable_sequence(), Some(100)); // lowest pending
+        }
+
+        // Receive message and call ack (simulating exporter behavior)
+        let msg = rx.try_recv().expect("Should receive message");
+        if let Some(ref metadata) = msg.metadata {
+            metadata.ack().await.expect("Ack should succeed");
+        }
+
+        // Receive the ack on the ack channel (simulating offset committer)
+        let ack = ack_rx.try_recv().expect("Should receive ack");
+        match ack {
+            KmsgAcknowledgement::Ack(kmsg_ack) => {
+                assert_eq!(kmsg_ack.sequences, vec![100, 101]);
+
+                // Process ack in tracker (what committer would do)
+                let mut tracker = offset_tracker.lock().expect("test mutex");
+                tracker.acknowledge_batch(&kmsg_ack.sequences);
+            }
+            _ => panic!("Expected Ack"),
+        }
+
+        // Verify tracker is now fully acknowledged
+        {
+            let tracker = offset_tracker.lock().expect("test mutex");
+            assert_eq!(tracker.pending_count(), 0);
+            assert_eq!(tracker.high_water_mark(), Some(101));
+            assert_eq!(tracker.get_persistable_sequence(), Some(102)); // hwm + 1
+        }
     }
 }

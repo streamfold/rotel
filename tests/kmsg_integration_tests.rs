@@ -432,8 +432,12 @@ async fn test_kmsg_receiver_reads_messages() {
 async fn test_kmsg_receiver_persistence_creates_offset_file() {
     skip_if_no_kmsg!();
 
+    use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+    use rotel::bounded_channel::bounded;
     use rotel::receivers::kmsg::persistence::load_state;
     use rotel::receivers::kmsg::receiver::read_boot_id;
+    use rotel::receivers::otlp_output::OTLPOutput;
+    use rotel::topology::payload::{Ack, Message};
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().expect("Should create temp dir");
@@ -442,11 +446,15 @@ async fn test_kmsg_receiver_persistence_creates_offset_file() {
     // Get current boot_id for verification
     let boot_id = read_boot_id().expect("Should read boot_id");
 
+    // Create a channel to receive the logs
+    let (tx, mut rx) = bounded::<Message<ResourceLogs>>(100);
+    let logs_output = OTLPOutput::new(tx);
+
     let config = KmsgReceiverConfig::new(7, true) // Read existing to ensure we process messages
         .with_offsets_path(Some(offsets_path.clone()))
         .with_checkpoint_interval_ms(500); // Checkpoint quickly for test
 
-    let receiver = KmsgReceiver::new(config, None)
+    let receiver = KmsgReceiver::new(config, Some(logs_output))
         .await
         .expect("Should create receiver");
 
@@ -458,8 +466,30 @@ async fn test_kmsg_receiver_persistence_creates_offset_file() {
         .await
         .expect("Should start receiver");
 
-    // Let it run long enough to read messages and checkpoint
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    // Receive messages and acknowledge them to trigger offset persistence.
+    // With at-least-once delivery, offsets are only persisted after acknowledgement.
+    let received = timeout(Duration::from_secs(2), async {
+        let mut count = 0;
+        while let Some(msg) = rx.next().await {
+            for resource_logs in &msg.payload {
+                for scope_logs in &resource_logs.scope_logs {
+                    count += scope_logs.log_records.len();
+                }
+            }
+            // Acknowledge the message to trigger offset tracking
+            if let Some(ref metadata) = msg.metadata {
+                let _ = metadata.ack().await;
+            }
+            if count > 0 {
+                break;
+            }
+        }
+        count
+    })
+    .await;
+
+    // Wait for the checkpoint to complete
+    tokio::time::sleep(Duration::from_millis(600)).await;
 
     // Cancel and wait for shutdown (final checkpoint happens here)
     cancel.cancel();
@@ -467,6 +497,15 @@ async fn test_kmsg_receiver_persistence_creates_offset_file() {
         while (task_set.join_next().await).is_some() {}
     })
     .await;
+
+    // If we didn't receive any messages, the kernel buffer might be empty
+    if matches!(received, Ok(0) | Err(_)) {
+        eprintln!("No kmsg messages available, skipping offset file assertion");
+        return;
+    }
+
+    let msg_count = received.unwrap_or(0);
+    eprintln!("Received and acknowledged {} log records", msg_count);
 
     // Verify the offset file was created
     assert!(
@@ -484,6 +523,103 @@ async fn test_kmsg_receiver_persistence_creates_offset_file() {
         "Persistence test: saved sequence {} for boot {}",
         state.sequence, state.boot_id
     );
+}
+
+/// Test that messages carry correct KmsgMetadata with sequences for acknowledgement tracking
+#[tokio::test]
+async fn test_kmsg_receiver_messages_have_metadata_with_sequences() {
+    skip_if_no_kmsg!();
+
+    use opentelemetry_proto::tonic::logs::v1::ResourceLogs;
+    use rotel::bounded_channel::bounded;
+    use rotel::receivers::otlp_output::OTLPOutput;
+    use rotel::topology::payload::{Message, MessageMetadataInner};
+    use tempfile::TempDir;
+
+    // Create temp dir for offsets (enables at-least-once delivery)
+    let temp_dir = TempDir::new().expect("Should create temp dir");
+    let offsets_path = temp_dir.path().join("kmsg_offsets.json");
+
+    let (tx, mut rx) = bounded::<Message<ResourceLogs>>(100);
+    let logs_output = OTLPOutput::new(tx);
+
+    // Enable persistence to activate at-least-once delivery (metadata with sequences)
+    let config = KmsgReceiverConfig::new(7, true).with_offsets_path(Some(offsets_path));
+
+    let receiver = KmsgReceiver::new(config, Some(logs_output))
+        .await
+        .expect("Should create receiver");
+
+    let mut task_set = JoinSet::new();
+    let cancel = CancellationToken::new();
+
+    receiver
+        .start(&mut task_set, &cancel)
+        .await
+        .expect("Should start receiver");
+
+    // Wait for a message
+    let received = timeout(Duration::from_secs(2), async { rx.next().await }).await;
+
+    cancel.cancel();
+    let _ = timeout(TEST_TIMEOUT, async {
+        while (task_set.join_next().await).is_some() {}
+    })
+    .await;
+
+    match received {
+        Ok(Some(msg)) => {
+            // Verify message has metadata
+            assert!(
+                msg.metadata.is_some(),
+                "Message should have metadata when persistence is enabled"
+            );
+
+            let metadata = msg.metadata.unwrap();
+
+            // Verify it's Kmsg metadata
+            match metadata.inner() {
+                MessageMetadataInner::Kmsg(kmsg_meta) => {
+                    // Verify sequences are present and non-empty
+                    assert!(
+                        !kmsg_meta.sequences.is_empty(),
+                        "KmsgMetadata should have sequences"
+                    );
+
+                    // Verify ack channel is present
+                    assert!(
+                        kmsg_meta.ack_chan.is_some(),
+                        "KmsgMetadata should have ack channel"
+                    );
+
+                    // Verify sequences are reasonable (positive, increasing)
+                    let sequences = &kmsg_meta.sequences;
+                    for i in 1..sequences.len() {
+                        assert!(
+                            sequences[i] > sequences[i - 1],
+                            "Sequences should be strictly increasing"
+                        );
+                    }
+
+                    eprintln!(
+                        "Message metadata verified: {} sequences, first={}, last={}",
+                        sequences.len(),
+                        sequences.first().unwrap(),
+                        sequences.last().unwrap()
+                    );
+                }
+                other => {
+                    panic!("Expected Kmsg metadata, got {:?}", other);
+                }
+            }
+        }
+        Ok(None) => {
+            eprintln!("Channel closed without messages, skipping metadata verification");
+        }
+        Err(_) => {
+            eprintln!("Timeout waiting for messages (kernel buffer may be empty), skipping");
+        }
+    }
 }
 
 #[tokio::test]
