@@ -61,7 +61,16 @@ function _unit_tests() {
 }
 
 function _integration_tests() {
-    docker_cargo --privileged test --test kmsg_integration_tests --features "integration-tests,kmsg_receiver" "$@"
+    docker run --rm \
+        -v "$(pwd)":/workspace \
+        -v cargo-registry:/usr/local/cargo/registry \
+        -v cargo-target:/workspace/target \
+        -w /workspace \
+        --privileged \
+        -e KMSG_INTEGRATION_TESTS=true \
+        --name $CONTAINER_NAME \
+        $IMAGE_NAME \
+        cargo test --test kmsg_integration_tests --features kmsg_receiver "$@"
 }
 
 function _clippy() {

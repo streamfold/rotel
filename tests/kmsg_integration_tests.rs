@@ -6,7 +6,7 @@
 //! end-to-end functionality of the kmsg receiver.
 //!
 //! To run these tests:
-//! 1. On Linux: cargo test --test kmsg_integration_tests --features "integration-tests,kmsg_receiver"
+//! 1. On Linux: KMSG_INTEGRATION_TESTS=true cargo test --test kmsg_integration_tests --features kmsg_receiver
 //! 2. In Docker (works on Linux, macOS, and Windows with Docker Desktop):
 //!    ```
 //!    # Using the helper script (recommended):
@@ -21,7 +21,7 @@
 
 #![cfg(all(
     target_os = "linux",
-    feature = "integration-tests",
+    kmsg_integration_tests = "true",
     feature = "kmsg_receiver"
 ))]
 
