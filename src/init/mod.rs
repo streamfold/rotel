@@ -14,6 +14,9 @@ mod fluent_receiver;
 #[cfg(feature = "file_receiver")]
 mod file_receiver;
 
+#[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+mod kmsg_receiver;
+
 mod awsemf_exporter;
 mod clickhouse_exporter;
 mod datadog_exporter;

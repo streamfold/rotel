@@ -11,6 +11,8 @@ use crate::init::fluent_receiver::FluentReceiverArgs;
 use crate::init::kafka_exporter::KafkaExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_receiver::KafkaReceiverArgs;
+#[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+use crate::init::kmsg_receiver::KmsgReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
 use crate::init::otlp_receiver::OTLPReceiverArgs;
 #[cfg(feature = "prometheus")]
@@ -75,6 +77,10 @@ pub struct AgentRun {
     #[command(flatten)]
     #[cfg(feature = "file_receiver")]
     pub file_receiver: FileReceiverArgs,
+
+    #[command(flatten)]
+    #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+    pub kmsg_receiver: KmsgReceiverArgs,
 
     /// Single receiver (type)
     #[arg(value_enum, long, env = "ROTEL_RECEIVER")]
@@ -174,6 +180,8 @@ impl Default for AgentRun {
             fluent_receiver: FluentReceiverArgs::default(),
             #[cfg(feature = "file_receiver")]
             file_receiver: FileReceiverArgs::default(),
+            #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+            kmsg_receiver: KmsgReceiverArgs::default(),
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
@@ -268,6 +276,8 @@ pub enum Receiver {
     Fluent,
     #[cfg(feature = "file_receiver")]
     File,
+    #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+    Kmsg,
 }
 
 impl FromStr for Receiver {
@@ -281,6 +291,8 @@ impl FromStr for Receiver {
             "fluent" => Ok(Receiver::Fluent),
             #[cfg(feature = "file_receiver")]
             "file" => Ok(Receiver::File),
+            #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
+            "kmsg" => Ok(Receiver::Kmsg),
             _ => Err("Unknown receiver"),
         }
     }
