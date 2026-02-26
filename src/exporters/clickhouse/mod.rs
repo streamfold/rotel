@@ -70,7 +70,7 @@ pub struct ClickhouseExporterConfigBuilder {
     auth_password: Option<String>,
     async_insert: bool,
     use_json: bool,
-    nested_kv_max_depth: Option<usize>,
+    nested_kv_max_depth: usize,
     request_timeout: Duration,
 }
 
@@ -113,7 +113,7 @@ impl ClickhouseExporterConfigBuilder {
             request_timeout: Duration::from_secs(5),
             compression: Default::default(),
             use_json: false,
-            nested_kv_max_depth: None,
+            nested_kv_max_depth: 3,
             async_insert: false,
         }
     }
@@ -128,7 +128,7 @@ impl ClickhouseExporterConfigBuilder {
         self
     }
 
-    pub fn with_nested_kv_max_depth(mut self, max_depth: Option<usize>) -> Self {
+    pub fn with_nested_kv_max_depth(mut self, max_depth: usize) -> Self {
         self.nested_kv_max_depth = max_depth;
         self
     }
@@ -190,7 +190,7 @@ pub struct ClickhouseExporterBuilder {
     retry_config: RetryConfig,
     request_mapper: Arc<RequestMapper>,
     request_timeout: Duration,
-    nested_kv_max_depth: Option<usize>,
+    nested_kv_max_depth: usize,
 }
 
 impl ClickhouseExporterBuilder {
@@ -960,7 +960,7 @@ mod tests {
             Default::default(),
         )
         .with_json(true)
-        .with_nested_kv_max_depth(Some(5))
+        .with_nested_kv_max_depth(5)
         .with_compression(Compression::None)
         .with_async_insert(true)
         .with_request_timeout(Duration::from_secs(5))

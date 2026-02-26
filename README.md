@@ -253,7 +253,7 @@ and traces.
 | --clickhouse-exporter-async-insert           | true                           | true, false |
 | --clickhouse-exporter-request-timeout        | 5s                             |             |
 | --clickhouse-exporter-enable-json            |                                |             |
-| --clickhouse-exporter-nested-kv-max-depth    |                                |             |
+| --clickhouse-exporter-nested-kv-max-depth    | 3                              |             |
 | --clickhouse-exporter-json-underscore        |                                |             |
 | --clickhouse-exporter-user                   |                                |             |
 | --clickhouse-exporter-password               |                                |             |
@@ -286,9 +286,12 @@ a nested JSON object. You can replace periods in JSON keys with underscores by p
 `service.name` will be inserted as `service_name`.
 
 When exporting OpenTelemetry attributes that contain nested `KeyValueList` structures (such as GenAI message
-attributes like `gen_ai.input.messages`), use `--clickhouse-exporter-nested-kv-max-depth` to convert them to
-proper JSON objects. Without this option, nested structures are serialized as JSON strings (the protobuf
-representation) for backwards compatibility. Set to a value like `10` to enable nested conversion:
+attributes like `gen_ai.input.messages`), use `--clickhouse-exporter-nested-kv-max-depth` to control the
+depth of nested objects that are supported. By default this will support nested attributes to a depth of
+three, to increase this depth set the parameter higher. Set to zero to disable any nesting, complex attributes
+will be stored as their JSON string representation.
+
+For example, increasing the depth to 10:
 
 ```shell
 rotel start --exporter clickhouse \

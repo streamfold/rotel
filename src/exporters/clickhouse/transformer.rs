@@ -13,7 +13,7 @@ pub struct Transformer {
     /// Maximum depth for nested KV list conversion.
     /// - `None` or `Some(0)`: flat mode (backwards compatible, nested KV serialized as JSON strings)
     /// - `Some(n)` where n > 0: recursive conversion up to depth n
-    nested_kv_max_depth: Option<usize>,
+    nested_kv_max_depth: usize,
 }
 
 impl Transformer {
@@ -21,11 +21,11 @@ impl Transformer {
         Self {
             compression,
             use_json,
-            nested_kv_max_depth: None, // Default: backwards compatible flat mode
+            nested_kv_max_depth: 0, // Default: backwards compatible flat mode
         }
     }
 
-    pub fn with_nested_kv_max_depth(mut self, max_depth: Option<usize>) -> Self {
+    pub fn with_nested_kv_max_depth(mut self, max_depth: usize) -> Self {
         self.nested_kv_max_depth = max_depth;
         self
     }
@@ -113,7 +113,7 @@ impl Transformer {
                         };
                         result.insert(
                             key,
-                            anyvalue_to_jsontype(any_value, self.nested_kv_max_depth),
+                            anyvalue_to_jsontype(any_value, Some(self.nested_kv_max_depth)),
                         );
                     }
                     None => {}
@@ -160,7 +160,10 @@ impl Transformer {
                     Some(_) => {
                         result.insert(
                             full_key,
-                            anyvalue_to_jsontype_owned(any_value.clone(), self.nested_kv_max_depth),
+                            anyvalue_to_jsontype_owned(
+                                any_value.clone(),
+                                Some(self.nested_kv_max_depth),
+                            ),
                         );
                     }
                     None => {}
