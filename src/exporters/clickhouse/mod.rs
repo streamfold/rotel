@@ -355,8 +355,17 @@ mod tests {
     use crate::bounded_channel::{BoundedReceiver, bounded};
     use crate::exporters::crypto_init_tests::init_crypto;
     use crate::topology::payload::{KafkaAcknowledgement, KafkaMetadata, Message, MessageMetadata};
+    use chrono::Utc;
     use httpmock::prelude::*;
-    use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+    use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValueValue;
+    use opentelemetry_proto::tonic::common::v1::{
+        AnyValue, ArrayValue, InstrumentationScope, KeyValue, KeyValueList,
+    };
+    use opentelemetry_proto::tonic::resource::v1::Resource;
+    use opentelemetry_proto::tonic::trace::v1::span::{
+        Event as SpanEvent, Link as SpanLink, SpanKind,
+    };
+    use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status};
     use std::time::Duration;
     use tokio::join;
     use tokio_test::assert_ok;
@@ -635,6 +644,382 @@ mod tests {
 
         // Verify the server received requests
         let _actual_hits = clickhouse_mock.hits();
+    }
+
+    /// Builds deeply nested `KeyValue` attributes suitable for stress-testing the transformer.
+    ///
+    /// At `depth == 0` only primitive leaf values are emitted.
+    /// At each higher depth the attributes include:
+    ///   - a plain string value
+    ///   - a nested `KvlistValue` containing the next depth's attributes
+    ///   - an `ArrayValue` whose elements are `KvlistValue` maps (with their own nested KV)
+    ///   - a double value
+    fn build_nested_kv_attributes(depth: usize) -> Vec<KeyValue> {
+        if depth == 0 {
+            return vec![
+                KeyValue {
+                    key: "leaf.string".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(AnyValueValue::StringValue("leaf_value".to_string())),
+                    }),
+                },
+                KeyValue {
+                    key: "leaf.int".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(AnyValueValue::IntValue(42)),
+                    }),
+                },
+                KeyValue {
+                    key: "leaf.bool".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(AnyValueValue::BoolValue(true)),
+                    }),
+                },
+            ];
+        }
+
+        let child_attrs = build_nested_kv_attributes(depth - 1);
+
+        // Each element of the array is itself a KvlistValue, and each such map contains
+        // a further nested KvlistValue so that Array<KvList> nesting is exercised.
+        let array_items: Vec<AnyValue> = (0..2)
+            .map(|i| AnyValue {
+                value: Some(AnyValueValue::KvlistValue(KeyValueList {
+                    values: vec![
+                        KeyValue {
+                            key: format!("array_item_{}.key", i),
+                            value: Some(AnyValue {
+                                value: Some(AnyValueValue::StringValue(format!(
+                                    "array_value_{}",
+                                    i
+                                ))),
+                            }),
+                        },
+                        KeyValue {
+                            key: format!("array_item_{}.nested", i),
+                            value: Some(AnyValue {
+                                value: Some(AnyValueValue::KvlistValue(KeyValueList {
+                                    values: vec![
+                                        KeyValue {
+                                            key: "deep_key".to_string(),
+                                            value: Some(AnyValue {
+                                                value: Some(AnyValueValue::IntValue(
+                                                    depth as i64 * 100 + i as i64,
+                                                )),
+                                            }),
+                                        },
+                                        KeyValue {
+                                            key: "deep_string".to_string(),
+                                            value: Some(AnyValue {
+                                                value: Some(AnyValueValue::StringValue(format!(
+                                                    "depth_{}_item_{}",
+                                                    depth, i
+                                                ))),
+                                            }),
+                                        },
+                                    ],
+                                })),
+                            }),
+                        },
+                    ],
+                })),
+            })
+            .collect();
+
+        vec![
+            KeyValue {
+                key: format!("level{}.string", depth),
+                value: Some(AnyValue {
+                    value: Some(AnyValueValue::StringValue(format!(
+                        "value_at_depth_{}",
+                        depth
+                    ))),
+                }),
+            },
+            KeyValue {
+                key: format!("level{}.nested_kv", depth),
+                value: Some(AnyValue {
+                    value: Some(AnyValueValue::KvlistValue(KeyValueList {
+                        values: child_attrs,
+                    })),
+                }),
+            },
+            KeyValue {
+                key: format!("level{}.array_of_maps", depth),
+                value: Some(AnyValue {
+                    value: Some(AnyValueValue::ArrayValue(ArrayValue {
+                        values: array_items,
+                    })),
+                }),
+            },
+            KeyValue {
+                key: format!("level{}.double", depth),
+                value: Some(AnyValue {
+                    value: Some(AnyValueValue::DoubleValue(depth as f64 * 3.14)),
+                }),
+            },
+        ]
+    }
+
+    /// Constructs a `ResourceSpans` that contains:
+    ///   - Resource attributes with nested KvlistValue + ArrayValue<KvlistValue>
+    ///   - A root span and one child span per nesting level, each carrying attributes
+    ///     built by `build_nested_kv_attributes` at the corresponding depth
+    ///   - The root span has a span event whose attributes are also nested
+    ///   - Each child span has a span link whose attributes are nested
+    fn build_nested_resource_spans(nesting_depth: usize) -> ResourceSpans {
+        let now_ns = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+
+        let trace_id: Vec<u8> = vec![
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77,
+        ];
+        let root_span_id: Vec<u8> = vec![0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+
+        let mut spans = Vec::new();
+
+        // Root span — deepest attribute nesting
+        spans.push(Span {
+            trace_id: trace_id.clone(),
+            span_id: root_span_id.clone(),
+            parent_span_id: vec![],
+            name: "root_operation".to_string(),
+            kind: SpanKind::Server as i32,
+            start_time_unix_nano: now_ns,
+            end_time_unix_nano: now_ns + 10_000_000,
+            attributes: build_nested_kv_attributes(nesting_depth),
+            events: vec![SpanEvent {
+                time_unix_nano: now_ns + 1_000_000,
+                name: "nested_event".to_string(),
+                // Event attributes also exercise nested KV at depth 1
+                attributes: build_nested_kv_attributes(1),
+                dropped_attributes_count: 0,
+            }],
+            links: vec![],
+            status: Some(Status {
+                code: 1, // Ok
+                message: "OK".to_string(),
+            }),
+            trace_state: String::new(),
+            ..Default::default()
+        });
+
+        // Child spans — one per nesting level, each with attributes at that depth
+        for level in 1..=nesting_depth {
+            let child_span_id: Vec<u8> =
+                vec![0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, (level + 1) as u8];
+            let parent_id: Vec<u8> = if level == 1 {
+                root_span_id.clone()
+            } else {
+                vec![0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, level as u8]
+            };
+
+            spans.push(Span {
+                trace_id: trace_id.clone(),
+                span_id: child_span_id,
+                parent_span_id: parent_id,
+                name: format!("child_operation_level_{}", level),
+                kind: SpanKind::Internal as i32,
+                start_time_unix_nano: now_ns + (level as u64) * 1_000_000,
+                end_time_unix_nano: now_ns + (level as u64) * 1_000_000 + 5_000_000,
+                attributes: build_nested_kv_attributes(level),
+                events: vec![],
+                links: vec![SpanLink {
+                    trace_id: trace_id.clone(),
+                    span_id: root_span_id.clone(),
+                    trace_state: String::new(),
+                    // Link attributes with one level of nesting
+                    attributes: build_nested_kv_attributes(1),
+                    dropped_attributes_count: 0,
+                    flags: 0,
+                }],
+                status: Some(Status {
+                    code: 0,
+                    message: String::new(),
+                }),
+                trace_state: String::new(),
+                ..Default::default()
+            });
+        }
+
+        let scope_spans = ScopeSpans {
+            scope: Some(InstrumentationScope {
+                name: "nested-trace-integration-test".to_string(),
+                version: "1.0.0".to_string(),
+                ..Default::default()
+            }),
+            spans,
+            schema_url: String::new(),
+        };
+
+        ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![
+                    // Flat resource attribute
+                    KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(AnyValueValue::StringValue(
+                                "nested-trace-test-service".to_string(),
+                            )),
+                        }),
+                    },
+                    KeyValue {
+                        key: "deployment.environment".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(AnyValueValue::StringValue("integration-test".to_string())),
+                        }),
+                    },
+                    // Nested KvlistValue inside resource attributes
+                    KeyValue {
+                        key: "resource.nested_kv".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(AnyValueValue::KvlistValue(KeyValueList {
+                                values: vec![
+                                    KeyValue {
+                                        key: "host".to_string(),
+                                        value: Some(AnyValue {
+                                            value: Some(AnyValueValue::StringValue(
+                                                "localhost".to_string(),
+                                            )),
+                                        }),
+                                    },
+                                    KeyValue {
+                                        key: "port".to_string(),
+                                        value: Some(AnyValue {
+                                            value: Some(AnyValueValue::IntValue(8123)),
+                                        }),
+                                    },
+                                ],
+                            })),
+                        }),
+                    },
+                    // ArrayValue of KvlistValue entries inside resource attributes
+                    KeyValue {
+                        key: "resource.tags".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(AnyValueValue::ArrayValue(ArrayValue {
+                                values: vec![
+                                    AnyValue {
+                                        value: Some(AnyValueValue::KvlistValue(KeyValueList {
+                                            values: vec![
+                                                KeyValue {
+                                                    key: "env".to_string(),
+                                                    value: Some(AnyValue {
+                                                        value: Some(AnyValueValue::StringValue(
+                                                            "test".to_string(),
+                                                        )),
+                                                    }),
+                                                },
+                                                KeyValue {
+                                                    key: "region".to_string(),
+                                                    value: Some(AnyValue {
+                                                        value: Some(AnyValueValue::StringValue(
+                                                            "local".to_string(),
+                                                        )),
+                                                    }),
+                                                },
+                                            ],
+                                        })),
+                                    },
+                                    AnyValue {
+                                        value: Some(AnyValueValue::KvlistValue(KeyValueList {
+                                            values: vec![KeyValue {
+                                                key: "version".to_string(),
+                                                value: Some(AnyValue {
+                                                    value: Some(AnyValueValue::StringValue(
+                                                        "1.0.0".to_string(),
+                                                    )),
+                                                }),
+                                            }],
+                                        })),
+                                    },
+                                ],
+                            })),
+                        }),
+                    },
+                ],
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            }),
+            scope_spans: vec![scope_spans],
+            schema_url: String::new(),
+        }
+    }
+
+    /// Builds a traces exporter configured for JSON mode and deep nested KV support,
+    /// pointing at the given Clickhouse endpoint.
+    fn new_nested_traces_exporter<'a>(
+        addr: String,
+        brx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
+    ) -> ExporterType<'a, ResourceSpans> {
+        let builder = ClickhouseExporterConfigBuilder::new(
+            addr,
+            "otel".to_string(),
+            "otel".to_string(),
+            Default::default(),
+        )
+        .with_json(true)
+        .with_nested_kv_max_depth(Some(5))
+        .with_compression(Compression::None)
+        .with_async_insert(true)
+        .with_request_timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+        builder.build_traces_exporter(brx, None).unwrap()
+    }
+
+    /// Integration test: exports a deeply nested OTel trace structure to a real Clickhouse
+    /// instance at http://localhost:8123.
+    ///
+    /// The test is marked `#[ignore]` so it does not run as part of the standard test suite.
+    /// Run it manually once a Clickhouse instance with the `otel` database and `otel_traces`
+    /// table is available:
+    ///
+    /// ```shell
+    /// cargo test -p rotel test_export_nested_traces_to_clickhouse -- --ignored --nocapture
+    /// ```
+    ///
+    /// The nesting depth is controlled by `NESTING_DEPTH` (hardwired to 3 for now).
+    /// Each depth level adds:
+    ///   - A `KvlistValue` attribute containing the next level's KV tree
+    ///   - An `ArrayValue` attribute whose elements are `KvlistValue` maps (with their own
+    ///     nested KV entries)
+    ///
+    /// The test does **not** verify the data stored in Clickhouse; that is done by hand.
+    #[tokio::test]
+    #[ignore]
+    async fn test_export_nested_traces_to_clickhouse() {
+        init_crypto();
+        let _ = tracing_subscriber::fmt::try_init();
+
+        /// Number of nesting levels to generate (change to experiment with deeper trees).
+        const NESTING_DEPTH: usize = 3;
+        const CLICKHOUSE_URL: &str = "http://localhost:8123";
+
+        let resource_spans = build_nested_resource_spans(NESTING_DEPTH);
+
+        let (btx, brx) = bounded::<Vec<Message<ResourceSpans>>>(100);
+        let exporter = new_nested_traces_exporter(CLICKHOUSE_URL.to_string(), brx);
+
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let jh = tokio::spawn(async move { exporter.start(cancel_clone).await.unwrap() });
+
+        btx.send(vec![Message {
+            metadata: None,
+            request_context: None,
+            payload: vec![resource_spans],
+        }])
+        .await
+        .unwrap();
+
+        // Drop the sender so the exporter drains and shuts down cleanly.
+        drop(btx);
+
+        let res = join!(jh);
+        assert_ok!(res.0, "Clickhouse export of nested traces should succeed");
     }
 
     fn new_traces_exporter<'a>(
