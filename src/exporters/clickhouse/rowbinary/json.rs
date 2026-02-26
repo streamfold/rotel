@@ -21,13 +21,11 @@ pub enum JsonType<'a> {
 
 impl<'a> JsonType<'a> {
     /// Create a borrowed string variant
-    #[inline]
     pub fn str_borrowed(s: &'a str) -> Self {
         JsonType::Str(Cow::Borrowed(s))
     }
 
     /// Create an owned string variant
-    #[inline]
     pub fn str_owned(s: String) -> Self {
         JsonType::Str(Cow::Owned(s))
     }
@@ -59,7 +57,6 @@ impl From<ConvertedAttrValue> for JsonType<'static> {
 ///
 /// Flat mode is the hot path - it handles nested complex types by serializing to JSON strings.
 /// Nested mode recursively converts KvlistValue to Object and preserves ArrayValue structure.
-#[inline]
 pub fn anyvalue_to_jsontype<'a>(
     value: &'a AnyValue,
     nested_kv_max_depth: Option<usize>,
@@ -141,7 +138,6 @@ fn anyvalue_to_jsontype_nested<'a>(
 }
 
 /// Convert owned AnyValue to JsonType with configurable nesting behavior.
-#[inline]
 pub fn anyvalue_to_jsontype_owned(
     value: AnyValue,
     nested_kv_max_depth: Option<usize>,
