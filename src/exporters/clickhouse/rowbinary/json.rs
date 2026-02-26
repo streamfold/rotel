@@ -68,55 +68,75 @@ pub fn anyvalue_to_jsontype<'a>(
 }
 
 /// Nested mode: recursively convert with depth tracking.
+///
+/// Nesting rules:
+/// - Simple types (`Int`, `Double`, `String`, `Bool`, `Bytes`) are always emitted as typed
+///   values regardless of depth or mode.
+/// - `ArrayValue`: preserved as `JsonType::Array` when within the allowed nesting depth.
+///   In flat mode (`max_depth = None`) only depth-0 arrays are preserved; elements at
+///   depth ≥ 1 are flattened (complex types → JSON strings).
+/// - `KvlistValue`: converted to `JsonType::Object` only in explicit nested mode
+///   (`max_depth = Some(n)`) and when `depth <= n`. In flat mode it is always a JSON string
+///   because KvList flattening is handled at the transformer level via path expansion.
 fn anyvalue_to_jsontype_nested<'a>(
     value: &'a AnyValue,
     depth: usize,
     max_depth: Option<usize>,
 ) -> JsonType<'a> {
-    if max_depth.is_none() || depth > max_depth.unwrap() {
-        return match &value.value {
-            Some(Value::IntValue(i)) => JsonType::Int(*i),
-            Some(Value::DoubleValue(d)) => JsonType::Double(*d),
-            Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
-            Some(Value::BoolValue(b)) => JsonType::Bool(*b),
-            // Complex nested types become JSON strings
-            Some(Value::ArrayValue(arr)) => JsonType::str_owned(json!(arr).to_string()),
-            Some(Value::KvlistValue(kv)) => JsonType::str_owned(json!(kv).to_string()),
-            Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
-            None => JsonType::str_borrowed(""),
-        };
-    }
-
     match &value.value {
+        // Simple types are always emitted as their native JsonType, regardless of depth.
         Some(Value::IntValue(i)) => JsonType::Int(*i),
         Some(Value::DoubleValue(d)) => JsonType::Double(*d),
         Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
         Some(Value::BoolValue(b)) => JsonType::Bool(*b),
-        Some(Value::ArrayValue(a)) => {
-            let values = a
-                .values
-                .iter()
-                .map(|v| anyvalue_to_jsontype_nested(v, depth + 1, max_depth))
-                .collect();
-            JsonType::Array(values)
-        }
-        Some(Value::KvlistValue(kv)) => {
-            let entries = kv
-                .values
-                .iter()
-                .filter_map(|entry| {
-                    entry.value.as_ref().map(|v| {
-                        (
-                            Cow::Borrowed(entry.key.as_str()),
-                            anyvalue_to_jsontype_nested(v, depth + 1, max_depth),
-                        )
-                    })
-                })
-                .collect();
-            JsonType::Object(entries)
-        }
         Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
         None => JsonType::str_borrowed(""),
+
+        Some(Value::ArrayValue(a)) => {
+            // In flat mode (None) only depth-0 arrays are preserved as Array.
+            // In nested mode (Some(d)) arrays at depth <= d are preserved.
+            let within_depth = match max_depth {
+                None => depth == 0,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
+                let values = a
+                    .values
+                    .iter()
+                    .map(|v| anyvalue_to_jsontype_nested(v, depth + 1, max_depth))
+                    .collect();
+                JsonType::Array(values)
+            } else {
+                JsonType::str_owned(json!(a).to_string())
+            }
+        }
+
+        Some(Value::KvlistValue(kv)) => {
+            // KvList is only converted to Object in explicit nested mode and within depth.
+            // Flat mode always serialises it as a JSON string; the transformer handles
+            // top-level KvList flattening via dotted-path expansion instead.
+            let within_depth = match max_depth {
+                None => false,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
+                let entries = kv
+                    .values
+                    .iter()
+                    .filter_map(|entry| {
+                        entry.value.as_ref().map(|v| {
+                            (
+                                Cow::Borrowed(entry.key.as_str()),
+                                anyvalue_to_jsontype_nested(v, depth + 1, max_depth),
+                            )
+                        })
+                    })
+                    .collect();
+                JsonType::Object(entries)
+            } else {
+                JsonType::str_owned(json!(kv).to_string())
+            }
+        }
     }
 }
 
@@ -130,54 +150,61 @@ pub fn anyvalue_to_jsontype_owned(
 }
 
 /// Nested mode (owned): recursively convert with depth tracking.
+/// Mirrors the logic of `anyvalue_to_jsontype_nested` but takes ownership of the value.
 fn anyvalue_to_jsontype_nested_owned(
     value: AnyValue,
     depth: usize,
     max_depth: Option<usize>,
 ) -> JsonType<'static> {
-    if max_depth.is_none() || depth > max_depth.unwrap() {
-        return match value.value {
-            Some(Value::IntValue(i)) => JsonType::Int(i),
-            Some(Value::DoubleValue(d)) => JsonType::Double(d),
-            Some(Value::StringValue(s)) => JsonType::str_owned(s),
-            Some(Value::BoolValue(b)) => JsonType::Bool(b),
-            Some(Value::ArrayValue(arr)) => JsonType::str_owned(json!(arr).to_string()),
-            Some(Value::KvlistValue(kv)) => JsonType::str_owned(json!(kv).to_string()),
-            Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
-            None => JsonType::str_owned(String::new()),
-        };
-    }
-
     match value.value {
+        // Simple types are always emitted as their native JsonType, regardless of depth.
         Some(Value::IntValue(i)) => JsonType::Int(i),
         Some(Value::DoubleValue(d)) => JsonType::Double(d),
         Some(Value::StringValue(s)) => JsonType::str_owned(s),
         Some(Value::BoolValue(b)) => JsonType::Bool(b),
-        Some(Value::ArrayValue(a)) => {
-            let values = a
-                .values
-                .into_iter()
-                .map(|v| anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth))
-                .collect();
-            JsonType::Array(values)
-        }
-        Some(Value::KvlistValue(kv)) => {
-            let entries = kv
-                .values
-                .into_iter()
-                .filter_map(|entry| {
-                    entry.value.map(|v| {
-                        (
-                            Cow::Owned(entry.key),
-                            anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth),
-                        )
-                    })
-                })
-                .collect();
-            JsonType::Object(entries)
-        }
         Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
         None => JsonType::str_owned(String::new()),
+
+        Some(Value::ArrayValue(a)) => {
+            let within_depth = match max_depth {
+                None => depth == 0,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
+                let values = a
+                    .values
+                    .into_iter()
+                    .map(|v| anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth))
+                    .collect();
+                JsonType::Array(values)
+            } else {
+                JsonType::str_owned(json!(a).to_string())
+            }
+        }
+
+        Some(Value::KvlistValue(kv)) => {
+            let within_depth = match max_depth {
+                None => false,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
+                let entries = kv
+                    .values
+                    .into_iter()
+                    .filter_map(|entry| {
+                        entry.value.map(|v| {
+                            (
+                                Cow::Owned(entry.key),
+                                anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth),
+                            )
+                        })
+                    })
+                    .collect();
+                JsonType::Object(entries)
+            } else {
+                JsonType::str_owned(json!(kv).to_string())
+            }
+        }
     }
 }
 
@@ -232,9 +259,11 @@ impl<'a> Serialize for JsonType<'a> {
                 jsonbool.serialize(serializer)
             }
             JsonType::Array(a) => {
-                // We always use the Dynamic type here because it is simpler to serialize. Clickhouse
-                // will use Nullable(T) in responses if all types are the same, but there doesn't seem
-                // to be a cost savings in wire size.
+                // Array(Dynamic(max_types=32)) — we always use Dynamic elements because
+                // array attributes are heterogeneous in practice.  ClickHouse will narrow
+                // the stored type when all elements share the same type.
+                // Wire format: 0x1E (Array) | 0x2B (Dynamic) | 0x20 (max_types=32)
+                //              | var_uint(count) | [type_disc value_bytes] …
                 let jsonarray = JsonArrayDynamic {
                     array_code: 0x1e,
                     dynamic_code: 0x2b,
@@ -244,12 +273,11 @@ impl<'a> Serialize for JsonType<'a> {
                 jsonarray.serialize(serializer)
             }
             JsonType::Object(entries) => {
-                // Object type code 0x1f for named tuples/objects
-                let jsonobject = JsonObject {
-                    object_code: 0x1f,
-                    entries,
-                };
-                jsonobject.serialize(serializer)
+                // Map(String, Dynamic(max_types=32))
+                // Wire format: 0x27 (Map) | 0x15 (String key type)
+                //              | 0x2B 0x20 (Dynamic(max_types=32) value type)
+                //              | var_uint(count) | [var_uint(key_len) key_bytes type_disc value_bytes] …
+                JsonMapDynamic { entries }.serialize(serializer)
             }
         }
     }
@@ -287,34 +315,88 @@ struct JsonArrayDynamic<'a> {
     values: &'a Vec<JsonType<'a>>,
 }
 
-/// Serializer for Object type (named tuple in ClickHouse JSON format)
-/// Format: object_code (0x1f) | num_entries | [key_len | key_bytes | value]...
-struct JsonObject<'a> {
-    object_code: u8,
+/// Serialises a `JsonType::Object` as `Map(String, Dynamic(max_types=32))`.
+///
+/// From the ClickHouse binary encoding specification:
+///   Map(K, V)  →  0x27 <key_type_enc> <val_type_enc>
+///
+/// So `Map(String, Dynamic(max_types=32))` has the type descriptor:
+///   0x27  (Map)
+///   0x15  (String key type)
+///   0x2B  (Dynamic value type)
+///   0x20  (max_types = 32)
+///
+/// The value data (same as `Array(Tuple(K, V))` in RowBinary) is then:
+///   var_uint(count)
+///   [ var_uint(key_len) key_bytes  type_disc value_bytes ] …
+///
+/// Keys are plain ClickHouse `String` values — varint length followed by the UTF-8 bytes,
+/// with **no** type-discriminator prefix (the type is fixed by the Map key type above).
+/// Values are Dynamic-encoded: a type discriminator byte followed by the value bytes.
+struct JsonMapDynamic<'a> {
     entries: &'a Vec<(Cow<'a, str>, JsonType<'a>)>,
 }
 
-impl<'a> Serialize for JsonObject<'a> {
+impl<'a> Serialize for JsonMapDynamic<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         use serde::ser::SerializeTuple;
-        // Object format: code | num_keys | [key_len | key_bytes | value_type | value]...
-        let num_entries = self.entries.len();
-        let mut seq = serializer.serialize_tuple(2 + num_entries * 2)?;
-        seq.serialize_element(&self.object_code)?;
-        seq.serialize_element(&(num_entries as u8))?;
-        for (key, value) in self.entries.iter() {
-            // Serialize key as length-prefixed string (Cow dereferences to &str)
-            seq.serialize_element(&JsonStr {
-                code: 0x00, // No type code for object keys, just length + bytes
-                value: key.as_ref(),
+        // `serialize_tuple` writes elements flat (no length prefix), which is exactly
+        // what we need for the 4-byte type descriptor.  The 5th element is
+        // `MapEntriesSeq`, whose own `serialize_seq` call emits the LEB128 entry count
+        // followed by the key/value pairs.
+        let mut tup = serializer.serialize_tuple(5)?;
+        tup.serialize_element(&0x27u8)?; // Map type code
+        tup.serialize_element(&0x15u8)?; // String key type
+        tup.serialize_element(&0x2bu8)?; // Dynamic value type
+        tup.serialize_element(&0x20u8)?; // max_types = 32
+        tup.serialize_element(&MapEntriesSeq(self.entries))?;
+        tup.end()
+    }
+}
+
+/// Wraps the entry slice so that `Serialize` emits a LEB128 count prefix via
+/// `serialize_seq`, followed by each `(key, value)` pair.
+struct MapEntriesSeq<'a>(&'a Vec<(Cow<'a, str>, JsonType<'a>)>);
+
+impl<'a> Serialize for MapEntriesSeq<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for (key, value) in self.0 {
+            seq.serialize_element(&MapEntryRef {
+                key: key.as_ref(),
+                value,
             })?;
-            // Serialize the value with its type
-            seq.serialize_element(value)?;
         }
         seq.end()
+    }
+}
+
+/// A single map entry: a `String` key (no type discriminator, type is fixed by the Map
+/// type descriptor) followed by a Dynamic-encoded value (type discriminator + data).
+struct MapEntryRef<'a> {
+    key: &'a str,
+    value: &'a JsonType<'a>,
+}
+
+impl<'a> Serialize for MapEntryRef<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeTuple;
+        let mut tup = serializer.serialize_tuple(2)?;
+        // Key: raw String — varint(len) + UTF-8 bytes, no type discriminator.
+        tup.serialize_element(self.key)?;
+        // Value: Dynamic — type discriminator byte + value bytes (from JsonType::serialize).
+        tup.serialize_element(self.value)?;
+        tup.end()
     }
 }
 
