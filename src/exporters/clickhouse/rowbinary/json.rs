@@ -1,25 +1,41 @@
 use serde::{Serialize, Serializer};
+use std::borrow::Cow;
 
 use crate::otlp::cvattr::ConvertedAttrValue;
 use opentelemetry_proto::tonic::common::v1::AnyValue;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use serde_json::json;
 
+/// JSON type representation for ClickHouse rowbinary format.
+/// Uses `Cow` for strings and object keys to efficiently handle both
+/// borrowed and owned data with a single type.
 #[derive(Debug)]
 pub enum JsonType<'a> {
     Int(i64),
-    Str(&'a str),
-    StrOwned(String),
+    Str(Cow<'a, str>),
     Double(f64),
     Bool(bool),
     Array(Vec<JsonType<'a>>),
+    Object(Vec<(Cow<'a, str>, JsonType<'a>)>),
+}
+
+impl<'a> JsonType<'a> {
+    /// Create a borrowed string variant
+    pub fn str_borrowed(s: &'a str) -> Self {
+        JsonType::Str(Cow::Borrowed(s))
+    }
+
+    /// Create an owned string variant
+    pub fn str_owned(s: String) -> Self {
+        JsonType::Str(Cow::Owned(s))
+    }
 }
 
 impl<'a> From<&'a ConvertedAttrValue> for JsonType<'a> {
     fn from(value: &'a ConvertedAttrValue) -> Self {
         match value {
             ConvertedAttrValue::Int(i) => JsonType::Int(*i),
-            ConvertedAttrValue::String(s) => JsonType::Str(s.as_str()),
+            ConvertedAttrValue::String(s) => JsonType::str_borrowed(s.as_str()),
             ConvertedAttrValue::Double(d) => JsonType::Double(*d),
         }
     }
@@ -29,81 +45,176 @@ impl From<ConvertedAttrValue> for JsonType<'static> {
     fn from(value: ConvertedAttrValue) -> Self {
         match value {
             ConvertedAttrValue::Int(i) => JsonType::Int(i),
-            ConvertedAttrValue::String(s) => JsonType::StrOwned(s),
+            ConvertedAttrValue::String(s) => JsonType::str_owned(s),
             ConvertedAttrValue::Double(d) => JsonType::Double(d),
         }
     }
 }
 
-impl<'a> From<&'a AnyValue> for JsonType<'a> {
-    fn from(value: &'a AnyValue) -> Self {
-        match &value.value {
-            Some(Value::IntValue(i)) => JsonType::Int(*i),
-            Some(Value::DoubleValue(d)) => JsonType::Double(*d),
-            Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
-            Some(Value::BoolValue(b)) => JsonType::Bool(*b),
-            Some(Value::ArrayValue(a)) => {
-                // We support arrays with all simple values, no recursive nesting
+/// Convert AnyValue to JsonType with configurable nesting behavior.
+/// - `nested_kv_max_depth = None` or `Some(0)`: flat mode (backwards compatible, fastest)
+/// - `nested_kv_max_depth = Some(n)` where n > 0: recursive conversion up to depth n
+///
+/// Flat mode is the hot path - it handles nested complex types by serializing to JSON strings.
+/// Nested mode recursively converts KvlistValue to Object and preserves ArrayValue structure.
+pub fn anyvalue_to_jsontype<'a>(
+    value: &'a AnyValue,
+    nested_kv_max_depth: Option<usize>,
+) -> JsonType<'a> {
+    anyvalue_to_jsontype_nested(value, 0, nested_kv_max_depth)
+}
+
+/// Nested mode: recursively convert with depth tracking.
+///
+/// Nesting rules:
+/// - Simple types (`Int`, `Double`, `String`, `Bool`, `Bytes`) are always emitted as typed
+///   values regardless of depth or mode.
+/// - `ArrayValue`: preserved as `JsonType::Array` when within the allowed nesting depth.
+///   In flat mode (`max_depth = None`) only depth-0 arrays are preserved; elements at
+///   depth ≥ 1 are flattened (complex types → JSON strings).
+/// - `KvlistValue`: converted to `JsonType::Object` only in explicit nested mode
+///   (`max_depth = Some(n)`) and when `depth <= n`. In flat mode it is always a JSON string
+///   because KvList flattening is handled at the transformer level via path expansion.
+fn anyvalue_to_jsontype_nested<'a>(
+    value: &'a AnyValue,
+    depth: usize,
+    max_depth: Option<usize>,
+) -> JsonType<'a> {
+    match &value.value {
+        // Simple types are always emitted as their native JsonType, regardless of depth.
+        Some(Value::IntValue(i)) => JsonType::Int(*i),
+        Some(Value::DoubleValue(d)) => JsonType::Double(*d),
+        Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
+        Some(Value::BoolValue(b)) => JsonType::Bool(*b),
+        Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
+        None => JsonType::str_borrowed(""),
+
+        Some(Value::ArrayValue(a)) => {
+            // In flat mode (None) only depth-0 arrays are preserved as Array.
+            // In nested mode (Some(d)) arrays at depth <= d are preserved.
+            let within_depth = match max_depth {
+                None => depth == 0,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
                 let values = a
                     .values
                     .iter()
-                    .map(|v| match &v.value {
-                        Some(Value::IntValue(i)) => JsonType::Int(*i),
-                        Some(Value::DoubleValue(d)) => JsonType::Double(*d),
-                        Some(Value::StringValue(s)) => JsonType::Str(s.as_str()),
-                        Some(Value::BoolValue(b)) => JsonType::Bool(*b),
-                        Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
-                        Some(Value::KvlistValue(kv)) => JsonType::StrOwned(json!(kv).to_string()),
-                        Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
-                        None => JsonType::Str(""),
-                    })
+                    .map(|v| anyvalue_to_jsontype_nested(v, depth + 1, max_depth))
                     .collect();
                 JsonType::Array(values)
+            } else {
+                JsonType::str_owned(json!(a).to_string())
             }
-            Some(Value::KvlistValue(_kv)) => {
-                // KvlistValue should be flattened before reaching this point
-                // This case should not occur in normal operation
-                JsonType::Str("")
+        }
+
+        Some(Value::KvlistValue(kv)) => {
+            // KvList is only converted to Object in explicit nested mode and within depth.
+            // Flat mode always serialises it as a JSON string; the transformer handles
+            // top-level KvList flattening via dotted-path expansion instead.
+            let within_depth = match max_depth {
+                None => false,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
+                let entries = kv
+                    .values
+                    .iter()
+                    .filter_map(|entry| {
+                        entry.value.as_ref().map(|v| {
+                            (
+                                Cow::Borrowed(entry.key.as_str()),
+                                anyvalue_to_jsontype_nested(v, depth + 1, max_depth),
+                            )
+                        })
+                    })
+                    .collect();
+                JsonType::Object(entries)
+            } else {
+                JsonType::str_owned(json!(kv).to_string())
             }
-            Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
-            None => JsonType::Str(""),
         }
     }
 }
 
-impl From<AnyValue> for JsonType<'static> {
-    fn from(value: AnyValue) -> Self {
-        match value.value {
-            Some(Value::IntValue(i)) => JsonType::Int(i),
-            Some(Value::DoubleValue(d)) => JsonType::Double(d),
-            Some(Value::StringValue(s)) => JsonType::StrOwned(s),
-            Some(Value::BoolValue(b)) => JsonType::Bool(b),
-            Some(Value::ArrayValue(a)) => {
-                // We support arrays with all simple values, no recursive nesting
+/// Convert owned AnyValue to JsonType with configurable nesting behavior.
+pub fn anyvalue_to_jsontype_owned(
+    value: AnyValue,
+    nested_kv_max_depth: Option<usize>,
+) -> JsonType<'static> {
+    anyvalue_to_jsontype_nested_owned(value, 0, nested_kv_max_depth)
+}
+
+/// Nested mode (owned): recursively convert with depth tracking.
+/// Mirrors the logic of `anyvalue_to_jsontype_nested` but takes ownership of the value.
+fn anyvalue_to_jsontype_nested_owned(
+    value: AnyValue,
+    depth: usize,
+    max_depth: Option<usize>,
+) -> JsonType<'static> {
+    match value.value {
+        // Simple types are always emitted as their native JsonType, regardless of depth.
+        Some(Value::IntValue(i)) => JsonType::Int(i),
+        Some(Value::DoubleValue(d)) => JsonType::Double(d),
+        Some(Value::StringValue(s)) => JsonType::str_owned(s),
+        Some(Value::BoolValue(b)) => JsonType::Bool(b),
+        Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
+        None => JsonType::str_owned(String::new()),
+
+        Some(Value::ArrayValue(a)) => {
+            let within_depth = match max_depth {
+                None => depth == 0,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
                 let values = a
                     .values
                     .into_iter()
-                    .map(|v| match v.value {
-                        Some(Value::IntValue(i)) => JsonType::Int(i),
-                        Some(Value::DoubleValue(d)) => JsonType::Double(d),
-                        Some(Value::StringValue(s)) => JsonType::StrOwned(s),
-                        Some(Value::BoolValue(b)) => JsonType::Bool(b),
-                        Some(Value::ArrayValue(a)) => JsonType::StrOwned(json!(a).to_string()),
-                        Some(Value::KvlistValue(kv)) => JsonType::StrOwned(json!(kv).to_string()),
-                        Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(b)),
-                        None => JsonType::Str(""),
-                    })
+                    .map(|v| anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth))
                     .collect();
                 JsonType::Array(values)
+            } else {
+                JsonType::str_owned(json!(a).to_string())
             }
-            Some(Value::KvlistValue(_kv)) => {
-                // KvlistValue should be flattened before reaching this point
-                // This case should not occur in normal operation
-                JsonType::StrOwned(String::new())
-            }
-            Some(Value::BytesValue(b)) => JsonType::StrOwned(hex::encode(&b)),
-            None => JsonType::StrOwned(String::new()),
         }
+
+        Some(Value::KvlistValue(kv)) => {
+            let within_depth = match max_depth {
+                None => false,
+                Some(d) => depth <= d,
+            };
+            if within_depth {
+                let entries = kv
+                    .values
+                    .into_iter()
+                    .filter_map(|entry| {
+                        entry.value.map(|v| {
+                            (
+                                Cow::Owned(entry.key),
+                                anyvalue_to_jsontype_nested_owned(v, depth + 1, max_depth),
+                            )
+                        })
+                    })
+                    .collect();
+                JsonType::Object(entries)
+            } else {
+                JsonType::str_owned(json!(kv).to_string())
+            }
+        }
+    }
+}
+
+impl<'a> From<&'a AnyValue> for JsonType<'a> {
+    /// Default conversion uses flat mode for backwards compatibility.
+    fn from(value: &'a AnyValue) -> Self {
+        anyvalue_to_jsontype(value, None)
+    }
+}
+
+impl From<AnyValue> for JsonType<'static> {
+    /// Default conversion uses flat mode for backwards compatibility.
+    fn from(value: AnyValue) -> Self {
+        anyvalue_to_jsontype_owned(value, None)
     }
 }
 
@@ -125,14 +236,7 @@ impl<'a> Serialize for JsonType<'a> {
             JsonType::Str(s) => {
                 let jsonstr = JsonStr {
                     code: 0x15,
-                    value: s,
-                };
-                jsonstr.serialize(serializer)
-            }
-            JsonType::StrOwned(s) => {
-                let jsonstr = JsonStr {
-                    code: 0x15,
-                    value: &s,
+                    value: s.as_ref(),
                 };
                 jsonstr.serialize(serializer)
             }
@@ -151,9 +255,11 @@ impl<'a> Serialize for JsonType<'a> {
                 jsonbool.serialize(serializer)
             }
             JsonType::Array(a) => {
-                // We always use the Dyanmic type here because it is simpler to serialize. Clickhouse
-                // will use Nullable(T) in responses if all types are the same, but there doesn't seem
-                // to be a cost savings in wire size.
+                // Array(Dynamic(max_types=32)) — we always use Dynamic elements because
+                // array attributes are heterogeneous in practice.  ClickHouse will narrow
+                // the stored type when all elements share the same type.
+                // Wire format: 0x1E (Array) | 0x2B (Dynamic) | 0x20 (max_types=32)
+                //              | var_uint(count) | [type_disc value_bytes] …
                 let jsonarray = JsonArrayDynamic {
                     array_code: 0x1e,
                     dynamic_code: 0x2b,
@@ -161,6 +267,13 @@ impl<'a> Serialize for JsonType<'a> {
                     values: a,
                 };
                 jsonarray.serialize(serializer)
+            }
+            JsonType::Object(entries) => {
+                // Map(String, Dynamic(max_types=32))
+                // Wire format: 0x27 (Map) | 0x15 (String key type)
+                //              | 0x2B 0x20 (Dynamic(max_types=32) value type)
+                //              | var_uint(count) | [var_uint(key_len) key_bytes type_disc value_bytes] …
+                JsonMapDynamic { entries }.serialize(serializer)
             }
         }
     }
@@ -196,6 +309,91 @@ struct JsonArrayDynamic<'a> {
     dynamic_code: u8,
     max_types: u8,
     values: &'a Vec<JsonType<'a>>,
+}
+
+/// Serialises a `JsonType::Object` as `Map(String, Dynamic(max_types=32))`.
+///
+/// From the ClickHouse binary encoding specification:
+///   Map(K, V)  →  0x27 <key_type_enc> <val_type_enc>
+///
+/// So `Map(String, Dynamic(max_types=32))` has the type descriptor:
+///   0x27  (Map)
+///   0x15  (String key type)
+///   0x2B  (Dynamic value type)
+///   0x20  (max_types = 32)
+///
+/// The value data (same as `Array(Tuple(K, V))` in RowBinary) is then:
+///   var_uint(count)
+///   [ var_uint(key_len) key_bytes  type_disc value_bytes ] …
+///
+/// Keys are plain ClickHouse `String` values — varint length followed by the UTF-8 bytes,
+/// with **no** type-discriminator prefix (the type is fixed by the Map key type above).
+/// Values are Dynamic-encoded: a type discriminator byte followed by the value bytes.
+struct JsonMapDynamic<'a> {
+    entries: &'a Vec<(Cow<'a, str>, JsonType<'a>)>,
+}
+
+impl<'a> Serialize for JsonMapDynamic<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeTuple;
+        // `serialize_tuple` writes elements flat (no length prefix), which is exactly
+        // what we need for the 4-byte type descriptor.  The 5th element is
+        // `MapEntriesSeq`, whose own `serialize_seq` call emits the LEB128 entry count
+        // followed by the key/value pairs.
+        let mut tup = serializer.serialize_tuple(5)?;
+        tup.serialize_element(&0x27u8)?; // Map type code
+        tup.serialize_element(&0x15u8)?; // String key type
+        tup.serialize_element(&0x2bu8)?; // Dynamic value type
+        tup.serialize_element(&0x20u8)?; // max_types = 32
+        tup.serialize_element(&MapEntriesSeq(self.entries))?;
+        tup.end()
+    }
+}
+
+/// Wraps the entry slice so that `Serialize` emits a LEB128 count prefix via
+/// `serialize_seq`, followed by each `(key, value)` pair.
+struct MapEntriesSeq<'a>(&'a Vec<(Cow<'a, str>, JsonType<'a>)>);
+
+impl<'a> Serialize for MapEntriesSeq<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for (key, value) in self.0 {
+            seq.serialize_element(&MapEntryRef {
+                key: key.as_ref(),
+                value,
+            })?;
+        }
+        seq.end()
+    }
+}
+
+/// A single map entry: a `String` key (no type discriminator, type is fixed by the Map
+/// type descriptor) followed by a Dynamic-encoded value (type discriminator + data).
+struct MapEntryRef<'a> {
+    key: &'a str,
+    value: &'a JsonType<'a>,
+}
+
+impl<'a> Serialize for MapEntryRef<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeTuple;
+        let mut tup = serializer.serialize_tuple(2)?;
+        // Key: raw String — varint(len) + UTF-8 bytes, no type discriminator.
+        tup.serialize_element(self.key)?;
+        // Value: Dynamic — type discriminator byte + value bytes (from JsonType::serialize).
+        tup.serialize_element(self.value)?;
+        tup.end()
+    }
 }
 
 #[cfg(test)]
@@ -244,12 +442,12 @@ mod tests {
         );
     }
 
-    /// Test that verifies the byte patterns for JsonType::Str serialization.
+    /// Test that verifies the byte patterns for JsonType::Str serialization (borrowed).
     /// This test prevents regressions in the wire format by ensuring the serialized
     /// bytes match the expected pattern: [type_code(0x15), string_length, string_bytes]
     #[test]
     fn test_jsontype_str_serialization() {
-        let json_str = JsonType::Str("hello");
+        let json_str = JsonType::str_borrowed("hello");
         let serialized = serialize_to_bytes(json_str);
 
         // Expected bytes: type code 0x15 + string length (5 as u8) + "hello" bytes
@@ -261,14 +459,14 @@ mod tests {
 
         assert_eq!(
             serialized, expected,
-            "JsonType::Str(\"hello\") serialization bytes mismatch"
+            "JsonType::str_borrowed(\"hello\") serialization bytes mismatch"
         );
     }
 
     /// Test that verifies the byte patterns for JsonType::Str with empty string.
     #[test]
     fn test_jsontype_str_empty_serialization() {
-        let json_str = JsonType::Str("");
+        let json_str = JsonType::str_borrowed("");
         let serialized = serialize_to_bytes(json_str);
 
         // Expected bytes: type code 0x15 + string length (0 as u8)
@@ -279,15 +477,15 @@ mod tests {
 
         assert_eq!(
             serialized, expected,
-            "JsonType::Str(\"\") serialization bytes mismatch"
+            "JsonType::str_borrowed(\"\") serialization bytes mismatch"
         );
     }
 
-    /// Test that verifies the byte patterns for JsonType::StrOwned serialization.
-    /// This should produce the same byte pattern as JsonType::Str.
+    /// Test that verifies the byte patterns for JsonType::Str (owned) serialization.
+    /// This should produce the same byte pattern as borrowed Str.
     #[test]
     fn test_jsontype_str_owned_serialization() {
-        let json_str_owned = JsonType::StrOwned("world".to_string());
+        let json_str_owned = JsonType::str_owned("world".to_string());
         let serialized = serialize_to_bytes(json_str_owned);
 
         // Expected bytes: type code 0x15 + string length (5 as u8) + "world" bytes
@@ -299,7 +497,7 @@ mod tests {
 
         assert_eq!(
             serialized, expected,
-            "JsonType::StrOwned(\"world\") serialization bytes mismatch"
+            "JsonType::str_owned(\"world\") serialization bytes mismatch"
         );
     }
 
@@ -370,7 +568,7 @@ mod tests {
         assert_eq!(serialized_array, expected);
 
         // Different types
-        let json_array = JsonType::Array(vec![JsonType::Int(3), JsonType::Str("hello")]);
+        let json_array = JsonType::Array(vec![JsonType::Int(3), JsonType::str_borrowed("hello")]);
         let serialized_array = serialize_to_bytes(json_array);
 
         let expected: Vec<u8> = vec![
@@ -413,11 +611,93 @@ mod tests {
         );
     }
 
+    /// Test flat mode (backwards compatible) - KvlistValue and nested ArrayValue become JSON strings
     #[test]
-    fn test_anyvalue_arrayvalue_conversion() {
+    fn test_anyvalue_arrayvalue_flat_mode() {
         use opentelemetry_proto::tonic::common::v1::{ArrayValue, KeyValue, KeyValueList};
 
-        // Create an ArrayValue with mixed types including KvlistValue
+        let mut kv_list = KeyValueList::default();
+        kv_list.values.push(KeyValue {
+            key: "nested_key".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::StringValue("nested_value".to_string())),
+            }),
+        });
+
+        let array_value = ArrayValue {
+            values: vec![
+                AnyValue {
+                    value: Some(Value::IntValue(42)),
+                },
+                AnyValue {
+                    value: Some(Value::StringValue("test_string".to_string())),
+                },
+                AnyValue {
+                    value: Some(Value::KvlistValue(kv_list)),
+                },
+                AnyValue {
+                    value: Some(Value::ArrayValue(ArrayValue {
+                        values: vec![AnyValue {
+                            value: Some(Value::IntValue(100)),
+                        }],
+                    })),
+                },
+            ],
+        };
+
+        let any_value = AnyValue {
+            value: Some(Value::ArrayValue(array_value)),
+        };
+
+        // Default From uses flat mode (None)
+        let json_type: JsonType = (&any_value).into();
+
+        match json_type {
+            JsonType::Array(values) => {
+                assert_eq!(values.len(), 4);
+
+                // Simple types are converted directly
+                match &values[0] {
+                    JsonType::Int(i) => assert_eq!(*i, 42),
+                    _ => panic!("Expected Int(42) at index 0"),
+                }
+                match &values[1] {
+                    JsonType::Str(s) => assert_eq!(s.as_ref(), "test_string"),
+                    _ => panic!("Expected Str at index 1"),
+                }
+
+                // KvlistValue becomes a JSON string in flat mode
+                match &values[2] {
+                    JsonType::Str(s) => {
+                        assert!(s.as_ref().contains("nested_key"));
+                        assert!(s.as_ref().contains("nested_value"));
+                    }
+                    _ => panic!(
+                        "Expected Str (JSON string) at index 2 in flat mode, got {:?}",
+                        &values[2]
+                    ),
+                }
+
+                // Nested ArrayValue becomes a JSON string in flat mode
+                match &values[3] {
+                    JsonType::Str(s) => {
+                        assert!(s.as_ref().contains("100"));
+                    }
+                    _ => panic!(
+                        "Expected Str (JSON string) at index 3 in flat mode, got {:?}",
+                        &values[3]
+                    ),
+                }
+            }
+            _ => panic!("Expected JsonType::Array"),
+        }
+    }
+
+    /// Test nested mode - KvlistValue becomes Object, nested ArrayValue stays Array
+    #[test]
+    fn test_anyvalue_arrayvalue_nested_mode() {
+        use opentelemetry_proto::tonic::common::v1::{ArrayValue, KeyValue, KeyValueList};
+
         let mut kv_list = KeyValueList::default();
         kv_list.values.push(KeyValue {
             key: "nested_key".to_string(),
@@ -444,7 +724,7 @@ mod tests {
                     value: Some(Value::KvlistValue(kv_list)),
                 },
                 AnyValue {
-                    value: Some(Value::BytesValue(vec![0x48, 0x65, 0x6c, 0x6c, 0x6f])), // "Hello"
+                    value: Some(Value::BytesValue(vec![0x48, 0x65, 0x6c, 0x6c, 0x6f])),
                 },
                 AnyValue {
                     value: Some(Value::ArrayValue(ArrayValue {
@@ -460,59 +740,64 @@ mod tests {
             value: Some(Value::ArrayValue(array_value)),
         };
 
-        let json_type: JsonType = (&any_value).into();
+        // Use nested mode with max depth 10
+        let json_type = anyvalue_to_jsontype(&any_value, Some(10));
 
         match json_type {
             JsonType::Array(values) => {
                 assert_eq!(values.len(), 7);
 
-                // Check Int value
                 match &values[0] {
                     JsonType::Int(i) => assert_eq!(*i, 42),
                     _ => panic!("Expected Int(42) at index 0"),
                 }
-
-                // Check String value
                 match &values[1] {
-                    JsonType::Str(s) => assert_eq!(*s, "test_string"),
-                    _ => panic!("Expected Str(\"test_string\") at index 1"),
+                    JsonType::Str(s) => assert_eq!(s.as_ref(), "test_string"),
+                    _ => panic!("Expected Str at index 1"),
                 }
-
-                // Check Double value
                 match &values[2] {
                     JsonType::Double(d) => assert_eq!(*d, 3.14),
-                    _ => panic!("Expected Double(3.14) at index 2"),
+                    _ => panic!("Expected Double at index 2"),
                 }
-
-                // Check Bool value
                 match &values[3] {
                     JsonType::Bool(b) => assert!(b),
-                    _ => panic!("Expected Bool(true) at index 3"),
+                    _ => panic!("Expected Bool at index 3"),
                 }
 
-                // Check KvlistValue (converted to JSON string)
+                // KvlistValue becomes Object in nested mode
                 match &values[4] {
-                    JsonType::StrOwned(s) => {
-                        // The exact JSON string format may vary, but it should contain the key-value pair
-                        assert!(s.contains("nested_key"));
-                        assert!(s.contains("nested_value"));
+                    JsonType::Object(entries) => {
+                        assert_eq!(entries.len(), 1);
+                        assert_eq!(entries[0].0.as_ref(), "nested_key");
+                        match &entries[0].1 {
+                            JsonType::Str(s) => assert_eq!(s.as_ref(), "nested_value"),
+                            _ => panic!("Expected nested_key to have Str value"),
+                        }
                     }
-                    _ => panic!("Expected StrOwned with JSON string at index 4"),
+                    _ => panic!(
+                        "Expected Object at index 4 in nested mode, got {:?}",
+                        &values[4]
+                    ),
                 }
 
-                // Check BytesValue (hex encoded)
                 match &values[5] {
-                    JsonType::StrOwned(s) => assert_eq!(s, "48656c6c6f"), // "Hello" in hex
-                    _ => panic!("Expected StrOwned with hex string at index 5"),
+                    JsonType::Str(s) => assert_eq!(s.as_ref(), "48656c6c6f"),
+                    _ => panic!("Expected Str (hex) at index 5"),
                 }
 
-                // Check nested ArrayValue (converted to JSON string)
+                // Nested ArrayValue stays as Array in nested mode
                 match &values[6] {
-                    JsonType::StrOwned(s) => {
-                        // Should be a JSON representation of the nested array
-                        assert!(s.contains("100"));
+                    JsonType::Array(nested) => {
+                        assert_eq!(nested.len(), 1);
+                        match &nested[0] {
+                            JsonType::Int(i) => assert_eq!(*i, 100),
+                            _ => panic!("Expected Int(100) in nested array"),
+                        }
                     }
-                    _ => panic!("Expected StrOwned with JSON array string at index 6"),
+                    _ => panic!(
+                        "Expected Array at index 6 in nested mode, got {:?}",
+                        &values[6]
+                    ),
                 }
             }
             _ => panic!("Expected JsonType::Array"),
@@ -532,11 +817,8 @@ mod tests {
     fn debug_jsontype_serialization_bytes() {
         let test_cases = vec![
             ("Int(42)", JsonType::Int(42)),
-            ("Str(\"hello\")", JsonType::Str("hello")),
-            (
-                "StrOwned(\"world\")",
-                JsonType::StrOwned("world".to_string()),
-            ),
+            ("Str(borrowed)", JsonType::str_borrowed("hello")),
+            ("Str(owned)", JsonType::str_owned("world".to_string())),
             ("Double(3.14)", JsonType::Double(std::f64::consts::PI)),
         ];
 
