@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pyo3 = { version = "0.24.1" }
-opentelemetry-proto = { version = "0.30.0" }
+pyo3 = { version = "0.27.2" }
+opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "0948c61" }
 tower = "0.5.2"
 utilities = { path = "../utilities" }
 tracing = "0.1"

@@ -1,6 +1,7 @@
+use crate::exporters::http::client::{DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST};
 use crate::exporters::otlp;
 use crate::exporters::otlp::config::OTLPExporterConfig;
-use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
+use crate::exporters::otlp::{Authenticator, CompressionEncoding, Endpoint, Protocol};
 use crate::init::args::{OTLPExporterAuthenticator, OTLPExporterProtocol};
 use crate::init::parse;
 use crate::init::retry::GlobalExporterRetryArgs;
@@ -65,6 +66,20 @@ pub struct OTLPExporterBaseArgs {
     )]
     pub authenticator: Option<OTLPExporterAuthenticator>,
 
+    /// OTLP Exporter Basic Auth Username
+    #[arg(
+        long("otlp-exporter-basic-auth-username"),
+        env = "ROTEL_OTLP_EXPORTER_BASIC_AUTH_USERNAME"
+    )]
+    pub basic_auth_username: Option<String>,
+
+    /// OTLP Exporter Basic Auth Password
+    #[arg(
+        long("otlp-exporter-basic-auth-password"),
+        env = "ROTEL_OTLP_EXPORTER_BASIC_AUTH_PASSWORD"
+    )]
+    pub basic_auth_password: Option<String>,
+
     /// OTLP Exporter Headers - Used as default for all OTLP data types unless more specific flag specified
     #[arg(
         long("otlp-exporter-custom-headers"),
@@ -112,6 +127,24 @@ pub struct OTLPExporterBaseArgs {
     #[serde(with = "humantime_serde")]
     pub request_timeout: std::time::Duration,
 
+    /// Connection pool idle timeout - How long idle connections remain in the pool before being closed.
+    #[arg(
+        long("otlp-exporter-pool-idle-timeout"),
+        env = "ROTEL_OTLP_EXPORTER_POOL_IDLE_TIMEOUT",
+        default_value = "30s",
+        value_parser = humantime::parse_duration,
+    )]
+    #[serde(with = "humantime_serde")]
+    pub pool_idle_timeout: Duration,
+
+    /// Maximum idle connections per host - Controls connection reuse for keep-alive.
+    #[arg(
+        long("otlp-exporter-pool-max-idle-per-host"),
+        env = "ROTEL_OTLP_EXPORTER_POOL_MAX_IDLE_PER_HOST",
+        default_value = "100"
+    )]
+    pub pool_max_idle_per_host: usize,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub retry: OtlpRetryArgs,
@@ -126,6 +159,8 @@ impl Default for OTLPExporterBaseArgs {
             logs_endpoint: None,
             protocol: OTLPExporterProtocol::Grpc,
             authenticator: None,
+            basic_auth_username: None,
+            basic_auth_password: None,
             custom_headers: None,
             compression: CompressionEncoding::Gzip,
             cert_group: CertGroup {
@@ -142,6 +177,8 @@ impl Default for OTLPExporterBaseArgs {
             },
             tls_skip_verify: false,
             request_timeout: Duration::from_secs(5),
+            pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
+            pool_max_idle_per_host: DEFAULT_POOL_MAX_IDLE_PER_HOST,
             retry: Default::default(),
         }
     }
@@ -621,17 +658,34 @@ impl OTLPExporterBaseArgs {
             None => Vec::new(),
         };
 
+        // Convert authenticator, handling Basic auth which needs username/password
+        let authenticator = match self.authenticator {
+            Some(OTLPExporterAuthenticator::Sigv4auth) => Some(Authenticator::Sigv4auth),
+            Some(OTLPExporterAuthenticator::Basic) => {
+                let username = self.basic_auth_username.ok_or(
+                    "basic auth requires --otlp-exporter-basic-auth-username or ROTEL_OTLP_EXPORTER_BASIC_AUTH_USERNAME"
+                )?;
+                let password = self.basic_auth_password.ok_or(
+                    "basic auth requires --otlp-exporter-basic-auth-password or ROTEL_OTLP_EXPORTER_BASIC_AUTH_PASSWORD"
+                )?;
+                Some(Authenticator::Basic { username, password })
+            }
+            None => None,
+        };
+
         let mut builder = otlp::config_builder(
             type_name,
             endpoint,
             self.protocol.into(),
             self.retry.build_retry_config(global_retry),
         )
-        .with_authenticator(self.authenticator.map(|a| a.into()))
+        .with_authenticator(authenticator)
         .with_tls_skip_verify(self.tls_skip_verify)
         .with_headers(custom_headers.as_slice())
         .with_request_timeout(self.request_timeout.into())
-        .with_compression_encoding(self.compression.into());
+        .with_compression_encoding(self.compression.into())
+        .with_pool_idle_timeout(self.pool_idle_timeout)
+        .with_pool_max_idle_per_host(self.pool_max_idle_per_host);
 
         if let Some(tls_cert_file) = self.cert_group.tls_cert_file {
             builder = builder.with_cert_file(tls_cert_file.as_str());

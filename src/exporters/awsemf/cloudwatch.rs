@@ -51,8 +51,16 @@ impl Cloudwatch {
             HeaderValue::from_static("application/x-amz-json-1.1"),
         );
 
+        use crate::exporters::http::client::{
+            DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST,
+        };
         // Use the existing HTTP client builder
-        let client = build_hyper_client(Config::default(), false)?;
+        let client = build_hyper_client(
+            Config::default(),
+            false,
+            DEFAULT_POOL_IDLE_TIMEOUT,
+            DEFAULT_POOL_MAX_IDLE_PER_HOST,
+        )?;
 
         Ok(Self {
             endpoint,

@@ -7,10 +7,10 @@
 //!
 //! To run these tests:
 //! 1. Start Kafka: ./scripts/kafka-test-env.sh start
-//! 2. Run tests: cargo test --test kafka_integration_tests --features integration-tests
+//! 2. Run tests: KAFKA_INTEGRATION_TESTS=true cargo test --test kafka_integration_tests
 //! 3. Stop Kafka: ./scripts/kafka-test-env.sh stop
 
-#![cfg(feature = "integration-tests")]
+#![cfg(kafka_integration_tests = "true")]
 
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
@@ -112,6 +112,7 @@ async fn test_kafka_exporter_traces_json() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: vec![trace_data],
+            request_context: None,
         }])
         .await
         .expect("Failed to send trace data");
@@ -179,6 +180,7 @@ async fn test_kafka_exporter_metrics_protobuf() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: vec![metrics_data],
+            request_context: None,
         }])
         .await
         .expect("Failed to send metrics data");
@@ -237,6 +239,7 @@ async fn test_kafka_exporter_logs_with_compression() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: vec![logs_data],
+            request_context: None,
         }])
         .await
         .expect("Failed to send logs data");
@@ -334,6 +337,7 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: vec![trace_data],
+            request_context: None,
         }])
         .await
         .expect("Failed to send trace data");
@@ -341,6 +345,7 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: vec![metrics_data],
+            request_context: None,
         }])
         .await
         .expect("Failed to send metrics data");
@@ -348,6 +353,7 @@ async fn test_kafka_exporter_multiple_telemetry_types() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: vec![logs_data],
+            request_context: None,
         }])
         .await
         .expect("Failed to send logs data");
@@ -539,6 +545,7 @@ async fn test_logs_partitioning_by_resource_attributes() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: logs_data_1,
+            request_context: None,
         }])
         .await
         .expect("Failed to send logs data 1");
@@ -546,6 +553,7 @@ async fn test_logs_partitioning_by_resource_attributes() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: logs_data_2,
+            request_context: None,
         }])
         .await
         .expect("Failed to send logs data 2");
@@ -553,6 +561,7 @@ async fn test_logs_partitioning_by_resource_attributes() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: logs_data_3,
+            request_context: None,
         }])
         .await
         .expect("Failed to send logs data 3");
@@ -675,6 +684,7 @@ async fn test_logs_partitioning_distribution_across_partitions() {
             .send(vec![PayloadMessage {
                 metadata: None,
                 payload: logs_data,
+                request_context: None,
             }])
             .await
             .expect("Failed to send logs data");
@@ -821,6 +831,7 @@ async fn test_metrics_partitioning_by_resource_attributes() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: metrics_data_1,
+            request_context: None,
         }])
         .await
         .expect("Failed to send metrics data 1");
@@ -828,6 +839,7 @@ async fn test_metrics_partitioning_by_resource_attributes() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: metrics_data_2,
+            request_context: None,
         }])
         .await
         .expect("Failed to send metrics data 2");
@@ -835,6 +847,7 @@ async fn test_metrics_partitioning_by_resource_attributes() {
         .send(vec![PayloadMessage {
             metadata: None,
             payload: metrics_data_3,
+            request_context: None,
         }])
         .await
         .expect("Failed to send metrics data 3");
@@ -947,6 +960,7 @@ async fn test_metrics_partitioning_distribution_across_partitions() {
             .send(vec![PayloadMessage {
                 metadata: None,
                 payload: metrics_data,
+                request_context: None,
             }])
             .await
             .expect("Failed to send metrics data");

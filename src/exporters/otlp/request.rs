@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::exporters::otlp::Authenticator;
 /// Provides functionality for exporting telemetry data via OTLP protocol
 ///
 /// This module contains the core OTLP exporter implementation that handles:
@@ -17,7 +18,9 @@ use crate::exporters::otlp::payload::OtlpPayload;
 use crate::exporters::otlp::{CompressionEncoding, Endpoint, Protocol};
 use crate::telemetry::{Counter, RotelCounter};
 use crate::topology::payload::MessageMetadata;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use bytes::Bytes;
+use http::header::AUTHORIZATION;
 use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request};
 use http_body_util::Full;
@@ -187,6 +190,18 @@ fn get_request_builder_config(
         };
 
         headermap.insert(key, value);
+    }
+
+    // Add Basic Auth header if configured
+    if let Some(Authenticator::Basic { username, password }) = &config.authenticator {
+        let credentials = format!("{}:{}", username, password);
+        let encoded = BASE64.encode(credentials.as_bytes());
+        let auth_value = format!("Basic {}", encoded);
+        headermap.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&auth_value)
+                .map_err(|e| format!("invalid basic auth header value: {}", e))?,
+        );
     }
 
     Ok(RequestBuilderConfig {
@@ -399,5 +414,61 @@ mod test {
         )
         .unwrap()
         .to_string()
+    }
+
+    #[test]
+    fn test_basic_auth_header() {
+        use crate::exporters::http::retry::RetryConfig;
+        use crate::exporters::otlp::config::OTLPExporterConfig;
+
+        // Create a config with Basic auth
+        let config = OTLPExporterConfig::new(
+            "test".to_string(),
+            Base("http://localhost:4317".to_string()),
+            Grpc,
+            RetryConfig::default(),
+        )
+        .with_authenticator(Some(Authenticator::Basic {
+            username: "testuser".to_string(),
+            password: "testpass".to_string(),
+        }));
+
+        let rbc =
+            get_request_builder_config(&config, TRACE_GRPC_SERVICE_PATH, TRACES_RELATIVE_HTTP_PATH)
+                .expect("failed to build request config");
+
+        // Verify the Authorization header is present with correct value
+        let auth_header = rbc
+            .default_headers
+            .get(AUTHORIZATION)
+            .expect("Authorization header should be present");
+
+        // Base64 encode "testuser:testpass" = "dGVzdHVzZXI6dGVzdHBhc3M="
+        assert_eq!(
+            auth_header.to_str().unwrap(),
+            "Basic dGVzdHVzZXI6dGVzdHBhc3M="
+        );
+    }
+
+    #[test]
+    fn test_no_auth_header_when_none() {
+        use crate::exporters::http::retry::RetryConfig;
+        use crate::exporters::otlp::config::OTLPExporterConfig;
+        use http::header::AUTHORIZATION;
+
+        // Create a config without auth
+        let config = OTLPExporterConfig::new(
+            "test".to_string(),
+            Base("http://localhost:4317".to_string()),
+            Grpc,
+            RetryConfig::default(),
+        );
+
+        let rbc =
+            get_request_builder_config(&config, TRACE_GRPC_SERVICE_PATH, TRACES_RELATIVE_HTTP_PATH)
+                .expect("failed to build request config");
+
+        // Verify the Authorization header is NOT present
+        assert!(rbc.default_headers.get(AUTHORIZATION).is_none());
     }
 }

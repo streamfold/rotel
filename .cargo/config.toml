@@ -1,0 +1,8 @@
+# Cross-compilation linker configuration for 32-bit ARM targets
+# These targets require specific cross-linkers when building on x86_64 hosts
+
+[target.armv5te-unknown-linux-gnueabi]
+linker = "arm-linux-gnueabi-gcc"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"

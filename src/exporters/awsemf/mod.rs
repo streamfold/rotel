@@ -174,7 +174,16 @@ impl AwsEmfExporterBuilder {
         flush_receiver: Option<FlushReceiver>,
         aws_creds_provider: AwsCredsProvider,
     ) -> Result<ExporterType<'a, ResourceMetrics, DefaultHTTPAcknowledger>, BoxError> {
-        let client = Client::build(tls::Config::default(), Protocol::Http, Default::default())?;
+        use crate::exporters::http::client::{
+            DEFAULT_POOL_IDLE_TIMEOUT, DEFAULT_POOL_MAX_IDLE_PER_HOST,
+        };
+        let client = Client::build(
+            tls::Config::default(),
+            Protocol::Http,
+            Default::default(),
+            DEFAULT_POOL_IDLE_TIMEOUT,
+            DEFAULT_POOL_MAX_IDLE_PER_HOST,
+        )?;
         let dim_filter = Arc::new(DimensionFilter::new(
             self.config.include_dimensions.clone(),
             self.config.exclude_dimensions.clone(),

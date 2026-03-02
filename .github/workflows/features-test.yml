@@ -1,15 +1,20 @@
-name: CI
+# Verify non-standard feature flag combinations to ensure
+# we don't have drift in build/test compatability. Only runs
+# on push to main, since running on every PR seems overkill
+# for now
+name: Features Test
 
 on:
   push:
-  pull_request:
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: test - ${{ matrix.target }}
+  test-all-features:
+    name: test all features - ${{ matrix.target }}
     strategy:
       fail-fast: true
       matrix:
@@ -31,7 +36,7 @@ jobs:
         if: matrix.os == 'macos'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: "3.13"
       - name: update apt cache on linux
         if: matrix.os == 'ubuntu'
         run: sudo apt-get update
@@ -46,56 +51,53 @@ jobs:
           target: ${{ matrix.target }}
           rustflags: ""
       - uses: taiki-e/install-action@nextest
-      - name: run tests
+      - name: run tests with all features
         uses: actions-rs/cargo@v1
         with:
           command: nextest
-          args: run --target ${{ matrix.target }} --verbose
-      - name: run test processor-sdk
-        uses: actions-rs/cargo@v1
-        with:
-          command: nextest
-          args: run --manifest-path ./rotel_python_processor_sdk/Cargo.toml --target ${{ matrix.target }}
+          args: |
+            run --target ${{ matrix.target }} --verbose --all-features
 
-  # Build check for 32-bit ARM targets (cross-compilation, no tests)
-  build-arm32:
-    name: build - ${{ matrix.target }}
-    runs-on: ubuntu-22.04
+  test-no-dflt-features:
+    name: test no default features - ${{ matrix.target }}
     strategy:
       fail-fast: true
       matrix:
         include:
-          - target: armv5te-unknown-linux-gnueabi
-          - target: armv7-unknown-linux-gnueabihf
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            os: ubuntu
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            os: ubuntu
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+    runs-on: ${{ matrix.runner }}
+
     steps:
       - uses: actions/checkout@v4
-      - name: update apt cache
+      - name: Set up Python 3.13
+        if: matrix.os == 'macos'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: update apt cache on linux
+        if: matrix.os == 'ubuntu'
         run: sudo apt-get update
-      - name: install protoc
+      - name: install protoc linux
+        if: matrix.os == 'ubuntu'
         run: sudo apt-get install -y protobuf-compiler
-      - name: install cross-compilation toolchain
-        run: |
-          sudo apt-get install -y gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
+      - name: install protoc macos
+        if: matrix.os == 'macos'
+        run: brew install protobuf
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: ${{ matrix.target }}
           rustflags: ""
-      - name: build (no default features)
+      - uses: taiki-e/install-action@nextest
+      - name: run tests with no default features
         uses: actions-rs/cargo@v1
         with:
-          command: build
-          args: --target ${{ matrix.target }} --no-default-features --features file_receiver
-
-  # Check formatting with rustfmt
-  formatting:
-    name: cargo fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Ensure rustfmt is installed and setup problem matcher
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: rustfmt
-          rustflags: ""
-      - name: Rustfmt Check
-        uses: actions-rust-lang/rustfmt@v1
+          command: nextest
+          args: run --target ${{ matrix.target }} --no-default-features --verbose

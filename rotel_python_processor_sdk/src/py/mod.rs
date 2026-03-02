@@ -183,6 +183,7 @@ mod tests {
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
     use opentelemetry_proto::tonic::trace::v1;
     use pyo3::ffi::c_str;
+    use pyo3::IntoPyObjectExt;
     use std::collections::HashMap;
     use std::ffi::CString;
     use std::sync::{Arc, Mutex, Once};
@@ -208,7 +209,7 @@ mod tests {
         process_fn: Option<String>,
     ) -> PyResult<()> {
         let sys = py.import("sys")?;
-        sys.setattr("stdout", LoggingStdout.into_py(py))?;
+        sys.setattr("stdout", LoggingStdout.into_py_any(py)?)?;
         let code = std::fs::read_to_string(format!("./python_tests/{}", script))?;
         let py_mod = PyModule::from_code(
             py,

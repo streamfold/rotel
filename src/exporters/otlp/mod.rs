@@ -67,6 +67,7 @@ pub enum Protocol {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Authenticator {
     Sigv4auth,
+    Basic { username: String, password: String },
 }
 
 /// OTLP endpoint configuration
