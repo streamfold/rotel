@@ -87,6 +87,15 @@ pub struct RedisStreamExporterArgs {
         env = "ROTEL_REDIS_STREAM_EXPORTER_PIPELINE_SIZE"
     )]
     pub pipeline_size: Option<usize>,
+
+    /// Only export spans from these service names (comma-separated). Empty = all services.
+    #[arg(
+        id("REDIS_STREAM_EXPORTER_FILTER_SERVICE_NAMES"),
+        long("redis-stream-exporter-filter-service-names"),
+        env = "ROTEL_REDIS_STREAM_EXPORTER_FILTER_SERVICE_NAMES",
+        value_delimiter = ','
+    )]
+    pub filter_service_names: Vec<String>,
 }
 
 impl Default for RedisStreamExporterArgs {
@@ -101,6 +110,7 @@ impl Default for RedisStreamExporterArgs {
             username: None,
             password: None,
             pipeline_size: None,
+            filter_service_names: Vec::new(),
         }
     }
 }
@@ -137,7 +147,8 @@ impl RedisStreamExporterArgs {
             .with_ca_cert_path(self.ca_cert_path.clone())
             .with_username(self.username.clone())
             .with_password(self.password.clone())
-            .with_pipeline_size(self.pipeline_size);
+            .with_pipeline_size(self.pipeline_size)
+            .with_filter_service_names(self.filter_service_names.clone());
 
         Ok(config)
     }

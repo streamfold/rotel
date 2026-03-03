@@ -8,7 +8,9 @@ use super::config::RedisStreamExporterConfig;
 use super::errors::Result;
 use super::transformer::transform_span;
 
+use crate::exporters::shared::otel_span::find_str_attribute;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
+use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use redis::streams::StreamMaxlen;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -72,6 +74,8 @@ impl RedisStreamExporter {
         let mut all_metadata: Vec<MessageMetadata> = Vec::new();
         let mut xadd_items: Vec<(String, Vec<(String, String)>)> = Vec::new();
 
+        let has_service_filter = !self.config.filter_service_names.is_empty();
+
         for message in messages {
             if let Some(metadata) = message.metadata {
                 all_metadata.push(metadata);
@@ -79,6 +83,16 @@ impl RedisStreamExporter {
 
             for rs in message.payload {
                 let resource = rs.resource.as_ref();
+
+                // Skip this ResourceSpans if service name doesn't match filter
+                if has_service_filter {
+                    let svc = resource
+                        .map(|r| find_str_attribute(SERVICE_NAME, &r.attributes))
+                        .unwrap_or_default();
+                    if !self.config.filter_service_names.iter().any(|f| f == svc.as_ref()) {
+                        continue;
+                    }
+                }
 
                 for ss in &rs.scope_spans {
                     let (scope_name, scope_version) = match &ss.scope {

@@ -535,21 +535,22 @@ The Redis Stream exporter can be selected by passing `--exporter redis-stream`. 
 and writes span data to Redis Streams via `XADD`. This enables downstream consumers to process spans in real-time
 using Redis consumer groups. The exporter works with standalone Redis and Valkey.
 
-| Option                                      | Default                | Options    |
-|---------------------------------------------|------------------------|------------|
-| --redis-stream-exporter-endpoint            | redis://localhost:6379 |            |
-| --redis-stream-exporter-stream-key-template | rotel:traces           |            |
-| --redis-stream-exporter-format              | json                   | json, flat |
-| --redis-stream-exporter-maxlen              |                        |            |
-| --redis-stream-exporter-cluster-mode        | false                  | (planned)  |
-| --redis-stream-exporter-ca-cert-path        |                        | (planned)  |
-| --redis-stream-exporter-username            |                        | (planned)  |
-| --redis-stream-exporter-password            |                        | (planned)  |
-| --redis-stream-exporter-pipeline-size       |                        |            |
+| Option                                       | Default                | Options    | Description                                          |
+|----------------------------------------------|------------------------|------------|------------------------------------------------------|
+| --redis-stream-exporter-endpoint             | redis://localhost:6379 |            | Redis endpoint URL (`redis://` or `rediss://` for TLS) |
+| --redis-stream-exporter-stream-key-template  | rotel:traces           |            | Stream key with optional `{attribute}` placeholders  |
+| --redis-stream-exporter-format               | json                   | json, flat | Serialization format                                 |
+| --redis-stream-exporter-maxlen               |                        |            | Approximate max stream length (`MAXLEN ~N`)          |
+| --redis-stream-exporter-cluster-mode         | false                  |            | Enable Redis Cluster mode                            |
+| --redis-stream-exporter-ca-cert-path         |                        |            | Path to custom CA certificate for TLS                |
+| --redis-stream-exporter-username             |                        |            | Redis username for authentication                    |
+| --redis-stream-exporter-password             |                        |            | Redis password for authentication                    |
+| --redis-stream-exporter-pipeline-size        |                        |            | Max XADD commands per pipeline batch (default: all at once) |
+| --redis-stream-exporter-filter-service-names |                        |            | Comma-separated service names to export (default: all) |
 
-**NOTE**: TLS via `rediss://` URL scheme works automatically. However, custom CA certs, username/password auth, and
-cluster mode are accepted as configuration but **not yet wired into the connection**. These will be implemented in a
-follow-up.
+TLS via `rediss://` URL scheme works automatically. Custom CA certificates can be provided with
+`--redis-stream-exporter-ca-cert-path` for environments like GCP Managed Redis. Username/password auth and cluster
+mode are supported.
 
 #### Stream Key Templates
 
@@ -567,6 +568,16 @@ attributes resolve to an empty string.
 
 In Redis Cluster mode, `{...}` in keys also serves as a hash tag, so spans with the same attribute values will route
 to the same cluster node.
+
+#### Service Name Filtering
+
+The `--redis-stream-exporter-filter-service-names` option accepts a comma-separated list of service names. When set,
+only spans from matching services are exported. When empty (default), all spans are exported.
+
+```shell
+# Only export spans from two services
+--redis-stream-exporter-filter-service-names "api-gateway,payment-service"
+```
 
 #### Serialization Formats
 

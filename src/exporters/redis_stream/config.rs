@@ -25,6 +25,7 @@ pub struct RedisStreamExporterConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub pipeline_size: Option<usize>,
+    pub filter_service_names: Vec<String>,
 }
 
 impl Default for RedisStreamExporterConfig {
@@ -39,6 +40,7 @@ impl Default for RedisStreamExporterConfig {
             username: None,
             password: None,
             pipeline_size: None,
+            filter_service_names: Vec::new(),
         }
     }
 }
@@ -88,6 +90,11 @@ impl RedisStreamExporterConfig {
 
     pub fn with_pipeline_size(mut self, pipeline_size: Option<usize>) -> Self {
         self.pipeline_size = pipeline_size;
+        self
+    }
+
+    pub fn with_filter_service_names(mut self, filter_service_names: Vec<String>) -> Self {
+        self.filter_service_names = filter_service_names;
         self
     }
 }
