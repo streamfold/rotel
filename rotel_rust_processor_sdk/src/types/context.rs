@@ -9,8 +9,8 @@ use abi_stable::StableAbi;
 #[repr(C)]
 #[derive(StableAbi, Clone, Debug)]
 pub enum RRequestContext {
-    Http(RHttpContext),
-    Grpc(RGrpcContext),
+    HttpContext(RHttpContext),
+    GrpcContext(RGrpcContext),
 }
 
 /// FFI-safe HTTP context

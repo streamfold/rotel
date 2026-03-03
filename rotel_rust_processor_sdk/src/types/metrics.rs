@@ -178,7 +178,7 @@ pub struct RQuantileValue {
 pub struct RExemplar {
     pub filtered_attributes: RVec<RKeyValue>,
     pub time_unix_nano: u64,
-    pub value: RNumberValue,
+    pub value: ROption<RNumberValue>,
     pub span_id: RVec<u8>,
     pub trace_id: RVec<u8>,
 }

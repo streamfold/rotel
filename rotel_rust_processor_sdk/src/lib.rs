@@ -21,16 +21,15 @@
 //! impl RotelProcessor for MyProcessor {
 //!     fn process_spans(
 //!         &self,
-//!         mut spans: RResourceSpans,
-//!         _context: ROption<RRequestContext>,
-//!     ) -> RResourceSpans {
+//!         spans: &mut RResourceSpans,
+//!         _context: &ROption<RRequestContext>,
+//!     ) {
 //!         // Add an attribute to every span
 //!         for scope_spans in spans.scope_spans.iter_mut() {
 //!             for span in scope_spans.spans.iter_mut() {
 //!                 span.attributes.push(RKeyValue::string("processed", "true"));
 //!             }
 //!         }
-//!         spans
 //!     }
 //! }
 //!
@@ -53,7 +52,7 @@ pub use tokio as __tokio;
 
 // Re-export the processor trait and its generated types
 pub use processor::{
-    AsyncProcessor, AsyncRotelProcessor, AsyncRotelProcessor_TO, ProcessorInfo, RotelProcessor,
+    AsyncProcessor, AsyncRotelProcessor, AsyncRotelProcessor_TO, RotelProcessor,
     RotelProcessor_TO,
 };
 
@@ -74,9 +73,7 @@ pub fn __extract_panic_message(err: &Box<dyn std::any::Any + Send>) -> String {
 
 /// Prelude module for convenient imports
 pub mod prelude {
-    pub use crate::processor::{
-        AsyncProcessor, AsyncRotelProcessor, ProcessorInfo, RotelProcessor,
-    };
+    pub use crate::processor::{AsyncProcessor, AsyncRotelProcessor, RotelProcessor};
     pub use crate::types::*;
     pub use crate::{export_async_processor, export_processor, ROption, RString, RVec};
 }

@@ -710,14 +710,14 @@ impl From<crate::topology::payload::RequestContext> for RRequestContext {
                 for (k, v) in headers_map {
                     headers.insert(k.into(), v.into());
                 }
-                RRequestContext::Http(RHttpContext { headers })
+                RRequestContext::HttpContext(RHttpContext { headers })
             }
             crate::topology::payload::RequestContext::Grpc(metadata_map) => {
                 let mut metadata = RHashMap::new();
                 for (k, v) in metadata_map {
                     metadata.insert(k.into(), v.into());
                 }
-                RRequestContext::Grpc(RGrpcContext { metadata })
+                RRequestContext::GrpcContext(RGrpcContext { metadata })
             }
         }
     }

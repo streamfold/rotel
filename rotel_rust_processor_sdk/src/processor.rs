@@ -3,7 +3,7 @@
 //! Processor trait definition for Rust-based Rotel processors.
 
 use abi_stable::std_types::ROption;
-use abi_stable::{sabi_trait, StableAbi};
+use abi_stable::sabi_trait;
 
 use crate::types::{RRequestContext, RResourceLogs, RResourceMetrics, RResourceSpans};
 
@@ -100,16 +100,6 @@ pub trait AsyncRotelProcessor: Send + Sync {
     ) -> RResourceMetrics {
         metrics
     }
-}
-
-/// Processor information returned by plugins
-#[repr(C)]
-#[derive(StableAbi, Clone, Debug)]
-pub struct ProcessorInfo {
-    /// Name of the processor for logging
-    pub name: abi_stable::std_types::RString,
-    /// Version of the processor
-    pub version: abi_stable::std_types::RString,
 }
 
 /// User-facing async processor trait with `async fn` methods.

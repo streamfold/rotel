@@ -1314,6 +1314,56 @@ def process_spans(resource_spans):
             span.attributes.append(KeyValue("processed.by", AnyValue("my_processor")))
 ```
 
+### Rust Processor SDK
+
+Rotel supports custom processors written in Rust, compiled as dynamic libraries and loaded at runtime. Rust processors
+provide native performance with no FFI overhead beyond the initial type conversion, making them ideal for
+high-throughput pipelines.
+
+The SDK supports both synchronous and asynchronous processors:
+
+- **Sync processors** (`RotelProcessor`) modify telemetry data in place — best for simple, CPU-bound transformations
+- **Async processors** (`AsyncProcessor`) support `async fn` methods with automatic tokio runtime management — best for processors that need I/O such as external API calls or database lookups
+
+Example of a simple sync trace processor:
+
+```rust
+use rotel_rust_processor_sdk::prelude::*;
+
+#[derive(Default)]
+pub struct MyProcessor;
+
+impl RotelProcessor for MyProcessor {
+    fn process_spans(
+        &self,
+        spans: &mut RResourceSpans,
+        _context: &ROption<RRequestContext>,
+    ) {
+        for scope_spans in spans.scope_spans.iter_mut() {
+            for span in scope_spans.spans.iter_mut() {
+                span.attributes.push(RKeyValue::string("processed_by", "my_processor"));
+            }
+        }
+    }
+}
+
+export_processor!(MyProcessor);
+```
+
+Run with Rotel:
+
+```bash
+rotel start \
+    --rust-trace-processor ./target/release/libmy_processor.dylib \
+    --exporter blackhole
+```
+
+Multiple processors can be chained and will execute in order. Rotel must be built with `--features rust_processor`
+to enable Rust processor support.
+
+For the full guide including async processors, available data types, request context access, and end-to-end examples,
+see the [Rust Processor SDK Documentation](rotel_rust_processor_sdk/README.md).
+
 ### Prebuilt Processors
 
 Rotel also ships with prebuilt processors written in Python that you can use right out of the box or modify.

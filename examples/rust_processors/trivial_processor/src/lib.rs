@@ -5,7 +5,6 @@
 //! This is an example of how to build a Rust processor for Rotel.
 
 use rotel_rust_processor_sdk::prelude::*;
-use rotel_rust_processor_sdk::{export_processor, ROption};
 
 /// A simple processor that adds a marker attribute to every span.
 #[derive(Default)]

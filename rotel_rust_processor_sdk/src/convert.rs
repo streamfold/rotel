@@ -2,9 +2,9 @@
 
 //! Conversions between OpenTelemetry protobuf types and FFI-safe types.
 
-use abi_stable::std_types::{RString, RVec};
+use abi_stable::std_types::{ROption, RString, RVec};
 use opentelemetry_proto::tonic::common::v1::{
-    any_value::Value as OtelValue, AnyValue, InstrumentationScope, KeyValue,
+    any_value::Value as OtelValue, AnyValue, EntityRef, InstrumentationScope, KeyValue,
 };
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::{
@@ -101,6 +101,12 @@ impl From<Resource> for RResource {
                 .collect::<Vec<_>>()
                 .into(),
             dropped_attributes_count: r.dropped_attributes_count,
+            entity_refs: r
+                .entity_refs
+                .into_iter()
+                .map(|er| er.into())
+                .collect::<Vec<_>>()
+                .into(),
         }
     }
 }
@@ -110,7 +116,38 @@ impl From<RResource> for Resource {
         Resource {
             attributes: rr.attributes.into_iter().map(|kv| kv.into()).collect(),
             dropped_attributes_count: rr.dropped_attributes_count,
-            entity_refs: Vec::new(),
+            entity_refs: rr.entity_refs.into_iter().map(|er| er.into()).collect(),
+        }
+    }
+}
+
+impl From<EntityRef> for REntityRef {
+    fn from(er: EntityRef) -> Self {
+        REntityRef {
+            schema_url: er.schema_url.into(),
+            r#type: er.r#type.into(),
+            id_keys: er.id_keys.into_iter().map(|k| k.into()).collect::<Vec<_>>().into(),
+            description_keys: er
+                .description_keys
+                .into_iter()
+                .map(|k| k.into())
+                .collect::<Vec<_>>()
+                .into(),
+        }
+    }
+}
+
+impl From<REntityRef> for EntityRef {
+    fn from(rer: REntityRef) -> Self {
+        EntityRef {
+            schema_url: rer.schema_url.into_string(),
+            r#type: rer.r#type.into_string(),
+            id_keys: rer.id_keys.into_iter().map(|k| k.into_string()).collect(),
+            description_keys: rer
+                .description_keys
+                .into_iter()
+                .map(|k| k.into_string())
+                .collect(),
         }
     }
 }
@@ -889,9 +926,9 @@ impl From<Exemplar> for RExemplar {
                 .into(),
             time_unix_nano: e.time_unix_nano,
             value: match e.value {
-                Some(Value::AsInt(i)) => RNumberValue::Int(i),
-                Some(Value::AsDouble(d)) => RNumberValue::Double(d),
-                None => RNumberValue::Int(0),
+                Some(Value::AsInt(i)) => ROption::RSome(RNumberValue::Int(i)),
+                Some(Value::AsDouble(d)) => ROption::RSome(RNumberValue::Double(d)),
+                None => ROption::RNone,
             },
             span_id: e.span_id.into(),
             trace_id: e.trace_id.into(),
@@ -909,7 +946,7 @@ impl From<RExemplar> for Exemplar {
                 .map(|kv| kv.into())
                 .collect(),
             time_unix_nano: re.time_unix_nano,
-            value: Some(match re.value {
+            value: re.value.into_option().map(|v| match v {
                 RNumberValue::Int(i) => Value::AsInt(i),
                 RNumberValue::Double(d) => Value::AsDouble(d),
             }),

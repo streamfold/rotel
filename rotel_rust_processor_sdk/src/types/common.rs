@@ -36,6 +36,18 @@ impl RKeyValue {
     pub fn double(key: impl Into<RString>, value: f64) -> Self {
         Self::new(key, RAnyValue::Double(value))
     }
+
+    pub fn bytes(key: impl Into<RString>, value: RVec<u8>) -> Self {
+        Self::new(key, RAnyValue::Bytes(value))
+    }
+
+    pub fn array(key: impl Into<RString>, value: RVec<RAnyValue>) -> Self {
+        Self::new(key, RAnyValue::Array(value))
+    }
+
+    pub fn key_value_list(key: impl Into<RString>, value: RVec<RKeyValue>) -> Self {
+        Self::new(key, RAnyValue::KeyValueList(value))
+    }
 }
 
 /// FFI-safe equivalent of opentelemetry_proto AnyValue
@@ -57,6 +69,17 @@ pub enum RAnyValue {
 pub struct RResource {
     pub attributes: RVec<RKeyValue>,
     pub dropped_attributes_count: u32,
+    pub entity_refs: RVec<REntityRef>,
+}
+
+/// FFI-safe equivalent of opentelemetry_proto EntityRef
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct REntityRef {
+    pub schema_url: RString,
+    pub r#type: RString,
+    pub id_keys: RVec<RString>,
+    pub description_keys: RVec<RString>,
 }
 
 /// FFI-safe equivalent of opentelemetry_proto InstrumentationScope

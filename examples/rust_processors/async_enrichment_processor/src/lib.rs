@@ -6,7 +6,6 @@
 //! bridging are handled automatically by `export_async_processor!`.
 
 use rotel_rust_processor_sdk::prelude::*;
-use rotel_rust_processor_sdk::{export_async_processor, ROption};
 
 /// An async processor that enriches spans with additional attributes.
 #[derive(Default)]
