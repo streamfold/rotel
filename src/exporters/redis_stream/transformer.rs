@@ -173,8 +173,13 @@ fn transform_span_json(
         serde_json::Value::Object(span_attrs),
     );
 
-    let json_str = serde_json::to_string(&serde_json::Value::Object(data))
-        .unwrap_or_else(|_| "{}".to_string());
+    let json_str = match serde_json::to_string(&serde_json::Value::Object(data)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, span_name = span.name, "Failed to serialize span to JSON, using empty object");
+            "{}".to_string()
+        }
+    };
     vec![("data".to_string(), json_str)]
 }
 

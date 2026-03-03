@@ -95,7 +95,10 @@ impl RedisStreamExporter {
         let mut unique_keys: HashSet<&str> = HashSet::new();
 
         let chunk_size = self.config.pipeline_size.unwrap_or(usize::MAX);
-        for chunk in xadd_items.chunks(chunk_size) {
+        let chunks: Vec<_> = xadd_items.chunks(chunk_size).collect();
+        let num_chunks = chunks.len();
+
+        for (i, chunk) in chunks.into_iter().enumerate() {
             let mut pipe = redis::pipe();
             for (key, fields) in chunk {
                 let field_refs: Vec<(&str, &str)> =
@@ -110,18 +113,17 @@ impl RedisStreamExporter {
                 }
                 unique_keys.insert(key);
             }
-            conn.execute_pipeline(&pipe).await?;
-        }
 
-        // Set TTL on stream keys if configured
-        if let Some(ttl) = self.config.key_ttl_seconds {
-            if !unique_keys.is_empty() {
-                let mut pipe = redis::pipe();
-                for key in &unique_keys {
-                    pipe.expire(*key, ttl as i64);
+            // Append EXPIRE commands to the last chunk's pipeline to avoid an extra round-trip
+            if i == num_chunks - 1 {
+                if let Some(ttl) = self.config.key_ttl_seconds {
+                    for key in &unique_keys {
+                        pipe.expire(*key, ttl as i64);
+                    }
                 }
-                conn.execute_pipeline(&pipe).await?;
             }
+
+            conn.execute_pipeline(&pipe).await?;
         }
 
         // Ack all metadata on success
