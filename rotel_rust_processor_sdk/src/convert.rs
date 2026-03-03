@@ -126,7 +126,12 @@ impl From<EntityRef> for REntityRef {
         REntityRef {
             schema_url: er.schema_url.into(),
             r#type: er.r#type.into(),
-            id_keys: er.id_keys.into_iter().map(|k| k.into()).collect::<Vec<_>>().into(),
+            id_keys: er
+                .id_keys
+                .into_iter()
+                .map(|k| k.into())
+                .collect::<Vec<_>>()
+                .into(),
             description_keys: er
                 .description_keys
                 .into_iter()

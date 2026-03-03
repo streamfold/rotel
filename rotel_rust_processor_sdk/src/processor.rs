@@ -2,8 +2,8 @@
 
 //! Processor trait definition for Rust-based Rotel processors.
 
-use abi_stable::std_types::ROption;
 use abi_stable::sabi_trait;
+use abi_stable::std_types::ROption;
 
 use crate::types::{RRequestContext, RResourceLogs, RResourceMetrics, RResourceSpans};
 

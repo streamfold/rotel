@@ -52,8 +52,7 @@ pub use tokio as __tokio;
 
 // Re-export the processor trait and its generated types
 pub use processor::{
-    AsyncProcessor, AsyncRotelProcessor, AsyncRotelProcessor_TO, RotelProcessor,
-    RotelProcessor_TO,
+    AsyncProcessor, AsyncRotelProcessor, AsyncRotelProcessor_TO, RotelProcessor, RotelProcessor_TO,
 };
 
 /// Helper function to extract a panic message from a caught panic.
