@@ -15,7 +15,7 @@ use redis::streams::StreamMaxlen;
 use std::collections::HashSet;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct RedisStreamExporter {
     config: RedisStreamExporterConfig,
@@ -46,16 +46,27 @@ impl RedisStreamExporter {
             error!(error = %e, "Failed to connect to Redis, exporter will not start");
             return;
         }
-        info!("Redis stream exporter started");
+        info!(
+            endpoint = self.config.endpoint,
+            stream_key_template = ?self.config.stream_key_template,
+            format = ?self.config.format,
+            cluster_mode = self.config.cluster_mode,
+            maxlen = ?self.config.maxlen,
+            pipeline_size = ?self.config.pipeline_size,
+            key_ttl_seconds = ?self.config.key_ttl_seconds,
+            filter_service_names = ?self.config.filter_service_names,
+            "Redis stream exporter started"
+        );
 
         loop {
             select! {
                 m = self.rx.next() => {
                     match m {
                         Some(messages) => {
+                            let batch_size = messages.iter().map(|m| m.payload.len()).sum::<usize>();
                             if let Err(e) = self.process_batch(messages).await {
                                 if !cancel_token.is_cancelled() {
-                                    error!(error = %e, "Failed to process Redis stream batch");
+                                    error!(error = %e, batch_size, "Failed to process Redis stream batch");
                                 }
                             }
                         }
@@ -75,37 +86,18 @@ impl RedisStreamExporter {
         let (all_metadata, xadd_items) = prepare_batch(&self.config, messages);
 
         // Build and execute pipeline(s)
-        let conn = self
-            .connection
-            .as_mut()
-            .expect("connection must be established before processing");
+        let conn = self.connection.as_mut().ok_or_else(|| {
+            "Redis connection not established".to_string()
+        })?;
 
         let maxlen = self.config.maxlen.map(StreamMaxlen::Approx);
 
         let mut unique_keys: HashSet<&str> = HashSet::new();
 
-        if let Some(pipeline_size) = self.config.pipeline_size {
-            // Split into sub-batches
-            for chunk in xadd_items.chunks(pipeline_size) {
-                let mut pipe = redis::pipe();
-                for (key, fields) in chunk {
-                    let field_refs: Vec<(&str, &str)> =
-                        fields.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-                    match maxlen {
-                        Some(ref ml) => {
-                            pipe.xadd_maxlen(key, ml.clone(), "*", &field_refs);
-                        }
-                        None => {
-                            pipe.xadd(key, "*", &field_refs);
-                        }
-                    }
-                    unique_keys.insert(key);
-                }
-                conn.execute_pipeline(&pipe).await?;
-            }
-        } else {
+        let chunk_size = self.config.pipeline_size.unwrap_or(usize::MAX);
+        for chunk in xadd_items.chunks(chunk_size) {
             let mut pipe = redis::pipe();
-            for (key, fields) in &xadd_items {
+            for (key, fields) in chunk {
                 let field_refs: Vec<(&str, &str)> =
                     fields.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                 match maxlen {
@@ -118,9 +110,7 @@ impl RedisStreamExporter {
                 }
                 unique_keys.insert(key);
             }
-            if !xadd_items.is_empty() {
-                conn.execute_pipeline(&pipe).await?;
-            }
+            conn.execute_pipeline(&pipe).await?;
         }
 
         // Set TTL on stream keys if configured
@@ -137,7 +127,7 @@ impl RedisStreamExporter {
         // Ack all metadata on success
         for metadata in all_metadata {
             if let Err(e) = metadata.ack().await {
-                debug!(error = ?e, "Failed to acknowledge message");
+                warn!(error = ?e, "Failed to acknowledge message");
             }
         }
 

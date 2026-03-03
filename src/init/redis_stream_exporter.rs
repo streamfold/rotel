@@ -148,6 +148,21 @@ impl From<RedisStreamSerializationFormat> for SerializationFormat {
 
 impl RedisStreamExporterArgs {
     pub fn build_config(&self) -> Result<RedisStreamExporterConfig, BoxError> {
+        if let Some(0) = self.key_ttl_seconds {
+            return Err("redis-stream-exporter-key-ttl-seconds must be greater than 0".into());
+        }
+        if let Some(0) = self.pipeline_size {
+            return Err("redis-stream-exporter-pipeline-size must be greater than 0".into());
+        }
+
+        // Strip empty strings from service name filter
+        let filter_service_names: Vec<String> = self
+            .filter_service_names
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .collect();
+
         let config = RedisStreamExporterConfig::new(self.endpoint.clone())
             .with_stream_key_template(StreamKeyTemplate::parse(&self.stream_key_template))
             .with_format(self.format.into())
@@ -157,9 +172,70 @@ impl RedisStreamExporterArgs {
             .with_username(self.username.clone())
             .with_password(self.password.clone())
             .with_pipeline_size(self.pipeline_size)
-            .with_filter_service_names(self.filter_service_names.clone())
+            .with_filter_service_names(filter_service_names)
             .with_key_ttl_seconds(self.key_ttl_seconds);
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_config_defaults() {
+        let args = RedisStreamExporterArgs::default();
+        let config = args.build_config().unwrap();
+        assert_eq!(config.endpoint, "redis://localhost:6379");
+        assert_eq!(config.format, SerializationFormat::Json);
+        assert!(!config.cluster_mode);
+        assert!(config.maxlen.is_none());
+        assert!(config.key_ttl_seconds.is_none());
+        assert!(config.pipeline_size.is_none());
+        assert!(config.filter_service_names.is_empty());
+    }
+
+    #[test]
+    fn test_build_config_rejects_zero_ttl() {
+        let args = RedisStreamExporterArgs {
+            key_ttl_seconds: Some(0),
+            ..Default::default()
+        };
+        assert!(args.build_config().is_err());
+    }
+
+    #[test]
+    fn test_build_config_rejects_zero_pipeline_size() {
+        let args = RedisStreamExporterArgs {
+            pipeline_size: Some(0),
+            ..Default::default()
+        };
+        assert!(args.build_config().is_err());
+    }
+
+    #[test]
+    fn test_build_config_strips_empty_filter_names() {
+        let args = RedisStreamExporterArgs {
+            filter_service_names: vec![
+                "api-gateway".to_string(),
+                "".to_string(),
+                "  ".to_string(),
+                "payment".to_string(),
+            ],
+            ..Default::default()
+        };
+        let config = args.build_config().unwrap();
+        assert_eq!(config.filter_service_names, vec!["api-gateway", "payment"]);
+    }
+
+    #[test]
+    fn test_build_config_valid_ttl() {
+        let args = RedisStreamExporterArgs {
+            key_ttl_seconds: Some(3600),
+            ..Default::default()
+        };
+        let config = args.build_config().unwrap();
+        assert_eq!(config.key_ttl_seconds, Some(3600));
     }
 }
