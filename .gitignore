@@ -9,3 +9,4 @@ rotel_python_processor_sdk/processors/__pycache__
 CLAUDE.md
 flamegraph.svg
 perf.data
+__pycache__

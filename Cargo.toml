@@ -83,6 +83,13 @@ rdkafka = { version = "0.38", features = [
     "zstd",
     "cmake-build",
 ], optional = true }
+redis = { version = "0.27", features = [
+    "tokio-comp",
+    "connection-manager",
+    "cluster-async",
+    "tokio-rustls-comp",
+    "streams",
+], optional = true }
 figment = { version = "0.10.19", default-features = false, features = ["env"] }
 parquet = { version = "55.1.0", optional = true }
 arrow = { version = "55.1.0", optional = true }
@@ -133,6 +140,7 @@ pprof = ["dep:pprof"]
 pyo3 = ["dep:pyo3", "dep:rotel_python_processor_sdk"]
 rdkafka = ["dep:rdkafka"]
 file_exporter = ["dep:parquet", "dep:arrow"]
+redis_exporter = ["dep:redis"]
 aws_iam = ["dep:aws-config", "dep:aws-credential-types"]
 prometheus = ["dep:opentelemetry-prometheus-text-exporter"]
 

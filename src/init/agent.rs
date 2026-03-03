@@ -5,6 +5,8 @@ use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
+#[cfg(feature = "redis_exporter")]
+use crate::exporters::redis_stream;
 use crate::exporters::otlp::{self, Authenticator};
 use crate::init::activation::{TelemetryActivation, TelemetryState};
 use crate::init::args::{AgentRun, DebugLogParam, Receiver};
@@ -505,6 +507,16 @@ impl Agent {
                     ExporterConfig::Kafka(kafka_config) => {
                         let mut traces_exporter =
                             build_traces_exporter(kafka_config, trace_pipeline_out_rx)?;
+                        let token = exporters_cancel.clone();
+                        exporters_task_set.spawn(async move {
+                            traces_exporter.start(token).await;
+                            Ok(())
+                        });
+                    }
+                    #[cfg(feature = "redis_exporter")]
+                    ExporterConfig::RedisStream(redis_config) => {
+                        let mut traces_exporter =
+                            redis_stream::build_traces_exporter(redis_config, trace_pipeline_out_rx)?;
                         let token = exporters_cancel.clone();
                         exporters_task_set.spawn(async move {
                             traces_exporter.start(token).await;

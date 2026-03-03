@@ -9,6 +9,8 @@ pub mod file;
 #[cfg(feature = "rdkafka")]
 pub mod kafka;
 pub mod otlp;
+#[cfg(feature = "redis_exporter")]
+pub mod redis_stream;
 pub mod xray;
 
 pub(crate) mod crypto_init_tests;
