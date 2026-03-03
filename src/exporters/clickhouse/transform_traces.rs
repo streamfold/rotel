@@ -3,8 +3,8 @@ use crate::exporters::clickhouse::request_builder::TransformPayload;
 use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
 use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_str_attribute_kv};
+use crate::exporters::shared::otel_span;
 use crate::topology::payload::{Message, MessageMetadata};
-use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use tower::BoxError;
@@ -145,31 +145,12 @@ impl TransformPayload<ResourceSpans> for Transformer {
     }
 }
 
-fn span_kind_to_string<'a>(kind: i32) -> &'a str {
-    if kind == SpanKind::Internal as i32 {
-        "Internal"
-    } else if kind == SpanKind::Server as i32 {
-        "Server"
-    } else if kind == SpanKind::Client as i32 {
-        "Client"
-    } else if kind == SpanKind::Producer as i32 {
-        "Producer"
-    } else if kind == SpanKind::Consumer as i32 {
-        "Consumer"
-    } else {
-        "Unspecified"
-    }
+fn span_kind_to_string(kind: i32) -> &'static str {
+    otel_span::span_kind_to_string(kind)
 }
 
-fn status_code<'a>(span: &Span) -> &'a str {
-    match &span.status {
-        None => "Unset",
-        Some(s) => match s.code {
-            1 => "Ok",
-            2 => "Error",
-            _ => "Unset",
-        },
-    }
+fn status_code(span: &Span) -> &'static str {
+    otel_span::status_code(span)
 }
 #[cfg(test)]
 mod tests {
@@ -179,6 +160,7 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
     use opentelemetry_proto::tonic::common::v1::KeyValue;
     use opentelemetry_proto::tonic::resource::v1::Resource;
+    use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
     use opentelemetry_proto::tonic::trace::v1::{ScopeSpans, Status};
 
     #[test]

@@ -11,6 +11,8 @@ use crate::init::fluent_receiver::FluentReceiverArgs;
 use crate::init::kafka_exporter::KafkaExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_receiver::KafkaReceiverArgs;
+#[cfg(feature = "redis_exporter")]
+use crate::init::redis_stream_exporter::RedisStreamExporterArgs;
 #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
 use crate::init::kmsg_receiver::KmsgReceiverArgs;
 use crate::init::otlp_exporter::OTLPExporterArgs;
@@ -154,6 +156,10 @@ pub struct AgentRun {
     pub kafka_exporter: KafkaExporterArgs,
 
     #[command(flatten)]
+    #[cfg(feature = "redis_exporter")]
+    pub redis_stream_exporter: RedisStreamExporterArgs,
+
+    #[command(flatten)]
     #[cfg(feature = "file_exporter")]
     pub file_exporter: FileExporterArgs,
 
@@ -203,6 +209,8 @@ impl Default for AgentRun {
             prometheus_endpoint: "127.0.0.1:9090".parse().unwrap(),
             #[cfg(feature = "rdkafka")]
             kafka_exporter: KafkaExporterArgs::default(),
+            #[cfg(feature = "redis_exporter")]
+            redis_stream_exporter: RedisStreamExporterArgs::default(),
             #[cfg(feature = "file_exporter")]
             file_exporter: FileExporterArgs::default(),
             #[cfg(feature = "pprof")]
@@ -262,6 +270,10 @@ pub enum Exporter {
 
     #[cfg(feature = "rdkafka")]
     Kafka,
+
+    #[cfg(feature = "redis_exporter")]
+    #[clap(name = "redis-stream")]
+    RedisStream,
 
     #[cfg(feature = "file_exporter")]
     File,

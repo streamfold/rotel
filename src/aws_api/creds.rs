@@ -78,7 +78,7 @@ impl AwsCredsProvider {
     pub async fn new() -> Result<Self, AwsCredsError> {
         let region = resolve_region().await.ok_or(AwsCredsError::NoRegion)?;
 
-        let cfg = aws_config::defaults(aws_config::BehaviorVersion::v2025_08_07())
+        let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(region)
             .load()
             .await;

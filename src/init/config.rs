@@ -3,6 +3,8 @@ use crate::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use crate::exporters::datadog::DatadogExporterConfigBuilder;
 #[cfg(feature = "rdkafka")]
 use crate::exporters::kafka::KafkaExporterConfig;
+#[cfg(feature = "redis_exporter")]
+use crate::exporters::redis_stream::RedisStreamExporterConfig;
 use crate::exporters::otlp::Endpoint;
 use crate::exporters::otlp::config::OTLPExporterConfig;
 use crate::exporters::xray::XRayExporterConfigBuilder;
@@ -14,6 +16,8 @@ use crate::init::datadog_exporter::DatadogExporterArgs;
 use crate::init::file_exporter::FileExporterArgs;
 #[cfg(feature = "rdkafka")]
 use crate::init::kafka_exporter::KafkaExporterArgs;
+#[cfg(feature = "redis_exporter")]
+use crate::init::redis_stream_exporter::RedisStreamExporterArgs;
 use crate::init::otlp_exporter::{
     OTLPExporterBaseArgs, build_logs_config, build_metrics_config, build_traces_config,
 };
@@ -141,6 +145,8 @@ pub(crate) enum ExporterArgs {
     Awsemf(AwsEmfExporterArgs),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterArgs),
+    #[cfg(feature = "redis_exporter")]
+    RedisStream(RedisStreamExporterArgs),
     #[cfg(feature = "file_exporter")]
     File(FileExporterArgs),
 }
@@ -182,6 +188,8 @@ pub(crate) enum ExporterConfig {
     Awsemf(AwsEmfExporterConfigBuilder),
     #[cfg(feature = "rdkafka")]
     Kafka(KafkaExporterConfig),
+    #[cfg(feature = "redis_exporter")]
+    RedisStream(RedisStreamExporterConfig),
     #[cfg(feature = "file_exporter")]
     File(crate::exporters::file::config::FileExporterConfig),
 }
@@ -197,6 +205,8 @@ impl ExporterConfig {
             ExporterConfig::Awsemf(_) => "awsemf",
             #[cfg(feature = "rdkafka")]
             ExporterConfig::Kafka(_) => "kafka",
+            #[cfg(feature = "redis_exporter")]
+            ExporterConfig::RedisStream(_) => "redis-stream",
             #[cfg(feature = "file_exporter")]
             ExporterConfig::File(_) => "file",
         }
@@ -418,6 +428,13 @@ impl TryIntoConfig for ExporterArgs {
                 }
                 Ok(ExporterConfig::Kafka(k.build_config()?))
             }
+            #[cfg(feature = "redis_exporter")]
+            ExporterArgs::RedisStream(rs) => {
+                if rs.endpoint.is_empty() {
+                    return Err("must specify a Redis endpoint".into());
+                }
+                Ok(ExporterConfig::RedisStream(rs.build_config()?))
+            }
         }
     }
 }
@@ -634,6 +651,16 @@ fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArg
             };
             Ok(ExporterArgs::Kafka(args))
         }
+        #[cfg(feature = "redis_exporter")]
+        "redis-stream" => {
+            let args: RedisStreamExporterArgs = match figment.extract() {
+                Ok(args) => args,
+                Err(e) => {
+                    return Err(format!("failed to parse Redis Stream config: {}", e).into());
+                }
+            };
+            Ok(ExporterArgs::RedisStream(args))
+        }
         _ => Err(format!("unknown exporter type: {}", exporter_type).into()),
     }
 }
@@ -749,6 +776,11 @@ fn get_single_exporter_config(
             cfg.metrics
                 .push(ExporterConfig::Kafka(kafka_config.clone()));
             cfg.logs.push(ExporterConfig::Kafka(kafka_config));
+        }
+        #[cfg(feature = "redis_exporter")]
+        Exporter::RedisStream => {
+            let redis_config = config.redis_stream_exporter.build_config()?;
+            cfg.traces.push(ExporterConfig::RedisStream(redis_config));
         }
         #[cfg(feature = "file_exporter")]
         Exporter::File => {

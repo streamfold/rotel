@@ -25,6 +25,8 @@ pub mod file_exporter;
 #[cfg(feature = "rdkafka")]
 mod kafka_exporter;
 mod otlp_exporter;
+#[cfg(feature = "redis_exporter")]
+mod redis_stream_exporter;
 mod xray_exporter;
 
 mod batch;

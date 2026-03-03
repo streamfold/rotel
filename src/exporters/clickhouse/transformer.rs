@@ -1,6 +1,7 @@
 use crate::exporters::clickhouse::Compression;
 use crate::exporters::clickhouse::rowbinary::json::JsonType;
 use crate::exporters::clickhouse::schema::MapOrJson;
+use crate::exporters::shared::otel_span;
 
 use opentelemetry_proto::tonic::common::v1::KeyValue;
 use std::borrow::Cow;
@@ -51,28 +52,15 @@ impl Transformer {
         prefix: String,
         result: &mut Vec<(String, String)>,
     ) {
-        use opentelemetry_proto::tonic::common::v1::any_value::Value;
-
-        for kv in attrs {
-            let full_key = if prefix.is_empty() {
-                kv.key.clone()
-            } else {
-                format!("{}.{}", prefix, kv.key)
-            };
-
-            if let Some(any_value) = &kv.value {
-                match &any_value.value {
-                    Some(Value::KvlistValue(kvlist)) => {
-                        // Recursively flatten nested key-value lists
-                        self.flatten_keyvalues_map(&kvlist.values, full_key, result);
-                    }
-                    Some(val) => {
-                        result.push((full_key, Self::anyvalue_to_string(val)));
-                    }
-                    None => {}
-                }
-            }
-        }
+        // Use shared flatten with appropriate prefix format.
+        // The shared function expects prefix to end with the separator already,
+        // but here prefix is a dotted parent key. We adapt by adding "." suffix.
+        let prefix_str = if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}.", prefix)
+        };
+        otel_span::flatten_keyvalues(attrs, &prefix_str, result);
     }
 
     fn build_json_attrs_kv<'a>(
@@ -172,53 +160,14 @@ impl Transformer {
         }
     }
 
-    fn anyvalue_to_string(
-        val: &opentelemetry_proto::tonic::common::v1::any_value::Value,
-    ) -> String {
-        use opentelemetry_proto::tonic::common::v1::any_value::Value;
-        use serde_json::json;
-
-        match val {
-            Value::StringValue(s) => s.clone(),
-            Value::BoolValue(b) => b.to_string(),
-            Value::IntValue(i) => i.to_string(),
-            Value::DoubleValue(d) => json!(d).to_string(),
-            Value::ArrayValue(a) => json!(a).to_string(),
-            Value::KvlistValue(kv) => json!(kv).to_string(),
-            Value::BytesValue(b) => hex::encode(b),
-        }
-    }
 }
 
 pub(crate) fn find_str_attribute_kv<'a>(attr: &str, attributes: &'a [KeyValue]) -> Cow<'a, str> {
-    use opentelemetry_proto::tonic::common::v1::any_value::Value;
-
-    attributes
-        .iter()
-        .find(|kv| kv.key == attr)
-        .and_then(|kv| {
-            kv.value.as_ref().and_then(|v| {
-                v.value.as_ref().map(|val| match val {
-                    Value::StringValue(s) => Cow::Borrowed(s.as_str()),
-                    _ => Cow::Borrowed(""),
-                })
-            })
-        })
-        .unwrap_or(Cow::Borrowed(""))
+    otel_span::find_str_attribute(attr, attributes)
 }
 
 pub(crate) fn encode_id<'a>(id: &[u8], out: &'a mut [u8]) -> &'a str {
-    match hex::encode_to_slice(id, out) {
-        Ok(_) => {
-            // We can be pretty sure the encoded string is utf8 safe
-            std::str::from_utf8(out).unwrap_or_default()
-        }
-        Err(_) => {
-            // Trace and Span IDs are required to have a certain length (8 or 16 bytes), the only
-            // case this should fail is on an empty ID, like parent_span_id on a root span.
-            ""
-        }
-    }
+    otel_span::encode_id(id, out)
 }
 
 #[cfg(test)]
