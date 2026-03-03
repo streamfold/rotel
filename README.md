@@ -607,6 +607,11 @@ rotel start --exporter redis-stream \
   --redis-stream-exporter-username myuser \
   --redis-stream-exporter-password mypass
 
+# Only export spans from specific services
+rotel start --exporter redis-stream \
+  --redis-stream-exporter-stream-key-template "traces:{service.name}" \
+  --redis-stream-exporter-filter-service-names "api-gateway,payment-service"
+
 # Cluster mode
 rotel start --exporter redis-stream \
   --redis-stream-exporter-endpoint "redis://node1:6379,redis://node2:6379,redis://node3:6379" \

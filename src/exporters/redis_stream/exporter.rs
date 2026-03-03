@@ -75,6 +75,7 @@ impl RedisStreamExporter {
         let mut xadd_items: Vec<(String, Vec<(String, String)>)> = Vec::new();
 
         let has_service_filter = !self.config.filter_service_names.is_empty();
+        let mut filtered_span_count: usize = 0;
 
         for message in messages {
             if let Some(metadata) = message.metadata {
@@ -90,6 +91,8 @@ impl RedisStreamExporter {
                         .map(|r| find_str_attribute(SERVICE_NAME, &r.attributes))
                         .unwrap_or_default();
                     if !self.config.filter_service_names.iter().any(|f| f == svc.as_ref()) {
+                        let span_count: usize = rs.scope_spans.iter().map(|ss| ss.spans.len()).sum();
+                        filtered_span_count += span_count;
                         continue;
                     }
                 }
@@ -116,6 +119,10 @@ impl RedisStreamExporter {
                     }
                 }
             }
+        }
+
+        if filtered_span_count > 0 {
+            debug!(filtered_span_count, "Dropped spans not matching service name filter");
         }
 
         // Build and execute pipeline(s)
