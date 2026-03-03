@@ -547,6 +547,7 @@ using Redis consumer groups. The exporter works with standalone Redis and Valkey
 | --redis-stream-exporter-password             |                        |            | Redis password for authentication                    |
 | --redis-stream-exporter-pipeline-size        |                        |            | Max XADD commands per pipeline batch (default: all at once) |
 | --redis-stream-exporter-filter-service-names |                        |            | Comma-separated service names to export (default: all) |
+| --redis-stream-exporter-key-ttl-seconds      |                        |            | TTL in seconds for stream keys (default: no expiry)    |
 
 TLS via `rediss://` URL scheme works automatically. Custom CA certificates can be provided with
 `--redis-stream-exporter-ca-cert-path` for environments like GCP Managed Redis. Username/password auth and cluster

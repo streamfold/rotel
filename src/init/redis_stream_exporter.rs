@@ -96,6 +96,14 @@ pub struct RedisStreamExporterArgs {
         value_delimiter = ','
     )]
     pub filter_service_names: Vec<String>,
+
+    /// TTL in seconds for stream keys. Redis will automatically expire keys after this duration.
+    #[arg(
+        id("REDIS_STREAM_EXPORTER_KEY_TTL_SECONDS"),
+        long("redis-stream-exporter-key-ttl-seconds"),
+        env = "ROTEL_REDIS_STREAM_EXPORTER_KEY_TTL_SECONDS"
+    )]
+    pub key_ttl_seconds: Option<u64>,
 }
 
 impl Default for RedisStreamExporterArgs {
@@ -111,6 +119,7 @@ impl Default for RedisStreamExporterArgs {
             password: None,
             pipeline_size: None,
             filter_service_names: Vec::new(),
+            key_ttl_seconds: None,
         }
     }
 }
@@ -148,7 +157,8 @@ impl RedisStreamExporterArgs {
             .with_username(self.username.clone())
             .with_password(self.password.clone())
             .with_pipeline_size(self.pipeline_size)
-            .with_filter_service_names(self.filter_service_names.clone());
+            .with_filter_service_names(self.filter_service_names.clone())
+            .with_key_ttl_seconds(self.key_ttl_seconds);
 
         Ok(config)
     }

@@ -12,6 +12,7 @@ use crate::exporters::shared::otel_span::find_str_attribute;
 use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use redis::streams::StreamMaxlen;
+use std::collections::HashSet;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
@@ -133,6 +134,8 @@ impl RedisStreamExporter {
 
         let maxlen = self.config.maxlen.map(StreamMaxlen::Approx);
 
+        let mut unique_keys: HashSet<&str> = HashSet::new();
+
         if let Some(pipeline_size) = self.config.pipeline_size {
             // Split into sub-batches
             for chunk in xadd_items.chunks(pipeline_size) {
@@ -148,6 +151,7 @@ impl RedisStreamExporter {
                             pipe.xadd(key, "*", &field_refs);
                         }
                     }
+                    unique_keys.insert(key);
                 }
                 conn.execute_pipeline(&pipe).await?;
             }
@@ -164,8 +168,20 @@ impl RedisStreamExporter {
                         pipe.xadd(key, "*", &field_refs);
                     }
                 }
+                unique_keys.insert(key);
             }
             if !xadd_items.is_empty() {
+                conn.execute_pipeline(&pipe).await?;
+            }
+        }
+
+        // Set TTL on stream keys if configured
+        if let Some(ttl) = self.config.key_ttl_seconds {
+            if !unique_keys.is_empty() {
+                let mut pipe = redis::pipe();
+                for key in &unique_keys {
+                    pipe.expire(*key, ttl as i64);
+                }
                 conn.execute_pipeline(&pipe).await?;
             }
         }

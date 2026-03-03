@@ -26,6 +26,7 @@ pub struct RedisStreamExporterConfig {
     pub password: Option<String>,
     pub pipeline_size: Option<usize>,
     pub filter_service_names: Vec<String>,
+    pub key_ttl_seconds: Option<u64>,
 }
 
 impl Default for RedisStreamExporterConfig {
@@ -41,6 +42,7 @@ impl Default for RedisStreamExporterConfig {
             password: None,
             pipeline_size: None,
             filter_service_names: Vec::new(),
+            key_ttl_seconds: None,
         }
     }
 }
@@ -95,6 +97,11 @@ impl RedisStreamExporterConfig {
 
     pub fn with_filter_service_names(mut self, filter_service_names: Vec<String>) -> Self {
         self.filter_service_names = filter_service_names;
+        self
+    }
+
+    pub fn with_key_ttl_seconds(mut self, key_ttl_seconds: Option<u64>) -> Self {
+        self.key_ttl_seconds = key_ttl_seconds;
         self
     }
 }
