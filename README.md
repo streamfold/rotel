@@ -29,7 +29,7 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - Built-in batching and retry mechanisms
 - Additional
   exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration),
-  and [Kafka](#kafka-exporter-configuration)
+  [Kafka](#kafka-exporter-configuration), and [Redis Stream](#redis-stream-exporter-configuration)
 - [Kafka Receiver](#kafka-receiver-configuration)
 - [Kmsg Receiver](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
 
@@ -521,6 +521,105 @@ cargo test --test kafka_integration_tests --features integration-tests
 ```
 
 See [KAFKA_INTEGRATION_TESTS.md](KAFKA_INTEGRATION_TESTS.md) for detailed testing instructions.
+
+### Redis Stream exporter configuration
+
+**NOTE**: The Redis Stream exporter is not enabled by default. It must be enabled by building with the feature flag
+`--features redis_exporter`:
+
+```shell
+cargo build --features redis_exporter
+```
+
+The Redis Stream exporter can be selected by passing `--exporter redis-stream`. It currently supports **traces only**
+and writes span data to Redis Streams via `XADD`. This enables downstream consumers to process spans in real-time
+using Redis consumer groups. The exporter works with standalone Redis and Valkey.
+
+| Option                                      | Default                | Options    |
+|---------------------------------------------|------------------------|------------|
+| --redis-stream-exporter-endpoint            | redis://localhost:6379 |            |
+| --redis-stream-exporter-stream-key-template | rotel:traces           |            |
+| --redis-stream-exporter-format              | json                   | json, flat |
+| --redis-stream-exporter-maxlen              |                        |            |
+| --redis-stream-exporter-cluster-mode        | false                  | (planned)  |
+| --redis-stream-exporter-ca-cert-path        |                        | (planned)  |
+| --redis-stream-exporter-username            |                        | (planned)  |
+| --redis-stream-exporter-password            |                        | (planned)  |
+| --redis-stream-exporter-pipeline-size       |                        |            |
+
+**NOTE**: TLS via `rediss://` URL scheme works automatically. However, custom CA certs, username/password auth, and
+cluster mode are accepted as configuration but **not yet wired into the connection**. These will be implemented in a
+follow-up.
+
+#### Stream Key Templates
+
+The `--redis-stream-exporter-stream-key-template` option supports attribute-based placeholders using `{attribute.name}`
+syntax. Placeholders are resolved per-span by looking up span attributes first, then resource attributes. Missing
+attributes resolve to an empty string.
+
+```shell
+# Static key (default)
+--redis-stream-exporter-stream-key-template "rotel:traces"
+
+# Route by service name
+--redis-stream-exporter-stream-key-template "traces:{service.name}"
+```
+
+In Redis Cluster mode, `{...}` in keys also serves as a hash tag, so spans with the same attribute values will route
+to the same cluster node.
+
+#### Serialization Formats
+
+- **json** (default): Each span is serialized as a single `data` field containing the full JSON object with nested
+  resource and span attributes.
+- **flat**: Each span is written as individual field/value pairs (`trace_id`, `span_id`, `service_name`,
+  `attr.http.method`, `resource.service.name`, etc.).
+
+#### Example Usage
+
+```shell
+# Basic usage with local Redis
+rotel start --exporter redis-stream
+
+# With TLS, auth, and attribute-based routing
+rotel start --exporter redis-stream \
+  --redis-stream-exporter-endpoint redis://127.0.0.1:6379/0 \
+  --redis-stream-exporter-stream-key-template "traces:{service.name}" \
+  --redis-stream-exporter-format flat
+
+# With TLS, auth, and attribute-based routing
+rotel start --exporter redis-stream \
+  --redis-stream-exporter-endpoint rediss://redis.example.com:6380 \
+  --redis-stream-exporter-stream-key-template "traces:{service.name}" \
+  --redis-stream-exporter-format flat \
+  --redis-stream-exporter-maxlen 100000 \
+  --redis-stream-exporter-username myuser \
+  --redis-stream-exporter-password mypass
+
+# Cluster mode
+rotel start --exporter redis-stream \
+  --redis-stream-exporter-endpoint "redis://node1:6379,redis://node2:6379,redis://node3:6379" \
+  --redis-stream-exporter-cluster-mode true
+```
+
+#### Testing the Redis Stream Exporter
+
+```shell
+# Start Redis
+docker run --rm -p 6379:6379 redis:7
+
+# Start rotel with Redis Stream exporter
+cargo run --features redis_exporter -- start \
+  --exporter redis-stream \
+  --redis-stream-exporter-endpoint redis://localhost:6379
+
+# Send traces (e.g., using otel-loadgen)
+otel-loadgen gen traces --otlp-endpoint localhost:4317 --duration 10s
+
+# Verify data
+redis-cli XLEN rotel:traces
+redis-cli XRANGE rotel:traces - + COUNT 3
+```
 
 ### File exporter configuration
 

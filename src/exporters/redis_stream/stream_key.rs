@@ -140,15 +140,15 @@ mod tests {
     #[test]
     fn test_parse_with_placeholders() {
         let template =
-            StreamKeyTemplate::parse("traces:{introspection.org.id}:{introspection.project.id}");
+            StreamKeyTemplate::parse("traces:{service.name}:{deployment.environment}");
         assert!(!template.is_static());
         assert_eq!(
             template.parts,
             vec![
                 TemplatePart::Literal("traces:".to_string()),
-                TemplatePart::Placeholder("introspection.org.id".to_string()),
+                TemplatePart::Placeholder("service.name".to_string()),
                 TemplatePart::Literal(":".to_string()),
-                TemplatePart::Placeholder("introspection.project.id".to_string()),
+                TemplatePart::Placeholder("deployment.environment".to_string()),
             ]
         );
     }
@@ -163,13 +163,13 @@ mod tests {
     #[test]
     fn test_resolve_with_span_attributes() {
         let template =
-            StreamKeyTemplate::parse("traces:{introspection.org.id}:{introspection.project.id}");
+            StreamKeyTemplate::parse("traces:{service.name}:{deployment.environment}");
         let attrs = vec![
-            make_kv("introspection.org.id", "org-123"),
-            make_kv("introspection.project.id", "proj-456"),
+            make_kv("service.name", "my-service"),
+            make_kv("deployment.environment", "production"),
         ];
         let result = template.resolve(None, &attrs);
-        assert_eq!(result, "traces:org-123:proj-456");
+        assert_eq!(result, "traces:my-service:production");
     }
 
     #[test]
