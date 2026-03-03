@@ -569,15 +569,14 @@ impl Processors {
         }
     }
 
-    /// Run sync Rust processors on a list of items via `spawn_blocking`.
-    /// This frees the tokio worker thread during processor execution, which is
-    /// important since FFI processor calls can easily exceed 150μs.
-    /// Ordering is preserved because each `spawn_blocking` call is awaited
-    /// sequentially before the next message is processed.
+    /// Run sync Rust processors on a list of items via a single `spawn_blocking` call.
+    /// All sync processors execute sequentially within one blocking thread, avoiding
+    /// repeated scheduling overhead. This frees the tokio worker thread during
+    /// processor execution, which is important since FFI calls can easily exceed 150μs.
     #[cfg(feature = "rust_processor")]
     async fn run_rust_processors<T>(
         &self,
-        mut items: Vec<T>,
+        items: Vec<T>,
         request_context: &Option<crate::topology::payload::RequestContext>,
     ) -> Vec<T>
     where
@@ -593,31 +592,33 @@ impl Processors {
             .map(|ctx| ctx.clone().into())
             .into();
 
-        // Process each processor sequentially via spawn_blocking.
-        // We use a raw pointer to pass the processor reference since
-        // RotelProcessor_TO doesn't implement Send, but the underlying
-        // trait requires Send + Sync.
-        for rust_proc in &self.rust_processors {
-            let proc_ptr = &rust_proc.processor
-                as *const RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>;
-            let ctx = context.clone();
-            // SAFETY: RotelProcessor requires Send + Sync, so the trait object
-            // is safe to access from the spawn_blocking thread. The processor
-            // outlives the spawn_blocking call because we await it immediately.
-            let proc_ref = unsafe { &*proc_ptr };
-            let moved_items = items;
-            items = tokio::task::spawn_blocking(move || {
-                let mut new_items = Vec::with_capacity(moved_items.len());
-                for item in moved_items {
-                    let result = item.process_with_rust(proc_ref, &ctx);
-                    new_items.push(result);
+        // Wrapper to send raw pointers across thread boundary.
+        // SAFETY: RotelProcessor requires Send + Sync, so the underlying
+        // trait objects are safe to access from any thread.
+        struct SendablePtr(*const RotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>);
+        unsafe impl Send for SendablePtr {}
+
+        let proc_ptrs: Vec<SendablePtr> = self
+            .rust_processors
+            .iter()
+            .map(|p| SendablePtr(&p.processor as *const _))
+            .collect();
+
+        // The processors outlive the spawn_blocking call because we await it immediately.
+        tokio::task::spawn_blocking(move || {
+            let mut items = items;
+            for ptr in &proc_ptrs {
+                let proc_ref = unsafe { &*ptr.0 };
+                let mut new_items = Vec::with_capacity(items.len());
+                for item in items {
+                    new_items.push(item.process_with_rust(proc_ref, &context));
                 }
-                new_items
-            })
-            .await
-            .expect("spawn_blocking for sync rust processor panicked");
-        }
-        items
+                items = new_items;
+            }
+            items
+        })
+        .await
+        .expect("spawn_blocking for sync rust processor panicked")
     }
 
     /// Run async Rust processors on a list of items.
