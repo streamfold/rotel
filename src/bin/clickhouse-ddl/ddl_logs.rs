@@ -28,6 +28,12 @@ pub(crate) fn get_logs_ddl(
         ""
     };
 
+    let event_name_col = if use_json {
+        LOGS_TABLE_EVENT_NAME_COL_SQL
+    } else {
+        ""
+    };
+
     // JSON tables drop the TimestampTime column. This one doesn't seem to be
     //
     let (ts_col, part_by, primary_key, order_by, ttl_col) = match use_json {
@@ -59,6 +65,7 @@ pub(crate) fn get_logs_ddl(
             ("CLUSTER", &build_cluster_string(cluster)),
             ("MAP_OR_JSON", map_or_json),
             ("TIMESTAMP_COL", ts_col),
+            ("EVENT_NAME_COL", event_name_col),
             ("ENGINE", &engine.to_string()),
             ("MAP_INDICES", map_indices),
             ("INDICES", indices),
@@ -91,6 +98,7 @@ CREATE TABLE IF NOT EXISTS %%TABLE%% %%CLUSTER%% (
 	ScopeVersion LowCardinality(String) CODEC(ZSTD(1)),
 	ScopeAttributes %%MAP_OR_JSON%% CODEC(ZSTD(1)),
 	LogAttributes %%MAP_OR_JSON%% CODEC(ZSTD(1)),
+	%%EVENT_NAME_COL%%
 
     %%MAP_INDICES%%
 
@@ -108,6 +116,8 @@ const LOGS_TABLE_INDICES_SQL: &str = r#"
 	INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
 	INDEX idx_body Body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 8,
 "#;
+
+const LOGS_TABLE_EVENT_NAME_COL_SQL: &str = r#"EventName String CODEC(ZSTD(1)),"#;
 
 const LOGS_TABLE_MAP_INDICES_SQL: &str = r#"
 	INDEX idx_res_attr_key mapKeys(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,

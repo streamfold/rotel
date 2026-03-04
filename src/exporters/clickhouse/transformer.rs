@@ -14,6 +14,8 @@ pub struct Transformer {
     /// - `None` or `Some(0)`: flat mode (backwards compatible, nested KV serialized as JSON strings)
     /// - `Some(n)` where n > 0: recursive conversion up to depth n
     nested_kv_max_depth: usize,
+    /// Whether the logs table has the extended EventName column.
+    pub(crate) logs_extended: bool,
 }
 
 impl Transformer {
@@ -22,11 +24,17 @@ impl Transformer {
             compression,
             use_json,
             nested_kv_max_depth: 0, // Default: backwards compatible flat mode
+            logs_extended: false,
         }
     }
 
     pub fn with_nested_kv_max_depth(mut self, max_depth: usize) -> Self {
         self.nested_kv_max_depth = max_depth;
+        self
+    }
+
+    pub fn with_logs_extended(mut self, extended: bool) -> Self {
+        self.logs_extended = extended;
         self
     }
 }

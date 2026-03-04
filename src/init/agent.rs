@@ -724,7 +724,7 @@ impl Agent {
                         );
                     }
                     ExporterConfig::Clickhouse(cfg_builder) => {
-                        let builder = cfg_builder.build()?;
+                        let builder = cfg_builder.build_logs().await?;
 
                         let exp = builder.build_logs_exporter(
                             logs_pipeline_out_rx,
