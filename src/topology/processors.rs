@@ -659,7 +659,7 @@ impl Processors {
     #[cfg(feature = "rust_processor")]
     async fn run_async_rust_processors<T>(
         &self,
-        mut items: Vec<T>,
+        items: Vec<T>,
         request_context: &Option<crate::topology::payload::RequestContext>,
     ) -> Vec<T>
     where
@@ -676,34 +676,37 @@ impl Processors {
 
         let preserve_on_panic = self.async_preserve_on_panic;
 
-        for async_proc in &self.async_rust_processors {
-            let processor = Arc::clone(&async_proc.processor);
-            let ctx = context.clone();
-            let moved_items = items;
+        let processors: Vec<Arc<AsyncRotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>>> =
+            self.async_rust_processors
+                .iter()
+                .map(|p| Arc::clone(&p.processor))
+                .collect();
 
-            items = tokio::task::spawn_blocking(move || {
-                let mut new_items = Vec::with_capacity(moved_items.len());
-                for item in moved_items {
+        tokio::task::spawn_blocking(move || {
+            let mut items = items;
+            for processor in &processors {
+                let mut new_items = Vec::with_capacity(items.len());
+                for item in items {
                     if preserve_on_panic {
                         let backup = item.clone();
-                        match item.process_with_async_rust(&processor, ctx.clone()) {
+                        match item.process_with_async_rust(processor, context.clone()) {
                             Some(result) => new_items.push(result),
                             None => new_items.push(backup),
                         }
                     } else {
-                        if let Some(result) = item.process_with_async_rust(&processor, ctx.clone())
+                        if let Some(result) =
+                            item.process_with_async_rust(processor, context.clone())
                         {
                             new_items.push(result);
                         }
-                        // On panic (None), item is dropped
                     }
                 }
-                new_items
-            })
-            .await
-            .expect("spawn_blocking for async rust processor panicked");
-        }
-        items
+                items = new_items;
+            }
+            items
+        })
+        .await
+        .expect("spawn_blocking for async rust processor panicked")
     }
 
     /// Run with Rust processors only (when pyo3 is disabled)
