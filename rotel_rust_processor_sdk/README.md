@@ -203,6 +203,7 @@ Processors are loaded per telemetry type. Multiple processors can be specified a
 | `--async-rust-trace-processor` | `ROTEL_ASYNC_RUST_TRACE_PROCESSOR` | Path to async trace processor dylib |
 | `--async-rust-logs-processor` | `ROTEL_ASYNC_RUST_LOGS_PROCESSOR` | Path to async logs processor dylib |
 | `--async-rust-metrics-processor` | `ROTEL_ASYNC_RUST_METRICS_PROCESSOR` | Path to async metrics processor dylib |
+| `--async-processor-preserve-on-panic` | `ROTEL_ASYNC_PROCESSOR_PRESERVE_ON_PANIC` | Preserve data on async processor panic (default: `false`) |
 
 ### Chaining multiple processors
 
@@ -310,12 +311,23 @@ Rotel will log the payload before and after processing. You should see the `rote
 
 ## Panic Safety
 
-Both `export_processor!` and `export_async_processor!` wrap your processor methods in `catch_unwind` to prevent panics from crossing the FFI boundary (which would be undefined behavior).
+Both `export_processor!` and `export_async_processor!` wrap your processor methods in `catch_unwind` to prevent panics from crossing the FFI boundary (which would be undefined behavior). In all cases, an error message is printed to stderr.
 
 - **Sync processors**: If a panic occurs, the data passes through in whatever state it was in at the time of the panic (potentially partially modified).
-- **Async processors**: If a panic occurs, the original unmodified data is passed through instead.
+- **Async processors**: Because async processors take ownership of the data (required for safe `.await` across the FFI boundary), the default behavior on panic is to **drop the data** — it is removed from the pipeline. This avoids the cost of cloning every item on every call.
 
-In both cases, an error message is printed to stderr.
+### Preserving data on async processor panic
+
+If you prefer to preserve the original data when an async processor panics, enable the `--async-processor-preserve-on-panic` flag:
+
+```bash
+rotel start \
+    --async-rust-trace-processor ./libenrichment.dylib \
+    --async-processor-preserve-on-panic \
+    --exporter blackhole
+```
+
+When enabled, Rotel clones each telemetry item before passing it to the async processor. If the processor panics, the original unmodified clone is returned instead. This provides safety at the cost of a full deep copy of every item on every processor invocation, which may impact throughput and memory usage under high load.
 
 ## Requirements
 

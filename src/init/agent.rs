@@ -800,7 +800,8 @@ impl Agent {
                 .initialize_rust(config.rust_trace_processor.clone())
                 .map_err(|e| format!("Failed to initialize Rust trace processors: {}", e))?
                 .initialize_async_rust(config.async_rust_trace_processor.clone())
-                .map_err(|e| format!("Failed to initialize async Rust trace processors: {}", e))?;
+                .map_err(|e| format!("Failed to initialize async Rust trace processors: {}", e))?
+                .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
 
             let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
                 "traces",
@@ -837,7 +838,8 @@ impl Agent {
                     .initialize_async_rust(config.async_rust_metrics_processor.clone())
                     .map_err(|e| {
                         format!("Failed to initialize async Rust metrics processors: {}", e)
-                    })?;
+                    })?
+                    .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
 
             let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
                 "metrics",
@@ -871,7 +873,8 @@ impl Agent {
                 .initialize_rust(config.rust_logs_processor.clone())
                 .map_err(|e| format!("Failed to initialize Rust logs processors: {}", e))?
                 .initialize_async_rust(config.async_rust_logs_processor.clone())
-                .map_err(|e| format!("Failed to initialize async Rust logs processors: {}", e))?;
+                .map_err(|e| format!("Failed to initialize async Rust logs processors: {}", e))?
+                .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
 
             let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
                 "logs",

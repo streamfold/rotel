@@ -341,23 +341,22 @@ macro_rules! export_async_processor {
                 &self,
                 spans: $crate::types::RResourceSpans,
                 context: $crate::ROption<$crate::types::RRequestContext>,
-            ) -> $crate::types::RResourceSpans {
+            ) -> $crate::ROption<$crate::types::RResourceSpans> {
                 let rt = self.runtime.get()
                     .expect("start() was not called before process_spans()");
-                let backup = spans.clone();
                 let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
                     rt.block_on(self.inner.process_spans(spans, context))
                 }));
                 match result {
-                    Ok(spans) => spans,
+                    Ok(spans) => $crate::ROption::RSome(spans),
                     Err(e) => {
                         let msg = $crate::__extract_panic_message(&e);
                         eprintln!(
-                            "[rotel-async-processor] PANIC in {}.process_spans: {} - data passed through unmodified",
+                            "[rotel-async-processor] PANIC in {}.process_spans: {} - data dropped",
                             stringify!($processor_type),
                             msg,
                         );
-                        backup
+                        $crate::ROption::RNone
                     }
                 }
             }
@@ -366,23 +365,22 @@ macro_rules! export_async_processor {
                 &self,
                 logs: $crate::types::RResourceLogs,
                 context: $crate::ROption<$crate::types::RRequestContext>,
-            ) -> $crate::types::RResourceLogs {
+            ) -> $crate::ROption<$crate::types::RResourceLogs> {
                 let rt = self.runtime.get()
                     .expect("start() was not called before process_logs()");
-                let backup = logs.clone();
                 let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
                     rt.block_on(self.inner.process_logs(logs, context))
                 }));
                 match result {
-                    Ok(logs) => logs,
+                    Ok(logs) => $crate::ROption::RSome(logs),
                     Err(e) => {
                         let msg = $crate::__extract_panic_message(&e);
                         eprintln!(
-                            "[rotel-async-processor] PANIC in {}.process_logs: {} - data passed through unmodified",
+                            "[rotel-async-processor] PANIC in {}.process_logs: {} - data dropped",
                             stringify!($processor_type),
                             msg,
                         );
-                        backup
+                        $crate::ROption::RNone
                     }
                 }
             }
@@ -391,23 +389,22 @@ macro_rules! export_async_processor {
                 &self,
                 metrics: $crate::types::RResourceMetrics,
                 context: $crate::ROption<$crate::types::RRequestContext>,
-            ) -> $crate::types::RResourceMetrics {
+            ) -> $crate::ROption<$crate::types::RResourceMetrics> {
                 let rt = self.runtime.get()
                     .expect("start() was not called before process_metrics()");
-                let backup = metrics.clone();
                 let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
                     rt.block_on(self.inner.process_metrics(metrics, context))
                 }));
                 match result {
-                    Ok(metrics) => metrics,
+                    Ok(metrics) => $crate::ROption::RSome(metrics),
                     Err(e) => {
                         let msg = $crate::__extract_panic_message(&e);
                         eprintln!(
-                            "[rotel-async-processor] PANIC in {}.process_metrics: {} - data passed through unmodified",
+                            "[rotel-async-processor] PANIC in {}.process_metrics: {} - data dropped",
                             stringify!($processor_type),
                             msg,
                         );
-                        backup
+                        $crate::ROption::RNone
                     }
                 }
             }

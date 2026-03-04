@@ -157,14 +157,16 @@ impl RustProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceMetric
 #[cfg(not(feature = "rust_processor"))]
 impl RustProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs {}
 
-/// Trait for types that can be processed by async Rust processors (owned data in/out)
+/// Trait for types that can be processed by async Rust processors (owned data in/out).
+///
+/// Returns `Some(result)` on success, `None` if the processor panicked.
 #[cfg(feature = "rust_processor")]
 pub trait AsyncRustProcessable: Sized {
     fn process_with_async_rust(
         self,
         processor: &AsyncRotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
         context: ROption<RRequestContext>,
-    ) -> Self;
+    ) -> Option<Self>;
 }
 
 #[cfg(feature = "rust_processor")]
@@ -173,10 +175,12 @@ impl AsyncRustProcessable for opentelemetry_proto::tonic::trace::v1::ResourceSpa
         self,
         processor: &AsyncRotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
         context: ROption<RRequestContext>,
-    ) -> Self {
+    ) -> Option<Self> {
         let r_spans: RResourceSpans = self.into();
-        let result = processor.process_spans(r_spans, context);
-        result.into()
+        match processor.process_spans(r_spans, context) {
+            ROption::RSome(result) => Some(result.into()),
+            ROption::RNone => None,
+        }
     }
 }
 
@@ -186,10 +190,12 @@ impl AsyncRustProcessable for opentelemetry_proto::tonic::metrics::v1::ResourceM
         self,
         processor: &AsyncRotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
         context: ROption<RRequestContext>,
-    ) -> Self {
+    ) -> Option<Self> {
         let r_metrics: RResourceMetrics = self.into();
-        let result = processor.process_metrics(r_metrics, context);
-        result.into()
+        match processor.process_metrics(r_metrics, context) {
+            ROption::RSome(result) => Some(result.into()),
+            ROption::RNone => None,
+        }
     }
 }
 
@@ -199,10 +205,12 @@ impl AsyncRustProcessable for opentelemetry_proto::tonic::logs::v1::ResourceLogs
         self,
         processor: &AsyncRotelProcessor_TO<'static, abi_stable::std_types::RBox<()>>,
         context: ROption<RRequestContext>,
-    ) -> Self {
+    ) -> Option<Self> {
         let r_logs: RResourceLogs = self.into();
-        let result = processor.process_logs(r_logs, context);
-        result.into()
+        match processor.process_logs(r_logs, context) {
+            ROption::RSome(result) => Some(result.into()),
+            ROption::RNone => None,
+        }
     }
 }
 
@@ -334,6 +342,8 @@ pub struct Processors {
     rust_processors: Vec<RustProcessor>,
     #[cfg(feature = "rust_processor")]
     async_rust_processors: Vec<AsyncRustProcessor>,
+    #[cfg(feature = "rust_processor")]
+    async_preserve_on_panic: bool,
 }
 
 impl Processors {
@@ -345,6 +355,8 @@ impl Processors {
             rust_processors: Vec::new(),
             #[cfg(feature = "rust_processor")]
             async_rust_processors: Vec::new(),
+            #[cfg(feature = "rust_processor")]
+            async_preserve_on_panic: false,
         }
     }
 
@@ -394,6 +406,8 @@ impl Processors {
             rust_processors: Vec::new(),
             #[cfg(feature = "rust_processor")]
             async_rust_processors: Vec::new(),
+            #[cfg(feature = "rust_processor")]
+            async_preserve_on_panic: false,
         })
     }
 
@@ -447,6 +461,21 @@ impl Processors {
         _async_processor_files: Vec<String>,
     ) -> Result<Self, BoxError> {
         Ok(self)
+    }
+
+    /// Enable preserve-on-panic for async processors.
+    /// When enabled, data is cloned before processing so the original can be
+    /// returned if the processor panics.
+    #[cfg(feature = "rust_processor")]
+    pub fn set_async_preserve_on_panic(mut self, preserve: bool) -> Self {
+        self.async_preserve_on_panic = preserve;
+        self
+    }
+
+    /// Noop when rust_processor is disabled
+    #[cfg(not(feature = "rust_processor"))]
+    pub fn set_async_preserve_on_panic(self, _preserve: bool) -> Self {
+        self
     }
 
     /// Check if there are any Rust processors loaded
@@ -623,6 +652,10 @@ impl Processors {
 
     /// Run async Rust processors on a list of items.
     /// Always executed via `spawn_blocking` since processors internally call `block_on`.
+    ///
+    /// When `async_preserve_on_panic` is enabled, each item is cloned before processing.
+    /// If the processor panics (returns `None`), the original clone is preserved.
+    /// When disabled (default), panicked items are dropped from the output.
     #[cfg(feature = "rust_processor")]
     async fn run_async_rust_processors<T>(
         &self,
@@ -641,6 +674,8 @@ impl Processors {
             .map(|ctx| ctx.clone().into())
             .into();
 
+        let preserve_on_panic = self.async_preserve_on_panic;
+
         for async_proc in &self.async_rust_processors {
             let processor = Arc::clone(&async_proc.processor);
             let ctx = context.clone();
@@ -649,8 +684,19 @@ impl Processors {
             items = tokio::task::spawn_blocking(move || {
                 let mut new_items = Vec::with_capacity(moved_items.len());
                 for item in moved_items {
-                    let result = item.process_with_async_rust(&processor, ctx.clone());
-                    new_items.push(result);
+                    if preserve_on_panic {
+                        let backup = item.clone();
+                        match item.process_with_async_rust(&processor, ctx.clone()) {
+                            Some(result) => new_items.push(result),
+                            None => new_items.push(backup),
+                        }
+                    } else {
+                        if let Some(result) = item.process_with_async_rust(&processor, ctx.clone())
+                        {
+                            new_items.push(result);
+                        }
+                        // On panic (None), item is dropped
+                    }
                 }
                 new_items
             })
@@ -987,7 +1033,7 @@ def process_logs(resource_logs):
                 &self,
                 mut spans: RResourceSpans,
                 _ctx: ROption<RRequestContext>,
-            ) -> RResourceSpans {
+            ) -> ROption<RResourceSpans> {
                 assert!(self.started.load(Ordering::SeqCst), "start() not called");
                 for scope in spans.scope_spans.iter_mut() {
                     for span in scope.spans.iter_mut() {
@@ -995,7 +1041,7 @@ def process_logs(resource_logs):
                             .push(RKeyValue::string("test.async", "was_here"));
                     }
                 }
-                spans
+                ROption::RSome(spans)
             }
         }
 
@@ -1027,6 +1073,7 @@ def process_logs(resource_logs):
             processor_modules: Vec::new(),
             rust_processors: vec![make_test_sync_processor()],
             async_rust_processors: Vec::new(),
+            async_preserve_on_panic: false,
         };
 
         let result = processors.run_rust_processors(items, &None).await;
@@ -1054,6 +1101,7 @@ def process_logs(resource_logs):
             processor_modules: Vec::new(),
             rust_processors: Vec::new(),
             async_rust_processors: vec![make_test_async_processor()],
+            async_preserve_on_panic: false,
         };
 
         let result = processors.run_async_rust_processors(items, &None).await;
@@ -1095,6 +1143,7 @@ def process_logs(resource_logs):
             processor_modules: Vec::new(),
             rust_processors: vec![make_test_sync_processor()],
             async_rust_processors: vec![make_test_async_processor()],
+            async_preserve_on_panic: false,
         };
 
         let result = processors.run(message, &NoOpInspector).await;
@@ -1145,6 +1194,7 @@ def process_logs(resource_logs):
             processor_modules: Vec::new(),
             rust_processors: Vec::new(),
             async_rust_processors: vec![make_test_async_processor()],
+            async_preserve_on_panic: false,
         };
 
         // Should not panic
@@ -1197,6 +1247,7 @@ def process_logs(resource_logs):
             processor_modules: Vec::new(),
             rust_processors: vec![make_proc("first"), make_proc("second"), make_proc("third")],
             async_rust_processors: Vec::new(),
+            async_preserve_on_panic: false,
         };
 
         let result = processors.run_rust_processors(items, &None).await;

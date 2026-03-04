@@ -66,6 +66,9 @@ pub trait RotelProcessor: Send + Sync {
 /// `async fn` methods and automatic runtime management via `export_async_processor!`.
 ///
 /// The host invokes these methods via `tokio::task::spawn_blocking`, so blocking is safe.
+///
+/// Processing methods return `ROption`: `RSome(result)` on success, `RNone` on panic.
+/// This allows the host to reliably detect panics and optionally preserve original data.
 #[sabi_trait]
 pub trait AsyncRotelProcessor: Send + Sync {
     /// Called once when the processor is loaded. Use for initialization.
@@ -74,31 +77,31 @@ pub trait AsyncRotelProcessor: Send + Sync {
     /// Called once when the pipeline is shutting down. Use for cleanup.
     fn shutdown(&self) {}
 
-    /// Process trace spans. Takes ownership and returns processed data.
+    /// Process trace spans. Returns `RSome(result)` on success, `RNone` on panic.
     fn process_spans(
         &self,
         spans: RResourceSpans,
         _context: ROption<RRequestContext>,
-    ) -> RResourceSpans {
-        spans
+    ) -> ROption<RResourceSpans> {
+        ROption::RSome(spans)
     }
 
-    /// Process logs. Takes ownership and returns processed data.
+    /// Process logs. Returns `RSome(result)` on success, `RNone` on panic.
     fn process_logs(
         &self,
         logs: RResourceLogs,
         _context: ROption<RRequestContext>,
-    ) -> RResourceLogs {
-        logs
+    ) -> ROption<RResourceLogs> {
+        ROption::RSome(logs)
     }
 
-    /// Process metrics. Takes ownership and returns processed data.
+    /// Process metrics. Returns `RSome(result)` on success, `RNone` on panic.
     fn process_metrics(
         &self,
         metrics: RResourceMetrics,
         _context: ROption<RRequestContext>,
-    ) -> RResourceMetrics {
-        metrics
+    ) -> ROption<RResourceMetrics> {
+        ROption::RSome(metrics)
     }
 }
 
