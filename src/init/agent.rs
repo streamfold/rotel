@@ -796,7 +796,12 @@ impl Agent {
                 .expect("Failed to build trace fanout with single consumer");
 
             let trace_processors = Processors::initialize(config.otlp_with_trace_processor.clone())
-                .map_err(|e| format!("Failed to initialize trace processors: {}", e))?;
+                .map_err(|e| format!("Failed to initialize trace processors: {}", e))?
+                .initialize_rust(config.rust_trace_processor.clone())
+                .map_err(|e| format!("Failed to initialize Rust trace processors: {}", e))?
+                .initialize_async_rust(config.async_rust_trace_processor.clone())
+                .map_err(|e| format!("Failed to initialize async Rust trace processors: {}", e))?
+                .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
 
             let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
                 "traces",
@@ -827,7 +832,14 @@ impl Agent {
 
             let metrics_processors =
                 Processors::initialize(config.otlp_with_metrics_processor.clone())
-                    .map_err(|e| format!("Failed to initialize metrics processors: {}", e))?;
+                    .map_err(|e| format!("Failed to initialize metrics processors: {}", e))?
+                    .initialize_rust(config.rust_metrics_processor.clone())
+                    .map_err(|e| format!("Failed to initialize Rust metrics processors: {}", e))?
+                    .initialize_async_rust(config.async_rust_metrics_processor.clone())
+                    .map_err(|e| {
+                        format!("Failed to initialize async Rust metrics processors: {}", e)
+                    })?
+                    .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
 
             let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
                 "metrics",
@@ -856,9 +868,13 @@ impl Agent {
                 .build()
                 .expect("Failed to build logs fanout with single consumer");
 
-            let logs_processors =
-                Processors::initialize(config.otlp_with_logs_processor.clone())
-                    .map_err(|e| format!("Failed to initialize logs processors: {}", e))?;
+            let logs_processors = Processors::initialize(config.otlp_with_logs_processor.clone())
+                .map_err(|e| format!("Failed to initialize logs processors: {}", e))?
+                .initialize_rust(config.rust_logs_processor.clone())
+                .map_err(|e| format!("Failed to initialize Rust logs processors: {}", e))?
+                .initialize_async_rust(config.async_rust_logs_processor.clone())
+                .map_err(|e| format!("Failed to initialize async Rust logs processors: {}", e))?
+                .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
 
             let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
                 "logs",

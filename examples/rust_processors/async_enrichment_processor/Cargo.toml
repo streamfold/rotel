@@ -1,0 +1,12 @@
+[package]
+name = "async_enrichment_processor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rotel_rust_processor_sdk = { path = "../../../rotel_rust_processor_sdk" }
+abi_stable = "0.11"
+tokio = { version = "1", features = ["time"] }

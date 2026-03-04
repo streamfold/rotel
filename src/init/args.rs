@@ -99,6 +99,38 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_OTLP_WITH_METRICS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
     pub otlp_with_metrics_processor: Vec<String>,
 
+    /// Path to Rust trace processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_RUST_TRACE_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub rust_trace_processor: Vec<String>,
+
+    /// Path to Rust logs processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_RUST_LOGS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub rust_logs_processor: Vec<String>,
+
+    /// Path to Rust metrics processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_RUST_METRICS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub rust_metrics_processor: Vec<String>,
+
+    /// Path to async Rust trace processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_ASYNC_RUST_TRACE_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub async_rust_trace_processor: Vec<String>,
+
+    /// Path to async Rust logs processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_ASYNC_RUST_LOGS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub async_rust_logs_processor: Vec<String>,
+
+    /// Path to async Rust metrics processor shared library (.so/.dylib)
+    #[arg(long, env = "ROTEL_ASYNC_RUST_METRICS_PROCESSOR", action = clap::ArgAction::Append, value_delimiter = ',')]
+    pub async_rust_metrics_processor: Vec<String>,
+
+    /// Preserve original data when an async Rust processor panics (clones data before processing)
+    #[arg(
+        long,
+        env = "ROTEL_ASYNC_PROCESSOR_PRESERVE_ON_PANIC",
+        default_value = "false"
+    )]
+    pub async_processor_preserve_on_panic: bool,
+
     /// Comma-separated, key=value pairs of resource attributes to set
     #[arg(long, env = "ROTEL_OTEL_RESOURCE_ATTRIBUTES")]
     pub otel_resource_attributes: Option<String>,
@@ -185,6 +217,13 @@ impl Default for AgentRun {
             otlp_with_trace_processor: Vec::new(),
             otlp_with_logs_processor: Vec::new(),
             otlp_with_metrics_processor: Vec::new(),
+            rust_trace_processor: Vec::new(),
+            rust_logs_processor: Vec::new(),
+            rust_metrics_processor: Vec::new(),
+            async_rust_trace_processor: Vec::new(),
+            async_rust_logs_processor: Vec::new(),
+            async_rust_metrics_processor: Vec::new(),
+            async_processor_preserve_on_panic: false,
             otel_resource_attributes: None,
             enable_internal_telemetry: false,
             batch: BatchArgs::default(),
