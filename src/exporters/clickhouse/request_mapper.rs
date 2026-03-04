@@ -1,4 +1,5 @@
 use crate::exporters::clickhouse::api_request::{ApiRequestBuilder, ConnectionConfig};
+use crate::exporters::clickhouse::describe_table::ExporterTableCapabilities;
 use crate::exporters::clickhouse::payload::ClickhousePayload;
 use crate::exporters::clickhouse::schema::{
     get_log_row_col_keys, get_metrics_exp_histogram_row_col_keys, get_metrics_gauge_row_col_keys,
@@ -27,6 +28,18 @@ pub struct RequestMapper {
 
 impl RequestMapper {
     pub(crate) fn new(config: &ConnectionConfig, table_prefix: String) -> Result<Self, BoxError> {
+        Self::new_with_capabilities(config, table_prefix, &ExporterTableCapabilities::default())
+    }
+
+    pub(crate) fn new_with_capabilities(
+        config: &ConnectionConfig,
+        table_prefix: String,
+        caps: &ExporterTableCapabilities,
+    ) -> Result<Self, BoxError> {
+        // Logs are extended when the EventName column is present.
+        let logs_extended = caps.logs.has_column("EventName");
+        let logs_cols = get_log_row_col_keys(logs_extended);
+
         let mut mapper = HashMap::new();
 
         mapper.insert(
@@ -35,7 +48,7 @@ impl RequestMapper {
         );
         mapper.insert(
             RequestType::Logs,
-            new_api_req_builder(config, &table_prefix, "logs", get_log_row_col_keys())?,
+            new_api_req_builder(config, &table_prefix, "logs", logs_cols)?,
         );
         mapper.insert(
             RequestType::MetricsSum,

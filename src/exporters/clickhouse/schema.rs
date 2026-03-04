@@ -104,10 +104,20 @@ pub struct LogRecordRow<'a> {
     pub(crate) scope_version: &'a str,
     pub(crate) scope_attributes: &'a MapOrJson<'a>,
     pub(crate) log_attributes: MapOrJson<'a>,
+
+    /// Present only when the table has the `EventName` column (upstream JSON schema).
+    /// When `None`, the field is omitted from serialization and `EventName` must not
+    /// appear in the INSERT column list. We must use a custom serializer to skip the
+    /// serialize_some implementation in rowbinary::ser.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_opt_str"
+    )]
+    pub(crate) event_name: Option<&'a str>,
 }
 
-pub fn get_log_row_col_keys() -> String {
-    let fields = vec![
+pub fn get_log_row_col_keys(with_event_name: bool) -> String {
+    let mut fields = vec![
         "Timestamp",
         "TraceId",
         "SpanId",
@@ -124,6 +134,10 @@ pub fn get_log_row_col_keys() -> String {
         "ScopeAttributes",
         "LogAttributes",
     ];
+
+    if with_event_name {
+        fields.push("EventName");
+    }
 
     fields.join(",")
 }
@@ -414,5 +428,12 @@ impl<'a> Serialize for MapOrJson<'a> {
                 m.end()
             }
         }
+    }
+}
+
+fn serialize_opt_str<'a, S: Serializer>(val: &Option<&'a str>, s: S) -> Result<S::Ok, S::Error> {
+    match val {
+        Some(v) => s.serialize_str(v),
+        None => s.serialize_none(), // should never happen since we skip serializing None
     }
 }

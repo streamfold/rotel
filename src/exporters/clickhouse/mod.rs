@@ -1,6 +1,7 @@
 mod api_request;
 mod ch_error;
 mod compression;
+mod describe_table;
 mod exception;
 mod payload;
 mod request_builder;
@@ -165,7 +166,7 @@ impl ClickhouseExporterConfigBuilder {
     pub fn build(self) -> Result<ClickhouseExporterBuilder, BoxError> {
         let config = ConnectionConfig {
             endpoint: self.endpoint,
-            database: self.database,
+            database: self.database.clone(),
             compression: self.compression,
             auth_user: self.auth_user,
             auth_password: self.auth_password,
@@ -173,27 +174,80 @@ impl ClickhouseExporterConfigBuilder {
             use_json: self.use_json,
         };
 
-        let mapper = Arc::new(RequestMapper::new(&config, self.table_prefix)?);
+        let mapper = Arc::new(RequestMapper::new(&config, self.table_prefix.clone())?);
 
         Ok(ClickhouseExporterBuilder {
             config,
+            table_prefix: self.table_prefix,
             request_mapper: mapper,
             retry_config: self.retry_config,
             request_timeout: self.request_timeout,
             nested_kv_max_depth: self.nested_kv_max_depth,
+            logs_extended: false,
         })
+    }
+
+    /// Like [`build`], but also probes the Clickhouse tables via `DESCRIBE TABLE` so that
+    /// the resulting builder writes the extended `EventName` column when it is present in
+    /// the target table. On any probe failure the builder falls back to the baseline schema
+    /// transparently. Only used for logs since that's the only table with a schema migration.
+    pub async fn build_logs(self) -> Result<ClickhouseExporterBuilder, BoxError> {
+        let mut builder = self.build()?;
+        builder.probe_and_configure().await;
+        Ok(builder)
     }
 }
 
 pub struct ClickhouseExporterBuilder {
     config: ConnectionConfig,
+    table_prefix: String,
     retry_config: RetryConfig,
     request_mapper: Arc<RequestMapper>,
     request_timeout: Duration,
     nested_kv_max_depth: usize,
+    /// Whether the logs table has the extended EventName column.
+    logs_extended: bool,
 }
 
 impl ClickhouseExporterBuilder {
+    /// Probe the Clickhouse tables via `DESCRIBE TABLE` and reconfigure the mapper and
+    /// capability flags accordingly. Call this once at startup (before building exporters)
+    /// to enable writing to tables that include the new `EventName` column.
+    /// On failure the builder is left unchanged (baseline schema is used).
+    pub async fn probe_and_configure(&mut self) {
+        use crate::exporters::clickhouse::describe_table::probe_table_capabilities;
+        use crate::exporters::clickhouse::request_mapper::RequestMapper;
+
+        let caps = probe_table_capabilities(
+            &self.config.endpoint,
+            &self.config.database,
+            &self.table_prefix,
+            self.config.auth_user.as_deref(),
+            self.config.auth_password.as_deref(),
+        )
+        .await;
+
+        let logs_extended = caps.logs.has_column("EventName");
+
+        match RequestMapper::new_with_capabilities(&self.config, self.table_prefix.clone(), &caps) {
+            Ok(mapper) => {
+                self.request_mapper = Arc::new(mapper);
+                self.logs_extended = logs_extended;
+                tracing::info!(
+                    logs_extended,
+                    "Clickhouse table capabilities probed successfully."
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to build Clickhouse request mapper with probed capabilities; \
+                     falling back to baseline schema."
+                );
+            }
+        }
+    }
+
     pub fn build_traces_exporter<'a>(
         &self,
         rx: BoundedReceiver<Vec<Message<ResourceSpans>>>,
@@ -240,7 +294,8 @@ impl ClickhouseExporterBuilder {
         )?;
 
         let transformer = Transformer::new(self.config.compression.clone(), self.config.use_json)
-            .with_nested_kv_max_depth(self.nested_kv_max_depth);
+            .with_nested_kv_max_depth(self.nested_kv_max_depth)
+            .with_logs_extended(self.logs_extended);
 
         let req_builder = RequestBuilder::new(transformer, self.request_mapper.clone())?;
 

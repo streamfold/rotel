@@ -4,6 +4,7 @@ use crate::exporters::clickhouse::request_mapper::RequestType;
 use crate::exporters::clickhouse::schema::SpanRow;
 use crate::exporters::clickhouse::transformer::{Transformer, encode_id, find_str_attribute_kv};
 use crate::topology::payload::{Message, MessageMetadata};
+
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
@@ -122,9 +123,8 @@ impl TransformPayload<ResourceSpans> for Transformer {
                             links_attributes,
                         };
 
-                        match payload_builder.add_row(&row) {
-                            Ok(_) => {}
-                            Err(e) => return (Err(e), None),
+                        if let Some(e) = payload_builder.add_row(&row).err() {
+                            return (Err(e), None);
                         }
                     }
                 }

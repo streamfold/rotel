@@ -77,11 +77,13 @@ impl TransformPayload<ResourceLogs> for Transformer {
                             scope_version: &scope_version,
                             scope_attributes: &scope_attrs,
                             log_attributes: self.transform_attrs_kv(&log_attrs),
+
+                            // Extended column, only added if column exists
+                            event_name: self.logs_extended.then(|| log.event_name.as_str()),
                         };
 
-                        match payload_builder.add_row(&row) {
-                            Ok(_) => {}
-                            Err(e) => return (Err(e), None),
+                        if let Some(e) = payload_builder.add_row(&row).err() {
+                            return (Err(e), None);
                         }
                     }
                 }
