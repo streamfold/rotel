@@ -118,6 +118,7 @@ tonic = { version = "0.14", features = [
     "gzip",
     "tls-aws-lc",
 ] } # TLS used to test exporter TLS
+test-log = "0.2.19"
 
 [build-dependencies]
 prost-build = "0.14"
