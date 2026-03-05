@@ -70,8 +70,8 @@ impl Transformer {
 
             if let Some(any_value) = &kv.value {
                 match &any_value.value {
-                    Some(Value::KvlistValue(kvlist)) => {
-                        // Recursively flatten nested key-value lists
+                    Some(Value::KvlistValue(kvlist)) if self.nested_kv_max_depth == 0 => {
+                        // Flat mode: recursively expand KvlistValue into dotted paths
                         self.flatten_keyvalues_map(&kvlist.values, full_key, result);
                     }
                     Some(val) => {
@@ -104,7 +104,8 @@ impl Transformer {
         for kv in attrs {
             if let Some(any_value) = &kv.value {
                 match &any_value.value {
-                    Some(Value::KvlistValue(kvlist)) => {
+                    Some(Value::KvlistValue(kvlist)) if self.nested_kv_max_depth == 0 => {
+                        // Flat mode: recursively expand KvlistValue into dotted paths
                         let full_key = if prefix.is_empty() {
                             kv.key.clone()
                         } else {
@@ -113,7 +114,9 @@ impl Transformer {
                         self.flatten_keyvalues_borrowed(&kvlist.values, full_key, result);
                     }
                     Some(_) => {
-                        // Optimize for common case: avoid clone when prefix is empty
+                        // Nested mode (max_depth > 0): let anyvalue_to_jsontype handle
+                        // KvlistValue → JsonType::Object conversion with depth tracking.
+                        // Also handles all other value types.
                         let key = if prefix.is_empty() {
                             Cow::Borrowed(kv.key.as_str())
                         } else {
@@ -161,11 +164,13 @@ impl Transformer {
 
             if let Some(any_value) = &kv.value {
                 match &any_value.value {
-                    Some(Value::KvlistValue(kvlist)) => {
-                        // Recursively flatten nested key-value lists
+                    Some(Value::KvlistValue(kvlist)) if self.nested_kv_max_depth == 0 => {
+                        // Flat mode: recursively expand KvlistValue into dotted paths
                         self.flatten_keyvalues_owned(&kvlist.values, full_key, result);
                     }
                     Some(_) => {
+                        // Nested mode (max_depth > 0): let anyvalue_to_jsontype_owned
+                        // handle KvlistValue → Object conversion with depth tracking.
                         result.insert(
                             full_key,
                             anyvalue_to_jsontype_owned(
@@ -751,6 +756,259 @@ mod tests {
                 assert!(vec.contains(&("outer.middle.inner".to_string(), "deep".to_string())));
             }
             _ => panic!("Expected Map variant"),
+        }
+    }
+
+    /// Test 1: Nested mode preserves KvlistValue as a JSON Object
+    ///
+    /// When nested_kv_max_depth > 0, a KvlistValue attribute sitting alongside
+    /// scalar siblings at the same level should be preserved as a JSON Object —
+    /// NOT flattened into dotted paths.
+    ///
+    /// Before the fix, flatten_keyvalues_* would unconditionally recurse into
+    /// KvlistValue entries regardless of nested_kv_max_depth, producing dotted
+    /// keys (e.g. "user_message.role", "user_message.content"). These dotted
+    /// keys conflicted with the depth-tracking logic, causing the nested
+    /// attribute to be silently lost in ClickHouse output.
+    ///
+    /// After the fix, KvlistValue entries are only flattened in flat mode
+    /// (nested_kv_max_depth == 0). In nested mode, they are passed through to
+    /// anyvalue_to_jsontype which correctly converts them to JSON Objects.
+    #[test]
+    fn test_nested_mode_preserves_kvlist_alongside_scalar_siblings() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        // nested_kv_max_depth > 0: nested mode enabled
+        let transformer = Transformer::new(Compression::None, true).with_nested_kv_max_depth(3);
+
+        // A KvlistValue ("user_message") alongside a scalar ("is_active")
+        let attrs = vec![
+            KeyValue {
+                key: "is_active".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::BoolValue(true)),
+                }),
+            },
+            KeyValue {
+                key: "user_message".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::KvlistValue(KeyValueList {
+                        values: vec![
+                            KeyValue {
+                                key: "role".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("user".to_string())),
+                                }),
+                            },
+                            KeyValue {
+                                key: "content".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("Hello".to_string())),
+                                }),
+                            },
+                        ],
+                    })),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Json(map) => {
+                // Must have exactly 2 top-level keys — NOT 3 dotted keys
+                assert_eq!(
+                    map.len(),
+                    2,
+                    "Expected 2 keys (scalar + object), got {}: {:?}",
+                    map.len(),
+                    map.keys().collect::<Vec<_>>()
+                );
+
+                // Scalar sibling preserved
+                assert!(map.contains_key("is_active"));
+
+                // KvlistValue kept as a single key with an Object value
+                assert!(
+                    map.contains_key("user_message"),
+                    "KvlistValue attribute was dropped — this is the bug"
+                );
+
+                // Bug symptom: dotted paths should NOT exist
+                assert!(
+                    !map.contains_key("user_message.role"),
+                    "KvlistValue was incorrectly flattened into dotted paths"
+                );
+                assert!(!map.contains_key("user_message.content"));
+
+                // Verify the Object contains the correct inner entries
+                match &map[&Cow::Borrowed("user_message")] {
+                    JsonType::Object(entries) => {
+                        assert_eq!(entries.len(), 2);
+                        let role = entries
+                            .iter()
+                            .find(|(k, _)| k == "role")
+                            .expect("missing 'role' in nested object");
+                        match &role.1 {
+                            JsonType::Str(s) => assert_eq!(s, "user"),
+                            other => panic!("Expected Str for role, got {:?}", other),
+                        }
+                        let content = entries
+                            .iter()
+                            .find(|(k, _)| k == "content")
+                            .expect("missing 'content' in nested object");
+                        match &content.1 {
+                            JsonType::Str(s) => assert_eq!(s, "Hello"),
+                            other => panic!("Expected Str for content, got {:?}", other),
+                        }
+                    }
+                    other => panic!("Expected user_message to be Object, got {:?}", other),
+                }
+            }
+            _ => panic!("Expected JSON variant"),
+        }
+    }
+
+    /// Test 2: Same fix for the owned variant (flatten_keyvalues_owned)
+    ///
+    /// Verifies the same bug fix in transform_attrs_kv_owned, which uses
+    /// flatten_keyvalues_owned internally. The owned path is used when
+    /// attributes need to outlive the source protobuf data.
+    #[test]
+    fn test_nested_mode_owned_preserves_kvlist_alongside_scalar_siblings() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        let transformer = Transformer::new(Compression::None, true).with_nested_kv_max_depth(3);
+
+        let attrs = vec![
+            KeyValue {
+                key: "is_active".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::BoolValue(false)),
+                }),
+            },
+            KeyValue {
+                key: "response_message".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::KvlistValue(KeyValueList {
+                        values: vec![KeyValue {
+                            key: "role".to_string(),
+                            value: Some(AnyValue {
+                                value: Some(Value::StringValue("assistant".to_string())),
+                            }),
+                        }],
+                    })),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv_owned(&attrs);
+
+        match result {
+            MapOrJson::JsonOwned(map) => {
+                assert_eq!(
+                    map.len(),
+                    2,
+                    "Expected 2 keys, got {}: {:?}",
+                    map.len(),
+                    map.keys().collect::<Vec<_>>()
+                );
+                assert!(map.contains_key("is_active"));
+                assert!(
+                    map.contains_key("response_message"),
+                    "KvlistValue attribute was dropped"
+                );
+                assert!(
+                    !map.contains_key("response_message.role"),
+                    "KvlistValue was incorrectly flattened into dotted paths"
+                );
+
+                match &map["response_message"] {
+                    JsonType::Object(entries) => {
+                        assert_eq!(entries.len(), 1);
+                        let role = entries
+                            .iter()
+                            .find(|(k, _)| k == "role")
+                            .expect("missing 'role' in nested object");
+                        match &role.1 {
+                            JsonType::Str(s) => assert_eq!(s, "assistant"),
+                            other => panic!("Expected Str for role, got {:?}", other),
+                        }
+                    }
+                    other => panic!("Expected response_message to be Object, got {:?}", other),
+                }
+            }
+            _ => panic!("Expected JsonOwned variant"),
+        }
+    }
+
+    /// Test 3: Flat mode backwards compatibility
+    ///
+    /// Verifies that flat mode (nested_kv_max_depth == 0, the default) still
+    /// flattens KvlistValue into dotted paths as before. This ensures the fix
+    /// doesn't break existing behavior for users not using nested mode.
+    #[test]
+    fn test_flat_mode_still_flattens_kvlist_into_dotted_paths() {
+        use opentelemetry_proto::tonic::common::v1::AnyValue;
+        use opentelemetry_proto::tonic::common::v1::KeyValueList;
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+        // nested_kv_max_depth == 0 (default): flat mode
+        let transformer = Transformer::new(Compression::None, true);
+
+        let attrs = vec![
+            KeyValue {
+                key: "is_active".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::BoolValue(true)),
+                }),
+            },
+            KeyValue {
+                key: "user_message".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::KvlistValue(KeyValueList {
+                        values: vec![
+                            KeyValue {
+                                key: "role".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("user".to_string())),
+                                }),
+                            },
+                            KeyValue {
+                                key: "content".to_string(),
+                                value: Some(AnyValue {
+                                    value: Some(Value::StringValue("Hello".to_string())),
+                                }),
+                            },
+                        ],
+                    })),
+                }),
+            },
+        ];
+
+        let result = transformer.transform_attrs_kv(&attrs);
+
+        match result {
+            MapOrJson::Json(map) => {
+                // Flat mode: KvlistValue IS expanded into dotted paths
+                assert_eq!(
+                    map.len(),
+                    3,
+                    "Flat mode should produce 3 dotted keys, got {}: {:?}",
+                    map.len(),
+                    map.keys().collect::<Vec<_>>()
+                );
+                assert!(map.contains_key("is_active"));
+                assert!(map.contains_key("user_message.role"));
+                assert!(map.contains_key("user_message.content"));
+                // The un-flattened key should NOT exist in flat mode
+                assert!(!map.contains_key("user_message"));
+            }
+            _ => panic!("Expected JSON variant"),
         }
     }
 }
