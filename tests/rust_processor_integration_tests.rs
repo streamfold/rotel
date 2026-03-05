@@ -7,10 +7,10 @@
 //!
 //! To run these tests:
 //! ```
-//! cargo test --test rust_processor_integration_tests --features "rust_processor,integration-tests"
+//! RUST_PROCESSOR_INTEGRATION_TESTS=true cargo test --test rust_processor_integration_tests --features rust_processor
 //! ```
 
-#![cfg(all(feature = "integration-tests", feature = "rust_processor"))]
+#![cfg(rust_processor_integration_tests = "true")]
 
 use rotel::topology::generic_pipeline::Inspect;
 use rotel::topology::payload::Message;
