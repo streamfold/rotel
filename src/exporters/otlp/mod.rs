@@ -342,7 +342,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn send_otlp_trace_request() {
         let (shut_tx, shut_rx) = oneshot::channel::<()>();
         let socket_addr: SocketAddr = "[::1]:0".parse().expect("invalid port");
@@ -375,7 +375,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn send_otlp_metrics_request() {
         let (shut_tx, shut_rx) = oneshot::channel::<()>();
         let socket_addr: SocketAddr = "[::1]:0".parse().expect("invalid port");
@@ -408,7 +408,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn send_otlp_logs_request() {
         let (shut_tx, shut_rx) = oneshot::channel::<()>();
         let socket_addr: SocketAddr = "[::1]:0".parse().expect("invalid port");
@@ -448,7 +448,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
     async fn send_otlp_trace_request_with_headers() {
         init_crypto();
 
@@ -528,7 +528,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
     async fn send_otlp_metrics_request_with_headers() {
         init_crypto();
 
@@ -609,7 +609,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
     async fn send_otlp_logs_request_with_headers() {
         init_crypto();
 
@@ -690,7 +690,7 @@ mod tests {
     }
 
     // We don't use TLS in this test because it can impact request timing
-    #[tokio::test(flavor = "multi_thread")]
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
     async fn send_otlp_trace_with_retry() {
         init_crypto();
 
@@ -768,7 +768,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn client_tls_auth() {
         init_crypto();
 
@@ -876,7 +876,7 @@ mod tests {
         shut_tx.send(()).unwrap();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn http_protocol_traces() {
         init_crypto();
         let server = MockServer::start();
@@ -950,7 +950,7 @@ mod tests {
         assert!((2..=3).contains(&(hello_mock.hits() as i32)));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn http_response_204() {
         init_crypto();
         let server = MockServer::start();
@@ -982,7 +982,7 @@ mod tests {
         hello_mock.assert_hits(1);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn draining_completes() {
         init_crypto();
         let server = MockServer::start();
@@ -1030,7 +1030,7 @@ mod tests {
         assert!(hello_mock.hits() >= 4);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn http_protocol_metrics() {
         init_crypto();
         let server = MockServer::start();
@@ -1067,7 +1067,7 @@ mod tests {
         hello_mock.delete();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn http_protocol_logs() {
         init_crypto();
         let server = MockServer::start();
@@ -1286,7 +1286,7 @@ mod tests {
         ServerTlsConfig::new().identity(identity)
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_message_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();

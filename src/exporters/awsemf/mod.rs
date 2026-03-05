@@ -261,7 +261,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn success_and_retry() {
         init_crypto();
         let server = MockServer::start();
@@ -330,7 +330,7 @@ mod tests {
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn resource_not_found_triggers_creation() {
         init_crypto();
         let server = MockServer::start();
@@ -405,7 +405,7 @@ mod tests {
         retention_mock.assert_hits(0);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn resource_already_exists_is_handled() {
         init_crypto();
         let server = MockServer::start();
@@ -467,7 +467,7 @@ mod tests {
         create_log_group_mock.assert_hits(0);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn log_group_retention() {
         init_crypto();
         let server = MockServer::start();
@@ -540,7 +540,7 @@ mod tests {
         assert!(retention_mock.hits() > 0);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_message_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();
@@ -610,7 +610,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_multi_batch_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();

@@ -178,7 +178,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn success_and_retry() {
         init_crypto();
         let server = MockServer::start();
@@ -246,7 +246,7 @@ mod tests {
         assert!(hello_mock.hits() >= 3); // somewhat timing dependent
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_message_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();
@@ -316,7 +316,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn splits_payload() {
         init_crypto();
         let server = MockServer::start();
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(2, hello_mock.hits());
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_multi_chunk_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();
@@ -443,7 +443,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_exact_multiple_of_50_spans_acknowledgment() {
         init_crypto();
         let server = MockServer::start();

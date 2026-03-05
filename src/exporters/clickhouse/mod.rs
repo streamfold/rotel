@@ -427,7 +427,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn traces_success() {
         init_crypto();
         let server = MockServer::start();
@@ -461,7 +461,7 @@ mod tests {
         hello_mock.assert();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn logs_success() {
         init_crypto();
         let server = MockServer::start();
@@ -495,7 +495,7 @@ mod tests {
         hello_mock.assert();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn metrics_success() {
         init_crypto();
         let server = MockServer::start();
@@ -529,7 +529,7 @@ mod tests {
         hello_mock.assert();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_message_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();
@@ -599,7 +599,7 @@ mod tests {
         let _ = exporter_handle.await;
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_multi_batch_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();
@@ -1043,7 +1043,7 @@ mod tests {
     ///     nested KV entries)
     ///
     /// The test does **not** verify the data stored in Clickhouse; that is done by hand.
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     #[ignore]
     async fn test_export_nested_traces_to_clickhouse() {
         init_crypto();

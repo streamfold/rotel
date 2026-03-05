@@ -223,7 +223,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use utilities::otlp::FakeOTLP;
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_message_acknowledgment_flow() {
         init_crypto();
         let server = MockServer::start();
@@ -294,7 +294,7 @@ mod tests {
         assert_ok!(exporter_result);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn success_and_retry() {
         init_crypto();
         let server = MockServer::start();
