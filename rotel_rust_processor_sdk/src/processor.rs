@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Processor trait definition for Rust-based Rotel processors.
+#![allow(non_local_definitions)]
 
 use abi_stable::sabi_trait;
 use abi_stable::std_types::ROption;

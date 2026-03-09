@@ -128,7 +128,7 @@ prost-build = "0.14"
 portable-atomic = { version = "1", default-features = false, features = ["fallback"] }
 
 [features]
-default = ["rdkafka", "aws_iam", "file_receiver"]
+default = ["rdkafka", "aws_iam", "file_receiver", "rust_processor"]
 fluent_receiver = ["dep:rmpv", "dep:rmp-serde"]
 file_receiver = ["dep:glob", "dep:notify", "dep:notify-debouncer-mini"]
 kmsg_receiver = ["dep:tempfile"]
