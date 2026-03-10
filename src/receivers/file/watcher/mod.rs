@@ -21,7 +21,6 @@ pub use poll::PollWatcher;
 pub use traits::MockWatcher;
 pub use traits::{AnyWatcher, FileEvent, FileEventKind, FileWatcher, WatcherError};
 
-use std::path::Path;
 use std::time::Duration;
 
 /// Watch mode configuration
@@ -80,17 +79,17 @@ impl Default for WatcherConfig {
 ///
 /// In `Auto` mode, this tries native watching first and falls back to polling
 /// if native watching fails to initialize.
-pub fn create_watcher(
-    config: &WatcherConfig,
-    directories: &[&Path],
-) -> Result<AnyWatcher, WatcherError> {
+///
+/// Directories are not registered at construction time. Call `watcher.watch(dir)`
+/// after creation to register directories (handled by `setup_watches()` in the coordinator).
+pub fn create_watcher(config: &WatcherConfig) -> Result<AnyWatcher, WatcherError> {
     match config.mode {
         WatchMode::Native => {
             let watcher = NativeWatcher::new(config.debounce_interval)?;
             Ok(AnyWatcher::Native(watcher))
         }
         WatchMode::Poll => {
-            let watcher = PollWatcher::new(directories, config.poll_interval)?;
+            let watcher = PollWatcher::new(config.poll_interval)?;
             Ok(AnyWatcher::Poll(watcher))
         }
         WatchMode::Auto => {
@@ -105,7 +104,7 @@ pub fn create_watcher(
                         "Native file watching unavailable ({}), falling back to polling",
                         e
                     );
-                    let watcher = PollWatcher::new(directories, config.poll_interval)?;
+                    let watcher = PollWatcher::new(config.poll_interval)?;
                     Ok(AnyWatcher::Poll(watcher))
                 }
             }

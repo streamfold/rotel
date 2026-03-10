@@ -43,7 +43,7 @@ impl Parser for JsonParser {
                 if self.lenient {
                     return Ok(ParsedLog::new());
                 }
-                return Err(Error::Config(format!("invalid JSON: {}", e)));
+                return Err(Error::Parse(format!("invalid JSON: {}", e)));
             }
         };
 
@@ -61,7 +61,7 @@ impl Parser for JsonParser {
                 if self.lenient {
                     Ok(ParsedLog::new())
                 } else {
-                    Err(Error::Config(
+                    Err(Error::Parse(
                         "JSON must be an object at the top level".to_string(),
                     ))
                 }

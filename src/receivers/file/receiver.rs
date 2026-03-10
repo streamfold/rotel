@@ -176,6 +176,8 @@ pub struct FileReceiver {
     file_info_tx: BoundedSender<TrackedFileInfo>,
     /// Shared offset tracker
     offset_tracker: SharedOffsetTracker,
+    /// Shared persistence database (single instance shared with committer and coordinator)
+    db: JsonFileDatabase,
 }
 
 impl FileReceiver {
@@ -225,6 +227,7 @@ impl FileReceiver {
             ack_tx,
             file_info_tx,
             offset_tracker,
+            db,
         })
     }
 
@@ -290,10 +293,17 @@ impl FileReceiver {
         let ack_tx = self.ack_tx.clone();
         let file_info_tx = self.file_info_tx.clone();
         let offset_tracker = self.offset_tracker.clone();
+        let db = self.db.clone();
 
         task_set.spawn(async move {
-            let mut handler =
-                FileWorkHandler::new(config, logs_output, ack_tx, file_info_tx, offset_tracker)?;
+            let mut handler = FileWorkHandler::new(
+                config,
+                logs_output,
+                ack_tx,
+                file_info_tx,
+                offset_tracker,
+                db,
+            )?;
             handler.run(cancel).await
         });
 
@@ -316,6 +326,8 @@ struct FileWorkHandler {
     file_info_tx: BoundedSender<TrackedFileInfo>,
     /// Shared offset tracker
     offset_tracker: SharedOffsetTracker,
+    /// Shared persistence database
+    db: JsonFileDatabase,
 }
 
 impl FileWorkHandler {
@@ -325,6 +337,7 @@ impl FileWorkHandler {
         ack_tx: BoundedSender<FileAcknowledgement>,
         file_info_tx: BoundedSender<TrackedFileInfo>,
         offset_tracker: SharedOffsetTracker,
+        db: JsonFileDatabase,
     ) -> std::result::Result<Self, BoxError> {
         let accepted_counter = get_meter()
             .u64_counter("rotel_receiver_accepted_log_records")
@@ -347,6 +360,7 @@ impl FileWorkHandler {
             ack_tx,
             file_info_tx,
             offset_tracker,
+            db,
         })
     }
 
@@ -365,19 +379,8 @@ impl FileWorkHandler {
                 }
             };
 
-        // Open persistence database for coordinator (read-only for loading state)
-        // The FileOffsetCommitter handles all writes
-        let db = match JsonFileDatabase::open(&self.config.offsets_path) {
-            Ok(db) => db,
-            Err(e) => {
-                error!(
-                    "Failed to open persistence database at {:?}: {}",
-                    self.config.offsets_path, e
-                );
-                return Err(e.into());
-            }
-        };
-        let persister = db.persister("file_receiver");
+        // Use shared database instance for coordinator (same instance as committer)
+        let persister = self.db.persister("file_receiver");
 
         // Create watcher config
         let watcher_config = WatcherConfig {
@@ -387,7 +390,7 @@ impl FileWorkHandler {
         };
 
         // Create the watcher (auto mode will try native first, fall back to poll)
-        let watcher = match create_watcher(&watcher_config, &[]) {
+        let watcher = match create_watcher(&watcher_config) {
             Ok(w) => w,
             Err(e) => {
                 error!("Failed to create watcher: {}", e);
@@ -712,8 +715,17 @@ impl FileWorkHandler {
                                 schema_url: String::new(),
                             };
 
+                            // Attach ack metadata so offsets are committed
+                            // on successful export (at-least-once delivery)
+                            let file_metadata = FileMetadata::new(
+                                batch.file_id,
+                                batch.offsets.clone(),
+                                Some(self.ack_tx.clone()),
+                            );
+                            let metadata = MessageMetadata::file(file_metadata);
+
                             let payload_msg =
-                                payload::Message::new(None, vec![resource_logs], None);
+                                payload::Message::new(Some(metadata), vec![resource_logs], None);
 
                             // Use timeout on send to avoid blocking shutdown indefinitely
                             match timeout_at(records_deadline, logs_output.send(payload_msg)).await
@@ -792,21 +804,20 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
 
     let records_tx = &ctx.records_tx;
 
+    // Capture observed timestamp once per batch rather than per line.
+    // Refreshed each time a batch is sent, so large file backlogs get
+    // progressively updated timestamps instead of one stale value.
+    let mut batch_observed_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+
     let parse_result = reader.read_lines_into(|line, begin_offset, len| {
         // Check if we're shutting down - exit early to allow worker to finish
         if ctx.shutting_down.load(Ordering::Relaxed) {
             debug!("Worker detected shutdown, stopping file read");
             return false;
         }
-
-        // Get timestamp for each line individually
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-
-        // Clone static attributes and extend with parsed attributes
-        let mut attributes = static_attributes.clone();
 
         // Parse line if parser is configured
         let (parsed_attributes, severity_number, severity_text, parsed_timestamp) =
@@ -827,16 +838,22 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                 (Vec::new(), 0, String::new(), None)
             };
 
-        // Use parsed timestamp if available, otherwise use current time
-        let time_unix_nano = parsed_timestamp.unwrap_or(now);
+        // Use parsed timestamp if available, otherwise use batch observed time
+        let time_unix_nano = parsed_timestamp.unwrap_or(batch_observed_timestamp);
 
-        // Add parsed attributes
-        attributes.extend(parsed_attributes);
+        // Build attributes: clone static attrs only when we need to extend with parsed ones
+        let attributes = if parsed_attributes.is_empty() {
+            static_attributes.clone()
+        } else {
+            let mut attrs = static_attributes.clone();
+            attrs.extend(parsed_attributes);
+            attrs
+        };
 
         // Build LogRecord
         let log_record = LogRecord {
             time_unix_nano,
-            observed_time_unix_nano: now,
+            observed_time_unix_nano: batch_observed_timestamp,
             severity_number,
             severity_text,
             body: Some(AnyValue {
@@ -869,6 +886,11 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                 debug!("Records channel closed during batch send, discarding remaining lines");
                 return false; // Stop reading
             }
+            // Refresh timestamp for the next batch
+            batch_observed_timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
         }
 
         true // Continue reading
@@ -1556,11 +1578,17 @@ impl<F: FileFinder> FileCoordinator<F> {
                             error_duration, e
                         );
 
-                        // Create a new poll watcher
-                        let dirs: Vec<&Path> =
-                            self.watched_dirs.iter().map(|p| p.as_path()).collect();
-                        match PollWatcher::new(&dirs, self.config.poll_interval) {
-                            Ok(poll_watcher) => {
+                        // Create a new poll watcher and re-register watched directories
+                        match PollWatcher::new(self.config.poll_interval) {
+                            Ok(mut poll_watcher) => {
+                                for dir in &self.watched_dirs {
+                                    if let Err(e) = poll_watcher.watch(dir) {
+                                        warn!(
+                                            "Failed to watch directory {:?} on poll fallback: {}",
+                                            dir, e
+                                        );
+                                    }
+                                }
                                 self.watcher = AnyWatcher::Poll(poll_watcher);
                                 self.watcher_first_error = None;
                                 info!("Switched to polling mode");
@@ -1821,12 +1849,10 @@ mod tests {
 
         if error_duration >= max_watcher_error_duration {
             // Create poll watcher (this is what the main loop does)
-            let dirs: Vec<&Path> = coordinator
-                .watched_dirs
-                .iter()
-                .map(|p| p.as_path())
-                .collect();
-            if let Ok(poll_watcher) = PollWatcher::new(&dirs, coordinator.config.poll_interval) {
+            if let Ok(mut poll_watcher) = PollWatcher::new(coordinator.config.poll_interval) {
+                for dir in &coordinator.watched_dirs {
+                    let _ = poll_watcher.watch(dir);
+                }
                 coordinator.watcher = AnyWatcher::Poll(poll_watcher);
                 coordinator.watcher_first_error = None;
             }
