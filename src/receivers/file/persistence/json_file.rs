@@ -279,6 +279,14 @@ fn atomic_write(path: &Path, state: &DatabaseState) -> Result<()> {
     fs::rename(&temp_path, path)
         .map_err(|e| Error::Persistence(format!("failed to rename database file: {}", e)))?;
 
+    // Fsync parent directory to ensure the rename (directory entry update) is durable.
+    // Without this, a power failure could roll back to the old directory state.
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+
     Ok(())
 }
 
