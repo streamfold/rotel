@@ -52,13 +52,13 @@ Rotel is fully open-sourced and licensed under the Apache 2.0 license.
 ## Getting Started
 
 ### Running Rotel
-_We use the prebuilt docker image for this example, but you can also download a binary from the [releases](https://github.com/streamfold/rotel/releases) page._
-
 ```bash
 docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
 ```
 
 Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+
+_We use the [prebuilt Docker image](#docker-images) for this example, but you can also download a binary from the [releases](https://github.com/streamfold/rotel/releases) page._
 
 ### Verify
 
@@ -92,8 +92,6 @@ curl -X POST http://localhost:4318/v1/traces \
 </details>
 
 ## Configuration
-
-### Table of Contents
 
 - [Base options](#base-options)
 - [OTLP exporter](#otlp-exporter-configuration)
