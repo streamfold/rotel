@@ -30,7 +30,7 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - Additional
   exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration),
   and [Kafka](#kafka-exporter-configuration)
-- Addtional receivers: [File](#file-receiver-configuration), [Fluent](#fluent-receiver-configuration), [Kafka](#kafka-receiver-configuration), and [Ksmsg](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
+- Additional receivers: [File](#file-receiver-configuration), [Fluent](#fluent-receiver-configuration), [Kafka](#kafka-receiver-configuration), and [Ksmsg](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
 - [Python](#python-processor-sdk) and [Rust](#rust-processor-sdk) processor SDKs
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
@@ -43,9 +43,9 @@ and a compact binary size, simplifying deployment without the need for a sidecar
 
 Rotel provides a unified data plane framework for high-performance OpenTelemetry processing. It can be used as a library and deployed in many different form factors:
 
-- [**Rotel Lambda Extension**](https://github.com/streamfold/rotel-lambda-extension): AWS Lambda Extension for OpenTelemetry collection with minimal coldstart latency
-- [**Rotel Lambda Forwarder**](https://github.com/streamfold/rotel-lambda-forwarder): Convert and forward CloudWatch and S3-stored stored logs to OpenTelemetry compatible backends
-- [**Rotel Lambda Forwarder**](https://github.com/streamfold/aws-firelens-rotel): AWS Firelens log router for easy Amazon ECS container logging
+- [**Lambda Extension**](https://github.com/streamfold/rotel-lambda-extension): AWS Lambda Extension for OpenTelemetry collection with minimal coldstart latency
+- [**Lambda Forwarder**](https://github.com/streamfold/rotel-lambda-forwarder): Convert and forward CloudWatch and S3-stored stored logs to OpenTelemetry compatible backends
+- [**AWS Firelens**](https://github.com/streamfold/aws-firelens-rotel): AWS Firelens log router for easy Amazon ECS container logging
 
 Rotel is fully open-sourced and licensed under the Apache 2.0 license.
 
