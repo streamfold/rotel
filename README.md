@@ -93,6 +93,52 @@ curl -X POST http://localhost:4318/v1/traces \
 
 ## Configuration
 
+### Table of Contents
+
+- [Base options](#base-options)
+- [OTLP exporter](#otlp-exporter-configuration)
+  - [Cloudwatch OTLP Export](#cloudwatch-otlp-export)
+  - [Basic Authentication](#basic-authentication)
+- [Datadog exporter](#datadog-exporter-configuration)
+- [ClickHouse exporter](#clickhouse-exporter-configuration)
+- [AWS X-Ray exporter](#aws-x-ray-exporter-configuration)
+- [AWS EMF exporter](#aws-emf-exporter-configuration)
+- [Kafka exporter](#kafka-exporter-configuration)
+  - [Acknowledgement Modes](#acknowledgement-modes)
+  - [Producer Performance Tuning](#producer-performance-tuning)
+  - [Message Partitioning Control](#message-partitioning-control)
+  - [Advanced Configuration](#advanced-configuration)
+  - [Testing the Kafka Exporter](#testing-the-kafka-exporter)
+- [File exporter](#file-exporter-configuration)
+- [Kafka Receiver](#kafka-receiver-configuration)
+  - [Offset Tracking and Data Reliability](#offset-tracking-and-data-reliability)
+  - [Consumer Configuration](#consumer-configuration)
+  - [Security Configuration](#security-configuration)
+  - [Advanced Configuration](#advanced-configuration-1)
+  - [Example Usage](#example-usage)
+- [Fluent Receiver](#fluent-receiver-configuration)
+- [File Receiver](#file-receiver-configuration)
+  - [Watch Modes](#watch-modes)
+  - [Parsers](#parsers)
+  - [Offset Persistence](#offset-persistence)
+  - [Example Usage](#example-usage-1)
+- [Kmsg Receiver (Linux-only)](#kmsg-receiver-configuration-linux-only)
+  - [Priority Levels](#priority-levels)
+  - [Example Usage](#example-usage-2)
+  - [Testing the Kmsg Receiver](#testing-the-kmsg-receiver)
+  - [Log Record Format](#log-record-format)
+- [Batch configuration](#batch-configuration)
+- [Setting resource attributes](#setting-resource-attributes)
+- [Retries and timeouts](#retries-and-timeouts)
+- [Internal telemetry](#internal-telemetry)
+- [Multiple receivers](#multiple-receivers)
+  - [Basic Usage](#basic-usage)
+  - [Receiver Configuration](#receiver-configuration)
+  - [Environment Variables](#environment-variables)
+- [Multiple exporters](#multiple-exporters)
+- [AWS Authentication](#aws-authentication)
+- [Full example](#full-example)
+
 ### Base options
 
 Rotel is configured on the command line with multiple flags. See the table below for the full list of options. Rotel
