@@ -205,10 +205,9 @@ mod tests {
         let file_path = temp_dir.path().join("test.log");
         File::create(&file_path).unwrap();
 
-        // Wait for debounce interval plus some buffer
-        std::thread::sleep(Duration::from_millis(200));
-
-        let events = watcher.try_recv().unwrap();
+        // Use recv_timeout instead of sleep + try_recv to handle
+        // variable FSEvents latency on macOS
+        let events = watcher.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(!events.is_empty(), "Should detect file creation");
     }
 

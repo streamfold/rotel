@@ -107,7 +107,7 @@ fn try_parse_naive_timestamp(value: &str) -> Option<u64> {
 impl Parser for RegexParser {
     fn parse(&self, line: &str) -> Result<ParsedLog> {
         let captures = self.regex.captures(line).ok_or_else(|| {
-            Error::Config(format!(
+            Error::Parse(format!(
                 "regex pattern does not match input: {:?}",
                 line.chars().take(100).collect::<String>()
             ))

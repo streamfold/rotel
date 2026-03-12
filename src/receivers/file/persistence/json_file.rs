@@ -261,18 +261,31 @@ fn atomic_write(path: &Path, state: &DatabaseState) -> Result<()> {
     serde_json::to_writer_pretty(&mut writer, state)
         .map_err(|e| Error::Persistence(format!("failed to write database: {}", e)))?;
 
-    // Ensure all data is flushed to disk before rename
+    // Flush userspace buffer, then fsync to ensure data reaches disk before rename.
+    // Without sync_all(), a power failure after rename could leave a valid filename
+    // pointing at a file whose data blocks haven't been persisted.
     use std::io::Write;
     writer
         .flush()
         .map_err(|e| Error::Persistence(format!("failed to flush database: {}", e)))?;
-
-    // Drop the writer to close the file handle before rename
-    drop(writer);
+    let file = writer
+        .into_inner()
+        .map_err(|e| Error::Persistence(format!("failed to flush buffer: {}", e)))?;
+    file.sync_all()
+        .map_err(|e| Error::Persistence(format!("failed to fsync database: {}", e)))?;
+    drop(file);
 
     // Rename temp to final (atomic on most filesystems)
     fs::rename(&temp_path, path)
         .map_err(|e| Error::Persistence(format!("failed to rename database file: {}", e)))?;
+
+    // Fsync parent directory to ensure the rename (directory entry update) is durable.
+    // Without this, a power failure could roll back to the old directory state.
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
 
     Ok(())
 }

@@ -22,7 +22,7 @@ pub mod watcher;
 
 pub use config::FileReceiverConfig;
 pub use error::{Error, Result};
-pub use input::{FileFinder, FileInputConfig, FileReader, StartAt};
+pub use input::{FileFinder, FileReader, StartAt};
 pub use offset_committer::{FileOffsetCommitter, OffsetCommitterConfig, TrackedFileInfo};
 pub use offset_tracker::{FileOffsetTracker, LineOffset};
 pub use parser::{JsonParser, ParsedLog, Parser, RegexParser};

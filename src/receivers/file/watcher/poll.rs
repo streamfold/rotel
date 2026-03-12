@@ -47,22 +47,16 @@ pub struct PollWatcher {
 }
 
 impl PollWatcher {
-    /// Create a new poll watcher for the given directories.
-    pub fn new(directories: &[&Path], poll_interval: Duration) -> Result<Self, WatcherError> {
-        let watched_dirs: Vec<PathBuf> = directories.iter().map(|p| p.to_path_buf()).collect();
-
-        let mut watcher = Self {
-            watched_dirs,
+    /// Create a new poll watcher.
+    /// Directories are registered after construction via `watch()`.
+    pub fn new(poll_interval: Duration) -> Result<Self, WatcherError> {
+        Ok(Self {
+            watched_dirs: Vec::new(),
             file_states: HashMap::new(),
             poll_interval,
             last_poll: Instant::now() - poll_interval, // Ensure first poll runs immediately
             pending_events: Vec::new(),
-        };
-
-        // Initial scan to populate file states
-        watcher.scan_all()?;
-
-        Ok(watcher)
+        })
     }
 
     /// Add a directory to watch
@@ -252,15 +246,18 @@ mod tests {
 
     #[test]
     fn test_poll_watcher_create() {
-        let temp_dir = TempDir::new().unwrap();
-        let watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(100));
+        let watcher = PollWatcher::new(Duration::from_millis(100));
         assert!(watcher.is_ok());
     }
 
     #[test]
     fn test_poll_watcher_detects_new_file() {
         let temp_dir = TempDir::new().unwrap();
-        let mut watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(50)).unwrap();
+        let mut watcher = {
+            let mut w = PollWatcher::new(Duration::from_millis(50)).unwrap();
+            w.watch(temp_dir.path()).unwrap();
+            w
+        };
 
         // Clear any initial events
         let _ = watcher.try_recv();
@@ -289,7 +286,11 @@ mod tests {
             file.write_all(b"initial\n").unwrap();
         }
 
-        let mut watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(50)).unwrap();
+        let mut watcher = {
+            let mut w = PollWatcher::new(Duration::from_millis(50)).unwrap();
+            w.watch(temp_dir.path()).unwrap();
+            w
+        };
 
         // Clear initial events
         let _ = watcher.try_recv();
@@ -323,7 +324,11 @@ mod tests {
         // Create file first
         File::create(&file_path).unwrap();
 
-        let mut watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(50)).unwrap();
+        let mut watcher = {
+            let mut w = PollWatcher::new(Duration::from_millis(50)).unwrap();
+            w.watch(temp_dir.path()).unwrap();
+            w
+        };
 
         // Clear initial events
         let _ = watcher.try_recv();
@@ -342,15 +347,13 @@ mod tests {
 
     #[test]
     fn test_poll_watcher_is_not_native() {
-        let temp_dir = TempDir::new().unwrap();
-        let watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(100)).unwrap();
+        let watcher = PollWatcher::new(Duration::from_millis(100)).unwrap();
         assert!(!watcher.is_native());
     }
 
     #[test]
     fn test_poll_watcher_backend_name() {
-        let temp_dir = TempDir::new().unwrap();
-        let watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(100)).unwrap();
+        let watcher = PollWatcher::new(Duration::from_millis(100)).unwrap();
         assert_eq!(watcher.backend_name(), "poll");
     }
 
@@ -358,7 +361,11 @@ mod tests {
     #[ignore]
     fn test_poll_watcher_recv_timeout() {
         let temp_dir = TempDir::new().unwrap();
-        let mut watcher = PollWatcher::new(&[temp_dir.path()], Duration::from_millis(500)).unwrap();
+        let mut watcher = {
+            let mut w = PollWatcher::new(Duration::from_millis(500)).unwrap();
+            w.watch(temp_dir.path()).unwrap();
+            w
+        };
 
         // Clear any events
         let _ = watcher.try_recv();

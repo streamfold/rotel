@@ -17,6 +17,9 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    #[error("Parse error: {0}")]
+    Parse(String),
+
     #[error("Field error: {0}")]
     Field(String),
 
