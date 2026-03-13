@@ -713,19 +713,19 @@ mod tests {
         if depth == 0 {
             return vec![
                 KeyValue {
-                    key: "leaf.string".to_string(),
+                    key: "leaf-string".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("leaf_value".to_string())),
                     }),
                 },
                 KeyValue {
-                    key: "leaf.int".to_string(),
+                    key: "leaf-int".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::IntValue(42)),
                     }),
                 },
                 KeyValue {
-                    key: "leaf.bool".to_string(),
+                    key: "leaf-bool".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::BoolValue(true)),
                     }),
@@ -742,7 +742,7 @@ mod tests {
                 value: Some(AnyValueValue::KvlistValue(KeyValueList {
                     values: vec![
                         KeyValue {
-                            key: format!("array_item_{}.key", i),
+                            key: format!("array_item_{}-key", i),
                             value: Some(AnyValue {
                                 value: Some(AnyValueValue::StringValue(format!(
                                     "array_value_{}",
@@ -751,7 +751,7 @@ mod tests {
                             }),
                         },
                         KeyValue {
-                            key: format!("array_item_{}.nested", i),
+                            key: format!("array_item_{}-nested", i),
                             value: Some(AnyValue {
                                 value: Some(AnyValueValue::KvlistValue(KeyValueList {
                                     values: vec![
@@ -783,7 +783,7 @@ mod tests {
 
         vec![
             KeyValue {
-                key: format!("level{}.string", depth),
+                key: format!("level{}-string", depth),
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::StringValue(format!(
                         "value_at_depth_{}",
@@ -792,7 +792,7 @@ mod tests {
                 }),
             },
             KeyValue {
-                key: format!("level{}.nested_kv", depth),
+                key: format!("level{}-nested_kv", depth),
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::KvlistValue(KeyValueList {
                         values: child_attrs,
@@ -800,7 +800,7 @@ mod tests {
                 }),
             },
             KeyValue {
-                key: format!("level{}.array_of_maps", depth),
+                key: format!("level{}-array_of_maps", depth),
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::ArrayValue(ArrayValue {
                         values: array_items,
@@ -808,7 +808,7 @@ mod tests {
                 }),
             },
             KeyValue {
-                key: format!("level{}.double", depth),
+                key: format!("level{}-double", depth),
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::DoubleValue(depth as f64 * 3.14)),
                 }),

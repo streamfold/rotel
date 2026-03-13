@@ -73,8 +73,7 @@ pub fn anyvalue_to_jsontype<'a>(
 ///   In flat mode (`max_depth = None`) only depth-0 arrays are preserved; elements at
 ///   depth ≥ 1 are flattened (complex types → JSON strings).
 /// - `KvlistValue`: converted to `JsonType::Object` only in explicit nested mode
-///   (`max_depth = Some(n)`) and when `depth <= n`. In flat mode it is always a JSON string
-///   because KvList flattening is handled at the transformer level via path expansion.
+///   (`max_depth = Some(n)`) and when `depth <= n`. In flat mode it is always a JSON string.
 fn anyvalue_to_jsontype_nested<'a>(
     value: &'a AnyValue,
     depth: usize,
@@ -110,8 +109,7 @@ fn anyvalue_to_jsontype_nested<'a>(
 
         Some(Value::KvlistValue(kv)) => {
             // KvList is only converted to Object in explicit nested mode and within depth.
-            // Flat mode always serialises it as a JSON string; the transformer handles
-            // top-level KvList flattening via dotted-path expansion instead.
+            // Flat mode always serialises it as a JSON string.
             let within_depth = match max_depth {
                 None => false,
                 Some(d) => depth <= d,
