@@ -71,7 +71,7 @@ pyo3 = { version = "0.27.2", optional = true }
 chrono = { version = "0.4.40", features = ["serde"] }
 serde = { version = "1.0.217", features = ["derive"] }
 thiserror = "2.0.12"
-lz4_flex = { version = "0.11.3", default-features = false, features = ["std"] }
+lz4_flex = { version = "0.11.6", default-features = false, features = ["std"] }
 cityhash-rs = "1.0.1"
 bstr = "1.12.0"
 indexmap = "2.9.0"
