@@ -87,47 +87,19 @@ impl Transformer {
         &self,
         attrs: &'a [KeyValue],
     ) -> HashMap<Cow<'a, str>, JsonType<'a>> {
-        let mut hm = HashMap::new();
-        self.flatten_keyvalues_borrowed(attrs, String::new(), &mut hm);
-        hm
-    }
-
-    fn flatten_keyvalues_borrowed<'a>(
-        &self,
-        attrs: &'a [KeyValue],
-        prefix: String,
-        result: &mut HashMap<Cow<'a, str>, JsonType<'a>>,
-    ) {
         use crate::exporters::clickhouse::rowbinary::json::anyvalue_to_jsontype;
-        use opentelemetry_proto::tonic::common::v1::any_value::Value;
-
+        let mut hm = HashMap::new();
         for kv in attrs {
             if let Some(any_value) = &kv.value {
-                match &any_value.value {
-                    Some(Value::KvlistValue(kvlist)) => {
-                        let full_key = if prefix.is_empty() {
-                            kv.key.clone()
-                        } else {
-                            format!("{}.{}", prefix, kv.key)
-                        };
-                        self.flatten_keyvalues_borrowed(&kvlist.values, full_key, result);
-                    }
-                    Some(_) => {
-                        // Optimize for common case: avoid clone when prefix is empty
-                        let key = if prefix.is_empty() {
-                            Cow::Borrowed(kv.key.as_str())
-                        } else {
-                            Cow::Owned(format!("{}.{}", prefix, kv.key))
-                        };
-                        result.insert(
-                            key,
-                            anyvalue_to_jsontype(any_value, Some(self.nested_kv_max_depth)),
-                        );
-                    }
-                    None => {}
+                if any_value.value.is_some() {
+                    hm.insert(
+                        Cow::Borrowed(kv.key.as_str()),
+                        anyvalue_to_jsontype(any_value, Some(self.nested_kv_max_depth)),
+                    );
                 }
             }
         }
+        hm
     }
 
     pub(crate) fn transform_attrs_kv_owned(&self, attrs: &[KeyValue]) -> MapOrJson<'static> {
@@ -138,46 +110,22 @@ impl Transformer {
     }
 
     fn build_json_attrs_kv_owned(&self, attrs: &[KeyValue]) -> HashMap<String, JsonType<'static>> {
-        let mut hm = HashMap::new();
-        self.flatten_keyvalues_owned(attrs, String::new(), &mut hm);
-        hm
-    }
-
-    fn flatten_keyvalues_owned(
-        &self,
-        attrs: &[KeyValue],
-        prefix: String,
-        result: &mut HashMap<String, JsonType<'static>>,
-    ) {
         use crate::exporters::clickhouse::rowbinary::json::anyvalue_to_jsontype_owned;
-        use opentelemetry_proto::tonic::common::v1::any_value::Value;
-
+        let mut hm = HashMap::new();
         for kv in attrs {
-            let full_key = if prefix.is_empty() {
-                kv.key.clone()
-            } else {
-                format!("{}.{}", prefix, kv.key)
-            };
-
             if let Some(any_value) = &kv.value {
-                match &any_value.value {
-                    Some(Value::KvlistValue(kvlist)) => {
-                        // Recursively flatten nested key-value lists
-                        self.flatten_keyvalues_owned(&kvlist.values, full_key, result);
-                    }
-                    Some(_) => {
-                        result.insert(
-                            full_key,
-                            anyvalue_to_jsontype_owned(
-                                any_value.clone(),
-                                Some(self.nested_kv_max_depth),
-                            ),
-                        );
-                    }
-                    None => {}
+                if any_value.value.is_some() {
+                    hm.insert(
+                        kv.key.clone(),
+                        anyvalue_to_jsontype_owned(
+                            any_value.clone(),
+                            Some(self.nested_kv_max_depth),
+                        ),
+                    );
                 }
             }
         }
+        hm
     }
 
     fn anyvalue_to_string(
@@ -550,23 +498,32 @@ mod tests {
 
         match result {
             MapOrJson::Json(map) => {
-                assert_eq!(map.len(), 3);
+                assert_eq!(map.len(), 2);
                 assert!(map.contains_key("simple"));
-                assert!(map.contains_key("metadata.region"));
-                assert!(map.contains_key("metadata.zone"));
-                assert!(!map.contains_key("metadata"));
+                // metadata is preserved as a nested Object, not flattened
+                match map.get("metadata") {
+                    Some(JsonType::Object(entries)) => {
+                        assert_eq!(entries.len(), 2);
+                        assert!(entries.iter().any(|(k, _)| k.as_ref() == "region"));
+                        assert!(entries.iter().any(|(k, _)| k.as_ref() == "zone"));
+                    }
+                    other => panic!("Expected metadata to be JsonType::Object, got {:?}", other),
+                }
+                assert!(!map.contains_key("metadata.region"));
+                assert!(!map.contains_key("metadata.zone"));
             }
             _ => panic!("Expected JSON variant"),
         }
     }
 
     #[test]
-    fn test_transform_attrs_kv_flatten_nested_kvlist() {
+    fn test_transform_attrs_kv_nested_kvlist() {
         use opentelemetry_proto::tonic::common::v1::AnyValue;
         use opentelemetry_proto::tonic::common::v1::KeyValueList;
         use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
-        let transformer = Transformer::new(Compression::None, true);
+        // Use nested_kv_max_depth=2 so all three levels are converted to Objects.
+        let transformer = Transformer::new(Compression::None, true).with_nested_kv_max_depth(2);
 
         let attrs = vec![KeyValue {
             key: "outer".to_string(),
@@ -601,18 +558,41 @@ mod tests {
 
         match result {
             MapOrJson::Json(map) => {
-                assert_eq!(map.len(), 2);
-                assert!(map.contains_key("outer.middle.inner"));
-                assert!(map.contains_key("outer.sibling"));
-                assert!(!map.contains_key("outer"));
-                assert!(!map.contains_key("outer.middle"));
+                assert_eq!(map.len(), 1);
+                // outer is preserved as a nested Object
+                match map.get("outer") {
+                    Some(JsonType::Object(outer_entries)) => {
+                        assert_eq!(outer_entries.len(), 2);
+                        // middle is itself a nested Object
+                        let middle = outer_entries.iter().find(|(k, _)| k.as_ref() == "middle");
+                        match middle {
+                            Some((_, JsonType::Object(middle_entries))) => {
+                                assert_eq!(middle_entries.len(), 1);
+                                assert!(middle_entries.iter().any(|(k, _)| k.as_ref() == "inner"));
+                            }
+                            other => {
+                                panic!("Expected middle to be JsonType::Object, got {:?}", other)
+                            }
+                        }
+                        let sibling = outer_entries.iter().find(|(k, _)| k.as_ref() == "sibling");
+                        match sibling {
+                            Some((_, JsonType::Int(42))) => {}
+                            other => {
+                                panic!("Expected sibling to be JsonType::Int(42), got {:?}", other)
+                            }
+                        }
+                    }
+                    other => panic!("Expected outer to be JsonType::Object, got {:?}", other),
+                }
+                assert!(!map.contains_key("outer.middle.inner"));
+                assert!(!map.contains_key("outer.sibling"));
             }
             _ => panic!("Expected JSON variant"),
         }
     }
 
     #[test]
-    fn test_transform_attrs_kv_owned_flatten_kvlist() {
+    fn test_transform_attrs_kv_owned_kvlist() {
         use opentelemetry_proto::tonic::common::v1::AnyValue;
         use opentelemetry_proto::tonic::common::v1::KeyValueList;
         use opentelemetry_proto::tonic::common::v1::any_value::Value;
@@ -653,11 +633,19 @@ mod tests {
 
         match result {
             MapOrJson::JsonOwned(map) => {
-                assert_eq!(map.len(), 3);
+                assert_eq!(map.len(), 2);
                 assert!(map.contains_key("simple"));
-                assert!(map.contains_key("metadata.region"));
-                assert!(map.contains_key("metadata.zone"));
-                assert!(!map.contains_key("metadata"));
+                // metadata is preserved as a nested Object, not flattened
+                match map.get("metadata") {
+                    Some(JsonType::Object(entries)) => {
+                        assert_eq!(entries.len(), 2);
+                        assert!(entries.iter().any(|(k, _)| k.as_ref() == "region"));
+                        assert!(entries.iter().any(|(k, _)| k.as_ref() == "zone"));
+                    }
+                    other => panic!("Expected metadata to be JsonType::Object, got {:?}", other),
+                }
+                assert!(!map.contains_key("metadata.region"));
+                assert!(!map.contains_key("metadata.zone"));
             }
             _ => panic!("Expected JsonOwned variant"),
         }

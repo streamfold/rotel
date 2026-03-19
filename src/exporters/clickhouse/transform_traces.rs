@@ -433,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn test_kvlist_flattening_in_spans() {
+    fn test_kvlist_nesting_in_spans() {
         use opentelemetry_proto::tonic::common::v1::KeyValueList;
         use opentelemetry_proto::tonic::common::v1::any_value::Value as AnyValueValue;
 
@@ -526,7 +526,7 @@ mod tests {
             ..Default::default()
         };
 
-        // Transform and verify it succeeds with flattened attributes
+        // Transform and verify it succeeds with nested KvlistValue attributes
         let (result, _metadata) = transformer.transform(vec![Message {
             payload: vec![resource_spans],
             metadata: None,
@@ -540,7 +540,7 @@ mod tests {
 
         let payloads = result.unwrap();
         assert_eq!(payloads.len(), 1);
-        // The actual flattening is verified by the transformer tests
+        // The actual nesting behavior is verified by the transformer tests
         // This test ensures the integration works end-to-end
     }
 }
