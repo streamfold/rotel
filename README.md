@@ -30,8 +30,8 @@ Rotel is ideal for resource-constrained environments and applications where mini
 - Additional
   exporters: [ClickHouse](#clickhouse-exporter-configuration), [Datadog](#datadog-exporter-configuration), [AWS X-RAY](#aws-x-ray-exporter-configuration), [AWS EMF](#aws-emf-exporter-configuration),
   and [Kafka](#kafka-exporter-configuration)
-- [Kafka Receiver](#kafka-receiver-configuration)
-- [Kmsg Receiver](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
+- Additional receivers: [File](#file-receiver-configuration), [Fluent](#fluent-receiver-configuration), [Kafka](#kafka-receiver-configuration), and [Ksmsg](#kmsg-receiver-configuration-linux-only) (Linux kernel messages)
+- [Python](#python-processor-sdk) and [Rust](#rust-processor-sdk) processor SDKs
 
 Rotel can be easily bundled with popular runtimes as packages. Its Rust implementation ensures minimal resource usage
 and a compact binary size, simplifying deployment without the need for a sidecar container.
@@ -41,58 +41,103 @@ and a compact binary size, simplifying deployment without the need for a sidecar
 - **Python:** [streamfold/pyrotel](https://github.com/streamfold/pyrotel)
 - **Node.js:** [streamfold/rotel-nodejs](https://github.com/streamfold/rotel-nodejs)
 
-We also have a custom AWS Lambda Extension layer that embeds the Rotel collector to provide OpenTelemetry collection
-with minimal coldstart latency:
+Rotel provides a unified data plane framework for high-performance OpenTelemetry processing. It can be used as a library and deployed in many different form factors:
 
-- **Rotel Lambda Extension**: [streamfold/rotel-lambda-extension](https://github.com/streamfold/rotel-lambda-extension)
+- [**Lambda Extension**](https://github.com/streamfold/rotel-lambda-extension): AWS Lambda Extension for OpenTelemetry collection with minimal coldstart latency
+- [**Lambda Forwarder**](https://github.com/streamfold/rotel-lambda-forwarder): Convert and forward CloudWatch and S3-stored stored logs to OpenTelemetry compatible backends
+- [**AWS Firelens**](https://github.com/streamfold/aws-firelens-rotel): AWS Firelens log router for easy Amazon ECS container logging
 
 Rotel is fully open-sourced and licensed under the Apache 2.0 license.
 
 ## Getting Started
 
-To quickly get started with Rotel you can leverage the bundled [Python](https://github.com/streamfold/pyrotel) or
-[NodeJS](https://github.com/streamfold/rotel-nodejs) packages. Or if you'd like to use Rotel directly from Docker,
-follow these steps:
+### Running Rotel
+```bash
+docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
+```
 
-1. **Running Rotel**
-    - We use the prebuilt docker image for this example, but you can also download a binary from the
-      [releases](https://github.com/streamfold/rotel/releases) page.
-    - Execute Rotel with the following arguments. To debug metrics or logs, add
-      an additional `--debug-log metrics|logs`.
+Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
 
-   ```bash
-   docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
-   ```
+_We use the [prebuilt Docker image](#docker-images) for this example, but you can also download a binary from the [releases](https://github.com/streamfold/rotel/releases) page._
 
-    - Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+### Verify
 
-2. **Verify**
-    - Send OTLP traces to Rotel and verify that it is receiving data:
+Send OTLP traces to Rotel and verify that it is receiving data:
 
-   ```bash
-   go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
+```bash
+go install github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest
 
-   telemetrygen traces --otlp-insecure --duration 5s
-   ```
+telemetrygen traces --otlp-insecure --duration 5s
+```
 
-   Alternatively, use the built-in `generate-otlp` tool:
+Check the output from Rotel and you should see several "Received traces" log lines.
 
-   ```bash
-   # Generate and send traces directly to Rotel
-   cargo run --bin generate-otlp -- traces --http-endpoint localhost:4318
+<details>
+<summary>Alternatively, generate traces with the built-in `generate-otlp` tool</summary>
+<br>
 
-   # Or generate a trace file for testing
-   cargo run --bin generate-otlp -- traces --file trace.pb
+```bash
+# Generate and send traces directly to Rotel
+cargo run --bin generate-otlp -- traces --http-endpoint localhost:4318
 
-   # Then send it with curl
-   curl -X POST http://localhost:4318/v1/traces \
-     -H "Content-Type: application/x-protobuf" \
-     --data-binary @trace.pb
-   ```
+# Or generate a trace file for testing
+cargo run --bin generate-otlp -- traces --file trace.pb
 
-    - Check the output from Rotel and you should see several "Received traces" log lines.
+# Then send it with curl
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/x-protobuf" \
+  --data-binary @trace.pb
+```
+
+</details>
 
 ## Configuration
+
+- [Base options](#base-options)
+- [OTLP exporter](#otlp-exporter-configuration)
+  - [Cloudwatch OTLP Export](#cloudwatch-otlp-export)
+  - [Basic Authentication](#basic-authentication)
+- [Datadog exporter](#datadog-exporter-configuration)
+- [ClickHouse exporter](#clickhouse-exporter-configuration)
+- [AWS X-Ray exporter](#aws-x-ray-exporter-configuration)
+- [AWS EMF exporter](#aws-emf-exporter-configuration)
+- [Kafka exporter](#kafka-exporter-configuration)
+  - [Acknowledgement Modes](#acknowledgement-modes)
+  - [Producer Performance Tuning](#producer-performance-tuning)
+  - [Message Partitioning Control](#message-partitioning-control)
+  - [Advanced Configuration](#advanced-configuration)
+  - [Testing the Kafka Exporter](#testing-the-kafka-exporter)
+- [File exporter](#file-exporter-configuration)
+- [Kafka Receiver](#kafka-receiver-configuration)
+  - [Offset Tracking and Data Reliability](#offset-tracking-and-data-reliability)
+  - [Consumer Configuration](#consumer-configuration)
+  - [Security Configuration](#security-configuration)
+  - [Advanced Configuration](#advanced-configuration-1)
+  - [Example Usage](#example-usage)
+- [Fluent Receiver](#fluent-receiver-configuration)
+- [File Receiver](#file-receiver-configuration)
+  - [Watch Modes](#watch-modes)
+  - [Parsers](#parsers)
+  - [Offset Persistence](#offset-persistence)
+  - [Example Usage](#example-usage-1)
+- [Kmsg Receiver (Linux-only)](#kmsg-receiver-configuration-linux-only)
+  - [Priority Levels](#priority-levels)
+  - [Example Usage](#example-usage-2)
+  - [Testing the Kmsg Receiver](#testing-the-kmsg-receiver)
+  - [Log Record Format](#log-record-format)
+- [Batch configuration](#batch-configuration)
+- [Setting resource attributes](#setting-resource-attributes)
+- [Retries and timeouts](#retries-and-timeouts)
+- [Internal telemetry](#internal-telemetry)
+- [Multiple receivers](#multiple-receivers)
+  - [Basic Usage](#basic-usage)
+  - [Receiver Configuration](#receiver-configuration)
+  - [Environment Variables](#environment-variables)
+- [Multiple exporters](#multiple-exporters)
+- [AWS Authentication](#aws-authentication)
+- [Full example](#full-example)
+
+### Base options
 
 Rotel is configured on the command line with multiple flags. See the table below for the full list of options. Rotel
 will also output the full argument list:
