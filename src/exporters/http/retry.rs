@@ -70,7 +70,7 @@ pub struct RetryPolicy<Resp> {
 
 impl<Resp> RetryPolicy<Resp> {
     /// Iteratively checks if an error or any of its wrapped sources are retryable
-    /// (ConnectError or tower::timeout::error::Elapsed)
+    /// (ConnectError, tower::timeout::error::Elapsed, or an incomplete HTTP message)
     fn is_retryable_error(mut err: &(dyn Error + 'static)) -> bool {
         loop {
             // Check if current error is a timeout error
@@ -83,6 +83,17 @@ impl<Resp> RetryPolicy<Resp> {
 
             // Check if current error is a connection error
             if err.downcast_ref::<ConnectError>().is_some() {
+                return true;
+            }
+
+            // The peer can close a connection after receiving the request but before
+            // returning a complete response. Hyper reports that response-path failure
+            // as IncompleteMessage. Retry it under the exporter's at-least-once
+            // delivery contract instead of dropping the batch immediately.
+            if err
+                .downcast_ref::<hyper::Error>()
+                .is_some_and(hyper::Error::is_incomplete_message)
+            {
                 return true;
             }
 
@@ -286,8 +297,16 @@ mod tests {
     use crate::exporters::http::client::{ConnectError, TransportErrorWithMetadata};
     use crate::exporters::http::response::Response;
     use crate::exporters::otlp::errors::{ExporterError, is_retryable_error};
+    use bytes::Bytes;
     use http::{Request, StatusCode};
+    use http_body_util::Empty;
+    use hyper_util::client::legacy::Client as HyperClient;
+    use hyper_util::client::legacy::connect::HttpConnector;
+    use hyper_util::rt::{TokioExecutor, TokioTimer};
+    use std::error::Error;
     use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
     use tokio::time::{Instant, timeout};
     use tower::BoxError;
     use tower::retry::Policy;
@@ -400,6 +419,53 @@ mod tests {
                 original_error: ConnectError {}.into(),
                 metadata: None,
             }));
+
+        let (was_success, should_retry) = policy.should_retry(Instant::now(), &wrapped_error);
+        assert!(!was_success);
+        assert!(should_retry);
+    }
+
+    #[tokio::test]
+    async fn test_should_retry_incomplete_http_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            // Close the connection without writing an HTTP response. Hyper reports
+            // this as IncompleteMessage, matching the ClickHouse failure seen in
+            // exporter logs.
+        });
+
+        let mut connector = HttpConnector::new();
+        connector.enforce_http(false);
+        let client = HyperClient::builder(TokioExecutor::new())
+            .timer(TokioTimer::new())
+            .build::<_, Empty<Bytes>>(connector);
+        let request = Request::builder()
+            .uri(format!("http://{address}/"))
+            .body(Empty::new())
+            .unwrap();
+
+        let transport_error = client.request(request).await.unwrap_err();
+        server.await.unwrap();
+        assert!(
+            transport_error.source().is_some_and(|error| error
+                .downcast_ref::<hyper::Error>()
+                .is_some_and(hyper::Error::is_incomplete_message)),
+            "test server should produce hyper::Error(IncompleteMessage): {transport_error:?}"
+        );
+
+        let wrapped_error: Result<Response<()>, BoxError> =
+            Err(Box::new(TransportErrorWithMetadata {
+                original_error: transport_error.into(),
+                metadata: None,
+            }));
+        let config = RetryConfig::default();
+        let mut policy = RetryPolicy::<()>::new(config, None);
+        policy.request_start = Some(Instant::now());
 
         let (was_success, should_retry) = policy.should_retry(Instant::now(), &wrapped_error);
         assert!(!was_success);
