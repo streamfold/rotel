@@ -1125,7 +1125,12 @@ mod tests {
             return None;
         }
 
-        let recv_fut = tokio::time::timeout(Duration::from_millis(100), server_rx.recv());
+        // Generous timeout: this must cover the full cold-start round trip (TCP connect,
+        // TLS/mTLS handshake, request send, server notify). A tight timeout here races the
+        // handshake and flaps under load (e.g. `nextest --all-features`). Since recv()
+        // returns as soon as the request arrives, a larger bound doesn't slow the happy
+        // path — it only adds slack. Negative cases still wait the full duration.
+        let recv_fut = tokio::time::timeout(Duration::from_secs(5), server_rx.recv());
 
         tokio::select! {
             _ = exp_fut => None,
