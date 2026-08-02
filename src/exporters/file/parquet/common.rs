@@ -103,6 +103,8 @@ pub(crate) fn attrs_to_map(
                 Some(AnyValue::ArrayValue(arr)) => serde_json::to_string(arr).unwrap(),
                 Some(AnyValue::KvlistValue(kvlist)) => serde_json::to_string(kvlist).unwrap(),
                 Some(AnyValue::BytesValue(bytes)) => BASE64_STANDARD.encode(bytes),
+                // Profiling-only string table index; treat as empty for non-profiling signals
+                Some(AnyValue::StringValueStrindex(_)) => "".to_string(),
                 None => "".to_string(),
             };
             map.insert(attr.key.clone(), value_str);

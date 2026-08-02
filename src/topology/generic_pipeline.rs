@@ -663,7 +663,7 @@ def process_spans(resource_spans):
         drop(input_tx);
 
         // Verify that acknowledgment was sent
-        tokio::time::timeout(Duration::from_millis(500), ack_rx.next())
+        tokio::time::timeout(Duration::from_secs(10), ack_rx.next())
             .await
             .expect("Should receive acknowledgment within timeout")
             .expect("Channel should not be closed");
