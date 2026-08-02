@@ -194,7 +194,7 @@ mod tests {
     pub fn initialize() {
         INIT.call_once(|| {
             pyo3::append_to_inittab!(rotel_sdk);
-            pyo3::prepare_freethreaded_python();
+            Python::initialize();
         });
     }
 
@@ -480,7 +480,7 @@ mod tests {
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-        Python::with_gil(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
+        Python::attach(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
             .unwrap();
 
         assert_rvalue_string(&arc_value, "foo");
@@ -495,7 +495,7 @@ mod tests {
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-        Python::with_gil(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
+        Python::attach(|py| -> PyResult<()> { run_script("write_string_value_test.py", py, pv) })
             .unwrap();
 
         assert_rvalue_string(&arc_value, "changed");
@@ -510,7 +510,7 @@ mod tests {
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-        Python::with_gil(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
+        Python::attach(|py| -> PyResult<()> { run_script("write_bool_value_test.py", py, pv) })
             .unwrap();
 
         assert_rvalue_bool(&arc_value, true);
@@ -525,7 +525,7 @@ mod tests {
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-        Python::with_gil(|py| -> PyResult<()> { run_script("write_bytes_value_test.py", py, pv) })
+        Python::attach(|py| -> PyResult<()> { run_script("write_bytes_value_test.py", py, pv) })
             .unwrap();
 
         assert_rvalue_bytes(&arc_value, b"111111");
@@ -542,7 +542,7 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> { run_script("read_key_value_key_test.py", py, kv) })
+        Python::attach(|py| -> PyResult<()> { run_script("read_key_value_key_test.py", py, kv) })
             .unwrap();
 
         assert_mutex_string(&key, "key");
@@ -559,7 +559,7 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("write_key_value_key_test.py", py, kv)
         })
         .unwrap();
@@ -578,7 +578,7 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("read_key_value_value_test.py", py, kv)
         })
         .unwrap();
@@ -597,7 +597,7 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("write_key_value_value_test.py", py, kv)
         })
         .unwrap();
@@ -616,7 +616,7 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("write_key_value_bytes_value_test.py", py, kv)
         })
         .unwrap();
@@ -630,7 +630,7 @@ mod tests {
         let kv_arc = string_key_value("key", "foo");
         let resource = resource_with_single_attr(kv_arc);
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("read_resource_attributes_test.py", py, resource)
         })
         .unwrap();
@@ -671,7 +671,7 @@ mod tests {
             entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script(
                 "read_and_write_attributes_array_value_test.py",
                 py,
@@ -733,7 +733,7 @@ mod tests {
             entity_refs: entity_refs.clone(),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("read_and_write_resource_entities_test.py", py, resource)
         })
         .unwrap();
@@ -814,7 +814,7 @@ mod tests {
             entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script(
                 "read_and_write_attributes_key_value_list_test.py",
                 py,
@@ -871,7 +871,7 @@ mod tests {
         let kv_arc = key_value_with_arcs(key.clone(), any_value_arc);
         let resource = resource_with_single_attr(kv_arc);
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script(
                 "write_resource_attributes_key_value_key_test.py",
                 py,
@@ -892,7 +892,7 @@ mod tests {
         let kv_arc = key_value_with_arcs(key.clone(), any_value_arc);
         let resource = resource_with_single_attr(kv_arc);
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script(
                 "write_resource_attributes_key_value_value_test.py",
                 py,
@@ -915,7 +915,7 @@ mod tests {
             entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("resource_attributes_append_attribute.py", py, resource)
         })
         .unwrap();
@@ -932,7 +932,7 @@ mod tests {
             entity_refs: Arc::new(Mutex::new(Vec::new())),
         };
 
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("resource_attributes_set_attributes.py", py, resource)
         })
         .unwrap();
@@ -966,7 +966,7 @@ mod tests {
             schema_url: resource_spans.schema_url,
             request_context: None,
         };
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("resource_spans_append_attribute.py", py, py_resource_spans)
         })
         .unwrap();
@@ -977,7 +977,7 @@ mod tests {
     fn resource_spans_iterate_spans() {
         initialize();
         let (py_resource_spans, _) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("resource_spans_iterate_spans.py", py, py_resource_spans)
         })
         .unwrap();
@@ -987,7 +987,7 @@ mod tests {
     fn read_and_write_instrumentation_scope() {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script(
                 "read_and_write_instrumentation_scope_test.py",
                 py,
@@ -1033,7 +1033,7 @@ mod tests {
     fn set_instrumentation_scope() {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("set_instrumentation_scope_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1076,7 +1076,7 @@ mod tests {
             schema_url: resource_spans.schema_url,
             request_context: None,
         };
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("read_and_write_spans_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1158,7 +1158,7 @@ mod tests {
     fn set_scope_spans_span_test() {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("set_scope_spans_span_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1240,7 +1240,7 @@ mod tests {
             schema_url: resource_spans.schema_url,
             request_context: None,
         };
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script(
                 "write_resource_spans_resource_test.py",
                 py,
@@ -1272,7 +1272,7 @@ mod tests {
     fn set_span_events() {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("write_span_events_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1310,7 +1310,7 @@ mod tests {
     fn set_scope_spans() {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("write_scope_spans_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1353,7 +1353,7 @@ mod tests {
     fn set_spans() {
         initialize();
         let (py_resource_spans, r_resource_spans) = py_resource_spans_from_fake(1, 1);
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("write_spans_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1449,7 +1449,7 @@ mod tests {
         };
 
         // Execute the Python script
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("read_and_write_logs_test.py", py, py_resource_logs)
         })
         .unwrap();
@@ -1539,7 +1539,7 @@ mod tests {
         };
 
         // Execute the Python script that adds a new log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("add_log_record_test.py", py, py_resource_logs)
         })
         .unwrap();
@@ -1657,7 +1657,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("remove_log_record_test.py", py, py_resource_logs)
         })
         .unwrap();
@@ -1786,7 +1786,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             run_script("traces_delitem_test.py", py, py_resource_spans)
         })
         .unwrap();
@@ -1963,7 +1963,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "attributes_processor_test.py",
                 py,
@@ -2030,7 +2030,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "attributes_processor_test.py",
                 py,
@@ -2082,7 +2082,7 @@ mod tests {
             request_context: None,
         };
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "attributes_processor_test.py",
                 py,
@@ -2230,7 +2230,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "redaction_processor_restrictive_test.py",
                 py,
@@ -2348,7 +2348,7 @@ mod tests {
             request_context: None,
         };
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "redaction_processor_restrictive_test.py",
                 py,
@@ -2467,7 +2467,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "redaction_processor_blocking_test.py",
                 py,
@@ -2547,7 +2547,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "redaction_processor_log_body_test.py",
                 py,
@@ -2598,7 +2598,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "redaction_processor_log_body_test.py",
                 py,
@@ -2675,7 +2675,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "redaction_processor_log_body_test.py",
                 py,
@@ -2749,7 +2749,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "context_processor_test.py",
                 py,
@@ -2792,7 +2792,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "context_processor_test.py",
                 py,
@@ -2832,7 +2832,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "context_processor_test.py",
                 py,
@@ -2875,7 +2875,7 @@ mod tests {
         };
 
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "context_processor_test.py",
                 py,
@@ -2926,7 +2926,7 @@ mod tests {
             })),
         };
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "context_processor_test.py",
                 py,
@@ -2962,7 +2962,7 @@ mod tests {
             })),
         };
         // Execute the Python script that removes a log record
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "context_processor_test.py",
                 py,
@@ -3284,7 +3284,7 @@ mod tests {
         };
 
         // Execute the Python script that will verify initial values and then mutate them
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             _run_script(
                 "read_and_write_metrics_test.py",
                 py,
