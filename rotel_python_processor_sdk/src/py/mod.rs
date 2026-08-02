@@ -480,8 +480,7 @@ mod tests {
         let pv = AnyValue {
             inner: any_value_arc.clone(),
         };
-        Python::attach(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) })
-            .unwrap();
+        Python::attach(|py| -> PyResult<()> { run_script("read_value_test.py", py, pv) }).unwrap();
 
         assert_rvalue_string(&arc_value, "foo");
     }
@@ -559,10 +558,8 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::attach(|py| -> PyResult<()> {
-            run_script("write_key_value_key_test.py", py, kv)
-        })
-        .unwrap();
+        Python::attach(|py| -> PyResult<()> { run_script("write_key_value_key_test.py", py, kv) })
+            .unwrap();
 
         assert_mutex_string(&key, "new_key");
     }
@@ -578,10 +575,8 @@ mod tests {
             inner: key_value_with_arcs(key.clone(), any_value_arc),
         };
 
-        Python::attach(|py| -> PyResult<()> {
-            run_script("read_key_value_value_test.py", py, kv)
-        })
-        .unwrap();
+        Python::attach(|py| -> PyResult<()> { run_script("read_key_value_value_test.py", py, kv) })
+            .unwrap();
 
         assert_rvalue_string(&arc_value, "foo");
     }
