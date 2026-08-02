@@ -268,7 +268,11 @@ fn transform_metric(m_arc: Arc<Mutex<RMetric>>) -> v1::Metric {
             .map(|kv| {
                 let key = Arc::into_inner(kv.key).unwrap().into_inner().unwrap();
                 let value = kv.value.lock().unwrap().take().map(convert_value);
-                KeyValue { key, value }
+                KeyValue {
+                    key,
+                    value,
+                    key_strindex: 0,
+                }
             })
             .collect(),
         data,
@@ -367,7 +371,11 @@ fn transform_number_data_point(ndp_arc: Arc<Mutex<RNumberDataPoint>>) -> v1::Num
             .map(|kv_arc| {
                 let key = Arc::into_inner(kv_arc.key).unwrap().into_inner().unwrap();
                 let value = kv_arc.value.lock().unwrap().take().map(convert_value);
-                KeyValue { key, value }
+                KeyValue {
+                    key,
+                    value,
+                    key_strindex: 0,
+                }
             })
             .collect(),
         start_time_unix_nano: moved_ndp.start_time_unix_nano,
@@ -416,7 +424,11 @@ fn transform_histogram_data_point(
             .map(|kv_arc| {
                 let key = Arc::into_inner(kv_arc.key).unwrap().into_inner().unwrap();
                 let value = kv_arc.value.lock().unwrap().take().map(convert_value);
-                KeyValue { key, value }
+                KeyValue {
+                    key,
+                    value,
+                    key_strindex: 0,
+                }
             })
             .collect(),
         start_time_unix_nano: moved_hdp.start_time_unix_nano,
@@ -484,7 +496,11 @@ fn transform_exponential_histogram_data_point(
             .map(|kv_arc| {
                 let key = Arc::into_inner(kv_arc.key).unwrap().into_inner().unwrap();
                 let value = kv_arc.value.lock().unwrap().take().map(convert_value);
-                KeyValue { key, value }
+                KeyValue {
+                    key,
+                    value,
+                    key_strindex: 0,
+                }
             })
             .collect(),
         start_time_unix_nano: moved_ehdp.start_time_unix_nano,
@@ -545,7 +561,11 @@ fn transform_summary_data_point(sdp_arc: Arc<Mutex<RSummaryDataPoint>>) -> v1::S
             .map(|kv_arc| {
                 let key = Arc::into_inner(kv_arc.key).unwrap().into_inner().unwrap();
                 let value = kv_arc.value.lock().unwrap().take().map(convert_value);
-                KeyValue { key, value }
+                KeyValue {
+                    key,
+                    value,
+                    key_strindex: 0,
+                }
             })
             .collect(),
         start_time_unix_nano: moved_sdp.start_time_unix_nano,
@@ -597,7 +617,11 @@ fn transform_exemplar(e_arc: Arc<Mutex<RExemplar>>) -> v1::Exemplar {
             .map(|kv_arc| {
                 let key = Arc::into_inner(kv_arc.key).unwrap().into_inner().unwrap();
                 let value = kv_arc.value.lock().unwrap().take().map(convert_value);
-                KeyValue { key, value }
+                KeyValue {
+                    key,
+                    value,
+                    key_strindex: 0,
+                }
             })
             .collect(),
         time_unix_nano: moved_exemplar.time_unix_nano,
@@ -693,12 +717,18 @@ fn convert_attributes(
         let mut any_value = attr.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
-            None => new_attrs.push(KeyValue { key, value: None }),
+            None => new_attrs.push(KeyValue {
+                key,
+                value: None,
+                key_strindex: 0,
+            }),
             Some(v) => {
                 let converted = convert_value(v);
                 new_attrs.push(KeyValue {
                     key,
                     value: Some(converted),
+
+                    key_strindex: 0,
                 })
             }
         }
@@ -719,12 +749,18 @@ pub fn transform_resource(
         let mut any_value = kv.value.lock().unwrap();
         let any_value = any_value.take();
         match any_value {
-            None => new_attrs.push(KeyValue { key, value: None }),
+            None => new_attrs.push(KeyValue {
+                key,
+                value: None,
+                key_strindex: 0,
+            }),
             Some(v) => {
                 let converted = convert_value(v);
                 new_attrs.push(KeyValue {
                     key,
                     value: Some(converted),
+
+                    key_strindex: 0,
                 })
             }
         }
@@ -829,6 +865,8 @@ pub fn convert_value(v: RAnyValue) -> opentelemetry_proto::tonic::common::v1::An
                 values.push(KeyValue {
                     key,
                     value: new_value,
+
+                    key_strindex: 0,
                 });
             }
             AnyValue {

@@ -661,8 +661,8 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "opentelemetry"
-version = "0.31.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=0948c61#0948c616cea77311165cd5a0e54f719679543ef9"
+version = "0.32.0"
+source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=284a37d9#284a37d93b3856e1975c2807ba3af1421ebd9b52"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -674,8 +674,8 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-proto"
-version = "0.31.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=0948c61#0948c616cea77311165cd5a0e54f719679543ef9"
+version = "0.32.0"
+source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=284a37d9#284a37d93b3856e1975c2807ba3af1421ebd9b52"
 dependencies = [
  "base64",
  "const-hex",
@@ -689,8 +689,8 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry_sdk"
-version = "0.31.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=0948c61#0948c616cea77311165cd5a0e54f719679543ef9"
+version = "0.32.1"
+source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=284a37d9#284a37d93b3856e1975c2807ba3af1421ebd9b52"
 dependencies = [
  "futures-channel",
  "futures-executor",
