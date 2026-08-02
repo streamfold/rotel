@@ -220,7 +220,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("test-service".to_string())),
                     }),
-                }],
+
+                    key_strindex: 0,}],
                 ..Default::default()
             }),
             scope_logs: vec![ScopeLogs {
@@ -244,7 +245,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("log.value".to_string())),
                         }),
-                    }],
+
+                        key_strindex: 0,}],
                     ..Default::default()
                 }],
                 ..Default::default()

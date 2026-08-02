@@ -226,6 +226,8 @@ mod tests {
                             ),
                         ),
                     }),
+
+                    key_strindex: 0,
                 }],
                 ..Default::default()
             }),
@@ -271,24 +273,32 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("test_value".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
                 KeyValue {
                     key: "int_attr".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::IntValue(42)),
                     }),
+
+                    key_strindex: 0,
                 },
                 KeyValue {
                     key: "double_attr".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::DoubleValue(3.14)),
                     }),
+
+                    key_strindex: 0,
                 },
                 KeyValue {
                     key: "bool_attr".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::BoolValue(true)),
                     }),
+
+                    key_strindex: 0,
                 },
             ],
             events: vec![],
@@ -318,6 +328,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("test_service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 ..Default::default()
             }),
@@ -368,6 +380,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("event_value".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
             }],
@@ -380,6 +394,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::IntValue(123)),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 flags: 0,
@@ -409,6 +425,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("test_service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 ..Default::default()
             }),
@@ -454,6 +472,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("simple_value".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
                 KeyValue {
                     key: "http".to_string(),
@@ -465,12 +485,14 @@ mod tests {
                                     value: Some(AnyValue {
                                         value: Some(AnyValueValue::StringValue("GET".to_string())),
                                     }),
+                                    key_strindex: 0,
                                 },
                                 KeyValue {
                                     key: "status_code".to_string(),
                                     value: Some(AnyValue {
                                         value: Some(AnyValueValue::IntValue(200)),
                                     }),
+                                    key_strindex: 0,
                                 },
                                 KeyValue {
                                     key: "headers".to_string(),
@@ -483,13 +505,17 @@ mod tests {
                                                         "application/json".to_string(),
                                                     )),
                                                 }),
+                                                key_strindex: 0,
                                             }],
                                         })),
                                     }),
+                                    key_strindex: 0,
                                 },
                             ],
                         })),
                     }),
+
+                    key_strindex: 0,
                 },
             ],
             events: vec![],
@@ -519,6 +545,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("test_service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 ..Default::default()
             }),

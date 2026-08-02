@@ -8,7 +8,7 @@ use crate::topology::payload::{Message, MessageMetadata};
 use bstr::FromUtf8Error;
 use opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span};
-use opentelemetry_sdk::trace::TraceError;
+use opentelemetry_sdk::error::OTelSdkError;
 use serde::de::Error;
 use serde_json::Value;
 use serde_json::{Error as JsonError, Map, json};
@@ -168,9 +168,9 @@ pub enum ValueType {
     Metadata,
 }
 
-impl From<ExportError> for TraceError {
+impl From<ExportError> for OTelSdkError {
     fn from(err: ExportError) -> Self {
-        TraceError::Other(Box::new(err))
+        OTelSdkError::InternalFailure(err.to_string())
     }
 }
 

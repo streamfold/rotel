@@ -778,6 +778,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue(name.clone())),
                 }),
+                key_strindex: 0,
             });
         }
     }
@@ -790,6 +791,7 @@ fn process_file_work(work: FileWorkItem, ctx: WorkerContext) {
                     work.path.display().to_string(),
                 )),
             }),
+            key_strindex: 0,
         });
     }
 

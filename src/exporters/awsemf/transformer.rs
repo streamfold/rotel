@@ -959,12 +959,16 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::StringValue("test-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "environment".to_string(),
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::StringValue("test".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ]
     }
@@ -1389,6 +1393,8 @@ mod tests {
                             value: Some(AnyValue {
                                 value: Some(AnyValueValue::StringValue("value1".to_string())),
                             }),
+
+                            key_strindex: 0,
                         }],
                         start_time_unix_nano: 1000000000,
                         time_unix_nano: 2000000000,
@@ -1402,6 +1408,8 @@ mod tests {
                             value: Some(AnyValue {
                                 value: Some(AnyValueValue::StringValue("value2".to_string())),
                             }),
+
+                            key_strindex: 0,
                         }],
                         start_time_unix_nano: 1000000000,
                         time_unix_nano: 2000000000,
@@ -1440,6 +1448,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(AnyValueValue::StringValue("api".to_string())),
                         }),
+
+                        key_strindex: 0,
                     }],
                     start_time_unix_nano: 1000000000,
                     time_unix_nano: 2000000000,
@@ -1463,6 +1473,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(AnyValueValue::StringValue("api".to_string())),
                         }),
+
+                        key_strindex: 0,
                     }],
                     start_time_unix_nano: 1000000000,
                     time_unix_nano: 2000000000, // Same timestamp

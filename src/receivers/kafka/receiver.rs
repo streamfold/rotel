@@ -655,6 +655,8 @@ mod tests {
                             ),
                         ),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
@@ -698,7 +700,8 @@ mod tests {
                             "test-service".to_string(),
                         )),
                     }),
-                }],
+
+                    key_strindex: 0,}],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
             }),
@@ -744,6 +747,8 @@ mod tests {
                             ),
                         ),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),

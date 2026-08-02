@@ -69,12 +69,16 @@ fn convert_event_to_log_record(
         .map(|(key, value)| KeyValue {
             key,
             value: Some(convert_event_value_to_any_value(value.into())),
+
+            key_strindex: 0,
         })
         .chain(std::iter::once(KeyValue {
             key: FLUENT_TAG_KEY.to_string(),
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue(tag.to_string())),
             }),
+
+            key_strindex: 0,
         }))
         .collect();
 
@@ -130,6 +134,8 @@ fn convert_event_value_to_any_value(value: rmpv::Value) -> AnyValue {
                         Some(KeyValue {
                             key: key_str.to_string(),
                             value: Some(convert_event_value_to_any_value(v)),
+
+                            key_strindex: 0,
                         })
                     } else {
                         None

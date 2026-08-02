@@ -105,9 +105,7 @@ pub fn container_tags_from_resource_attributes(
 #[cfg(test)]
 mod tests {
     use crate::exporters::datadog::transform::otel_mapping::attributes::container_tags_from_resource_attributes;
-    use opentelemetry_semantic_conventions::{
-        resource, // For resource attributes
-    };
+    use opentelemetry_semantic_conventions::{attribute, resource};
     use std::collections::HashMap;
 
     // For older conventions equivalent to v1.6.1
@@ -192,7 +190,7 @@ mod tests {
                 conventions::ATTRIBUTE_CONTAINER_IMAGE_TAG,
                 "sample_app_image_tag",
             );
-            attr_map.insert(resource::CONTAINER_RUNTIME, "cro");
+            attr_map.insert(attribute::CONTAINER_RUNTIME, "cro");
             attr_map.insert(resource::K8S_CONTAINER_NAME, "kube_sample_app");
             attr_map.insert(resource::K8S_REPLICASET_NAME, "sample_replica_set");
             attr_map.insert(resource::K8S_DAEMONSET_NAME, "sample_daemonset_name");

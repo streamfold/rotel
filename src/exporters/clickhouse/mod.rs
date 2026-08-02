@@ -717,18 +717,24 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::StringValue("leaf_value".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
                 KeyValue {
                     key: "leaf-int".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::IntValue(42)),
                     }),
+
+                    key_strindex: 0,
                 },
                 KeyValue {
                     key: "leaf-bool".to_string(),
                     value: Some(AnyValue {
                         value: Some(AnyValueValue::BoolValue(true)),
                     }),
+
+                    key_strindex: 0,
                 },
             ];
         }
@@ -749,6 +755,8 @@ mod tests {
                                     i
                                 ))),
                             }),
+
+                            key_strindex: 0,
                         },
                         KeyValue {
                             key: format!("array_item_{}-nested", i),
@@ -762,6 +770,8 @@ mod tests {
                                                     depth as i64 * 100 + i as i64,
                                                 )),
                                             }),
+
+                                            key_strindex: 0,
                                         },
                                         KeyValue {
                                             key: "deep_string".to_string(),
@@ -771,10 +781,14 @@ mod tests {
                                                     depth, i
                                                 ))),
                                             }),
+
+                                            key_strindex: 0,
                                         },
                                     ],
                                 })),
                             }),
+
+                            key_strindex: 0,
                         },
                     ],
                 })),
@@ -790,6 +804,8 @@ mod tests {
                         depth
                     ))),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: format!("level{}-nested_kv", depth),
@@ -798,6 +814,8 @@ mod tests {
                         values: child_attrs,
                     })),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: format!("level{}-array_of_maps", depth),
@@ -806,12 +824,16 @@ mod tests {
                         values: array_items,
                     })),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: format!("level{}-double", depth),
                 value: Some(AnyValue {
                     value: Some(AnyValueValue::DoubleValue(depth as f64 * 3.14)),
                 }),
+
+                key_strindex: 0,
             },
         ]
     }
@@ -918,12 +940,16 @@ mod tests {
                                 "nested-trace-test-service".to_string(),
                             )),
                         }),
+
+                        key_strindex: 0,
                     },
                     KeyValue {
                         key: "deployment.environment".to_string(),
                         value: Some(AnyValue {
                             value: Some(AnyValueValue::StringValue("integration-test".to_string())),
                         }),
+
+                        key_strindex: 0,
                     },
                     // Nested KvlistValue inside resource attributes
                     KeyValue {
@@ -938,16 +964,22 @@ mod tests {
                                                 "localhost".to_string(),
                                             )),
                                         }),
+
+                                        key_strindex: 0,
                                     },
                                     KeyValue {
                                         key: "port".to_string(),
                                         value: Some(AnyValue {
                                             value: Some(AnyValueValue::IntValue(8123)),
                                         }),
+
+                                        key_strindex: 0,
                                     },
                                 ],
                             })),
                         }),
+
+                        key_strindex: 0,
                     },
                     // ArrayValue of KvlistValue entries inside resource attributes
                     KeyValue {
@@ -965,6 +997,8 @@ mod tests {
                                                             "test".to_string(),
                                                         )),
                                                     }),
+
+                                                    key_strindex: 0,
                                                 },
                                                 KeyValue {
                                                     key: "region".to_string(),
@@ -973,6 +1007,8 @@ mod tests {
                                                             "local".to_string(),
                                                         )),
                                                     }),
+
+                                                    key_strindex: 0,
                                                 },
                                             ],
                                         })),
@@ -986,12 +1022,16 @@ mod tests {
                                                         "1.0.0".to_string(),
                                                     )),
                                                 }),
+
+                                                key_strindex: 0,
                                             }],
                                         })),
                                     },
                                 ],
                             })),
                         }),
+
+                        key_strindex: 0,
                     },
                 ],
                 dropped_attributes_count: 0,

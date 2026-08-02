@@ -49,6 +49,7 @@ impl ParsedLog {
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue(value.into())),
             }),
+            key_strindex: 0,
         });
     }
 
@@ -60,6 +61,7 @@ impl ParsedLog {
             value: Some(AnyValue {
                 value: Some(any_value::Value::IntValue(value)),
             }),
+            key_strindex: 0,
         });
     }
 
@@ -71,6 +73,7 @@ impl ParsedLog {
             value: Some(AnyValue {
                 value: Some(any_value::Value::DoubleValue(value)),
             }),
+            key_strindex: 0,
         });
     }
 
@@ -82,6 +85,7 @@ impl ParsedLog {
             value: Some(AnyValue {
                 value: Some(any_value::Value::BoolValue(value)),
             }),
+            key_strindex: 0,
         });
     }
 
@@ -91,6 +95,7 @@ impl ParsedLog {
         self.attributes.push(KeyValue {
             key: key.into(),
             value: Some(value),
+            key_strindex: 0,
         });
     }
 }

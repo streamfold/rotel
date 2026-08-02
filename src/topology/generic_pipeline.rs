@@ -103,7 +103,11 @@ pub fn build_attrs(resource_attributes: Vec<KeyValue>, attributes: &[KeyValue]) 
 
     // Reconstruct KeyValue structs from the map entries
     map.into_iter()
-        .map(|(key, value)| KeyValue { key, value })
+        .map(|(key, value)| KeyValue {
+            key,
+            value,
+            key_strindex: 0,
+        })
         .collect()
 }
 
@@ -136,6 +140,7 @@ where
                 value: Some(AnyValue {
                     value: Some(StringValue(a.1.clone())),
                 }),
+                key_strindex: 0,
             })
             .collect();
 
@@ -353,6 +358,7 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(StringValue("new_attr_value".to_string())),
             }),
+            key_strindex: 0,
         }];
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
@@ -378,6 +384,7 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(StringValue("new_attr_value".to_string())),
             }),
+            key_strindex: 0,
         }];
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);
@@ -420,6 +427,7 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(StringValue("overwritten_service_name".to_string())),
             }),
+            key_strindex: 0,
         }];
 
         let mut trace_request = FakeOTLP::trace_service_request_with_spans(1, 1);

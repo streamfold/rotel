@@ -86,7 +86,7 @@ fn anyvalue_to_jsontype_nested<'a>(
         Some(Value::StringValue(s)) => JsonType::str_borrowed(s.as_str()),
         Some(Value::BoolValue(b)) => JsonType::Bool(*b),
         Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(b)),
-        None => JsonType::str_borrowed(""),
+        Some(Value::StringValueStrindex(_)) | None => JsonType::str_borrowed(""),
 
         Some(Value::ArrayValue(a)) => {
             // In flat mode (None) only depth-0 arrays are preserved as Array.
@@ -157,7 +157,7 @@ fn anyvalue_to_jsontype_nested_owned(
         Some(Value::StringValue(s)) => JsonType::str_owned(s),
         Some(Value::BoolValue(b)) => JsonType::Bool(b),
         Some(Value::BytesValue(b)) => JsonType::str_owned(hex::encode(&b)),
-        None => JsonType::str_owned(String::new()),
+        Some(Value::StringValueStrindex(_)) | None => JsonType::str_owned(String::new()),
 
         Some(Value::ArrayValue(a)) => {
             let within_depth = match max_depth {
@@ -620,6 +620,8 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(Value::StringValue("nested_value".to_string())),
             }),
+
+            key_strindex: 0,
         });
 
         let array_value = ArrayValue {
@@ -702,6 +704,8 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(Value::StringValue("nested_value".to_string())),
             }),
+
+            key_strindex: 0,
         });
 
         let array_value = ArrayValue {

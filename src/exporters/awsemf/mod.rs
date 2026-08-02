@@ -663,7 +663,8 @@ mod tests {
                             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
                                 format!("value_{}", i)
                             ))
-                        })
+                        }),
+                        key_strindex: 0,
                     });
                 }
             }

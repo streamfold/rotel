@@ -58,12 +58,16 @@ pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>, boot_time_ns: Option<u64>)
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue(LOG_SOURCE_VALUE.to_string())),
             }),
+
+            key_strindex: 0,
         },
         KeyValue {
             key: OS_TYPE_KEY.to_string(),
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue(OS_TYPE_VALUE.to_string())),
             }),
+
+            key_strindex: 0,
         },
         KeyValue {
             key: SERVICE_NAME_KEY.to_string(),
@@ -72,6 +76,8 @@ pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>, boot_time_ns: Option<u64>)
                     SERVICE_NAME_VALUE.to_string(),
                 )),
             }),
+
+            key_strindex: 0,
         },
     ];
 
@@ -82,6 +88,8 @@ pub fn convert_to_otlp_logs(records: Vec<KmsgRecord>, boot_time_ns: Option<u64>)
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue(hostname)),
             }),
+
+            key_strindex: 0,
         });
     }
 
@@ -125,6 +133,8 @@ fn convert_kmsg_record_to_otlp_log_record(
                     (record.priority_raw & 0x07) as i64,
                 )),
             }),
+
+            key_strindex: 0,
         },
         KeyValue {
             key: KMSG_PRIORITY_NAME_KEY.to_string(),
@@ -133,6 +143,8 @@ fn convert_kmsg_record_to_otlp_log_record(
                     record.priority.as_str().to_string(),
                 )),
             }),
+
+            key_strindex: 0,
         },
         KeyValue {
             key: KMSG_FACILITY_KEY.to_string(),
@@ -141,6 +153,8 @@ fn convert_kmsg_record_to_otlp_log_record(
                     (record.priority_raw >> 3) as i64,
                 )),
             }),
+
+            key_strindex: 0,
         },
         KeyValue {
             key: KMSG_FACILITY_NAME_KEY.to_string(),
@@ -149,12 +163,16 @@ fn convert_kmsg_record_to_otlp_log_record(
                     record.facility.as_str().to_string(),
                 )),
             }),
+
+            key_strindex: 0,
         },
         KeyValue {
             key: KMSG_SEQUENCE_KEY.to_string(),
             value: Some(AnyValue {
                 value: Some(any_value::Value::IntValue(record.sequence as i64)),
             }),
+
+            key_strindex: 0,
         },
     ];
 
@@ -165,6 +183,8 @@ fn convert_kmsg_record_to_otlp_log_record(
             value: Some(AnyValue {
                 value: Some(any_value::Value::BoolValue(true)),
             }),
+
+            key_strindex: 0,
         });
     }
 

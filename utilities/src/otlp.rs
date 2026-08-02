@@ -283,5 +283,6 @@ pub fn string_attr(key: &str, value: &str) -> KeyValue {
         value: Some(AnyValue {
             value: Some(StringValue(value.to_string())),
         }),
+        key_strindex: 0,
     }
 }
