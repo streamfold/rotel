@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pyo3 = { version = "0.27.2" }
+pyo3 = { version = "0.29" }
 opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "0948c61" }
 tower = "0.5.2"
 utilities = { path = "../utilities" }
 tracing = "0.1"
 tracing-log = "0.2.0"
-pyo3-stub-gen = "0.7.0"
-pyo3-stub-gen-derive = "0.7.0"
+pyo3-stub-gen = "0.23"
+pyo3-stub-gen-derive = "0.23"
 
 [dev-dependencies]
 chrono = "0.4.40"
