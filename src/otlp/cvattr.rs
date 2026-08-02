@@ -37,6 +37,7 @@ impl From<Value> for ConvertedAttrValue {
             Value::ArrayValue(a) => ConvertedAttrValue::String(json!(a).to_string()),
             Value::KvlistValue(kv) => ConvertedAttrValue::String(json!(kv).to_string()),
             Value::BytesValue(b) => ConvertedAttrValue::String(hex::encode(b)),
+            Value::StringValueStrindex(_) => ConvertedAttrValue::String(String::new()),
         }
     }
 }

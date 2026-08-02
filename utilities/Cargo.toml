@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.39"
-opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "0948c61" }
+opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "284a37d9" }

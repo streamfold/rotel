@@ -52,7 +52,7 @@ impl TransformPayload<ResourceLogs> for Transformer {
                                 Some(Value::ArrayValue(a)) => serde_json::json!(a).to_string(),
                                 Some(Value::KvlistValue(kv)) => serde_json::json!(kv).to_string(),
                                 Some(Value::BytesValue(b)) => hex::encode(b),
-                                None => String::new(),
+                                Some(Value::StringValueStrindex(_)) | None => String::new(),
                             },
                         };
 

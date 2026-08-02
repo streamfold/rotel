@@ -353,7 +353,10 @@ pub(crate) fn value_to_string(v: Option<&AnyValue>) -> String {
             Some(opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(ref b)) => {
                 format!("Bytes({:?})", b)
             }
-            None => "Empty".to_string(),
+            Some(
+                opentelemetry_proto::tonic::common::v1::any_value::Value::StringValueStrindex(_),
+            )
+            | None => "Empty".to_string(),
         }
     } else {
         "Empty".to_string()

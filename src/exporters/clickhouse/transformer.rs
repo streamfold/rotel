@@ -142,6 +142,7 @@ impl Transformer {
             Value::ArrayValue(a) => json!(a).to_string(),
             Value::KvlistValue(kv) => json!(kv).to_string(),
             Value::BytesValue(b) => hex::encode(b),
+            Value::StringValueStrindex(_) => String::new(),
         }
     }
 }
@@ -195,18 +196,24 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("test-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "http.status_code".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(200)),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "duration".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::DoubleValue(1.23)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -238,12 +245,16 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("value1".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "key2".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(42)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -273,18 +284,24 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("test-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "http.status_code".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(200)),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "duration".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::DoubleValue(1.23)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -330,18 +347,24 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("test-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "http.status_code".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(200)),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "duration".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::DoubleValue(1.23)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -371,12 +394,16 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("value1".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "key2".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(42)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -405,12 +432,16 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("test-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "http.status_code".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(200)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -437,12 +468,16 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("my-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "http.status_code".to_string(),
                 value: Some(AnyValue {
                     value: Some(Value::IntValue(200)),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -470,6 +505,8 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("value".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "metadata".to_string(),
@@ -481,16 +518,22 @@ mod tests {
                                 value: Some(AnyValue {
                                     value: Some(Value::StringValue("us-east-1".to_string())),
                                 }),
+
+                                key_strindex: 0,
                             },
                             KeyValue {
                                 key: "zone".to_string(),
                                 value: Some(AnyValue {
                                     value: Some(Value::StringValue("a".to_string())),
                                 }),
+
+                                key_strindex: 0,
                             },
                         ],
                     })),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -539,19 +582,26 @@ mod tests {
                                         value: Some(AnyValue {
                                             value: Some(Value::StringValue("deep".to_string())),
                                         }),
+                                        key_strindex: 0,
                                     }],
                                 })),
                             }),
+
+                            key_strindex: 0,
                         },
                         KeyValue {
                             key: "sibling".to_string(),
                             value: Some(AnyValue {
                                 value: Some(Value::IntValue(42)),
                             }),
+
+                            key_strindex: 0,
                         },
                     ],
                 })),
             }),
+
+            key_strindex: 0,
         }];
 
         let result = transformer.transform_attrs_kv(&attrs);
@@ -605,6 +655,8 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("value".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "metadata".to_string(),
@@ -616,16 +668,22 @@ mod tests {
                                 value: Some(AnyValue {
                                     value: Some(Value::StringValue("us-east-1".to_string())),
                                 }),
+
+                                key_strindex: 0,
                             },
                             KeyValue {
                                 key: "zone".to_string(),
                                 value: Some(AnyValue {
                                     value: Some(Value::IntValue(1)),
                                 }),
+
+                                key_strindex: 0,
                             },
                         ],
                     })),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -665,6 +723,8 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(Value::StringValue("value".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "metadata".to_string(),
@@ -676,16 +736,22 @@ mod tests {
                                 value: Some(AnyValue {
                                     value: Some(Value::StringValue("us-east-1".to_string())),
                                 }),
+
+                                key_strindex: 0,
                             },
                             KeyValue {
                                 key: "zone".to_string(),
                                 value: Some(AnyValue {
                                     value: Some(Value::IntValue(1)),
                                 }),
+
+                                key_strindex: 0,
                             },
                         ],
                     })),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -723,12 +789,17 @@ mod tests {
                                     value: Some(AnyValue {
                                         value: Some(Value::StringValue("deep".to_string())),
                                     }),
+                                    key_strindex: 0,
                                 }],
                             })),
                         }),
+
+                        key_strindex: 0,
                     }],
                 })),
             }),
+
+            key_strindex: 0,
         }];
 
         let result = transformer.transform_attrs_kv(&attrs);

@@ -64,6 +64,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue("test-service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
@@ -540,6 +542,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue("test-service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
@@ -578,6 +582,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue("test-service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
@@ -649,6 +655,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(any_value::Value::StringValue("service-1".to_string())),
                         }),
+
+                        key_strindex: 0,
                     }],
                     dropped_attributes_count: 0,
                     entity_refs: Vec::new(),
@@ -663,6 +671,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(any_value::Value::StringValue("service-2".to_string())),
                         }),
+
+                        key_strindex: 0,
                     }],
                     dropped_attributes_count: 0,
                     entity_refs: Vec::new(),
@@ -740,6 +750,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue("test-service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
@@ -778,6 +790,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(any_value::Value::StringValue("test-service".to_string())),
                     }),
+
+                    key_strindex: 0,
                 }],
                 dropped_attributes_count: 0,
                 entity_refs: Vec::new(),
@@ -849,6 +863,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(any_value::Value::StringValue("service-1".to_string())),
                         }),
+
+                        key_strindex: 0,
                     }],
                     dropped_attributes_count: 0,
                     entity_refs: Vec::new(),
@@ -863,6 +879,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(any_value::Value::StringValue("service-2".to_string())),
                         }),
+
+                        key_strindex: 0,
                     }],
                     dropped_attributes_count: 0,
                     entity_refs: Vec::new(),
@@ -1000,8 +1018,9 @@ mod tests {
                     attributes: vec![KeyValue {
                         key: "service.name".to_string(),
                         value: Some(AnyValue {
-                            value: Some(any_value::Value::StringValue(format!("service_{}", i)))
-                        })
+                            value: Some(any_value::Value::StringValue(format!("service_{}", i))),
+                        }),
+                        key_strindex: 0,
                     }],
                     dropped_attributes_count: 0,
                     entity_refs: vec![],

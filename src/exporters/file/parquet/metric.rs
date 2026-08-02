@@ -412,6 +412,8 @@ mod tests {
                         ),
                     ),
                 }),
+
+                key_strindex: 0,
             }],
             ..Default::default()
         };

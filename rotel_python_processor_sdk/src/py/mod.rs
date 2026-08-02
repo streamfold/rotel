@@ -1393,12 +1393,16 @@ mod tests {
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::StringValue("my_app".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
                 opentelemetry_proto::tonic::common::v1::KeyValue {
                     key: "component".to_string(),
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::StringValue("backend".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
             ],
             dropped_attributes_count: 0,
@@ -1696,12 +1700,16 @@ mod tests {
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::BoolValue(true)),
                     }),
+
+                    key_strindex: 0,
                 },
                 opentelemetry_proto::tonic::common::v1::KeyValue {
                     key: "second_key".to_string(),
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::StringValue("second_value".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
             ],
         };
@@ -1712,18 +1720,24 @@ mod tests {
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::KvlistValue(kvlist)),
                     }),
+
+                    key_strindex: 0,
                 },
                 opentelemetry_proto::tonic::common::v1::KeyValue {
                     key: "second_attr".to_string(),
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::ArrayValue(av)),
                     }),
+
+                    key_strindex: 0,
                 },
                 opentelemetry_proto::tonic::common::v1::KeyValue {
                     key: "third_attr".to_string(),
                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                         value: Some(Value::StringValue("to_remove_value".to_string())),
                     }),
+
+                    key_strindex: 0,
                 },
             ],
             dropped_attributes_count: 0,
@@ -1874,72 +1888,96 @@ mod tests {
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::IntValue(200)),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "user.id".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("abc-123".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "user.email".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("test@example.com".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "request.id".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("req-456".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "message".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("User login successful.".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "raw_data".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("id:123,name:Alice,age:30".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "temp_str_int".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("123".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "temp_str_bool".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("true".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "temp_str_float".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::DoubleValue(10.0)),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "path".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("https://rotel.dev/blog".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "super.secret".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("don't tell anyone".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "trace.id".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("12345678".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
         log_request.resource_logs[0].scope_logs[0].log_records[0].attributes = attrs.clone();
@@ -2108,36 +2146,48 @@ mod tests {
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("amd64".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "os.type".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("linux".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "region".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("us-east-1".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "service.name".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("my-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "unallowed_resource_key".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("some_value".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "deployment.environment".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("prod".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -2147,6 +2197,8 @@ mod tests {
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("test@example.com".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "http.url".to_string(),
@@ -2155,6 +2207,8 @@ mod tests {
                         "https://example.com/sensitive/path".to_string(),
                     )),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "db.statement".to_string(),
@@ -2163,42 +2217,56 @@ mod tests {
                         "SELECT * FROM users WHERE id = 1".to_string(),
                     )),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "operation".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("get_data".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "some_token".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("abcdef123".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "api_key_header".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("xyz789".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "safe_attribute".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("this should remain".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "unallowed_key".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("should_be_deleted".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "my_company_email".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("user@mycompany.com".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -2394,54 +2462,72 @@ mod tests {
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("foo".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "api_key".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("bar".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "password_hash".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("xyz123".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "visa".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("4123456789012".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "mastercard".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("5234567890123456".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "bl_email".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("foo@bar.com".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "allowed_email".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("test@mycompany.com".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "ip".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("10.0.1.100".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             opentelemetry_proto::tonic::common::v1::KeyValue {
                 key: "query".to_string(),
                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                     value: Some(Value::StringValue("SELECT * FROM USERS".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -2573,6 +2659,8 @@ mod tests {
                                 "Login successful: password=1234567890".to_string(),
                             )),
                         }),
+
+                        key_strindex: 0,
                     }],
                 },
             )),
@@ -2645,6 +2733,8 @@ mod tests {
                                                     )),
                                                 },
                                             ),
+
+                                            key_strindex: 0,
                                         },
                                     ],
                                 },
@@ -2991,7 +3081,8 @@ mod tests {
                         value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                             value: Some(Value::StringValue("initial_resource_value".to_string())),
                         }),
-                    },
+
+                        key_strindex: 0,},
                 ],
                 dropped_attributes_count: 10,
                 entity_refs: vec![],
@@ -3007,7 +3098,8 @@ mod tests {
                                 value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                     value: Some(Value::BoolValue(true)),
                                 }),
-                            },
+
+                                key_strindex: 0,},
                         ],
                         dropped_attributes_count: 5,
                     }),
@@ -3023,7 +3115,8 @@ mod tests {
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                         value: Some(Value::StringValue("gauge_metadata_value".to_string())),
                                     }),
-                                },
+
+                                    key_strindex: 0,},
                             ],
                             data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(
                                 opentelemetry_proto::tonic::metrics::v1::Gauge {
@@ -3035,7 +3128,8 @@ mod tests {
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                         value: Some(Value::StringValue("gauge_dp_value".to_string())),
                                                     }),
-                                                },
+
+                                                    key_strindex: 0,},
                                             ],
                                             start_time_unix_nano: 1000,
                                             time_unix_nano: 2000,
@@ -3047,7 +3141,8 @@ mod tests {
                                                             value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                                 value: Some(Value::StringValue("gauge_exemplar_value".to_string())),
                                                             }),
-                                                        },
+
+                                                            key_strindex: 0,},
                                                     ],
                                                     time_unix_nano: 1500,
                                                     span_id: b"\x01\x02\x03\x04\x05\x06\x07\x08".to_vec(),
@@ -3073,7 +3168,8 @@ mod tests {
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                         value: Some(Value::IntValue(42)),
                                     }),
-                                },
+
+                                    key_strindex: 0,},
                             ],
                             data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Sum(
                                 opentelemetry_proto::tonic::metrics::v1::Sum {
@@ -3085,7 +3181,8 @@ mod tests {
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                         value: Some(Value::StringValue("sum_dp_value".to_string())),
                                                     }),
-                                                },
+
+                                                    key_strindex: 0,},
                                             ],
                                             start_time_unix_nano: 3000,
                                             time_unix_nano: 4000,
@@ -3110,7 +3207,8 @@ mod tests {
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                         value: Some(Value::BoolValue(false)),
                                     }),
-                                },
+
+                                    key_strindex: 0,},
                             ],
                             data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Histogram(
                                 opentelemetry_proto::tonic::metrics::v1::Histogram {
@@ -3122,7 +3220,8 @@ mod tests {
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                         value: Some(Value::StringValue("histogram_dp_value".to_string())),
                                                     }),
-                                                },
+
+                                                    key_strindex: 0,},
                                             ],
                                             start_time_unix_nano: 5000,
                                             time_unix_nano: 6000,
@@ -3159,7 +3258,8 @@ mod tests {
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                         value: Some(Value::DoubleValue(3.14)),
                                     }),
-                                },
+
+                                    key_strindex: 0,},
                             ],
                             data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::ExponentialHistogram(
                                 opentelemetry_proto::tonic::metrics::v1::ExponentialHistogram {
@@ -3171,7 +3271,8 @@ mod tests {
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                         value: Some(Value::StringValue("exp_histogram_dp_value".to_string())),
                                                     }),
-                                                },
+
+                                                    key_strindex: 0,},
                                             ],
                                             start_time_unix_nano: 7000,
                                             time_unix_nano: 8000,
@@ -3196,7 +3297,8 @@ mod tests {
                                                             value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                                 value: Some(Value::StringValue("exp_exemplar_value".to_string())),
                                                             }),
-                                                        },
+
+                                                            key_strindex: 0,},
                                                     ],
                                                     time_unix_nano: 7500,
                                                     span_id: b"\x21\x22\x23\x24\x25\x26\x27\x28".to_vec(),
@@ -3224,7 +3326,8 @@ mod tests {
                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                         value: Some(Value::BytesValue(b"summary_bytes".to_vec())),
                                     }),
-                                },
+
+                                    key_strindex: 0,},
                             ],
                             data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Summary(
                                 opentelemetry_proto::tonic::metrics::v1::Summary {
@@ -3236,7 +3339,8 @@ mod tests {
                                                     value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
                                                         value: Some(Value::StringValue("summary_dp_value".to_string())),
                                                     }),
-                                                },
+
+                                                    key_strindex: 0,},
                                             ],
                                             start_time_unix_nano: 9000,
                                             time_unix_nano: 10000,

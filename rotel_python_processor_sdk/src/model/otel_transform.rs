@@ -537,6 +537,11 @@ pub fn convert_value(v: opentelemetry_proto::tonic::common::v1::AnyValue) -> RAn
             opentelemetry_proto::tonic::common::v1::any_value::Value::BytesValue(b) => RAnyValue {
                 value: Arc::new(Mutex::new(Some(BytesValue(b)))),
             },
+            opentelemetry_proto::tonic::common::v1::any_value::Value::StringValueStrindex(_) => {
+                RAnyValue {
+                    value: Arc::new(Mutex::new(None)),
+                }
+            }
         },
     }
 }

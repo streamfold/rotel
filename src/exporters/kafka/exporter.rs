@@ -219,7 +219,10 @@ fn hash_any_value<H: std::hash::Hasher>(
                     value_hash.hash(hasher);
                 }
             }
-            None => {
+            Some(
+                opentelemetry_proto::tonic::common::v1::any_value::Value::StringValueStrindex(_),
+            )
+            | None => {
                 "empty".hash(hasher);
             }
         },
@@ -891,30 +894,40 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("test-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "bool_attr".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::BoolValue(true)),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "int_attr".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::IntValue(42)),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "double_attr".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::DoubleValue(std::f64::consts::PI)),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "bytes_attr".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::BytesValue(vec![0xDE, 0xAD, 0xBE, 0xEF])),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "array_attr".to_string(),
@@ -933,6 +946,8 @@ mod tests {
                         ],
                     })),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "kvlist_attr".to_string(),
@@ -946,24 +961,34 @@ mod tests {
                                         "nested_value1".to_string(),
                                     )),
                                 }),
+
+                                key_strindex: 0,
                             },
                             KeyValue {
                                 key: "nested_key2".to_string(),
                                 value: Some(AnyValue {
                                     value: Some(any_value::Value::IntValue(200)),
                                 }),
+
+                                key_strindex: 0,
                             },
                         ],
                     })),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "null_attr".to_string(),
                 value: Some(AnyValue { value: None }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "missing_value_attr".to_string(),
                 value: None,
+
+                key_strindex: 0,
             },
         ];
 
@@ -985,24 +1010,32 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("my-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "service.version".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("1.2.3".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "host.name".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("host-123".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "environment".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("production".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -1061,6 +1094,7 @@ mod tests {
                                                                     value: Some(AnyValue {
                                                                         value: Some(any_value::Value::StringValue("deep_value1".to_string())),
                                                                     }),
+                                                                    key_strindex: 0,
                                                                 },
                                                                 KeyValue {
                                                                     key: "deep_key2".to_string(),
@@ -1076,6 +1110,7 @@ mod tests {
                                                                             ],
                                                                         })),
                                                                     }),
+                                                                    key_strindex: 0,
                                                                 },
                                                             ],
                                                         })),
@@ -1083,13 +1118,15 @@ mod tests {
                                                 ],
                                             })),
                                         }),
-                                    },
+
+                                        key_strindex: 0,},
                                     KeyValue {
                                         key: "another_mid_key".to_string(),
                                         value: Some(AnyValue {
                                             value: Some(any_value::Value::BytesValue(vec![1, 2, 3])),
                                         }),
-                                    },
+
+                                        key_strindex: 0,},
                                 ],
                             })),
                         },
@@ -1099,7 +1136,8 @@ mod tests {
                     ],
                 })),
             }),
-        }];
+
+            key_strindex: 0,}];
 
         let hash = calculate_resource_attributes_hash(&attrs);
         assert_eq!(hash.len(), 8);
@@ -1123,6 +1161,8 @@ mod tests {
                             value: Some(AnyValue {
                                 value: Some(any_value::Value::StringValue("us-west-2".to_string())),
                             }),
+
+                            key_strindex: 0,
                         },
                         KeyValue {
                             key: "zone".to_string(),
@@ -1131,16 +1171,22 @@ mod tests {
                                     "us-west-2a".to_string(),
                                 )),
                             }),
+
+                            key_strindex: 0,
                         },
                         KeyValue {
                             key: "instance_type".to_string(),
                             value: Some(AnyValue {
                                 value: Some(any_value::Value::StringValue("t2.micro".to_string())),
                             }),
+
+                            key_strindex: 0,
                         },
                     ],
                 })),
             }),
+
+            key_strindex: 0,
         }];
 
         // Same KvList with keys in different order
@@ -1154,12 +1200,16 @@ mod tests {
                             value: Some(AnyValue {
                                 value: Some(any_value::Value::StringValue("t2.micro".to_string())),
                             }),
+
+                            key_strindex: 0,
                         },
                         KeyValue {
                             key: "region".to_string(),
                             value: Some(AnyValue {
                                 value: Some(any_value::Value::StringValue("us-west-2".to_string())),
                             }),
+
+                            key_strindex: 0,
                         },
                         KeyValue {
                             key: "zone".to_string(),
@@ -1168,10 +1218,14 @@ mod tests {
                                     "us-west-2a".to_string(),
                                 )),
                             }),
+
+                            key_strindex: 0,
                         },
                     ],
                 })),
             }),
+
+            key_strindex: 0,
         }];
 
         let hash1 = calculate_resource_attributes_hash(&attrs1);
@@ -1203,6 +1257,8 @@ mod tests {
                     ],
                 })),
             }),
+
+            key_strindex: 0,
         }];
 
         // Same array with elements in different order
@@ -1223,6 +1279,8 @@ mod tests {
                     ],
                 })),
             }),
+
+            key_strindex: 0,
         }];
 
         let hash1 = calculate_resource_attributes_hash(&attrs1);
@@ -1243,18 +1301,24 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("my-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "service.version".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("1.2.3".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "deployment.environment".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("production".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -1265,18 +1329,24 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("my-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "service.version".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("1.2.3".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "deployment.env".to_string(), // Changed from deployment.environment
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("production".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -1293,18 +1363,24 @@ mod tests {
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("my-service".to_string())),
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "service.version".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("1.2.4".to_string())), // Changed version
                 }),
+
+                key_strindex: 0,
             },
             KeyValue {
                 key: "deployment.environment".to_string(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::StringValue("production".to_string())),
                 }),
+
+                key_strindex: 0,
             },
         ];
 
@@ -1324,6 +1400,8 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(any_value::Value::StringValue("8080".to_string())),
             }),
+
+            key_strindex: 0,
         }];
 
         let attrs_int = vec![KeyValue {
@@ -1331,6 +1409,8 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(any_value::Value::IntValue(8080)),
             }),
+
+            key_strindex: 0,
         }];
 
         let attrs_double = vec![KeyValue {
@@ -1338,6 +1418,8 @@ mod tests {
             value: Some(AnyValue {
                 value: Some(any_value::Value::DoubleValue(8080.0)),
             }),
+
+            key_strindex: 0,
         }];
 
         let hash_string = calculate_resource_attributes_hash(&attrs_string);

@@ -39,6 +39,7 @@ impl From<RKeyValue> for KeyValue {
         KeyValue {
             key: rkv.key.into_string(),
             value: rkv.value.into_option().map(|v| v.into()),
+            key_strindex: 0,
         }
     }
 }
@@ -65,7 +66,7 @@ impl From<AnyValue> for RAnyValue {
                     .collect::<Vec<_>>()
                     .into(),
             ),
-            None => RAnyValue::String(RString::new()),
+            Some(OtelValue::StringValueStrindex(_)) | None => RAnyValue::String(RString::new()),
         }
     }
 }

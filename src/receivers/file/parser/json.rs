@@ -95,6 +95,7 @@ fn json_to_any_value(value: Value) -> AnyValue {
                 .map(|(k, v)| KeyValue {
                     key: k,
                     value: Some(json_to_any_value(v)),
+                    key_strindex: 0,
                 })
                 .collect();
             Some(any_value::Value::KvlistValue(KeyValueList { values }))

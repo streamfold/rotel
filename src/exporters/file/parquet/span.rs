@@ -341,7 +341,8 @@ mod tests {
                     value: Some(AnyValue {
                         value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("test-service".to_string())),
                     }),
-                }],
+
+                    key_strindex: 0,}],
                 ..Default::default()
             }),
             scope_spans: vec![ScopeSpans {
@@ -363,7 +364,8 @@ mod tests {
                         value: Some(AnyValue {
                             value: Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue("span.value".to_string())),
                         }),
-                    }],
+
+                        key_strindex: 0,}],
                     status: Some(Status {
                         code: 1, // Ok
                         message: "success".to_string(),
