@@ -1476,19 +1476,18 @@ On release, Rotel images are published to
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
 
 Rotel releases with built-in Python Processor support and Python 3.13 are also available
-on [Dockerhub](https://hub.docker.com/repository/docker/streamfold/rotel-python-processors/general)
-with the following tags:
+on [Amazon ECR Public](https://gallery.ecr.aws/rotel-dev/python-processors) with the following tags:
 
-- `streamfold/rotel-python-processors:<release name>`
-- `streamfold/rotel-python-processors:latest`
-- `streamfold/rotel-python-processors:sha-<sha>`
+- `public.ecr.aws/rotel-dev/python-processors:<release name>`
+- `public.ecr.aws/rotel-dev/python-processors:latest`
+- `public.ecr.aws/rotel-dev/python-processors:sha-<sha>`
 
 When running an image, you can mount directories from your local filesystem as volumes to provide processor code
 to the container with `-v` flag, for example: `-v ~/my_processor_directory:/processors`. You can then start rotel and
 pass in processors like the example below.
 
 ```
-docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors streamfold/rotel-python-processors:latest
+docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors public.ecr.aws/rotel-dev/python-processors:latest
 --exporter blackhole --debug-log traces --debug-log-verbosity detailed --otlp-with-trace-processor /processors/my_processor.py`
 ```
 
