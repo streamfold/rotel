@@ -18,10 +18,10 @@ tracing-log = "0.2.0"
 tracing-bunyan-formatter = "0.3.10"
 tracing-appender = "0.2.3"
 tonic = { version = "0.14", features = ["gzip"] }
-# Using git revision for opentelemetry_sdk 0.32.1 (includes 32-bit ARM AtomicU64 fix from commit 0948c61)
-opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "284a37d9" }
-opentelemetry_sdk = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "284a37d9" }
-opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "284a37d9" }
+# opentelemetry_sdk 0.32.1 includes the 32-bit ARM AtomicU64/portable-atomic fix (PR #3345, merged 2026-02-06)
+opentelemetry = "0.32.0"
+opentelemetry_sdk = "0.32.1"
+opentelemetry-proto = "0.32.0"
 flume = { version = "0.11.1", features = ["async"] }
 http-body-util = "0.1.2"
 http = "1.2.0"

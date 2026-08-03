@@ -3303,7 +3303,8 @@ dependencies = [
 [[package]]
 name = "opentelemetry"
 version = "0.32.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=284a37d9#284a37d93b3856e1975c2807ba3af1421ebd9b52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -3316,7 +3317,7 @@ dependencies = [
 [[package]]
 name = "opentelemetry-prometheus-text-exporter"
 version = "0.2.0"
-source = "git+https://github.com/mheffner/opentelemetry-prometheus-text-exporter?branch=sorted-otel-0.32.1#86192da821f73a0ebdb864fc35cb739eb912bbb4"
+source = "git+https://github.com/mheffner/opentelemetry-prometheus-text-exporter?branch=sorted-otel-0.32.1#bbeebcfb6e6181a1392d65fa563a430c0167c9cc"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
@@ -3326,7 +3327,8 @@ dependencies = [
 [[package]]
 name = "opentelemetry-proto"
 version = "0.32.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=284a37d9#284a37d93b3856e1975c2807ba3af1421ebd9b52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
 dependencies = [
  "base64 0.22.1",
  "const-hex",
@@ -3347,7 +3349,8 @@ checksum = "c913ac17a6c451661ee255f4625d143e51647ae78ebd969b75e41c4442f4fe47"
 [[package]]
 name = "opentelemetry_sdk"
 version = "0.32.1"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=284a37d9#284a37d93b3856e1975c2807ba3af1421ebd9b52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9"
 dependencies = [
  "futures-channel",
  "futures-executor",
