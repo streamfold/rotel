@@ -8,16 +8,16 @@ Examples:
 
 ```shell
 # generate DDL for logs
-docker run -ti streamfold/rotel-clickhouse-ddl create --endpoint https://abcd1234.us-east-1.aws.clickhouse.cloud:8443 --logs
+docker run -ti public.ecr.aws/rotel-dev/clickhouse-ddl create --endpoint https://abcd1234.us-east-1.aws.clickhouse.cloud:8443 --logs
 
 # generate DDL for traces, use the JSON type
-docker run -ti streamfold/rotel-clickhouse-ddl create --endpoint https://abcd1234.us-east-1.aws.clickhouse.cloud:8443 --traces --enable-json
+docker run -ti public.ecr.aws/rotel-dev/clickhouse-ddl create --endpoint https://abcd1234.us-east-1.aws.clickhouse.cloud:8443 --traces --enable-json
 ```
 
 If you are executing against a localhost Clickhouse server, add `--network="host"`:
 
 ```shell
-docker run -ti --network="host" streamfold/rotel-clickhouse-ddl create --endpoint http://localhost:8123 --logs
+docker run -ti --network="host" public.ecr.aws/rotel-dev/clickhouse-ddl create --endpoint http://localhost:8123 --logs
 ```
 
 Full usage:

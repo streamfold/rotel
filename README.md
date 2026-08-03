@@ -53,7 +53,7 @@ Rotel is fully open-sourced and licensed under the Apache 2.0 license.
 
 ### Running Rotel
 ```bash
-docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
+docker run -ti -p 4317-4318:4317-4318 public.ecr.aws/rotel-dev/rotel --debug-log traces --exporter blackhole
 ```
 
 Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
@@ -1466,29 +1466,28 @@ may include logging from third-party crates used in Rotel.
 
 ## Docker images
 
-On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following
-tags:
+On release, Rotel images are published to
+[Amazon ECR Public](https://gallery.ecr.aws/rotel-dev/rotel) with the following tags:
 
-- `streamfold/rotel:<release name>`
-- `streamfold/rotel:latest`
-- `streamfold/rotel:sha-<sha>`
+- `public.ecr.aws/rotel-dev/rotel:<release name>`
+- `public.ecr.aws/rotel-dev/rotel:latest`
+- `public.ecr.aws/rotel-dev/rotel:sha-<sha>`
 
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
 
 Rotel releases with built-in Python Processor support and Python 3.13 are also available
-on [Dockerhub](https://hub.docker.com/repository/docker/streamfold/rotel-python-processors/general)
-with the following tags:
+on [Amazon ECR Public](https://gallery.ecr.aws/rotel-dev/python-processors) with the following tags:
 
-- `streamfold/rotel-python-processors:<release name>`
-- `streamfold/rotel-python-processors:latest`
-- `streamfold/rotel-python-processors:sha-<sha>`
+- `public.ecr.aws/rotel-dev/python-processors:<release name>`
+- `public.ecr.aws/rotel-dev/python-processors:latest`
+- `public.ecr.aws/rotel-dev/python-processors:sha-<sha>`
 
 When running an image, you can mount directories from your local filesystem as volumes to provide processor code
 to the container with `-v` flag, for example: `-v ~/my_processor_directory:/processors`. You can then start rotel and
 pass in processors like the example below.
 
 ```
-docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors streamfold/rotel-python-processors:latest
+docker run -ti -p 4317-4318:4317-4318  -v ~/my_processor_director:/processors public.ecr.aws/rotel-dev/python-processors:latest
 --exporter blackhole --debug-log traces --debug-log-verbosity detailed --otlp-with-trace-processor /processors/my_processor.py`
 ```
 
