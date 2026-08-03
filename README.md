@@ -53,7 +53,7 @@ Rotel is fully open-sourced and licensed under the Apache 2.0 license.
 
 ### Running Rotel
 ```bash
-docker run -ti -p 4317-4318:4317-4318 streamfold/rotel --debug-log traces --exporter blackhole
+docker run -ti -p 4317-4318:4317-4318 public.ecr.aws/rotel-dev/rotel --debug-log traces --exporter blackhole
 ```
 
 Rotel is now listening on localhost:4317 (gRPC) and localhost:4318 (HTTP).
@@ -1466,12 +1466,12 @@ may include logging from third-party crates used in Rotel.
 
 ## Docker images
 
-On release, Rotel images are published to [Dockerhub](https://hub.docker.com/r/streamfold/rotel) with the following
-tags:
+On release, Rotel images are published to
+[Amazon ECR Public](https://gallery.ecr.aws/rotel-dev/rotel) with the following tags:
 
-- `streamfold/rotel:<release name>`
-- `streamfold/rotel:latest`
-- `streamfold/rotel:sha-<sha>`
+- `public.ecr.aws/rotel-dev/rotel:<release name>`
+- `public.ecr.aws/rotel-dev/rotel:latest`
+- `public.ecr.aws/rotel-dev/rotel:sha-<sha>`
 
 When running an image, map the OTLP receiver ports to their local values with the flag `-p 4317-4318:4317-4318`.
 
