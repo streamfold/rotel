@@ -17,6 +17,9 @@ mod file_receiver;
 #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
 mod kmsg_receiver;
 
+#[cfg(feature = "node_metrics_receiver")]
+mod node_metrics_receiver;
+
 mod awsemf_exporter;
 mod clickhouse_exporter;
 mod datadog_exporter;

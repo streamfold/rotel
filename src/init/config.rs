@@ -28,6 +28,8 @@ use crate::receivers::fluent::config::FluentReceiverConfig;
 use crate::receivers::kafka::config::KafkaReceiverConfig;
 #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
 use crate::receivers::kmsg::config::KmsgReceiverConfig;
+#[cfg(feature = "node_metrics_receiver")]
+use crate::receivers::node_metrics::config::NodeMetricsConfig;
 use crate::receivers::otlp::OTLPReceiverConfig;
 use figment::{Figment, providers::Env};
 use gethostname::gethostname;
@@ -214,6 +216,8 @@ pub(crate) enum ReceiverConfig {
     File(FileReceiverConfig),
     #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
     Kmsg(KmsgReceiverConfig),
+    #[cfg(feature = "node_metrics_receiver")]
+    NodeMetrics(NodeMetricsConfig),
 }
 
 impl TryIntoConfig for ExporterArgs {
@@ -650,6 +654,10 @@ fn get_receiver_config(config: &AgentRun, receiver: Receiver) -> Result<Receiver
         Receiver::File => ReceiverConfig::File(config.file_receiver.build_config()),
         #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
         Receiver::Kmsg => ReceiverConfig::Kmsg(config.kmsg_receiver.build_config()),
+        #[cfg(feature = "node_metrics_receiver")]
+        Receiver::NodeMetrics => {
+            ReceiverConfig::NodeMetrics(config.node_metrics_receiver.build_config()?)
+        }
     })
 }
 

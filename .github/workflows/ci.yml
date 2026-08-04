@@ -50,7 +50,9 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: nextest
-          args: run --target ${{ matrix.target }} --verbose
+          # node_metrics_receiver pulls in no extra dependencies, so building it here is
+          # nearly free and keeps its code and tests compiled on every PR.
+          args: run --target ${{ matrix.target }} --features node_metrics_receiver --verbose
       - name: run test processor-sdk
         uses: actions-rs/cargo@v1
         with:
@@ -83,8 +85,10 @@ jobs:
       - name: build (no default features)
         uses: actions-rs/cargo@v1
         with:
+          # node_metrics_receiver is built here too: it reads /proc and /sys through libc,
+          # whose statfs field widths differ on 32-bit targets.
+          args: --target ${{ matrix.target }} --no-default-features --features file_receiver,node_metrics_receiver
           command: build
-          args: --target ${{ matrix.target }} --no-default-features --features file_receiver
 
   # Check formatting with rustfmt
   formatting:

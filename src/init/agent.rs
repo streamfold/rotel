@@ -31,6 +31,8 @@ use crate::receivers::kafka::offset_ack_committer::KafkaOffsetCommitter;
 use crate::receivers::kafka::receiver::KafkaReceiver;
 #[cfg(all(target_os = "linux", feature = "kmsg_receiver"))]
 use crate::receivers::kmsg::receiver::KmsgReceiver;
+#[cfg(feature = "node_metrics_receiver")]
+use crate::receivers::node_metrics::NodeMetricsReceiver;
 use crate::receivers::otlp::otlp_grpc::OTLPGrpcServer;
 use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
@@ -1081,6 +1083,17 @@ impl Agent {
                             }
                         }
                     });
+                }
+                #[cfg(feature = "node_metrics_receiver")]
+                ReceiverConfig::NodeMetrics(config) => {
+                    let node_metrics_receiver =
+                        NodeMetricsReceiver::new(config.clone(), metrics_output.clone())?;
+
+                    // Spawned directly into the shared task set rather than into its own
+                    // supervised set: this receiver owns a single task, so there is
+                    // nothing to supervise or drain. It runs until cancelled, so an early
+                    // completion here legitimately means something went wrong.
+                    node_metrics_receiver.start(&mut receivers_task_set, &receivers_cancel)?;
                 }
             }
         }

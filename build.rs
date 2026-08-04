@@ -3,9 +3,11 @@ use std::io::Result;
 fn main() -> Result<()> {
     println!("cargo::rustc-check-cfg=cfg(kafka_integration_tests, values(\"true\"))");
     println!("cargo::rustc-check-cfg=cfg(kmsg_integration_tests, values(\"true\"))");
+    println!("cargo::rustc-check-cfg=cfg(node_metrics_integration_tests, values(\"true\"))");
     println!("cargo::rustc-check-cfg=cfg(rust_processor_integration_tests, values(\"true\"))");
     println!("cargo::rerun-if-env-changed=KAFKA_INTEGRATION_TESTS");
     println!("cargo::rerun-if-env-changed=KMSG_INTEGRATION_TESTS");
+    println!("cargo::rerun-if-env-changed=NODE_METRICS_INTEGRATION_TESTS");
     println!("cargo::rerun-if-env-changed=RUST_PROCESSOR_INTEGRATION_TESTS");
     println!("cargo::rerun-if-changed=proto/datadog");
     prost_build::compile_protos(&["proto/datadog/agent_payload.proto"], &["proto/datadog"])?;
@@ -15,6 +17,9 @@ fn main() -> Result<()> {
 
     let env = std::env::var("KMSG_INTEGRATION_TESTS").unwrap_or("false".to_string());
     println!("cargo:rustc-cfg=kmsg_integration_tests=\"{}\"", env);
+
+    let env = std::env::var("NODE_METRICS_INTEGRATION_TESTS").unwrap_or("false".to_string());
+    println!("cargo:rustc-cfg=node_metrics_integration_tests=\"{}\"", env);
 
     let env = std::env::var("RUST_PROCESSOR_INTEGRATION_TESTS").unwrap_or("false".to_string());
     println!(
