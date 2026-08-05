@@ -602,11 +602,13 @@ pub struct KmsgNack {
     pub reason: ExporterError,
 }
 
+#[derive(Clone)]
 pub enum ForwarderAcknowledgement {
     Ack(ForwarderPayloadDetails),
     Nack(ForwarderPayloadDetails),
 }
 
+#[derive(Clone)]
 pub struct ForwarderPayloadDetails {
     pub request_id: String,
 }

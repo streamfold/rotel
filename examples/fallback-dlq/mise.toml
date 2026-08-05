@@ -1,0 +1,89 @@
+[tasks]
+build = { run = "cd ../.. && cargo build --release --bins --target-dir target", description = "Build rotel and helper binaries" }
+up = { run = "docker compose up -d", description = "Start Kafka and ClickHouse" }
+down = { run = "docker compose down", description = "Stop Kafka and ClickHouse" }
+reset = { run = "docker compose down -v --remove-orphans", description = "Reset all data and offsets" }
+
+ddl = { run = [
+    "curl -s -u default:password --data 'CREATE DATABASE IF NOT EXISTS otel' http://localhost:8123/",
+    "../../target/release/clickhouse-ddl create --endpoint localhost:8123 --user default --password password --traces --metrics --logs"
+], description = "Apply ClickHouse DDL" }
+
+send = { run = [
+    "../../target/release/generate-otlp traces --http-endpoint localhost:4318 --resources 1 --items 1",
+    "../../target/release/generate-otlp metrics --http-endpoint localhost:4318 --resources 1 --items 1",
+    "../../target/release/generate-otlp logs --http-endpoint localhost:4318 --resources 1 --items 1"
+], description = "Send test OTLP data" }
+
+"clickhouse:stop" = { run = "docker compose stop clickhouse", description = "Simulate ClickHouse failure" }
+"clickhouse:start" = { run = "docker compose start clickhouse", description = "Recover ClickHouse" }
+
+"verify:clickhouse" = { run = """
+    echo "--- Traces ---"
+    curl -s -u default:password --data "SELECT count() FROM otel.otel_traces" http://localhost:8123/
+    echo "--- Metrics (Gauge) ---"
+    curl -s -u default:password --data "SELECT count() FROM otel.otel_metrics_gauge" http://localhost:8123/
+    echo "--- Logs ---"
+    curl -s -u default:password --data "SELECT count() FROM otel.otel_logs" http://localhost:8123/
+""", description = "Verify row counts in ClickHouse" }
+
+"verify:kafka" = { run = [
+    "docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic otlp_traces",
+    "docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic otlp_metrics",
+    "docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic otlp_logs",
+    "docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:29092 --describe --group rotel-dlq-recovery"
+], description = "Inspect Kafka topics and consumer group" }
+
+[tasks."rotel:start"]
+run = "../../target/release/rotel --log-format text start"
+description = "Start Rotel agent in foreground"
+
+[tasks."rotel:start".env]
+# Rotel Configuration
+ROTEL_RECEIVERS = "otlp,kafka"
+ROTEL_EXPORTERS = "ch:clickhouse,ch_replay:clickhouse,dlq:kafka"
+
+# Pipeline Exporters
+ROTEL_EXPORTERS_TRACES = "ch,ch_replay,dlq"
+ROTEL_EXPORTERS_METRICS = "ch,ch_replay,dlq"
+ROTEL_EXPORTERS_LOGS = "ch,ch_replay,dlq"
+
+# Export Groups
+ROTEL_EXPORT_GROUPS_TRACES = "live=ch,dlq"
+ROTEL_EXPORT_GROUPS_METRICS = "live=ch,dlq"
+ROTEL_EXPORT_GROUPS_LOGS = "live=ch,dlq"
+
+# ClickHouse Exporters (both point to the same endpoint)
+ROTEL_EXPORTER_CH_ENDPOINT = "http://localhost:8123"
+ROTEL_EXPORTER_CH_USER = "default"
+ROTEL_EXPORTER_CH_PASSWORD = "password"
+ROTEL_EXPORTER_CH_REPLAY_ENDPOINT = "http://localhost:8123"
+ROTEL_EXPORTER_CH_REPLAY_USER = "default"
+ROTEL_EXPORTER_CH_REPLAY_PASSWORD = "password"
+
+# Kafka Exporter (named `dlq:kafka`, so use the named-exporter env prefix)
+ROTEL_EXPORTER_DLQ_BROKERS = "localhost:9092"
+ROTEL_EXPORTER_DLQ_TRACES_TOPIC = "otlp_traces"
+ROTEL_EXPORTER_DLQ_METRICS_TOPIC = "otlp_metrics"
+ROTEL_EXPORTER_DLQ_LOGS_TOPIC = "otlp_logs"
+
+# Kafka Receiver
+ROTEL_KAFKA_RECEIVER_BROKERS = "localhost:9092"
+ROTEL_KAFKA_RECEIVER_TRACES = "true"
+ROTEL_KAFKA_RECEIVER_METRICS = "true"
+ROTEL_KAFKA_RECEIVER_LOGS = "true"
+ROTEL_KAFKA_RECEIVER_TRACES_TOPIC = "otlp_traces"
+ROTEL_KAFKA_RECEIVER_METRICS_TOPIC = "otlp_metrics"
+ROTEL_KAFKA_RECEIVER_LOGS_TOPIC = "otlp_logs"
+ROTEL_KAFKA_RECEIVER_GROUP_ID = "rotel-dlq-recovery"
+ROTEL_KAFKA_RECEIVER_AUTO_OFFSET_RESET = "earliest"
+
+# Kafka Receiver Targets (must be ch_replay to allow offset tracking)
+ROTEL_KAFKA_RECEIVER_TARGET_EXPORTERS_TRACES = "ch_replay"
+ROTEL_KAFKA_RECEIVER_TARGET_EXPORTERS_METRICS = "ch_replay"
+ROTEL_KAFKA_RECEIVER_TARGET_EXPORTERS_LOGS = "ch_replay"
+
+# Demo-specific tuning
+ROTEL_EXPORT_GROUP_TRIP_AFTER = "1"
+ROTEL_EXPORT_GROUP_PROBE_AFTER = "5s"
+ROTEL_EXPORT_GROUP_MEMBER_RETRY_MAX_ELAPSED_TIME = "2s"

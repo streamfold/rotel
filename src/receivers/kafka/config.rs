@@ -125,6 +125,15 @@ pub struct KafkaReceiverConfig {
     /// Enable consuming logs
     pub logs: bool,
 
+    /// Optional trace exporter targets for this receiver.
+    pub target_exporters_traces: Option<Vec<String>>,
+
+    /// Optional metrics exporter targets for this receiver.
+    pub target_exporters_metrics: Option<Vec<String>>,
+
+    /// Optional logs exporter targets for this receiver.
+    pub target_exporters_logs: Option<Vec<String>>,
+
     /// Deserialization format for incoming messages
     pub deserialization_format: DeserializationFormat,
 
@@ -220,6 +229,9 @@ impl Default for KafkaReceiverConfig {
             traces: false,
             metrics: false,
             logs: false,
+            target_exporters_traces: None,
+            target_exporters_metrics: None,
+            target_exporters_logs: None,
             deserialization_format: DeserializationFormat::default(),
             group_id: "rotel-consumer".to_string(),
             client_id: "rotel".to_string(),
@@ -295,6 +307,24 @@ impl KafkaReceiverConfig {
     /// Consume logs
     pub fn with_logs(mut self, logs: bool) -> Self {
         self.logs = logs;
+        self
+    }
+
+    /// Override trace exporter targets for this receiver
+    pub fn with_target_exporters_traces(mut self, targets: Option<Vec<String>>) -> Self {
+        self.target_exporters_traces = targets;
+        self
+    }
+
+    /// Override metrics exporter targets for this receiver
+    pub fn with_target_exporters_metrics(mut self, targets: Option<Vec<String>>) -> Self {
+        self.target_exporters_metrics = targets;
+        self
+    }
+
+    /// Override logs exporter targets for this receiver
+    pub fn with_target_exporters_logs(mut self, targets: Option<Vec<String>>) -> Self {
+        self.target_exporters_logs = targets;
         self
     }
 

@@ -411,7 +411,7 @@ impl KafkaReceiver {
         self.offset_committer.take()
     }
 
-    pub(crate) async fn run(
+    pub async fn run(
         &mut self,
         receivers_cancel: CancellationToken,
     ) -> std::result::Result<(), Box<dyn Error + Send + Sync>> {

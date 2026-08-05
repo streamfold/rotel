@@ -3,6 +3,7 @@
 pub mod batch;
 pub mod batch_resources;
 pub mod debug;
+pub mod export_group;
 pub mod fanout;
 pub mod flush_control;
 pub mod generic_pipeline;

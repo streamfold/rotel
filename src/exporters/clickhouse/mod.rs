@@ -62,7 +62,7 @@ pub enum Compression {
 
 #[derive(Clone)]
 pub struct ClickhouseExporterConfigBuilder {
-    retry_config: RetryConfig,
+    pub(crate) retry_config: RetryConfig,
     compression: Compression,
     endpoint: String,
     database: String,
@@ -98,6 +98,27 @@ pub type ExporterType<'a, Resource> = Exporter<
 >;
 
 impl ClickhouseExporterConfigBuilder {
+    /// Convenience constructor with a standard retry configuration (5s → 30s backoff, 300s budget).
+    /// When used as an export-group member the group's `member_retry_max_elapsed_time` cap
+    /// (default 20s) takes precedence and overrides `max_elapsed_time` at startup.
+    pub fn with_defaults(
+        endpoint: String,
+        database: String,
+        table_prefix: String,
+    ) -> ClickhouseExporterConfigBuilder {
+        Self::new(
+            endpoint,
+            database,
+            table_prefix,
+            RetryConfig {
+                initial_backoff: Duration::from_secs(5),
+                max_backoff: Duration::from_secs(30),
+                max_elapsed_time: Duration::from_secs(300),
+                indefinite_retry: false,
+            },
+        )
+    }
+
     pub fn new(
         endpoint: String,
         database: String,
@@ -151,6 +172,11 @@ impl ClickhouseExporterConfigBuilder {
 
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
+        self
+    }
+
+    pub fn with_retry_max_elapsed_time(mut self, max_elapsed_time: Duration) -> Self {
+        self.retry_config.max_elapsed_time = max_elapsed_time;
         self
     }
 

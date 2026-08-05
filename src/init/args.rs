@@ -166,6 +166,38 @@ pub struct AgentRun {
     #[arg(long, env = "ROTEL_EXPORTERS_INTERNAL_METRICS")]
     pub exporters_internal_metrics: Option<String>,
 
+    /// Trace export groups. Format: <name>=<member1>,<member2>[;<name2>=<m3>,<m4>...]
+    /// Each group name must be unique; members must be declared in --exporters-traces.
+    #[arg(long, env = "ROTEL_EXPORT_GROUPS_TRACES")]
+    pub export_groups_traces: Option<String>,
+
+    /// Metrics export groups. Format: <name>=<member1>,<member2>[;<name2>=<m3>,<m4>...]
+    #[arg(long, env = "ROTEL_EXPORT_GROUPS_METRICS")]
+    pub export_groups_metrics: Option<String>,
+
+    /// Logs export groups. Format: <name>=<member1>,<member2>[;<name2>=<m3>,<m4>...]
+    #[arg(long, env = "ROTEL_EXPORT_GROUPS_LOGS")]
+    pub export_groups_logs: Option<String>,
+
+    /// Consecutive nacks of the active group member required to trip the circuit breaker
+    #[arg(long, env = "ROTEL_EXPORT_GROUP_TRIP_AFTER", default_value_t = 3)]
+    pub export_group_trip_after: u32,
+
+    /// Probe interval after tripping; member[0] is retested after this duration.
+    /// Use "0s" to disable auto-recovery.
+    #[arg(long, env = "ROTEL_EXPORT_GROUP_PROBE_AFTER", default_value = "30s")]
+    pub export_group_probe_after: humantime::Duration,
+
+    /// Maximum total time an export group member may spend retrying a single batch before
+    /// the group records a nack and advances to the next member. Keeping this short ensures
+    /// the circuit breaker can trip quickly on a degraded primary.
+    #[arg(
+        long,
+        env = "ROTEL_EXPORT_GROUP_MEMBER_RETRY_MAX_ELAPSED_TIME",
+        default_value = "20s"
+    )]
+    pub export_group_member_retry_max_elapsed_time: humantime::Duration,
+
     #[command(flatten)]
     pub otlp_exporter: OTLPExporterArgs,
 
@@ -233,6 +265,12 @@ impl Default for AgentRun {
             exporters_metrics: None,
             exporters_logs: None,
             exporters_internal_metrics: None,
+            export_groups_traces: None,
+            export_groups_metrics: None,
+            export_groups_logs: None,
+            export_group_trip_after: 3,
+            export_group_probe_after: std::time::Duration::from_secs(30).into(),
+            export_group_member_retry_max_elapsed_time: std::time::Duration::from_secs(20).into(),
             otlp_exporter: OTLPExporterArgs::default(),
             datadog_exporter: DatadogExporterArgs::default(),
             clickhouse_exporter: ClickhouseExporterArgs::default(),

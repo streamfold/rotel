@@ -152,6 +152,10 @@ harness = false
 name = "encode_otlp_trace_bench"
 harness = false
 
+[[bench]]
+name = "export_group"
+harness = false
+
 [[bin]]
 name = "rotel"
 

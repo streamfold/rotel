@@ -87,7 +87,7 @@ pub struct DatadogExporterConfigBuilder {
     api_token: String,
     environment: String,
     hostname: String,
-    retry_config: RetryConfig,
+    pub(crate) retry_config: RetryConfig,
 }
 
 pub struct DatadogExporterBuilder {

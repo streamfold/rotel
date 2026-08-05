@@ -66,6 +66,27 @@ pub struct KafkaReceiverArgs {
     )]
     pub logs: bool,
 
+    /// Trace exporters targeted by this Kafka receiver. Defaults to the normal traces pipeline.
+    #[arg(
+        long("kafka-receiver-target-exporters-traces"),
+        env = "ROTEL_KAFKA_RECEIVER_TARGET_EXPORTERS_TRACES"
+    )]
+    pub target_exporters_traces: Option<String>,
+
+    /// Metrics exporters targeted by this Kafka receiver. Defaults to the normal metrics pipeline.
+    #[arg(
+        long("kafka-receiver-target-exporters-metrics"),
+        env = "ROTEL_KAFKA_RECEIVER_TARGET_EXPORTERS_METRICS"
+    )]
+    pub target_exporters_metrics: Option<String>,
+
+    /// Logs exporters targeted by this Kafka receiver. Defaults to the normal logs pipeline.
+    #[arg(
+        long("kafka-receiver-target-exporters-logs"),
+        env = "ROTEL_KAFKA_RECEIVER_TARGET_EXPORTERS_LOGS"
+    )]
+    pub target_exporters_logs: Option<String>,
+
     /// Deserialization format
     #[arg(
         id("KAFKA_RECEIVER_FORMAT"),
@@ -305,6 +326,9 @@ impl KafkaReceiverArgs {
             .with_traces(self.traces)
             .with_metrics(self.metrics)
             .with_logs(self.logs)
+            .with_target_exporters_traces(parse_target_exporters(&self.target_exporters_traces)?)
+            .with_target_exporters_metrics(parse_target_exporters(&self.target_exporters_metrics)?)
+            .with_target_exporters_logs(parse_target_exporters(&self.target_exporters_logs)?)
             .with_deserialization_format(self.format)
             .with_client_id(self.client_id.clone())
             .with_auto_commit(self.enable_auto_commit, self.auto_commit_interval_ms)
@@ -370,8 +394,27 @@ impl KafkaReceiverArgs {
     }
 }
 
+fn parse_target_exporters(targets: &Option<String>) -> Result<Option<Vec<String>>, BoxError> {
+    let Some(targets) = targets else {
+        return Ok(None);
+    };
+
+    let parsed: Vec<String> = targets
+        .split(',')
+        .map(|target| target.trim().to_string())
+        .filter(|target| !target.is_empty())
+        .collect();
+
+    if parsed.is_empty() {
+        return Err("Kafka receiver target exporters cannot be empty".into());
+    }
+
+    Ok(Some(parsed))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::KafkaReceiverArgs;
     use crate::receivers::kafka::config::{AutoOffsetReset, IsolationLevel, SaslMechanism};
 
     #[test]
@@ -406,5 +449,29 @@ mod tests {
 
         let read_committed = serde_json::from_str::<IsolationLevel>("\"read-committed\"").unwrap();
         assert_eq!(read_committed, IsolationLevel::ReadCommitted);
+    }
+
+    #[test]
+    fn test_kafka_receiver_target_exporters_default_to_none() {
+        let config = KafkaReceiverArgs::default().build_config().unwrap();
+
+        assert!(config.target_exporters_traces.is_none());
+        assert!(config.target_exporters_metrics.is_none());
+        assert!(config.target_exporters_logs.is_none());
+    }
+
+    #[test]
+    fn test_kafka_receiver_target_exporters_parse_csv() {
+        let args = KafkaReceiverArgs {
+            target_exporters_traces: Some("ch, otlp".to_string()),
+            ..Default::default()
+        };
+
+        let config = args.build_config().unwrap();
+
+        assert_eq!(
+            Some(vec!["ch".to_string(), "otlp".to_string()]),
+            config.target_exporters_traces
+        );
     }
 }

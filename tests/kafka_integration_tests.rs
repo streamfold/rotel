@@ -11,19 +11,28 @@
 //! 3. Stop Kafka: ./scripts/kafka-test-env.sh stop
 
 #![cfg(kafka_integration_tests = "true")]
+#![allow(unused_imports)]
 
+use httpmock::Method::POST as HTTP_POST;
+use httpmock::MockServer;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
 use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric, number_data_point,
 };
 use opentelemetry_proto::tonic::resource::v1::Resource;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rotel::bounded_channel::bounded;
+use rotel::exporters::clickhouse::ClickhouseExporterConfigBuilder;
 use rotel::exporters::kafka::config::{Compression, KafkaExporterConfig, SerializationFormat};
 use rotel::exporters::kafka::{build_logs_exporter, build_metrics_exporter, build_traces_exporter};
+use rotel::receivers::kafka::config::{AutoOffsetReset, KafkaReceiverConfig};
+use rotel::receivers::kafka::receiver::KafkaReceiver;
+use rotel::receivers::otlp_output::OTLPOutput;
+use rotel::topology::export_group::ExportGroupBuilder;
 use rotel::topology::payload::Message as PayloadMessage;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -41,11 +50,12 @@ fn generate_unique_topic(base: &str) -> String {
 }
 
 async fn setup_consumer(topic: &str) -> StreamConsumer {
+    setup_consumer_with_group(topic, format!("test-consumer-{}", uuid::Uuid::new_v4())).await
+}
+
+async fn setup_consumer_with_group(topic: &str, group_id: String) -> StreamConsumer {
     let consumer: StreamConsumer = ClientConfig::new()
-        .set(
-            "group.id",
-            format!("test-consumer-{}", uuid::Uuid::new_v4()),
-        )
+        .set("group.id", group_id)
         .set("bootstrap.servers", KAFKA_BROKER)
         .set("auto.offset.reset", "earliest")
         .set("enable.auto.commit", "false")
@@ -128,8 +138,10 @@ async fn test_kafka_exporter_traces_json() {
     let json: Value = serde_json::from_str(&message_content).expect("Message is not valid JSON");
 
     // Verify it contains trace data
-    assert!(json.is_array(), "Message should be an array");
-    let traces = json.as_array().unwrap();
+    let traces = json
+        .get("resourceSpans")
+        .and_then(|value| value.as_array())
+        .expect("Message should contain resourceSpans array");
     assert!(!traces.is_empty(), "Traces array should not be empty");
 
     // Verify trace structure
@@ -255,8 +267,10 @@ async fn test_kafka_exporter_logs_with_compression() {
     let json: Value = serde_json::from_str(&message_content).expect("Message is not valid JSON");
 
     // Verify it contains log data
-    assert!(json.is_array(), "Message should be an array");
-    let logs = json.as_array().unwrap();
+    let logs = json
+        .get("resourceLogs")
+        .and_then(|value| value.as_array())
+        .expect("Message should contain resourceLogs array");
     assert!(!logs.is_empty(), "Logs array should not be empty");
 
     // Verify log structure
@@ -1064,4 +1078,230 @@ mod uuid {
             format!("test-{}", timestamp)
         }
     }
+}
+
+// ─── Export Group integration test ───────────────────────────────────────────
+//
+// Scenario: Clickhouse (always-5xx) → Kafka (working).
+// Expected:
+//   1. Each of the first `trip_after` batches is nacked by Clickhouse and immediately
+//      retried on the Kafka member, which acks.  No traces are lost.
+//   2. After `trip_after` consecutive Clickhouse nacks the breaker trips; subsequent
+//      batches start directly at the Kafka member (Clickhouse is skipped).
+//   3. All traces appear in the Kafka topic exactly once.
+//
+// Run with:
+//   KAFKA_INTEGRATION_TESTS=true cargo test --test kafka_integration_tests test_export_group_
+
+#[tokio::test]
+async fn test_export_group_clickhouse_then_kafka() {
+    const BATCH_COUNT: usize = 6;
+    const TRIP_AFTER: u32 = 3;
+
+    // ── Spin up a mock Clickhouse that always returns HTTP 503 ──────────────
+    let clickhouse_server = MockServer::start();
+    let clickhouse_mock = clickhouse_server.mock(|when, then| {
+        when.method(HTTP_POST).path("/");
+        then.status(503).body("service unavailable");
+    });
+
+    // ── Build Clickhouse exporter pointed at the mock ───────────────────────
+    let (ch_tx, ch_rx) = bounded::<Vec<PayloadMessage<ResourceSpans>>>(64);
+    let ch_addr = format!("http://127.0.0.1:{}", clickhouse_server.port());
+    let ch_exporter = ClickhouseExporterConfigBuilder::with_defaults(
+        ch_addr,
+        "otel".to_string(),
+        "otel".to_string(),
+    )
+    .with_retry_max_elapsed_time(Duration::from_millis(1))
+    .build()
+    .expect("Clickhouse builder failed")
+    .build_traces_exporter(ch_rx, None)
+    .expect("Clickhouse exporter build failed");
+
+    let ch_cancel = CancellationToken::new();
+    let ch_token = ch_cancel.clone();
+    tokio::spawn(async move {
+        let _ = ch_exporter.start(ch_token).await;
+    });
+
+    // ── Build Kafka exporter ────────────────────────────────────────────────
+    let topic = generate_unique_topic("export_group_traces");
+    let kafka_consumer = setup_consumer(&topic).await;
+    // Give the consumer time to connect and assign partitions.
+    sleep(Duration::from_secs(2)).await;
+
+    let (kafka_tx, kafka_rx) = bounded::<Vec<PayloadMessage<ResourceSpans>>>(64);
+    let kafka_config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
+        .with_traces_topic(topic.clone())
+        .with_serialization_format(SerializationFormat::Json);
+    let mut kafka_exporter =
+        build_traces_exporter(kafka_config, kafka_rx).expect("Kafka exporter build failed");
+
+    let kafka_cancel = CancellationToken::new();
+    let kafka_token = kafka_cancel.clone();
+    tokio::spawn(async move {
+        kafka_exporter.start(kafka_token).await;
+    });
+
+    // ── Wire an ExportGroup: Clickhouse first, Kafka second ─────────────────
+    let group = ExportGroupBuilder::<ResourceSpans>::new(64)
+        .add_member(ch_tx)
+        .add_member(kafka_tx)
+        .trip_after(TRIP_AFTER)
+        .probe_after(Duration::ZERO) // disable auto-recovery for this test
+        .build();
+
+    let mut active_rx = group.subscribe_active();
+    let group_tx = group.sender();
+
+    // ── Send BATCH_COUNT batches through the group ──────────────────────────
+    let trace_data = FakeOTLP::trace_service_request().resource_spans;
+    for _ in 0..BATCH_COUNT {
+        group_tx
+            .send(vec![PayloadMessage {
+                metadata: None,
+                payload: trace_data.clone(),
+                request_context: None,
+            }])
+            .await
+            .expect("Failed to send to group");
+    }
+
+    // ── Wait for the breaker to trip (after TRIP_AFTER nacks) ──────────────
+    let tripped = timeout(Duration::from_secs(30), active_rx.wait_for(|&v| v == 1)).await;
+    assert!(tripped.is_ok(), "Breaker did not trip within 30s");
+
+    // ── Verify all BATCH_COUNT messages arrived in Kafka ───────────────────
+    let mut received = 0usize;
+    for _ in 0..BATCH_COUNT {
+        let msg = wait_for_message(&kafka_consumer, Duration::from_secs(15)).await;
+        assert!(
+            msg.is_some(),
+            "Missing Kafka message; received {}/{} so far",
+            received,
+            BATCH_COUNT
+        );
+        received += 1;
+    }
+    assert_eq!(
+        received, BATCH_COUNT,
+        "Expected all {} batches in Kafka",
+        BATCH_COUNT
+    );
+
+    // ── Verify Clickhouse only received TRIP_AFTER requests before trip ─────
+    // The first TRIP_AFTER batches hit Clickhouse (and were retried on Kafka).
+    // Post-trip batches bypass Clickhouse entirely.
+    // Retry policy may cause multiple hits per batch on Clickhouse; assert at least TRIP_AFTER.
+    let ch_hits = clickhouse_mock.hits();
+    assert!(
+        ch_hits >= TRIP_AFTER as usize,
+        "Expected Clickhouse to receive at least {} hits, got {}",
+        TRIP_AFTER,
+        ch_hits
+    );
+    // After the trip, subsequent batches should not hit Clickhouse at all.
+    // Give the group a moment to process any in-flight post-trip batches.
+    sleep(Duration::from_millis(200)).await;
+    let ch_hits_after = clickhouse_mock.hits();
+    // Post-trip batches (BATCH_COUNT - TRIP_AFTER) should have all gone straight to Kafka.
+    let expected_max_ch_hits =
+        TRIP_AFTER as usize * (/* retry attempts per batch, typically 1 */2 + 1);
+    assert!(
+        ch_hits_after <= expected_max_ch_hits,
+        "Clickhouse received too many hits after trip ({} > {}); some batches were not short-circuited",
+        ch_hits_after,
+        expected_max_ch_hits
+    );
+
+    ch_cancel.cancel();
+    kafka_cancel.cancel();
+}
+
+#[tokio::test]
+async fn test_kafka_receiver_unacked_dlq_message_is_not_committed() {
+    let topic = generate_unique_topic("dlq_replay_pause");
+    let group_id = format!("dlq-replay-{}", uuid::Uuid::new_v4());
+
+    // Produce a DLQ trace message using the same protobuf format the Kafka receiver consumes.
+    let (producer_tx, producer_rx) = bounded::<Vec<PayloadMessage<ResourceSpans>>>(8);
+    let producer_config = KafkaExporterConfig::new(KAFKA_BROKER.to_string())
+        .with_traces_topic(topic.clone())
+        .with_serialization_format(SerializationFormat::Protobuf);
+    let mut producer =
+        build_traces_exporter(producer_config, producer_rx).expect("Kafka exporter build failed");
+
+    let producer_cancel = CancellationToken::new();
+    let producer_token = producer_cancel.clone();
+    tokio::spawn(async move {
+        producer.start(producer_token).await;
+    });
+
+    producer_tx
+        .send(vec![PayloadMessage {
+            metadata: None,
+            payload: vec![FakeOTLP::trace_service_request().resource_spans[0].clone()],
+            request_context: None,
+        }])
+        .await
+        .expect("Failed to send test trace to Kafka exporter");
+
+    // Wait until Kafka has the message before starting the receiver under test.
+    let probe_consumer = setup_consumer(&topic).await;
+    assert!(
+        wait_for_message(&probe_consumer, TEST_TIMEOUT)
+            .await
+            .is_some(),
+        "Produced DLQ message was not visible in Kafka"
+    );
+    drop(probe_consumer);
+
+    let (receiver_tx, mut receiver_rx) = bounded::<PayloadMessage<ResourceSpans>>(8);
+    let receiver_output = OTLPOutput::new(receiver_tx);
+    let receiver_config = KafkaReceiverConfig::new(KAFKA_BROKER.to_string(), group_id.clone())
+        .with_traces(true)
+        .with_traces_topic(topic.clone())
+        .with_auto_offset_reset(AutoOffsetReset::Earliest);
+    let mut receiver =
+        KafkaReceiver::new(receiver_config, Some(receiver_output), None, None, false)
+            .expect("Kafka receiver build failed");
+    let mut offset_committer = receiver
+        .take_offset_committer()
+        .expect("Offset committer should be enabled when auto-commit is disabled");
+
+    let receiver_cancel = CancellationToken::new();
+    let committer_cancel = CancellationToken::new();
+    let receiver_token = receiver_cancel.clone();
+    let committer_token = committer_cancel.clone();
+    let receiver_handle = tokio::spawn(async move { receiver.run(receiver_token).await });
+    let committer_handle = tokio::spawn(async move { offset_committer.run(committer_token).await });
+
+    let received = timeout(TEST_TIMEOUT, receiver_rx.next())
+        .await
+        .expect("Kafka receiver did not emit the DLQ message")
+        .expect("Kafka receiver output closed unexpectedly");
+    assert!(
+        received.metadata.is_some(),
+        "Kafka receiver output should carry offset-tracking metadata"
+    );
+    // Deliberately do not ack the metadata. This simulates Clickhouse being down while the
+    // replay exporter retries indefinitely, so the DLQ offset must remain uncommitted.
+
+    receiver_cancel.cancel();
+    committer_cancel.cancel();
+    let _ = receiver_handle.await;
+    let _ = committer_handle.await;
+
+    // A new consumer in the same group should still receive the same message because no ack
+    // reached the offset committer.
+    let replay_consumer = setup_consumer_with_group(&topic, group_id).await;
+    assert!(
+        wait_for_message(&replay_consumer, TEST_TIMEOUT)
+            .await
+            .is_some(),
+        "Unacked DLQ message was committed; replay would not pause while Clickhouse is down"
+    );
+
+    producer_cancel.cancel();
 }

@@ -86,7 +86,7 @@ pub struct AwsEmfExporterConfig {
 }
 
 pub struct AwsEmfExporterConfigBuilder {
-    config: AwsEmfExporterConfig,
+    pub(crate) config: AwsEmfExporterConfig,
 }
 
 impl AwsEmfExporterConfigBuilder {

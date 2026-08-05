@@ -1,5 +1,5 @@
 use crate::aws_api::creds::AwsCredsProvider;
-use crate::bounded_channel::{BoundedReceiver, bounded};
+use crate::bounded_channel::{BoundedReceiver, BoundedSender, bounded};
 use crate::crypto::init_crypto_provider;
 use crate::exporters::blackhole::BlackholeExporter;
 use crate::exporters::datadog::Region;
@@ -11,8 +11,10 @@ use crate::init::args::{AgentRun, DebugLogParam, Receiver};
 use crate::init::batch::{
     build_logs_batch_config, build_metrics_batch_config, build_traces_batch_config,
 };
+#[cfg(feature = "rdkafka")]
+use crate::init::config::validate_receiver_targets;
 use crate::init::config::{
-    ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
+    ExportGroupConfig, ExporterConfig, ReceiverConfig, get_exporters_config, get_receivers_config,
 };
 use crate::init::datadog_exporter::DatadogRegion;
 #[cfg(feature = "pprof")]
@@ -36,6 +38,7 @@ use crate::receivers::otlp::otlp_http::OTLPHttpServer;
 use crate::receivers::otlp_output::OTLPOutput;
 use crate::topology::batch::BatchSizer;
 use crate::topology::debug::DebugLogger;
+use crate::topology::export_group::ExportGroupBuilder;
 use crate::topology::fanout::FanoutBuilder;
 use crate::topology::flush_control::{FlushSubscriber, conditional_flush};
 use crate::topology::payload::Message;
@@ -48,9 +51,13 @@ use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, Temporality};
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 use std::time::Duration;
 use tokio::select;
 use tokio::task::JoinSet;
@@ -181,6 +188,9 @@ impl Agent {
         #[allow(unused_mut)]
         let mut exp_config = get_exporters_config(&config, &self.environment)?;
 
+        #[cfg(feature = "rdkafka")]
+        validate_receiver_targets(&rec_config, &exp_config)?;
+
         // Check if Kafka receiver with offset tracking is enabled
         // Offset tracking is enabled when auto commit is disabled
         #[cfg(feature = "rdkafka")]
@@ -195,6 +205,9 @@ impl Agent {
             #[cfg(feature = "rdkafka")]
             matches!(cfg, ReceiverConfig::Kafka(k) if !k.enable_auto_commit && k.disable_exporter_indefinite_retry)
         });
+
+        #[cfg(feature = "rdkafka")]
+        let kafka_target_exporters = kafka_receiver_target_exporters(&rec_config);
 
         // Validate configuration: disable_exporter_indefinite_retry requires auto_commit to be disabled
         #[cfg(feature = "rdkafka")]
@@ -221,7 +234,15 @@ impl Agent {
             info!(
                 "Kafka offset tracking enabled - setting exporters to retry indefinitely to ensure no data loss. To disable this behavior, use --kafka-receiver-disable-exporter-indefinite-retry"
             );
-            exp_config.set_indefinite_retry();
+            if kafka_target_exporters.has_targets() {
+                exp_config.set_indefinite_retry_for_targets(
+                    &kafka_target_exporters.traces,
+                    &kafka_target_exporters.metrics,
+                    &kafka_target_exporters.logs,
+                );
+            } else {
+                exp_config.set_indefinite_retry();
+            }
         }
 
         // Check if file receiver with offset tracking is enabled (indefinite retry not disabled)
@@ -268,6 +289,25 @@ impl Agent {
         let mut metrics_output = None;
         let mut logs_output = None;
         let mut internal_metrics_output = None;
+
+        #[cfg(feature = "rdkafka")]
+        let (kafka_target_traces_output, kafka_target_traces_rx) =
+            new_optional_pipeline_output::<ResourceSpans>(
+                !kafka_target_exporters.traces.is_empty(),
+                max(4, num_cpus),
+            );
+        #[cfg(feature = "rdkafka")]
+        let (kafka_target_metrics_output, kafka_target_metrics_rx) =
+            new_optional_pipeline_output::<ResourceMetrics>(
+                !kafka_target_exporters.metrics.is_empty(),
+                max(4, num_cpus),
+            );
+        #[cfg(feature = "rdkafka")]
+        let (kafka_target_logs_output, kafka_target_logs_rx) =
+            new_optional_pipeline_output::<ResourceLogs>(
+                !kafka_target_exporters.logs.is_empty(),
+                max(4, num_cpus),
+            );
 
         let otlp_rec_enabled = rec_config.contains_key(&Receiver::Otlp);
         // Only notify user if we have an otlp receiver
@@ -397,15 +437,31 @@ impl Agent {
         let mut metrics_fanout = FanoutBuilder::new("metrics");
         let mut logs_fanout = FanoutBuilder::new("logs");
         let mut internal_metrics_fanout = FanoutBuilder::new("internal_metrics");
+        let mut trace_senders = HashMap::new();
+        let mut metrics_senders = HashMap::new();
+        let mut logs_senders = HashMap::new();
 
         //
         // TRACES
         //
         if activation.traces == TelemetryState::Active {
-            for cfg in exp_config.traces {
-                let (trace_pipeline_out_tx, trace_pipeline_out_rx) =
-                    bounded::<Vec<Message<ResourceSpans>>>(self.sending_queue_size);
-                trace_fanout = trace_fanout.add_tx(cfg.name(), trace_pipeline_out_tx);
+            let (mut trace_channels, trace_member_retry_cap) = setup_pipeline_channels(
+                &exp_config.trace_groups,
+                &exp_config.trace_names,
+                &mut trace_fanout,
+                "traces",
+                self.sending_queue_size,
+            );
+            trace_senders = clone_channel_senders(&trace_channels);
+
+            for (name, mut cfg) in exp_config.trace_names.into_iter().zip(exp_config.traces) {
+                let (_, trace_pipeline_out_rx) = trace_channels
+                    .remove(&name)
+                    .expect("channel pre-allocated above");
+
+                if let Some(&cap) = trace_member_retry_cap.get(&name) {
+                    cfg.cap_retry_elapsed_time(cap);
+                }
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
@@ -541,33 +597,51 @@ impl Agent {
         // METRICS
         //
         if activation.metrics == TelemetryState::Active {
-            // Combine both metrics and internal_metrics exporters into single pass
+            let (mut metrics_channels, metrics_member_retry_cap) = setup_pipeline_channels(
+                &exp_config.metric_groups,
+                &exp_config.metric_names,
+                &mut metrics_fanout,
+                "metrics",
+                self.sending_queue_size,
+            );
+            metrics_senders = clone_channel_senders(&metrics_channels);
+
+            // Combine metrics and internal_metrics exporters for spawning.
             let combined_metrics_configs = exp_config
-                .metrics
+                .metric_names
                 .into_iter()
-                .map(|cfg| (cfg, false))
+                .zip(exp_config.metrics)
+                .map(|(name, cfg)| (name, cfg, false))
                 .chain(
                     exp_config
-                        .internal_metrics
+                        .internal_metric_names
                         .into_iter()
-                        .map(|cfg| (cfg, true)),
+                        .zip(exp_config.internal_metrics)
+                        .map(|(name, cfg)| (name, cfg, true)),
                 );
 
-            for (cfg, is_internal_metrics) in combined_metrics_configs {
+            for (name, mut cfg, is_internal_metrics) in combined_metrics_configs {
                 // Skip internal metrics if not enabled
                 if is_internal_metrics && !config.enable_internal_telemetry {
                     continue;
                 }
 
-                let (metrics_pipeline_out_tx, metrics_pipeline_out_rx) =
-                    bounded::<Vec<Message<ResourceMetrics>>>(self.sending_queue_size);
-
-                if is_internal_metrics {
+                let metrics_pipeline_out_rx = if is_internal_metrics {
+                    // Internal metrics are never grouped; create channel inline.
+                    let (internal_tx, internal_rx) =
+                        bounded::<Vec<Message<ResourceMetrics>>>(self.sending_queue_size);
                     internal_metrics_fanout =
-                        internal_metrics_fanout.add_tx(cfg.name(), metrics_pipeline_out_tx);
+                        internal_metrics_fanout.add_tx(cfg.name(), internal_tx);
+                    internal_rx
                 } else {
-                    metrics_fanout = metrics_fanout.add_tx(cfg.name(), metrics_pipeline_out_tx);
-                }
+                    if let Some(&cap) = metrics_member_retry_cap.get(&name) {
+                        cfg.cap_retry_elapsed_time(cap);
+                    }
+                    let (_, rx) = metrics_channels
+                        .remove(&name)
+                        .expect("channel pre-allocated above");
+                    rx
+                };
 
                 let telemetry_type = match is_internal_metrics {
                     true => "internal_metrics",
@@ -697,10 +771,23 @@ impl Agent {
         // LOGS
         //
         if activation.logs == TelemetryState::Active {
-            for cfg in exp_config.logs {
-                let (logs_pipeline_out_tx, logs_pipeline_out_rx) =
-                    bounded::<Vec<Message<ResourceLogs>>>(self.sending_queue_size);
-                logs_fanout = logs_fanout.add_tx(cfg.name(), logs_pipeline_out_tx);
+            let (mut logs_channels, logs_member_retry_cap) = setup_pipeline_channels(
+                &exp_config.log_groups,
+                &exp_config.log_names,
+                &mut logs_fanout,
+                "logs",
+                self.sending_queue_size,
+            );
+            logs_senders = clone_channel_senders(&logs_channels);
+
+            for (name, mut cfg) in exp_config.log_names.into_iter().zip(exp_config.logs) {
+                let (_, logs_pipeline_out_rx) = logs_channels
+                    .remove(&name)
+                    .expect("channel pre-allocated above");
+
+                if let Some(&cap) = logs_member_retry_cap.get(&name) {
+                    cfg.cap_retry_elapsed_time(cap);
+                }
 
                 match cfg {
                     ExporterConfig::Otlp(exp_config) => {
@@ -898,6 +985,114 @@ impl Agent {
                 .spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
         }
 
+        #[cfg(feature = "rdkafka")]
+        if let Some(kafka_target_traces_rx) = kafka_target_traces_rx {
+            let trace_fanout =
+                build_target_fanout(&kafka_target_exporters.traces, &trace_senders, "traces")?;
+
+            let trace_processors = Processors::initialize(config.otlp_with_trace_processor.clone())
+                .map_err(|e| format!("Failed to initialize trace processors: {}", e))?
+                .initialize_rust(config.rust_trace_processor.clone())
+                .map_err(|e| format!("Failed to initialize Rust trace processors: {}", e))?
+                .initialize_async_rust(config.async_rust_trace_processor.clone())
+                .map_err(|e| format!("Failed to initialize async Rust trace processors: {}", e))?
+                .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
+
+            let mut trace_pipeline = topology::generic_pipeline::Pipeline::new(
+                "traces",
+                kafka_target_traces_rx,
+                trace_fanout,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                build_traces_batch_config(config.batch.clone()),
+                trace_processors,
+                resource_attributes.clone(),
+            );
+
+            let log_traces = config.debug_log.contains(&DebugLogParam::Traces);
+            let dbg_log = DebugLogger::new(
+                log_traces
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
+
+            let pipeline_cancel = pipeline_cancel.clone();
+            pipeline_task_set
+                .spawn(async move { trace_pipeline.start(dbg_log, pipeline_cancel).await });
+        }
+
+        #[cfg(feature = "rdkafka")]
+        if let Some(kafka_target_metrics_rx) = kafka_target_metrics_rx {
+            let metrics_fanout =
+                build_target_fanout(&kafka_target_exporters.metrics, &metrics_senders, "metrics")?;
+
+            let metrics_processors =
+                Processors::initialize(config.otlp_with_metrics_processor.clone())
+                    .map_err(|e| format!("Failed to initialize metrics processors: {}", e))?
+                    .initialize_rust(config.rust_metrics_processor.clone())
+                    .map_err(|e| format!("Failed to initialize Rust metrics processors: {}", e))?
+                    .initialize_async_rust(config.async_rust_metrics_processor.clone())
+                    .map_err(|e| {
+                        format!("Failed to initialize async Rust metrics processors: {}", e)
+                    })?
+                    .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
+
+            let mut metrics_pipeline = topology::generic_pipeline::Pipeline::new(
+                "metrics",
+                kafka_target_metrics_rx,
+                metrics_fanout,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                build_metrics_batch_config(config.batch.clone()),
+                metrics_processors,
+                resource_attributes.clone(),
+            );
+
+            let log_metrics = config.debug_log.contains(&DebugLogParam::Metrics);
+            let dbg_log = DebugLogger::new(
+                log_metrics
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
+
+            let pipeline_cancel = pipeline_cancel.clone();
+            pipeline_task_set
+                .spawn(async move { metrics_pipeline.start(dbg_log, pipeline_cancel).await });
+        }
+
+        #[cfg(feature = "rdkafka")]
+        if let Some(kafka_target_logs_rx) = kafka_target_logs_rx {
+            let logs_fanout =
+                build_target_fanout(&kafka_target_exporters.logs, &logs_senders, "logs")?;
+
+            let logs_processors = Processors::initialize(config.otlp_with_logs_processor.clone())
+                .map_err(|e| format!("Failed to initialize logs processors: {}", e))?
+                .initialize_rust(config.rust_logs_processor.clone())
+                .map_err(|e| format!("Failed to initialize Rust logs processors: {}", e))?
+                .initialize_async_rust(config.async_rust_logs_processor.clone())
+                .map_err(|e| format!("Failed to initialize async Rust logs processors: {}", e))?
+                .set_async_preserve_on_panic(config.async_processor_preserve_on_panic);
+
+            let mut logs_pipeline = topology::generic_pipeline::Pipeline::new(
+                "logs",
+                kafka_target_logs_rx,
+                logs_fanout,
+                pipeline_flush_sub.as_mut().map(|sub| sub.subscribe()),
+                build_logs_batch_config(config.batch.clone()),
+                logs_processors,
+                resource_attributes.clone(),
+            );
+
+            let log_logs = config.debug_log.contains(&DebugLogParam::Logs);
+            let dbg_log = DebugLogger::new(
+                log_logs
+                    .then_some(config.debug_log_verbosity)
+                    .map(|v| v.into()),
+            );
+
+            let pipeline_cancel = pipeline_cancel.clone();
+            pipeline_task_set
+                .spawn(async move { logs_pipeline.start(dbg_log, pipeline_cancel).await });
+        }
+
         if internal_metrics_output.is_some() {
             let internal_metrics_fanout = internal_metrics_fanout
                 .build()
@@ -980,11 +1175,21 @@ impl Agent {
                 }
                 #[cfg(feature = "rdkafka")]
                 ReceiverConfig::Kafka(config) => {
+                    let kafka_traces_output = kafka_target_traces_output
+                        .clone()
+                        .or_else(|| traces_output.clone());
+                    let kafka_metrics_output = kafka_target_metrics_output
+                        .clone()
+                        .or_else(|| metrics_output.clone());
+                    let kafka_logs_output = kafka_target_logs_output
+                        .clone()
+                        .or_else(|| logs_output.clone());
+
                     let mut kafka = KafkaReceiver::new(
                         config.clone(),
-                        traces_output.clone(),
-                        metrics_output.clone(),
-                        logs_output.clone(),
+                        kafka_traces_output,
+                        kafka_metrics_output,
+                        kafka_logs_output,
                         finite_retry_enabled,
                     )?;
 
@@ -1365,6 +1570,232 @@ impl Agent {
 
         Ok(())
     }
+}
+
+#[cfg(feature = "rdkafka")]
+#[derive(Default)]
+struct ReceiverTargetExporters {
+    traces: Vec<String>,
+    metrics: Vec<String>,
+    logs: Vec<String>,
+}
+
+#[cfg(feature = "rdkafka")]
+impl ReceiverTargetExporters {
+    fn has_targets(&self) -> bool {
+        !(self.traces.is_empty() && self.metrics.is_empty() && self.logs.is_empty())
+    }
+}
+
+#[cfg(feature = "rdkafka")]
+fn kafka_receiver_target_exporters(
+    rec_config: &HashMap<Receiver, ReceiverConfig>,
+) -> ReceiverTargetExporters {
+    let mut targets = ReceiverTargetExporters::default();
+    for config in rec_config.values() {
+        let ReceiverConfig::Kafka(config) = config else {
+            continue;
+        };
+
+        if let Some(trace_targets) = &config.target_exporters_traces {
+            targets.traces.extend(trace_targets.iter().cloned());
+        }
+        if let Some(metric_targets) = &config.target_exporters_metrics {
+            targets.metrics.extend(metric_targets.iter().cloned());
+        }
+        if let Some(log_targets) = &config.target_exporters_logs {
+            targets.logs.extend(log_targets.iter().cloned());
+        }
+    }
+    targets
+}
+
+fn new_optional_pipeline_output<T>(
+    enabled: bool,
+    capacity: usize,
+) -> (
+    Option<OTLPOutput<Message<T>>>,
+    Option<BoundedReceiver<Message<T>>>,
+) {
+    if !enabled {
+        return (None, None);
+    }
+
+    let (tx, rx) = bounded(capacity);
+    (Some(OTLPOutput::new(tx)), Some(rx))
+}
+
+fn clone_channel_senders<T>(
+    channels: &HashMap<
+        String,
+        (
+            BoundedSender<Vec<Message<T>>>,
+            BoundedReceiver<Vec<Message<T>>>,
+        ),
+    >,
+) -> HashMap<String, BoundedSender<Vec<Message<T>>>> {
+    channels
+        .iter()
+        .map(|(name, (tx, _))| (name.clone(), tx.clone()))
+        .collect()
+}
+
+fn build_target_fanout<T>(
+    targets: &[String],
+    senders: &HashMap<String, BoundedSender<Vec<Message<T>>>>,
+    telemetry_type: &'static str,
+) -> Result<topology::fanout::Fanout<Vec<Message<T>>>, Box<dyn Error + Send + Sync>>
+where
+    T: Send + 'static,
+{
+    let mut fanout = FanoutBuilder::new(telemetry_type);
+    for target in targets {
+        let Some(sender) = senders.get(target) else {
+            return Err(format!("Target exporter '{}' was not initialized", target).into());
+        };
+        fanout = fanout.add_tx(leak_config_name(target), sender.clone());
+    }
+    Ok(fanout.build()?)
+}
+
+fn leak_config_name(name: &str) -> &'static str {
+    Box::leak(name.to_string().into_boxed_str())
+}
+
+/// For each export group: builds an `ExportGroup` task, registers its sender with `fanout`,
+/// and returns (group_name, active_atomic) pairs for telemetry gauge registration.
+/// Member rx values stay in `channels` for the caller to use when spawning exporters.
+fn wire_export_groups<T>(
+    groups: &[ExportGroupConfig],
+    channels: &mut HashMap<
+        String,
+        (
+            BoundedSender<Vec<Message<T>>>,
+            BoundedReceiver<Vec<Message<T>>>,
+        ),
+    >,
+    fanout: &mut FanoutBuilder<Vec<Message<T>>>,
+    telemetry_type: &'static str,
+    sending_queue_size: usize,
+) -> Vec<(String, Arc<AtomicU32>)>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    let mut atomics = Vec::new();
+    for group in groups {
+        let mut builder = ExportGroupBuilder::<T>::new(sending_queue_size)
+            .trip_after(group.trip_after)
+            .probe_after(group.probe_after);
+
+        for member_name in &group.members {
+            if let Some((tx, _)) = channels.get(member_name) {
+                builder = builder.add_member(tx.clone());
+            }
+        }
+
+        let export_group = builder.build();
+        let active = export_group.active_atomic();
+
+        // Group names are configured once at startup; leaking is acceptable.
+        let static_name: &'static str = Box::leak(group.name.clone().into_boxed_str());
+        *fanout = std::mem::replace(fanout, FanoutBuilder::new(telemetry_type))
+            .add_tx(static_name, export_group.sender());
+
+        atomics.push((group.name.clone(), active));
+    }
+    atomics
+}
+
+/// Registers an ObservableGauge for each export group's active-member index.
+fn register_group_gauges(atomics: Vec<(String, Arc<AtomicU32>)>, telemetry_type: &'static str) {
+    for (group_name, active_atomic) in atomics {
+        global::meter("export_group")
+            .u64_observable_gauge("rotel_export_group_active")
+            .with_callback(move |observer| {
+                observer.observe(
+                    active_atomic.load(Ordering::Relaxed) as u64,
+                    &[
+                        opentelemetry::KeyValue::new("telemetry_type", telemetry_type),
+                        opentelemetry::KeyValue::new("group_name", group_name.clone()),
+                    ],
+                );
+            })
+            .build();
+    }
+}
+
+/// Prepares channel plumbing for one telemetry pipeline's export groups:
+///   1. Pre-allocates (tx, rx) pairs for every exporter.
+///   2. Builds retry-cap map from group configs.
+///   3. Wires export groups (spawns tasks, registers senders with fanout).
+///   4. Registers non-grouped exporters directly with the fanout.
+///   5. Registers ObservableGauges for each group's active-member index.
+///
+/// Returns `(channels, retry_cap)` for use during exporter spawning.
+fn setup_pipeline_channels<T: Clone + Send + Sync + 'static>(
+    groups: &[ExportGroupConfig],
+    exporter_names: &[String],
+    fanout: &mut FanoutBuilder<Vec<Message<T>>>,
+    telemetry_type: &'static str,
+    sending_queue_size: usize,
+) -> (
+    HashMap<
+        String,
+        (
+            BoundedSender<Vec<Message<T>>>,
+            BoundedReceiver<Vec<Message<T>>>,
+        ),
+    >,
+    HashMap<String, Duration>,
+) {
+    let grouped_members: HashSet<&str> = groups
+        .iter()
+        .flat_map(|g| g.members.iter().map(|m| m.as_str()))
+        .collect();
+
+    let member_retry_cap: HashMap<String, Duration> = groups
+        .iter()
+        .flat_map(|g| {
+            g.members
+                .iter()
+                .map(move |m| (m.clone(), g.member_retry_max_elapsed_time))
+        })
+        .collect();
+
+    let mut channels: HashMap<
+        String,
+        (
+            BoundedSender<Vec<Message<T>>>,
+            BoundedReceiver<Vec<Message<T>>>,
+        ),
+    > = HashMap::new();
+    for exporter_name in exporter_names {
+        let (tx, rx) = bounded(sending_queue_size);
+        channels.insert(exporter_name.clone(), (tx, rx));
+    }
+
+    let atomics = wire_export_groups(
+        groups,
+        &mut channels,
+        fanout,
+        telemetry_type,
+        sending_queue_size,
+    );
+
+    for exporter_name in exporter_names {
+        if grouped_members.contains(exporter_name.as_str()) {
+            continue;
+        }
+        let Some((tx, _)) = channels.get(exporter_name.as_str()) else {
+            continue;
+        };
+        *fanout = std::mem::replace(fanout, FanoutBuilder::new(telemetry_type))
+            .add_tx(leak_config_name(exporter_name), tx.clone());
+    }
+
+    register_group_gauges(atomics, telemetry_type);
+
+    (channels, member_retry_cap)
 }
 
 fn start_otlp_exporter<Resource, Request, Response>(

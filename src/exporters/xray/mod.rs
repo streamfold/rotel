@@ -64,7 +64,7 @@ type ExporterType<'a, Resource> = Exporter<
 pub struct XRayExporterConfigBuilder {
     region: Region,
     custom_endpoint: Option<String>,
-    retry_config: RetryConfig,
+    pub(crate) retry_config: RetryConfig,
 }
 
 impl XRayExporterConfigBuilder {

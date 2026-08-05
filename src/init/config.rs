@@ -31,9 +31,10 @@ use crate::receivers::kmsg::config::KmsgReceiverConfig;
 use crate::receivers::otlp::OTLPReceiverConfig;
 use figment::{Figment, providers::Env};
 use gethostname::gethostname;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
+use std::time::Duration;
 use tower::BoxError;
 use tracing::error;
 
@@ -89,12 +90,35 @@ impl ExporterMap {
     }
 }
 
+/// Configuration for an ordered export group (circuit-breaker + per-batch retry).
+pub(crate) struct ExportGroupConfig {
+    /// Logical name used to register the group's sender with the fanout.
+    pub(crate) name: String,
+    /// Ordered list of member exporter names (priority order; [0] is primary).
+    pub(crate) members: Vec<String>,
+    /// Consecutive nacks of the active member before tripping.
+    pub(crate) trip_after: u32,
+    /// Time between probe attempts after tripping; `Duration::ZERO` disables auto-recovery.
+    pub(crate) probe_after: Duration,
+    /// Cap applied to each member exporter's retry `max_elapsed_time`. A short cap (e.g. 20s)
+    /// ensures the group can nack quickly and advance to the next member rather than waiting for
+    /// the exporter's own full retry budget to exhaust.
+    pub(crate) member_retry_max_elapsed_time: Duration,
+}
+
 #[derive(Default)]
 pub(crate) struct ExporterConfigs {
     pub(crate) metrics: Vec<ExporterConfig>,
     pub(crate) logs: Vec<ExporterConfig>,
     pub(crate) traces: Vec<ExporterConfig>,
     pub(crate) internal_metrics: Vec<ExporterConfig>,
+    pub(crate) metric_names: Vec<String>,
+    pub(crate) log_names: Vec<String>,
+    pub(crate) trace_names: Vec<String>,
+    pub(crate) internal_metric_names: Vec<String>,
+    pub(crate) trace_groups: Vec<ExportGroupConfig>,
+    pub(crate) metric_groups: Vec<ExportGroupConfig>,
+    pub(crate) log_groups: Vec<ExportGroupConfig>,
 }
 
 impl ExporterConfigs {
@@ -127,6 +151,70 @@ impl ExporterConfigs {
                 // Kafka is already maxint reties and we don't need to worry about this for file.
                 _ => {}
             }
+        }
+    }
+
+    #[cfg(feature = "rdkafka")]
+    pub(crate) fn set_indefinite_retry_for_targets(
+        &mut self,
+        trace_targets: &[String],
+        metric_targets: &[String],
+        log_targets: &[String],
+    ) {
+        set_indefinite_retry_for_named_exporters(
+            &mut self.traces,
+            &self.trace_names,
+            trace_targets,
+        );
+        set_indefinite_retry_for_named_exporters(
+            &mut self.metrics,
+            &self.metric_names,
+            metric_targets,
+        );
+        set_indefinite_retry_for_named_exporters(&mut self.logs, &self.log_names, log_targets);
+    }
+
+    pub(crate) fn exporter_by_name<'a>(
+        exporters: &'a [ExporterConfig],
+        names: &[String],
+        name: &str,
+    ) -> Option<&'a ExporterConfig> {
+        names
+            .iter()
+            .zip(exporters.iter())
+            .find_map(|(exporter_name, exporter)| (exporter_name == name).then_some(exporter))
+    }
+}
+
+#[cfg(feature = "rdkafka")]
+fn set_indefinite_retry_for_named_exporters(
+    exporters: &mut [ExporterConfig],
+    names: &[String],
+    targets: &[String],
+) {
+    let targets: HashSet<&str> = targets.iter().map(|target| target.as_str()).collect();
+    for (name, exporter) in names.iter().zip(exporters.iter_mut()) {
+        if !targets.contains(name.as_str()) {
+            continue;
+        }
+
+        match exporter {
+            ExporterConfig::Otlp(config) => {
+                config.retry_config.indefinite_retry = true;
+            }
+            ExporterConfig::Datadog(config) => {
+                config.set_indefinite_retry();
+            }
+            ExporterConfig::Xray(config) => {
+                config.set_indefinite_retry();
+            }
+            ExporterConfig::Awsemf(config) => {
+                config.set_indefinite_retry();
+            }
+            ExporterConfig::Clickhouse(config) => {
+                config.set_indefinite_retry();
+            }
+            _ => {}
         }
     }
 }
@@ -199,6 +287,27 @@ impl ExporterConfig {
             ExporterConfig::Kafka(_) => "kafka",
             #[cfg(feature = "file_exporter")]
             ExporterConfig::File(_) => "file",
+        }
+    }
+
+    fn retry_config_mut(&mut self) -> Option<&mut crate::exporters::http::retry::RetryConfig> {
+        match self {
+            ExporterConfig::Otlp(c) => Some(&mut c.retry_config),
+            ExporterConfig::Datadog(c) => Some(&mut c.retry_config),
+            ExporterConfig::Clickhouse(c) => Some(&mut c.retry_config),
+            ExporterConfig::Xray(c) => Some(&mut c.retry_config),
+            ExporterConfig::Awsemf(c) => Some(&mut c.config.retry_config),
+            // Kafka, Blackhole, File have no HTTP retry config.
+            _ => None,
+        }
+    }
+
+    /// Reduce the exporter's internal retry `max_elapsed_time` to at most `cap`.
+    /// Applied to group members so the circuit-breaker can nack quickly rather than
+    /// waiting for the exporter's own full retry budget.
+    pub(crate) fn cap_retry_elapsed_time(&mut self, cap: Duration) {
+        if let Some(rc) = self.retry_config_mut() {
+            rc.max_elapsed_time = rc.max_elapsed_time.min(cap);
         }
     }
 }
@@ -476,6 +585,87 @@ pub(crate) fn get_exporters_config(
     )
 }
 
+#[cfg(feature = "rdkafka")]
+pub(crate) fn validate_receiver_targets(
+    receiver_config: &HashMap<Receiver, ReceiverConfig>,
+    exporter_config: &ExporterConfigs,
+) -> Result<(), BoxError> {
+    for config in receiver_config.values() {
+        let ReceiverConfig::Kafka(config) = config else {
+            continue;
+        };
+
+        validate_kafka_targets(
+            "traces",
+            &config.target_exporters_traces,
+            &exporter_config.traces,
+            &exporter_config.trace_names,
+            &exporter_config.trace_groups,
+            !config.enable_auto_commit && !config.disable_exporter_indefinite_retry,
+        )?;
+        validate_kafka_targets(
+            "metrics",
+            &config.target_exporters_metrics,
+            &exporter_config.metrics,
+            &exporter_config.metric_names,
+            &exporter_config.metric_groups,
+            !config.enable_auto_commit && !config.disable_exporter_indefinite_retry,
+        )?;
+        validate_kafka_targets(
+            "logs",
+            &config.target_exporters_logs,
+            &exporter_config.logs,
+            &exporter_config.log_names,
+            &exporter_config.log_groups,
+            !config.enable_auto_commit && !config.disable_exporter_indefinite_retry,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "rdkafka")]
+fn validate_kafka_targets(
+    pipeline: &str,
+    targets: &Option<Vec<String>>,
+    exporters: &[ExporterConfig],
+    names: &[String],
+    groups: &[ExportGroupConfig],
+    offset_tracking_enabled: bool,
+) -> Result<(), BoxError> {
+    let Some(targets) = targets else {
+        return Ok(());
+    };
+
+    for target in targets {
+        let Some(exporter) = ExporterConfigs::exporter_by_name(exporters, names, target) else {
+            return Err(format!(
+                "Kafka receiver target exporter '{}' is not declared in --exporters-{}",
+                target, pipeline
+            )
+            .into());
+        };
+
+        if matches!(exporter, ExporterConfig::Kafka(_)) {
+            return Err(format!(
+                "Kafka receiver target exporter '{}' for {} cannot be a Kafka exporter",
+                target, pipeline
+            )
+            .into());
+        }
+
+        if offset_tracking_enabled && groups.iter().any(|group| group.members.contains(target)) {
+            return Err(format!(
+                "Kafka receiver target exporter '{}' for {} is also an export-group member; define a separate logical exporter for DLQ replay so live failover can use finite retry while replay uses indefinite retry",
+                target, pipeline
+            )
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 fn get_multi_exporter_config(
     config: &AgentRun,
     exporters: String,
@@ -487,6 +677,7 @@ fn get_multi_exporter_config(
 
     if let Some(traces_exps) = &config.exporters_traces {
         let sp: Vec<&str> = traces_exps.split(",").collect();
+        cfg.trace_names = sp.iter().map(|exp| exp.to_string()).collect();
 
         cfg.traces = sp
             .into_iter()
@@ -506,6 +697,7 @@ fn get_multi_exporter_config(
 
     if let Some(metrics_exps) = &config.exporters_metrics {
         let sp: Vec<&str> = metrics_exps.split(",").collect();
+        cfg.metric_names = sp.iter().map(|exp| exp.to_string()).collect();
 
         cfg.metrics = sp
             .into_iter()
@@ -525,6 +717,7 @@ fn get_multi_exporter_config(
 
     if let Some(logs_exps) = &config.exporters_logs {
         let sp: Vec<&str> = logs_exps.split(",").collect();
+        cfg.log_names = sp.iter().map(|exp| exp.to_string()).collect();
 
         cfg.logs = sp
             .into_iter()
@@ -544,6 +737,7 @@ fn get_multi_exporter_config(
 
     if let Some(internal_metrics_exps) = &config.exporters_internal_metrics {
         let sp: Vec<&str> = internal_metrics_exps.split(",").collect();
+        cfg.internal_metric_names = sp.iter().map(|exp| exp.to_string()).collect();
 
         cfg.internal_metrics = sp
             .into_iter()
@@ -567,6 +761,33 @@ fn get_multi_exporter_config(
             .collect::<Result<Vec<ExporterConfig>, BoxError>>()?;
     }
 
+    // Parse and validate export groups.
+    let trip_after = config.export_group_trip_after;
+    let probe_after: Duration = config.export_group_probe_after.into();
+    let member_retry_max_elapsed_time: Duration =
+        config.export_group_member_retry_max_elapsed_time.into();
+
+    let parse_groups = |groups_str: &str, pipeline: &str, exporter_names: &[String]| {
+        parse_and_validate_groups(
+            groups_str,
+            pipeline,
+            exporter_names,
+            trip_after,
+            probe_after,
+            member_retry_max_elapsed_time,
+        )
+    };
+
+    if let Some(s) = &config.export_groups_traces {
+        cfg.trace_groups = parse_groups(s, "traces", &cfg.trace_names)?;
+    }
+    if let Some(s) = &config.export_groups_metrics {
+        cfg.metric_groups = parse_groups(s, "metrics", &cfg.metric_names)?;
+    }
+    if let Some(s) = &config.export_groups_logs {
+        cfg.log_groups = parse_groups(s, "logs", &cfg.log_names)?;
+    }
+
     // Internal metrics do not count here, we need at least one actual pipeline
     if cfg.traces.is_empty() && cfg.metrics.is_empty() && cfg.logs.is_empty() {
         return Err(
@@ -576,6 +797,99 @@ fn get_multi_exporter_config(
     }
 
     Ok(cfg)
+}
+
+/// Parse a groups string of the form `name=m0,m1[;name2=m2,m3...]` and validate
+/// against the already-resolved exporter list for this pipeline.
+fn parse_and_validate_groups(
+    groups_str: &str,
+    pipeline: &str,
+    pipeline_exporter_names: &[String],
+    trip_after: u32,
+    probe_after: Duration,
+    member_retry_max_elapsed_time: Duration,
+) -> Result<Vec<ExportGroupConfig>, BoxError> {
+    let raw = parse_export_groups(groups_str)?;
+
+    let exporter_names: HashSet<&str> = pipeline_exporter_names
+        .iter()
+        .map(|name| name.as_str())
+        .collect();
+
+    let mut seen_group_names: HashSet<String> = HashSet::new();
+    let mut seen_members: HashSet<String> = HashSet::new();
+
+    let mut groups = Vec::new();
+    for (name, members) in raw {
+        if !seen_group_names.insert(name.clone()) {
+            return Err(format!(
+                "ExportGroup[{}]: duplicate group name in {} pipeline",
+                name, pipeline
+            )
+            .into());
+        }
+        if members.len() < 2 {
+            return Err(format!(
+                "ExportGroup[{}]: must have at least 2 members, found {}",
+                name,
+                members.len()
+            )
+            .into());
+        }
+        for member in &members {
+            if !exporter_names.contains(member.as_str()) {
+                return Err(format!(
+                    "ExportGroup[{}]: member '{}' is not declared in --exporters-{}",
+                    name, member, pipeline
+                )
+                .into());
+            }
+            if !seen_members.insert(member.clone()) {
+                return Err(format!(
+                    "ExportGroup[{}]: member '{}' appears in more than one group for the {} pipeline",
+                    name, member, pipeline
+                )
+                .into());
+            }
+        }
+        groups.push(ExportGroupConfig {
+            name,
+            members,
+            trip_after,
+            probe_after,
+            member_retry_max_elapsed_time,
+        });
+    }
+    Ok(groups)
+}
+
+/// Parse `name=m0,m1[;name2=m2,m3...]` into a `Vec<(name, Vec<member>)>`.
+fn parse_export_groups(s: &str) -> Result<Vec<(String, Vec<String>)>, BoxError> {
+    let mut result = Vec::new();
+    for group_str in s.split(';') {
+        let group_str = group_str.trim();
+        if group_str.is_empty() {
+            continue;
+        }
+        let pos = group_str.find('=').ok_or_else(|| {
+            format!(
+                "ExportGroup: invalid format '{}'; expected name=m0,m1",
+                group_str
+            )
+        })?;
+        let name = group_str[..pos].trim().to_string();
+        if name.is_empty() {
+            return Err(format!("ExportGroup: empty group name in '{}'", group_str).into());
+        }
+        let members_str = group_str[pos + 1..].trim();
+        let members: Vec<String> = members_str
+            .split(',')
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        result.push((name, members));
+    }
+    Ok(result)
 }
 
 fn args_from_env_prefix(exporter_type: &str, prefix: &str) -> Result<ExporterArgs, BoxError> {
@@ -770,6 +1084,15 @@ fn get_single_exporter_config(
             )?);
         }
     }
+
+    cfg.trace_names = cfg.traces.iter().map(|e| e.name().to_string()).collect();
+    cfg.metric_names = cfg.metrics.iter().map(|e| e.name().to_string()).collect();
+    cfg.log_names = cfg.logs.iter().map(|e| e.name().to_string()).collect();
+    cfg.internal_metric_names = cfg
+        .internal_metrics
+        .iter()
+        .map(|e| e.name().to_string())
+        .collect();
 
     Ok(cfg)
 }
@@ -1291,5 +1614,101 @@ mod tests {
             }
             _ => panic!("Expected Clickhouse exporter"),
         }
+    }
+
+    #[cfg(feature = "rdkafka")]
+    fn kafka_receiver_config_with_trace_target(target: &str) -> AgentRun {
+        AgentRun {
+            receivers: Some("kafka".to_string()),
+            exporters: Some("ch:clickhouse,ch_replay:clickhouse,dlq:kafka".to_string()),
+            exporters_traces: Some("ch,ch_replay,dlq".to_string()),
+            export_groups_traces: Some("live=ch,dlq".to_string()),
+            kafka_receiver: crate::init::kafka_receiver::KafkaReceiverArgs {
+                traces: true,
+                target_exporters_traces: Some(target.to_string()),
+                ..Default::default()
+            },
+            ..AgentRun::default()
+        }
+    }
+
+    #[cfg(feature = "rdkafka")]
+    #[test]
+    fn test_kafka_receiver_target_accepts_clickhouse_exporter() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_CH_ENDPOINT", "http://localhost:8123");
+        env_manager.set_var("ROTEL_EXPORTER_CH_REPLAY_ENDPOINT", "http://localhost:8123");
+
+        let config = kafka_receiver_config_with_trace_target("ch_replay");
+        let receivers = get_receivers_config(&config, false).unwrap();
+        let exporters = get_exporters_config(&config, "production").unwrap();
+
+        validate_receiver_targets(&receivers, &exporters).unwrap();
+    }
+
+    #[cfg(feature = "rdkafka")]
+    #[test]
+    fn test_kafka_receiver_target_accepts_group_member_without_offset_tracking() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_CH_ENDPOINT", "http://localhost:8123");
+        env_manager.set_var("ROTEL_EXPORTER_CH_REPLAY_ENDPOINT", "http://localhost:8123");
+
+        let mut config = kafka_receiver_config_with_trace_target("ch");
+        config.kafka_receiver.enable_auto_commit = true;
+        let receivers = get_receivers_config(&config, false).unwrap();
+        let exporters = get_exporters_config(&config, "production").unwrap();
+
+        validate_receiver_targets(&receivers, &exporters).unwrap();
+    }
+
+    #[cfg(feature = "rdkafka")]
+    #[test]
+    fn test_kafka_receiver_target_rejects_group_member_with_offset_tracking() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_CH_ENDPOINT", "http://localhost:8123");
+        env_manager.set_var("ROTEL_EXPORTER_CH_REPLAY_ENDPOINT", "http://localhost:8123");
+
+        let config = kafka_receiver_config_with_trace_target("ch");
+        let receivers = get_receivers_config(&config, false).unwrap();
+        let exporters = get_exporters_config(&config, "production").unwrap();
+
+        let err = validate_receiver_targets(&receivers, &exporters).unwrap_err();
+        assert!(err.to_string().contains("is also an export-group member"));
+    }
+
+    #[cfg(feature = "rdkafka")]
+    #[test]
+    fn test_kafka_receiver_target_rejects_unknown_exporter() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_CH_ENDPOINT", "http://localhost:8123");
+        env_manager.set_var("ROTEL_EXPORTER_CH_REPLAY_ENDPOINT", "http://localhost:8123");
+
+        let config = kafka_receiver_config_with_trace_target("missing");
+        let receivers = get_receivers_config(&config, false).unwrap();
+        let exporters = get_exporters_config(&config, "production").unwrap();
+
+        let err = validate_receiver_targets(&receivers, &exporters).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("target exporter 'missing' is not declared")
+        );
+    }
+
+    #[cfg(feature = "rdkafka")]
+    #[test]
+    fn test_kafka_receiver_target_rejects_kafka_exporter() {
+        let mut env_manager = EnvManager::new();
+        env_manager.set_var("ROTEL_EXPORTER_CH_ENDPOINT", "http://localhost:8123");
+        env_manager.set_var("ROTEL_EXPORTER_CH_REPLAY_ENDPOINT", "http://localhost:8123");
+
+        let config = kafka_receiver_config_with_trace_target("dlq");
+        let receivers = get_receivers_config(&config, false).unwrap();
+        let exporters = get_exporters_config(&config, "production").unwrap();
+
+        let err = validate_receiver_targets(&receivers, &exporters).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("target exporter 'dlq' for traces cannot be a Kafka exporter")
+        );
     }
 }
